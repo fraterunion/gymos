@@ -10,7 +10,7 @@
 
 | Variable | Purpose |
 |----------|---------|
-| `DATABASE_URL` | Connection string for Postgres (or chosen DB) when persistence is added. |
+| `DATABASE_URL` | PostgreSQL connection URL for Prisma (`apps/api`). Required for `prisma migrate` and runtime API once wired. |
 | `JWT_ACCESS_SECRET` | Signs short-lived access tokens for staff and members. |
 | `JWT_REFRESH_SECRET` | Signs refresh tokens; rotate independently from access. |
 | `JWT_QR_SECRET` | Signs short-lived QR / check-in payloads; separate from user JWTs to limit blast radius. |

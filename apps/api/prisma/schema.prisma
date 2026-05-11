@@ -1,0 +1,369 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  MEMBER
+  INSTRUCTOR
+  ADMIN
+  OWNER
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+  PAUSED
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+  WEEKLY
+}
+
+enum ClassStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  NO_SHOW
+  COMPLETED
+}
+
+enum CancelSource {
+  MEMBER
+  STUDIO
+  SYSTEM
+}
+
+enum WaitlistStatus {
+  WAITING
+  PROMOTED
+  CANCELLED
+  EXPIRED
+}
+
+enum CheckInMethod {
+  QR
+  MANUAL
+  KIOSK
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model Studio {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  timezone  String    @default("UTC")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  memberships    StudioMembership[]
+  plans          MembershipPlan[]
+  subscriptions  Subscription[]
+  classTemplates ClassTemplate[]
+  classes        ScheduledClass[]
+  bookings       Booking[]
+  waitlist       WaitlistEntry[]
+  attendances    Attendance[]
+  qrTokens       QRToken[]
+  payments       Payment[]
+
+  @@map("studios")
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  firstName        String    @map("first_name")
+  lastName         String    @map("last_name")
+  phone            String?   @map("phone")
+  passwordHash     String?   @map("password_hash")
+  stripeCustomerId String?   @unique @map("stripe_customer_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  studioMemberships StudioMembership[]
+  subscriptions     Subscription[]     @relation("SubscriptionMember")
+  bookings            Booking[]
+  waitlistEntries     WaitlistEntry[]
+  attendances         Attendance[]
+  qrTokens            QRToken[]
+  payments            Payment[]
+  refreshTokens       RefreshToken[]
+  instructedClasses   ScheduledClass[]   @relation("ScheduledClassInstructor")
+
+  @@map("users")
+}
+
+model StudioMembership {
+  id        String    @id @default(cuid())
+  studioId String    @map("studio_id")
+  userId   String    @map("user_id")
+  role      Role
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, studioId])
+  @@index([studioId])
+  @@index([studioId, userId])
+  @@map("studio_memberships")
+}
+
+model MembershipPlan {
+  id               String          @id @default(cuid())
+  studioId         String          @map("studio_id")
+  name             String
+  description      String?
+  priceCents       Int             @map("price_cents")
+  currency         String          @default("usd")
+  billingInterval  BillingInterval @map("billing_interval")
+  active           Boolean         @default(true)
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  deletedAt        DateTime?       @map("deleted_at")
+
+  studio        Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  subscriptions Subscription[]
+
+  @@index([studioId])
+  @@index([studioId, active])
+  @@map("membership_plans")
+}
+
+model Subscription {
+  id                   String               @id @default(cuid())
+  studioId             String               @map("studio_id")
+  userId               String               @map("user_id")
+  membershipPlanId     String               @map("membership_plan_id")
+  status               SubscriptionStatus
+  stripeSubscriptionId String?              @unique @map("stripe_subscription_id")
+  currentPeriodStart   DateTime?            @map("current_period_start")
+  currentPeriodEnd     DateTime?            @map("current_period_end")
+  cancelAtPeriodEnd    Boolean              @default(false) @map("cancel_at_period_end")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+
+  studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user           User           @relation("SubscriptionMember", fields: [userId], references: [id], onDelete: Restrict)
+  membershipPlan MembershipPlan @relation(fields: [membershipPlanId], references: [id], onDelete: Restrict)
+
+  @@index([studioId])
+  @@index([studioId, userId])
+  @@index([userId])
+  @@index([membershipPlanId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+model ClassTemplate {
+  id              String    @id @default(cuid())
+  studioId        String    @map("studio_id")
+  name            String
+  durationMinutes Int       @map("duration_minutes")
+  description     String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  studio  Studio            @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  classes ScheduledClass[]
+
+  @@index([studioId])
+  @@map("class_templates")
+}
+
+model ScheduledClass {
+  id              String      @id @default(cuid())
+  studioId        String      @map("studio_id")
+  classTemplateId String      @map("class_template_id")
+  instructorId    String?     @map("instructor_id")
+  startsAt        DateTime    @map("starts_at")
+  endsAt          DateTime    @map("ends_at")
+  capacity        Int
+  status          ClassStatus
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  studio        Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  classTemplate ClassTemplate  @relation(fields: [classTemplateId], references: [id], onDelete: Restrict)
+  instructor    User?          @relation("ScheduledClassInstructor", fields: [instructorId], references: [id], onDelete: SetNull)
+  bookings      Booking[]
+  waitlist      WaitlistEntry[]
+  attendances   Attendance[]
+  qrTokens      QRToken[]
+
+  @@index([studioId])
+  @@index([studioId, startsAt])
+  @@index([classTemplateId])
+  @@index([instructorId])
+  @@index([status])
+  @@map("scheduled_classes")
+}
+
+model Booking {
+  id               String         @id @default(cuid())
+  studioId         String         @map("studio_id")
+  scheduledClassId String         @map("scheduled_class_id")
+  userId           String         @map("user_id")
+  status           BookingStatus
+  cancelSource     CancelSource?  @map("cancel_source")
+  cancelledAt      DateTime?      @map("cancelled_at")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  scheduledClass ScheduledClass @relation(fields: [scheduledClassId], references: [id], onDelete: Restrict)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([studioId])
+  @@index([studioId, scheduledClassId])
+  @@index([studioId, userId])
+  @@index([scheduledClassId, status])
+  @@index([userId])
+  @@map("bookings")
+}
+
+model WaitlistEntry {
+  id               String          @id @default(cuid())
+  studioId         String          @map("studio_id")
+  scheduledClassId String          @map("scheduled_class_id")
+  userId           String          @map("user_id")
+  status           WaitlistStatus
+  position         Int
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  scheduledClass ScheduledClass @relation(fields: [scheduledClassId], references: [id], onDelete: Restrict)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([studioId])
+  @@index([studioId, scheduledClassId])
+  @@index([scheduledClassId, status])
+  @@index([userId])
+  @@map("waitlist_entries")
+}
+
+model Attendance {
+  id               String        @id @default(cuid())
+  studioId         String        @map("studio_id")
+  scheduledClassId String        @map("scheduled_class_id")
+  userId           String        @map("user_id")
+  method           CheckInMethod
+  checkedInAt      DateTime      @default(now()) @map("checked_in_at")
+
+  studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  scheduledClass ScheduledClass @relation(fields: [scheduledClassId], references: [id], onDelete: Restrict)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([scheduledClassId, userId])
+  @@index([studioId])
+  @@index([studioId, scheduledClassId])
+  @@map("attendances")
+}
+
+model QRToken {
+  id               String    @id @default(cuid())
+  studioId         String    @map("studio_id")
+  tokenHash        String    @map("token_hash")
+  userId           String?   @map("user_id")
+  scheduledClassId String?   @map("scheduled_class_id")
+  expiresAt        DateTime  @map("expires_at")
+  usedAt           DateTime? @map("used_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  studio         Studio          @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  scheduledClass ScheduledClass? @relation(fields: [scheduledClassId], references: [id], onDelete: SetNull)
+
+  @@unique([tokenHash])
+  @@index([studioId])
+  @@index([studioId, expiresAt])
+  @@map("qr_tokens")
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  tokenHash  String    @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenHash])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Payment {
+  id                     String        @id @default(cuid())
+  studioId               String        @map("studio_id")
+  userId                 String        @map("user_id")
+  amountCents            Int           @map("amount_cents")
+  currency               String        @default("usd")
+  status                 PaymentStatus
+  stripePaymentIntentId  String?       @unique @map("stripe_payment_intent_id")
+  stripeInvoiceId        String?       @unique @map("stripe_invoice_id")
+  createdAt              DateTime      @default(now()) @map("created_at")
+  updatedAt              DateTime      @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([studioId])
+  @@index([studioId, userId])
+  @@index([studioId, status])
+  @@index([userId])
+  @@map("payments")
+}
+
+model StripeWebhookEvent {
+  id           String    @id @default(cuid())
+  stripeEventId String @unique @map("stripe_event_id")
+  eventType    String    @map("event_type")
+  payload      Json
+  processed    Boolean   @default(false)
+  processedAt  DateTime? @map("processed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([processed])
+  @@index([createdAt])
+  @@map("stripe_webhook_events")
+}
