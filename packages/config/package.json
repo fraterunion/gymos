@@ -1,0 +1,27 @@
+{
+  "name": "@gymos/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "tsconfig.base.json",
+    "tsconfig.nest.json",
+    "tsconfig.next.json",
+    "eslint.config.mjs",
+    "tailwind.preset.cjs"
+  ],
+  "exports": {
+    "./tsconfig/base": "./tsconfig.base.json",
+    "./tsconfig/nest": "./tsconfig.nest.json",
+    "./tsconfig/next": "./tsconfig.next.json",
+    "./eslint": "./eslint.config.mjs",
+    "./tailwind-preset": "./tailwind.preset.cjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "eslint": "^9.27.0",
+    "eslint-config-prettier": "^10.1.5",
+    "globals": "^16.0.0",
+    "typescript-eslint": "^8.32.1"
+  }
+}
