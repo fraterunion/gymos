@@ -10,14 +10,16 @@
 
 | Variable | Purpose |
 |----------|---------|
-| `DATABASE_URL` | PostgreSQL connection URL for Prisma (`apps/api`). Required for `prisma migrate` and runtime API once wired. |
-| `JWT_ACCESS_SECRET` | Signs short-lived access tokens for staff and members. |
-| `JWT_REFRESH_SECRET` | Signs refresh tokens; rotate independently from access. |
-| `JWT_QR_SECRET` | Signs short-lived QR / check-in payloads; separate from user JWTs to limit blast radius. |
-| `PORT` | HTTP listen port (default may be overridden in code). |
+| `DATABASE_URL` | PostgreSQL connection URL for Prisma (`apps/api`). Required; the API fails fast at startup if unset. |
+| `JWT_SECRET` | Signs access JWTs (Phase 1B). Required; the API fails fast at startup if unset. |
+| `JWT_ACCESS_TTL` | Access token lifetime (e.g. `15m`). Parsed in `apps/api` for Nest `JwtModule`. |
+| `JWT_REFRESH_TTL_DAYS` | Refresh token row lifetime (opaque tokens stored hashed in DB; rotation + reuse detection). |
+| `CORS_ORIGIN` | Comma-separated allowed browser origins for the API (explicit CORS in `main.ts`). |
+| `PORT` | HTTP listen port (from config; default in `.env.example` is `3000`). |
 
-Future (document when implemented, not required in scaffold):
+Future (document when implemented):
 
+- `JWT_QR_SECRET` — short-lived QR / check-in payloads; separate from user JWTs.
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — server only.
 - `REDIS_URL` — if caching or rate limits require it.
 

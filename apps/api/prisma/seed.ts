@@ -5,8 +5,11 @@ import {
   Role,
   SubscriptionStatus,
 } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
+
+const DEV_PASSWORD_HASH = bcrypt.hashSync('password12', 12);
 
 async function main() {
   const studio = await prisma.studio.create({
@@ -23,6 +26,7 @@ async function main() {
       firstName: 'Alex',
       lastName: 'Admin',
       phone: '+15555550100',
+      passwordHash: DEV_PASSWORD_HASH,
       stripeCustomerId: 'cus_seed_admin',
     },
   });
@@ -32,6 +36,7 @@ async function main() {
       email: 'member@gymos.local',
       firstName: 'Morgan',
       lastName: 'Member',
+      passwordHash: DEV_PASSWORD_HASH,
       stripeCustomerId: 'cus_seed_member',
     },
   });

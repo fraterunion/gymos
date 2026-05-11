@@ -319,6 +319,7 @@ model QRToken {
 model RefreshToken {
   id         String    @id @default(cuid())
   userId     String    @map("user_id")
+  familyId   String    @map("family_id")
   tokenHash  String    @map("token_hash")
   expiresAt  DateTime  @map("expires_at")
   revokedAt  DateTime? @map("revoked_at")
@@ -328,6 +329,7 @@ model RefreshToken {
 
   @@unique([tokenHash])
   @@index([userId])
+  @@index([familyId])
   @@index([expiresAt])
   @@map("refresh_tokens")
 }
