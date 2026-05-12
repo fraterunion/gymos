@@ -68,6 +68,10 @@ These are read by **`app.config.ts`** when Expo resolves the config (not inlined
 
 **Client launch:** cross-platform checklist and store listing worksheet: [`CLIENT_LAUNCH_CHECKLIST.md`](./CLIENT_LAUNCH_CHECKLIST.md), [`STORE_METADATA_TEMPLATE.md`](./STORE_METADATA_TEMPLATE.md).
 
+## Production & pilot (Phase 6A)
+
+Reference hosts (**Railway / Neon / Vercel / EAS / Stripe**) and runbooks: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
+
 ## Local development
 
 - Copy `apps/api/.env.example` to `.env` (gitignored) and fill placeholders locally.

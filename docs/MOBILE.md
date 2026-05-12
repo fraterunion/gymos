@@ -35,6 +35,13 @@ See **`docs/WHITE_LABEL_BUILDS.md` → EAS Build** for `eas.json` profiles (`dev
 - **Checklist** — [`docs/CLIENT_LAUNCH_CHECKLIST.md`](./CLIENT_LAUNCH_CHECKLIST.md) (accounts, env, assets, Stripe, testing, approval gates). **Not** automated submission.
 - **Store copy template** — [`docs/STORE_METADATA_TEMPLATE.md`](./STORE_METADATA_TEMPLATE.md) (titles, descriptions, keywords, legal/support; **unique** copy per client).
 
+### Production & pilot (Phase 6A)
+
+- **Deploy & env matrix** — [`docs/PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md) (Railway, Neon, Vercel, EAS, Stripe, `/health`, migrate order).
+- **Pre-flight checklist** — [`docs/PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md).
+- **Rollback** — [`docs/ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md).
+- **Device QA** — [`docs/REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
+
 ## Boot sequence
 
 1. **Fonts / splash** — root `_layout.tsx`.

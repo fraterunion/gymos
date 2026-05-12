@@ -2,7 +2,7 @@
 
 Operational checklist for shipping **one** gym’s **own** App Store and Google Play apps from `apps/mobile`. Use one copy of this document **per client**; track owners and dates in your PM tool if needed.
 
-**Related docs:** [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) (builds & EAS), [`STORE_METADATA_TEMPLATE.md`](./STORE_METADATA_TEMPLATE.md) (store copy), [`MOBILE.md`](./MOBILE.md), [`ENV_VARS.md`](./ENV_VARS.md).
+**Related docs:** [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) (builds & EAS), [`STORE_METADATA_TEMPLATE.md`](./STORE_METADATA_TEMPLATE.md) (store copy), [`MOBILE.md`](./MOBILE.md), [`ENV_VARS.md`](./ENV_VARS.md), [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md).
 
 ---
 

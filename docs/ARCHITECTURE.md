@@ -68,4 +68,11 @@ Check-in and QR flows use short-lived, signed tokens issued by the API (`JWT_QR_
 
 ## Documentation map
 
-Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership. **`docs/MOBILE.md`** covers the Expo member app; **`docs/ADMIN.md`** covers the Next.js check-in desk.
+Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership. **`docs/MOBILE.md`** covers the Expo member app; **`docs/ADMIN.md`** covers the Next.js check-in desk. **Production / pilot:** [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
+
+## Production & pilot operations (Phase 6A)
+
+- **Reference topology:** API on **Railway**, Postgres on **Neon**, admin on **Vercel**, mobile via **EAS**, Stripe **webhooks** to the API (`POST /api/v1/stripe/webhook`). Details and ordering: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md).
+- **Health:** `GET /health` on the API host (outside `api/v1` prefix) returns `{ "status": "ok" }` for probes.
+- **Migrations:** `prisma migrate deploy` against the target `DATABASE_URL` before serving traffic that depends on new schema (see deployment doc + [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md)).
+- **CORS:** API `CORS_ORIGIN` must list the Vercel admin origin(s) in production ([`apps/api/src/http-app.setup.ts`](../apps/api/src/http-app.setup.ts)).

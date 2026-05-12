@@ -201,3 +201,9 @@ EAS does not change Apple/Google rules: **changing `IOS_BUNDLE_IDENTIFIER` or `A
 | `eas:build:android:production` | Base **production** profile, Android. |
 
 All `eas build` commands require **EAS login** and a linked project when you actually run them; they are not executed in this repo’s validation scripts.
+
+---
+
+## Production & pilot (Phase 6A)
+
+Target layout (**Railway API**, **Neon DB**, **Vercel admin**, **EAS mobile**, **Stripe webhooks**) and ordering: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md). Use [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) before widening pilot traffic.
