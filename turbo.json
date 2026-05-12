@@ -10,7 +10,8 @@
     "JWT_REFRESH_TTL_DAYS",
     "PORT",
     "EXPO_PUBLIC_API_URL",
-    "EXPO_PUBLIC_STUDIO_SLUG"
+    "EXPO_PUBLIC_STUDIO_SLUG",
+    "NEXT_PUBLIC_API_URL"
   ],
   "tasks": {
     "build": {

@@ -24,7 +24,7 @@ export class ClassBookingsController {
 
   @Get('roster')
   @UseGuards(RolesGuard)
-  @Roles(Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
+  @Roles(Role.STAFF, Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
   roster(@Param('studioId') studioId: string, @Param('classId') classId: string) {
     return this.bookingsService.getRoster(studioId, classId);
   }

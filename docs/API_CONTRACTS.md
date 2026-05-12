@@ -361,7 +361,7 @@ No notifications, expiration jobs, Stripe, or UI. **`studioId`** and **`classId`
 
 #### `GET /studios/:studioId/classes/:classId/roster`
 
-- **Auth:** JWT + `StudioMemberGuard` + **INSTRUCTOR**, **ADMIN**, or **OWNER** only (not **STAFF**).
+- **Auth:** JWT + `StudioMemberGuard` + **STAFF**, **INSTRUCTOR**, **ADMIN**, or **OWNER** only (**MEMBER** and other roles without access → **`403`**).
 - **Response:** `200` — **`CONFIRMED`** bookings with **user** summary (id, email, firstName, lastName, phone). Never **`passwordHash`** or **`stripeCustomerId`**.
 
 ---

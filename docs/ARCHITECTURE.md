@@ -5,7 +5,7 @@
 GymOS is a pnpm workspace with Turborepo.
 
 - `apps/api` — NestJS HTTP API (studio operations, integrations, webhooks).
-- `apps/admin` — Next.js staff and owner console (App Router).
+- `apps/admin` — Next.js **operational desk** (Phase 3E: staff check-in — login, studio picker, today’s classes, class workspace with **QR paste**, **manual check-in**, **attendance** + roster when API role allows). Not the full owner/admin dashboard; see **`docs/ADMIN.md`**.
 - `apps/mobile` — Expo React Native member app (Expo Router).
 
 Shared packages:
@@ -66,4 +66,4 @@ Check-in and QR flows use short-lived, signed tokens issued by the API (`JWT_QR_
 
 ## Documentation map
 
-Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership. **`docs/MOBILE.md`** covers the Expo app (env, boot, auth, routing).
+Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership. **`docs/MOBILE.md`** covers the Expo member app; **`docs/ADMIN.md`** covers the Next.js check-in desk.
