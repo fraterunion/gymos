@@ -19,6 +19,41 @@ Authentication: `Authorization: Bearer <access_token>` unless noted.
 
 ---
 
+## Phase 3A — White-label branding (foundation)
+
+No Stripe, mobile UI, app store builds, uploads, or refactors of booking/waitlist/check-in.
+
+### White-label strategy
+
+- **GymOS** = internal core platform and API.
+- Each **client gym** ships its own **branded** member app (store listing, icon, colors, legal URLs, bundle IDs).
+- **One backend**, many branded apps: runtime identity comes from **`slug`** + **`GET /public/studios/:slug/branding`** (and authenticated branding admin routes).
+- **Future**: EAS / CI may generate per-tenant native projects from these fields; not in 3A.
+
+### Public branding (boot)
+
+#### `GET /public/studios/:slug/branding`
+
+- **Auth:** none.
+- **Rules:** Studio must exist and **`deleted_at` IS NULL**. Otherwise **`404`**.
+- **Response:** `200` — Public-safe JSON only: `slug`, `name`, `timezone`, and nullable branding fields (`appName`, `brandPrimaryColor`, `brandSecondaryColor`, `brandLogoUrl`, `brandIconUrl`, `brandSplashUrl`, `supportEmail`, `supportPhone`, `privacyUrl`, `termsUrl`, `iosBundleId`, `androidPackageName`, `appStoreUrl`, `playStoreUrl`). **No** internal ids or `deletedAt`.
+
+### Studio branding (admin)
+
+#### `GET /studios/:studioId/branding`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER** or **ADMIN** only.
+- **Response:** `200` — Same branding fields as public, plus **`id`**, **`slug`**, **`name`**, **`timezone`**.
+
+#### `PATCH /studios/:studioId/branding`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER** or **ADMIN** only.
+- **Body:** Partial; only nullable branding fields above. **`id`**, **`slug`**, and **`name`** are **not** accepted here (use existing studio profile **`PATCH /studios/:studioId`** for name/slug).
+- **Validation:** Hex colors **`#RGB`** / **`#RRGGBB`** (optional leading `#`, normalized to lowercase `#rrggbb`); URLs must be **`http`** or **`https`** with protocol; **`supportEmail`** as email; **`iosBundleId`** / **`androidPackageName`** as reverse-DNS–style strings.
+- **Response:** `200` — Updated branding payload (admin shape).
+
+---
+
 ## Phase 2A — Studio, membership plans, members
 
 ### Conventions

@@ -6,7 +6,7 @@ The API uses **Prisma** with PostgreSQL (`apps/api/prisma/schema.prisma`). Migra
 
 ## Tenancy and identity
 
-- **Studio** (`studios`) — Tenant root: `name`, `slug` (unique), `timezone`, `deleted_at`. Soft delete via `deleted_at`. The HTTP **`StudioMemberGuard`** loads the studio with `deleted_at IS NULL`; **soft-deleted studios are rejected** even if a `studio_memberships` row still exists.
+- **Studio** (`studios`) — Tenant root: `name`, `slug` (unique), `timezone`, `deleted_at`. **Phase 3A** nullable white-label fields: `app_name`, `brand_primary_color`, `brand_secondary_color`, `brand_logo_url`, `brand_icon_url`, `brand_splash_url`, `support_email`, `support_phone`, `privacy_url`, `terms_url`, `ios_bundle_id`, `android_package_name`, `app_store_url`, `play_store_url` (URLs only; no file storage in API). Soft delete via `deleted_at`. The HTTP **`StudioMemberGuard`** loads the studio with `deleted_at IS NULL`; **soft-deleted studios are rejected** even if a `studio_memberships` row still exists.
 - **User** (`users`) — Auth identity; `deleted_at` for soft delete. API rejects soft-deleted users where guards check membership.
 - **StudioMembership** (`studio_memberships`) — Links `user_id` to `studio_id` with a **`Role`**. Unique `(user_id, studio_id)`. Soft delete via `deleted_at`. Guards require an active membership for routes under `/studios/:studioId/...`.
 
@@ -32,7 +32,7 @@ Partial unique index `bookings_one_confirmed_per_user_per_class_idx` on `(studio
 
 ### Advisory lock (API)
 
-Booking creation runs in a transaction and calls **`pg_advisory_xact_lock((hashtext(...))::bigint)`** so capacity checks and insert serialize per class. This is the **only** intentional raw SQL path in the booking flow.
+Booking creation runs in a transaction and calls **`pg_advisory_xact_lock((hashtext('booking_class_<scheduledClassId>'))::bigint)`** so capacity checks and insert serialize per class. This is the **only** intentional raw SQL path in the booking flow; the same lock key is reused for waitlist and promotion (Phase 2E).
 
 ## Membership plans
 

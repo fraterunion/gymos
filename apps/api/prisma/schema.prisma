@@ -87,6 +87,21 @@ model Studio {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  appName              String? @map("app_name")
+  brandPrimaryColor    String? @map("brand_primary_color")
+  brandSecondaryColor  String? @map("brand_secondary_color")
+  brandLogoUrl         String? @map("brand_logo_url")
+  brandIconUrl         String? @map("brand_icon_url")
+  brandSplashUrl       String? @map("brand_splash_url")
+  supportEmail         String? @map("support_email")
+  supportPhone         String? @map("support_phone")
+  privacyUrl           String? @map("privacy_url")
+  termsUrl             String? @map("terms_url")
+  iosBundleId          String? @map("ios_bundle_id")
+  androidPackageName   String? @map("android_package_name")
+  appStoreUrl          String? @map("app_store_url")
+  playStoreUrl         String? @map("play_store_url")
+
   memberships    StudioMembership[]
   plans          MembershipPlan[]
   subscriptions  Subscription[]

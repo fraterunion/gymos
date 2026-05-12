@@ -31,8 +31,15 @@ Future / optional packages: `packages/ui`, CI templates, Docker compose variants
 
 ### Phase 2A (API) — studio-scoped modules
 
-- Domain HTTP for studios, membership plans, and directory-style members lives in `apps/api/src/studios`, `membership-plans`, and `members`.
+- Domain HTTP for studios, membership plans, directory-style members, and **white-label branding** lives in `apps/api/src/studios`, `membership-plans`, `members`, and `branding`.
 - **`StudioMemberGuard`** ensures the JWT subject has a non-deleted `StudioMembership` and the studio is not soft-deleted. **`RolesGuard`** checks `Role` on that same membership; `studioId` is always taken from **route params**, never from the body, for scoping and authorization.
+
+## White-label branding (Phase 3A)
+
+- **GymOS** is the internal core platform and API template; each gym ships a **separately branded** member app in the App Store / Google Play (different app name, colors, icons, bundle IDs, store URLs).
+- **One backend, many branded apps**: mobile clients resolve **studio `slug`** (and optionally cached branding) via **`GET /api/v1/public/studios/:slug/branding`** on boot — no auth, no internal fields. Tenant-specific assets are **URL references only** in this phase (no uploads or object storage in the API).
+- **Studio-scoped** `GET` / `PATCH /api/v1/studios/:studioId/branding` is **OWNER** / **ADMIN** only for read/update of the same fields plus `id` for admin forms.
+- **Future**: EAS / native build pipelines can consume these fields to generate per-client app config; not implemented in 3A.
 
 ## Cross-cutting concerns
 
