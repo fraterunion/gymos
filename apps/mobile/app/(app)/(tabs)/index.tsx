@@ -83,8 +83,8 @@ export default function HomeScreen() {
             <SectionLabel>Today</SectionLabel>
             {todaysUpcoming.length === 0 ? (
               <EmptyHint
-                title="No more classes today"
-                body="Browse the schedule for upcoming sessions."
+                title="No classes on the calendar today"
+                body="Browse the Schedule tab for the next sessions."
               />
             ) : (
               todaysUpcoming.map((c) => (

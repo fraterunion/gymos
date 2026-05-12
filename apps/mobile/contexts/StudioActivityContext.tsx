@@ -5,7 +5,7 @@ import { useFocusEffect } from 'expo-router';
 import { fetchMyBookings } from '@/lib/api/bookingsApi';
 import { fetchStudioSchedule } from '@/lib/api/scheduleApi';
 import { fetchMyWaitlist } from '@/lib/api/waitlistApi';
-import { ApiError } from '@/lib/api/errors';
+import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { buildScheduleQueryRange } from '@/lib/datetime';
 import type { BookingWithClass, MyWaitlistEntry, ScheduledClassDto } from '@/lib/types/studio';
 
@@ -48,8 +48,7 @@ export function StudioActivityProvider({
       setMyBookings(b);
       setMyWaitlist(w);
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Something went wrong.';
-      setError(msg);
+      setError(userFacingApiMessage(e, 'We could not load your schedule. Pull to try again.'));
     } finally {
       setLoading(false);
     }

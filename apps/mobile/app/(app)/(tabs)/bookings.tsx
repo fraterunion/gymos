@@ -106,7 +106,7 @@ export default function MyBookingsScreen() {
                     {w.status === 'WAITING'
                       ? `Waiting · #${w.queueRank ?? '—'} of ${w.waitingCountForClass}`
                       : w.status === 'PROMOTED'
-                        ? 'Promoted — seat pending'
+                        ? 'You are next—open this class to finish booking'
                         : w.status}
                   </Text>
                 </Pressable>

@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 import { fetchPublicBrandingBySlug } from '@/lib/api/branding';
 import { ApiError } from '@/lib/api/errors';
+import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getStudioSlug } from '@/lib/env';
 import type { PublicBranding } from '@/lib/types';
 
@@ -41,7 +42,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(async () => {
     if (!slug) {
-      setError(new Error('EXPO_PUBLIC_STUDIO_SLUG is not set'));
+      setError(new Error('This app build is missing studio settings. Ask your studio for an updated app.'));
       setStatus('error');
       setBranding(null);
       return;
@@ -54,7 +55,13 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       setStatus('ready');
     } catch (e) {
       setBranding(null);
-      setError(e instanceof Error ? e : new Error('Unknown error'));
+      const msg =
+        e instanceof ApiError
+          ? userFacingApiMessage(e, 'We could not load this studio. Check your connection and try again.')
+          : e instanceof Error
+            ? e.message
+            : 'We could not load this studio. Check your connection and try again.';
+      setError(new Error(msg));
       setStatus('error');
     }
   }, [slug]);

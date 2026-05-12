@@ -21,11 +21,12 @@ export function SubscriptionRequiredPanel({ accentColor, appDisplayName }: Props
           <FontAwesome name="lock" size={26} color={accentColor} />
         </View>
         <Text className="text-center text-xl font-semibold text-neutral-900 dark:text-neutral-50">
-          Active membership required
+          Choose a membership to book
         </Text>
         <Text className="mt-3 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-          {appDisplayName} requires an active paid membership to book classes. Choose a plan in Membership,
-          complete checkout in your browser, then return here and refresh.
+          {appDisplayName} uses memberships to keep class sizes fair and your benefits clear. Pick a plan below, finish
+          checkout in your browser, then come back here—your schedule unlocks as soon as the studio confirms your
+          membership.
         </Text>
         <View className="mt-8 w-full gap-3">
           <BrandButton

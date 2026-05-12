@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { fetchMyStudios } from '@/lib/api/meStudios';
-import { ApiError } from '@/lib/api/errors';
+import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getStudioSlug } from '@/lib/env';
 import type { MyStudioRow } from '@/lib/types/studio';
 
@@ -33,7 +33,7 @@ export function MemberStudioProvider({ children }: { children: ReactNode }) {
     }
     const slug = getStudioSlug();
     if (!slug) {
-      setError('Studio is not configured for this app build.');
+      setError('This app build is missing studio settings. Ask your studio for an updated app.');
       setMatched(null);
       setStatus('error');
       return;
@@ -46,8 +46,7 @@ export function MemberStudioProvider({ children }: { children: ReactNode }) {
       setMatched(hit);
       setStatus('ready');
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Could not load your studios.';
-      setError(msg);
+      setError(userFacingApiMessage(e, 'We could not load your studio membership. Please try again.'));
       setMatched(null);
       setStatus('error');
     }

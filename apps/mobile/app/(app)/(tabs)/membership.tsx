@@ -16,7 +16,7 @@ import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
-import { ApiError } from '@/lib/api/errors';
+import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import {
   createBillingPortalSession,
   createMembershipCheckoutSession,
@@ -87,7 +87,7 @@ export default function MembershipScreen() {
         setPlans(p);
         setProfile(prof);
       } catch (e) {
-        const msg = e instanceof ApiError ? e.message : 'Something went wrong.';
+        const msg = userFacingApiMessage(e, 'We could not load plans right now. Pull to refresh.');
         setError(msg);
       } finally {
         setLoading(false);
@@ -130,7 +130,7 @@ export default function MembershipScreen() {
       await Linking.openURL(url);
     } catch (e) {
       expectReturnFromBrowser.current = false;
-      const msg = e instanceof ApiError ? e.message : 'Could not start checkout.';
+      const msg = userFacingApiMessage(e, 'Checkout could not be started. Please try again or contact the studio.');
       setError(msg);
     } finally {
       setCheckoutPlanId(null);
@@ -147,7 +147,7 @@ export default function MembershipScreen() {
       await Linking.openURL(url);
     } catch (e) {
       expectReturnFromBrowser.current = false;
-      const msg = e instanceof ApiError ? e.message : 'Could not open billing portal.';
+      const msg = userFacingApiMessage(e, 'Billing could not be opened. Please try again or contact the studio.');
       setPortalError(msg);
     } finally {
       setPortalBusy(false);
@@ -183,9 +183,9 @@ export default function MembershipScreen() {
         }>
         <Text className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">Membership</Text>
         <Text className="mt-2 text-base text-neutral-600 dark:text-neutral-400">
-          Plans and billing for {appDisplayName}. After Checkout or the billing portal, Stripe sends you back into this
-          app when your server is configured with the matching return URLs (see project docs). Subscription status always
-          comes from the server—pull to refresh on Membership if needed.
+          Plans and billing for {appDisplayName}. Subscribe to unlock booking, or open billing to update your payment
+          method or plan. After you finish in the browser, return here and pull down to refresh so we show your latest
+          status.
         </Text>
 
         {error ? (
@@ -222,7 +222,7 @@ export default function MembershipScreen() {
             </View>
           ) : (
             <Text className="mt-3 text-base text-neutral-600 dark:text-neutral-400">
-              No active subscription on file for this studio. Subscribe to a plan below to book classes.
+              You do not have an active membership on file yet. Choose a plan below to start booking classes.
             </Text>
           )}
           <View className="mt-5">

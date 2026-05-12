@@ -29,7 +29,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
             {appDisplayName}
           </Text>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text className="mt-4 text-center text-sm text-neutral-500 dark:text-neutral-400">Loading studio…</Text>
+          <Text className="mt-4 text-center text-sm text-neutral-500 dark:text-neutral-400">Opening your studio…</Text>
         </View>
       </SafeAreaView>
     );
@@ -44,7 +44,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
           </Text>
           <Text className="mb-10 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
             {error?.message ??
-              'Check your network connection and that EXPO_PUBLIC_API_URL and EXPO_PUBLIC_STUDIO_SLUG are correct.'}
+              'Check your internet connection and try again. If the problem continues, contact the studio.'}
           </Text>
           <Pressable
             accessibilityRole="button"

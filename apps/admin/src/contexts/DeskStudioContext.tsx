@@ -11,7 +11,7 @@ import {
 } from "react";
 
 import { fetchMyStudios, type MyStudioRow } from "@/lib/api/meStudios";
-import { ApiError } from "@/lib/api/errors";
+import { userFacingApiMessage } from "@/lib/userFacingApiMessage";
 
 const STORAGE_KEY = "gymos_admin_studio_id";
 
@@ -63,7 +63,7 @@ export function DeskStudioProvider({ children }: { children: ReactNode }) {
       setSelectedStudioIdState(nextId);
       if (nextId) writeStoredStudioId(nextId);
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "Could not load studios";
+      const msg = userFacingApiMessage(e, "Could not load your studios. Try again or sign out and back in.");
       setError(msg);
       setStudios([]);
       setSelectedStudioIdState(null);

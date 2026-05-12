@@ -85,8 +85,8 @@ export default function ScheduleScreen() {
           ListEmptyComponent={
             <View className="mt-10">
               <EmptyHint
-                title="Nothing scheduled yet"
-                body="When your studio publishes classes, they will appear here."
+                title="Your schedule is open"
+                body="When the studio publishes classes, they will appear here. Pull down anytime to refresh."
               />
             </View>
           }

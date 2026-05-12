@@ -42,6 +42,12 @@ See **`docs/WHITE_LABEL_BUILDS.md` → EAS Build** for `eas.json` profiles (`dev
 - **Rollback** — [`docs/ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md).
 - **Device QA** — [`docs/REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
 
+### Pilot polish & QA (Phase 6D)
+
+- **Demo data & accounts** — [`docs/DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md).
+- **Sales demo script** — [`docs/PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md).
+- **Pre-flight QA checklist** — [`docs/PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
+
 ## Boot sequence
 
 1. **Fonts / splash** — root `_layout.tsx`.

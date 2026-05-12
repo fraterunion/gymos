@@ -13,6 +13,7 @@ import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { cancelBooking, createClassBooking } from '@/lib/api/bookingsApi';
 import { ApiError } from '@/lib/api/errors';
 import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionRequired';
+import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
 import { formatClassRange } from '@/lib/datetime';
@@ -74,7 +75,7 @@ export default function ClassDetailScreen() {
         setOfferWaitlist(true);
         return;
       }
-      setInlineError(e instanceof ApiError ? e.message : 'Something went wrong.');
+      setInlineError(userFacingApiMessage(e, 'That action could not be completed. Please try again.'));
     } finally {
       setBusy(false);
     }

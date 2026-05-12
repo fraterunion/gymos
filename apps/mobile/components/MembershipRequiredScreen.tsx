@@ -19,11 +19,11 @@ export function MembershipRequiredScreen({ onRetry }: Props) {
   return (
     <View className="flex-1 justify-center bg-neutral-50 px-8 dark:bg-neutral-950">
       <Text className="text-center text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">
-        Membership required
+        We do not see a membership here yet
       </Text>
       <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-        Your account is not linked to <Text className="font-semibold text-neutral-800 dark:text-neutral-200">{displayName}</Text> yet.
-        Ask the front desk to add you to this studio, then try again.
+        Your login is valid, but this app is tied to <Text className="font-semibold text-neutral-800 dark:text-neutral-200">{displayName}</Text>.
+        Ask the front desk to add your account to this studio, then tap try again.
       </Text>
       {supportEmail ? (
         <Pressable

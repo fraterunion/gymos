@@ -25,7 +25,7 @@ export default function LoginPage() {
       e.preventDefault();
       setLocalError(null);
       if (!getPublicApiOrigin()) {
-        setLocalError("Set NEXT_PUBLIC_API_URL for this app.");
+        setLocalError("This desk app is not connected to your studio server yet. Ask your technical contact to finish setup.");
         return;
       }
       setBusy(true);

@@ -122,6 +122,13 @@ pnpm --filter api demo:reset-help
 
 ---
 
+## Pilot demo & QA (Phase 6D)
+
+- **Sales / walkthrough script** — [`PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md).
+- **Pre-demo QA checklist** — [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md) (seed, ARES/Pilates branding, mobile, desk, Stripe caveat, devices).
+
+---
+
 ## Recommended next phase
 
 - Optional **Stripe test mode** checkout smoke using **test** keys and real test prices, separate from this static seed.

@@ -11,7 +11,7 @@ import {
 } from "react";
 
 import { loginRequest, logoutRequest, meRequest, type AuthUser } from "@/lib/api/auth";
-import { ApiError } from "@/lib/api/errors";
+import { userFacingApiMessage } from "@/lib/userFacingApiMessage";
 import { getApiV1Base } from "@/lib/env";
 import {
   clearSession,
@@ -83,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRefreshToken(bundle.refreshToken);
       setUser(bundle.user);
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "Could not sign in";
+      const msg = userFacingApiMessage(e, "Could not sign in. Check your email and password.");
       setError(msg);
       throw e;
     }

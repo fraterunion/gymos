@@ -51,3 +51,9 @@ From repo root: `pnpm --filter admin dev`, `pnpm --filter admin build`, `pnpm --
 
 - **Mobile** — member QR **generation** and self-service.
 - **Admin desk** — staff **consumption** of pasted QR tokens and **manual** check-ins against the same attendance model.
+
+### Pilot polish & QA (Phase 6D)
+
+- **Demo accounts & seed** — [`docs/DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md) (`staff@ares.demo`, `admin@ares.demo`, etc.).
+- **Sales demo script** (includes desk segment) — [`docs/PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md).
+- **QA checklist** — [`docs/PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
