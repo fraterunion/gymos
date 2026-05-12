@@ -21,6 +21,7 @@
     "db:seed": "prisma db seed",
     "smoke:health": "node scripts/smoke-health.mjs",
     "smoke:auth": "node scripts/smoke-auth.mjs",
+    "demo:reset-help": "node scripts/reset-demo.mjs",
     "clean": "rm -rf dist .turbo tsconfig.build.tsbuildinfo",
     "test": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.unit.ts",
     "test:e2e": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.e2e.ts --runInBand",

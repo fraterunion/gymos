@@ -1,5 +1,7 @@
 # Production checklist (pre-flight & post-deploy)
 
+**Demo data:** never use [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md) accounts, passwords, or fake Stripe IDs on a **public production** API or shared live database. Pilot demos belong on private hosts or VPN-scoped envs.
+
 Use for **staging** and **production** cutovers. Complement with [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), and [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
 
 ---

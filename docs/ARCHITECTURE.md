@@ -68,7 +68,7 @@ Check-in and QR flows use short-lived, signed tokens issued by the API (`JWT_QR_
 
 ## Documentation map
 
-Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership. **`docs/MOBILE.md`** covers the Expo member app; **`docs/ADMIN.md`** covers the Next.js check-in desk. **Production / pilot:** [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
+Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership. **`docs/MOBILE.md`** covers the Expo member app; **`docs/ADMIN.md`** covers the Next.js check-in desk. **Production / pilot:** [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md). **Demo seed:** [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md).
 
 ## Production & pilot operations (Phase 6A)
 

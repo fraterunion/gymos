@@ -72,6 +72,8 @@ These are read by **`app.config.ts`** when Expo resolves the config (not inlined
 
 Reference hosts (**Railway / Neon / Vercel / EAS / Stripe**) and runbooks: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
 
+**Local / private pilot data:** [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md) (Prisma seed, demo password, reset notes).
+
 ## Ops scripts & smoke env (Phase 6B)
 
 These variables are for **operators / CI** running `apps/api` smoke scripts from a shell — **not** required for the Nest process at runtime unless you invoke those scripts on the same host.
