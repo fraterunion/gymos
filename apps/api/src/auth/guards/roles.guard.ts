@@ -37,9 +37,17 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('studioId route parameter is required');
     }
 
-    const membership = await this.prisma.studioMembership.findUnique({
-      where: { userId_studioId: { userId: user.sub, studioId } },
-    });
+    const [studio, membership] = await Promise.all([
+      this.prisma.studio.findFirst({
+        where: { id: studioId, deletedAt: null },
+      }),
+      this.prisma.studioMembership.findUnique({
+        where: { userId_studioId: { userId: user.sub, studioId } },
+      }),
+    ]);
+    if (!studio) {
+      throw new ForbiddenException();
+    }
     if (!membership || membership.deletedAt) {
       throw new ForbiddenException();
     }

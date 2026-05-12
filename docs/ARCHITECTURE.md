@@ -14,7 +14,7 @@ Shared packages:
 - `packages/types` — Shared TypeScript types and DTO shapes (no runtime).
 - `packages/utils` — Shared pure helpers (no I/O, no framework imports).
 
-Intentionally not in this phase: `packages/ui`, Prisma, auth implementation, Stripe SDK wiring, CI, Docker.
+Future / optional packages: `packages/ui`, CI templates, Docker compose variants.
 
 ## Module boundaries
 
@@ -28,6 +28,11 @@ Intentionally not in this phase: `packages/ui`, Prisma, auth implementation, Str
 - **Tenant** is a boutique studio (organization). Almost all domain data is scoped by `studio_id` (or equivalent tenant key).
 - **Users** belong to one primary studio for staff; members may be linked across studios only when explicitly modeled (e.g. network franchises); default is single-studio membership.
 - API middleware and query filters enforce tenant isolation on every mutating and listing path. Admin and mobile send tenant context via auth claims or explicit studio slug only where the product allows switching; the API remains authoritative.
+
+### Phase 2A (API) — studio-scoped modules
+
+- Domain HTTP for studios, membership plans, and directory-style members lives in `apps/api/src/studios`, `membership-plans`, and `members`.
+- **`StudioMemberGuard`** ensures the JWT subject has a non-deleted `StudioMembership` and the studio is not soft-deleted. **`RolesGuard`** checks `Role` on that same membership; `studioId` is always taken from **route params**, never from the body, for scoping and authorization.
 
 ## Cross-cutting concerns
 

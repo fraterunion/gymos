@@ -2,44 +2,43 @@
 
 ## Status
 
-No ORM or migration layer is checked in yet. This document lists the **intended** entities and constraints so the first schema (e.g. Prisma) aligns with product decisions rather than ad hoc tables.
+The API uses **Prisma** with PostgreSQL (`apps/api/prisma/schema.prisma`). Migrations live under `apps/api/prisma/migrations/`. This document highlights **tenant-relevant** tables and constraints that affect API behavior; it is not a full column listing (see Prisma schema for that).
 
 ## Tenancy and identity
 
-- **Studio** — The tenant. Billing profile, timezone, branding, capacity defaults.
-- **User** — Login identity. Staff users are tied to studios with roles; members are tied via membership.
-- **Membership** — Contract between a member and a studio: plan, status, start/end, pause rules. Links to Stripe subscription or one-off products when billing applies.
+- **Studio** (`studios`) — Tenant root: `name`, `slug` (unique), `timezone`, `deleted_at`. Soft delete via `deleted_at`. The HTTP **`StudioMemberGuard`** loads the studio with `deleted_at IS NULL`; **soft-deleted studios are rejected** even if a `studio_memberships` row still exists.
+- **User** (`users`) — Auth identity; `deleted_at` for soft delete. API rejects soft-deleted users where guards check membership.
+- **StudioMembership** (`studio_memberships`) — Links `user_id` to `studio_id` with a **`Role`**. Unique `(user_id, studio_id)`. Soft delete via `deleted_at`. Guards require an active membership for routes under `/studios/:studioId/...`.
 
-## Scheduling and inventory
+### `Role` enum
 
-- **Location** — Physical site within a studio (single-site studios still use one row for consistency).
-- **ClassType** — Template (name, duration, description, default capacity).
-- **Instructor** — Staff person who can lead classes; availability is modeled separately from identity.
-- **ClassSession** — A scheduled instance: studio, location, type, instructor, start/end, capacity, status (scheduled, cancelled, completed).
-- **Booking** — Member (or guest slot) reserved for a session. Holds state: confirmed, waitlisted, cancelled, attended, no-show.
+Stored on `studio_memberships.role`. Values (Prisma / PostgreSQL):
 
-## Check-in
+- `MEMBER`, `INSTRUCTOR`, `STAFF`, `ADMIN`, `OWNER`
 
-- **CheckIn** — Immutable or append-only record tying member (or token), session, timestamp, and source (QR, manual staff, kiosk). Must reference valid booking or controlled walk-in policy per studio rules.
+**`STAFF`** was added in migration `20260512120000_phase2a_role_staff_and_plan_class_credits` (`ALTER TYPE "Role" ADD VALUE 'STAFF'`). Use it for staff-scoped directory/read endpoints as defined in the API layer.
 
-## Payments (logical, not Stripe IDs only)
+## Membership plans
 
-- **Invoice / PaymentRecord** (names TBD at implementation) — Mirror of amounts and status for reporting; Stripe remains authoritative for card state.
+- **MembershipPlan** (`membership_plans`) — Belongs to `studio_id`. Fields include `price_cents`, `currency`, `billing_interval`, `active`, `deleted_at` (soft delete).
+
+### `class_credits`
+
+Column **`class_credits`** (`classCredits` in Prisma) was added in the same migration as `STAFF`. Type: nullable integer.
+
+- **`NULL`** — treated as **unlimited** class credits for the plan (product semantics in the API).
+- **Non-null** — finite credit allowance for the plan.
+
+## Subscriptions and scheduling (summary)
+
+- **Subscription**, **ClassTemplate**, **ScheduledClass**, **Booking**, **Attendance**, etc. exist in Prisma for future phases. Row-level **`studio_id`** scoping applies where modeled.
 
 ## Critical constraints
 
-- Every row that represents studio-owned business data includes `studio_id` (or is strictly global reference data with no PII).
-- **Bookings** are unique per member per session for active states (no double confirm).
-- **ClassSession** capacity cannot go negative; waitlist ordering is deterministic (e.g. FIFO by `created_at`).
-- Cancellations respect studio-defined cutoffs; late cancels may still consume credits (product rule, enforced in API).
+- Studio-owned rows are tied to `studio_id` where applicable.
+- **No hard deletes** for tenant-facing entities in Phase 2A flows; use `deleted_at` (and plan `active` flags where applicable).
 
-## Booking rules (data-level)
+## Related docs
 
-- A member may hold at most one active booking per session unless product explicitly allows guest add-ons as separate rows.
-- Waitlist promotes automatically when a spot frees, up to capacity; promotion emits notifications (out of scope for this doc).
-- Studio-defined buffers between sessions can be enforced via non-overlapping session windows per room/instructor where configured.
-
-## What is explicitly out of scope here
-
-- Column-level DDL, indexes, and Prisma models — added when the persistence layer lands.
-- Full event-sourcing; only note that audit trails are expected for sensitive mutations.
+- `docs/API_CONTRACTS.md` — HTTP routes and guard/role expectations.
+- `docs/ARCHITECTURE.md` — Multi-tenant strategy and module layout.

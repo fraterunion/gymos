@@ -22,11 +22,16 @@ function mockContext(partial: {
 
 describe('StudioMemberGuard', () => {
   let guard: StudioMemberGuard;
-  let prisma: { user: { findUnique: jest.Mock }; studioMembership: { findUnique: jest.Mock } };
+  let prisma: {
+    user: { findUnique: jest.Mock };
+    studio: { findFirst: jest.Mock };
+    studioMembership: { findUnique: jest.Mock };
+  };
 
   beforeEach(async () => {
     prisma = {
       user: { findUnique: jest.fn() },
+      studio: { findFirst: jest.fn() },
       studioMembership: { findUnique: jest.fn() },
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -55,8 +60,22 @@ describe('StudioMemberGuard', () => {
     await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('throws when studio is missing or soft-deleted', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'u1', deletedAt: null });
+    prisma.studio.findFirst.mockResolvedValue(null);
+    prisma.studioMembership.findUnique.mockResolvedValue({
+      id: 'm1',
+      deletedAt: null,
+      role: 'MEMBER',
+    });
+    await expect(
+      guard.canActivate(mockContext({ user: { sub: 'u1', email: 'a@b.com' } })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('throws when membership is soft-deleted', async () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'u1', deletedAt: null });
+    prisma.studio.findFirst.mockResolvedValue({ id: 'studio-1' });
     prisma.studioMembership.findUnique.mockResolvedValue({
       id: 'm1',
       deletedAt: new Date(),
@@ -69,6 +88,7 @@ describe('StudioMemberGuard', () => {
 
   it('returns true for active member', async () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'u1', deletedAt: null });
+    prisma.studio.findFirst.mockResolvedValue({ id: 'studio-1' });
     prisma.studioMembership.findUnique.mockResolvedValue({
       id: 'm1',
       deletedAt: null,

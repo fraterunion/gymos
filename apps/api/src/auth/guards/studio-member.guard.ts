@@ -23,8 +23,11 @@ export class StudioMemberGuard implements CanActivate {
       throw new ForbiddenException('studioId route parameter is required');
     }
 
-    const [dbUser, membership] = await Promise.all([
+    const [dbUser, studio, membership] = await Promise.all([
       this.prisma.user.findUnique({ where: { id: user.sub } }),
+      this.prisma.studio.findFirst({
+        where: { id: studioId, deletedAt: null },
+      }),
       this.prisma.studioMembership.findUnique({
         where: { userId_studioId: { userId: user.sub, studioId } },
       }),
@@ -32,6 +35,9 @@ export class StudioMemberGuard implements CanActivate {
 
     if (!dbUser || dbUser.deletedAt) {
       throw new ForbiddenException();
+    }
+    if (!studio) {
+      throw new ForbiddenException('Studio not found');
     }
     if (!membership || membership.deletedAt) {
       throw new ForbiddenException('Not a member of this studio');

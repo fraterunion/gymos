@@ -22,11 +22,17 @@ function mockContext(opts: { user?: { sub: string }; studioId?: string }): Execu
 describe('RolesGuard', () => {
   let guard: RolesGuard;
   let reflector: { getAllAndOverride: jest.Mock };
-  let prisma: { studioMembership: { findUnique: jest.Mock } };
+  let prisma: {
+    studio: { findFirst: jest.Mock };
+    studioMembership: { findUnique: jest.Mock };
+  };
 
   beforeEach(async () => {
     reflector = { getAllAndOverride: jest.fn() };
-    prisma = { studioMembership: { findUnique: jest.fn() } };
+    prisma = {
+      studio: { findFirst: jest.fn() },
+      studioMembership: { findUnique: jest.fn() },
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RolesGuard,
@@ -51,6 +57,7 @@ describe('RolesGuard', () => {
 
   it('throws Forbidden when role insufficient', async () => {
     reflector.getAllAndOverride.mockReturnValue([Role.ADMIN]);
+    prisma.studio.findFirst.mockResolvedValue({ id: 's1' });
     prisma.studioMembership.findUnique.mockResolvedValue({
       id: 'm1',
       deletedAt: null,
@@ -63,6 +70,7 @@ describe('RolesGuard', () => {
 
   it('allows ADMIN when required', async () => {
     reflector.getAllAndOverride.mockReturnValue([Role.ADMIN]);
+    prisma.studio.findFirst.mockResolvedValue({ id: 's1' });
     prisma.studioMembership.findUnique.mockResolvedValue({
       id: 'm1',
       deletedAt: null,
