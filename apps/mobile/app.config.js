@@ -59,7 +59,7 @@ function resolveAssetPath(profile: string, key: AssetKey): string {
   return requireOrDefault(profile, key);
 }
 
-export default ({ config }: ConfigContext): ExpoConfig => {
+module.exports = ({ config }) => {
   const profile = loadProfileEnvFiles();
 
   const name = requireOrDefault(profile, 'APP_DISPLAY_NAME');
