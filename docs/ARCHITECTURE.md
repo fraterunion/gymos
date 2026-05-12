@@ -41,13 +41,14 @@ Future / optional packages: `packages/ui`, CI templates, Docker compose variants
 - **Studio-scoped** `GET` / `PATCH /api/v1/studios/:studioId/branding` is **OWNER** / **ADMIN** only for read/update of the same fields plus `id` for admin forms.
 - **Future**: EAS / native build pipelines can consume these fields to generate per-client app config; not implemented in 3A.
 
-## Mobile member app (Phase 3B)
+## Mobile member app (Phase 3B–3C)
 
-- **`apps/mobile`** is the Expo Router + React Native + NativeWind client. It is **not** a generic Expo demo: routing is split into **branding boot** → **auth** → **protected tabs** (home/profile placeholders only in 3B).
+- **`apps/mobile`** is the Expo Router + React Native + NativeWind client. It is **not** a generic Expo demo: routing is split into **branding boot** → **auth** → **protected shell** (membership gate + activity data) → **tabs** + **stack overlays** (e.g. class detail).
 - **White-label boot**: `EXPO_PUBLIC_STUDIO_SLUG` selects the tenant; **`GET /api/v1/public/studios/:slug/branding`** (no auth) drives **app name**, **primary/secondary colors**, and optional **logo URL** in UI. Missing env or failed fetch shows a dedicated error screen with retry.
 - **Auth**: Same Phase 1 auth API as admin (`/auth/login`, `/auth/register`, `/auth/refresh`, `/auth/logout`, `/auth/me`). **Access JWT** lives **only in memory**; **refresh token** is stored with **Expo SecureStore**. The shared **`lib/api/client.ts`** attaches `Authorization: Bearer`, refreshes once on **401** (single-flight, no infinite loop), and clears the session if refresh fails.
-- **Studio context**: The app build is bound to one slug; **`SelectedStudioProvider`** exposes slug, display name, and timezone from branding + API for downstream features.
-- **Documentation**: `docs/MOBILE.md` describes env vars, boot order, and layout map.
+- **Studio context**: **`SelectedStudioProvider`** exposes slug, display name, and timezone from **public branding** for shell copy. **Phase 3C** adds **`MemberStudioProvider`**: after login, **`GET /api/v1/me/studios`** must contain a row whose **`studio.slug`** matches the env slug; otherwise the member sees a **membership required** screen (no schedule calls). **`StudioActivityProvider`** then owns **`GET .../schedule`**, **`GET .../bookings/me`**, and **`GET .../waitlist/me`** with refetch-on-focus.
+- **Member UX (3C)**: Home (today + next booking + waitlist preview), **Schedule** (grouped by day), **My bookings** (confirmed + waitlist), **Class detail** (book / cancel / waitlist flows per API rules — no invented capacity counts; **`409` “full”** surfaces waitlist).
+- **Documentation**: `docs/MOBILE.md` describes env vars, boot order, selected-studio logic, schedule/booking/waitlist flows, and layout map.
 
 ## Cross-cutting concerns
 

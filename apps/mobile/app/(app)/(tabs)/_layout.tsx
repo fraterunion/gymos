@@ -13,6 +13,7 @@ export default function MemberTabsLayout() {
   const colorScheme = useColorScheme();
   const { primaryColor, appDisplayName } = useBranding();
   const isDark = colorScheme === 'dark';
+  const headerBg = isDark ? '#0a0a0a' : '#fafafa';
 
   return (
     <Tabs
@@ -20,11 +21,12 @@ export default function MemberTabsLayout() {
         headerShown: true,
         headerShadowVisible: false,
         headerStyle: {
-          backgroundColor: isDark ? '#0a0a0a' : '#fafafa',
+          backgroundColor: headerBg,
         },
+        headerTintColor: isDark ? '#fafafa' : '#171717',
         headerTitleStyle: { fontWeight: '600', fontSize: 17 },
         tabBarStyle: {
-          backgroundColor: isDark ? '#0a0a0a' : '#fafafa',
+          backgroundColor: headerBg,
           borderTopColor: isDark ? '#262626' : '#e5e5e5',
         },
         tabBarActiveTintColor: primaryColor,
@@ -36,6 +38,21 @@ export default function MemberTabsLayout() {
           title: appDisplayName,
           tabBarLabel: 'Home',
           tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="schedule"
+        options={{
+          title: 'Schedule',
+          tabBarIcon: ({ color }) => <TabBarIcon name="calendar" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="bookings"
+        options={{
+          title: 'My bookings',
+          tabBarLabel: 'Bookings',
+          tabBarIcon: ({ color }) => <TabBarIcon name="bookmark" color={color} />,
         }}
       />
       <Tabs.Screen
