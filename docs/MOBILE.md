@@ -47,8 +47,23 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 | `lib/api/scheduleApi.ts` | `GET /studios/:studioId/schedule?from=&to=` |
 | `lib/api/bookingsApi.ts` | `GET .../bookings/me`, `POST .../classes/:classId/bookings`, `POST .../bookings/:id/cancel` |
 | `lib/api/waitlistApi.ts` | `GET .../waitlist/me`, `POST .../classes/:classId/waitlist`, `POST .../waitlist/:entryId/cancel` |
+| `lib/api/checkInsApi.ts` | `GET .../bookings/:bookingId/attendance`, `POST .../bookings/:bookingId/qr` |
 
 `StudioActivityContext` loads schedule + my bookings + my waitlist in parallel, refreshes on tab **focus**, and exposes **`refresh()`** after mutations.
+
+## QR check-in (Phase 3D)
+
+- **Entry points** — Confirmed bookings: **My bookings** (row action) and **Class detail** (**Check-in QR**). Route: `/(app)/check-in/[bookingId]`.
+- **Attendance first** — On load and on screen focus, **`GET /studios/:studioId/bookings/:bookingId/attendance`**. If **`attendance`** is non-null, the UI shows a **Checked in** success state (no QR).
+- **Token issuance** — Inside the studio check-in window (client mirrors API: **15 minutes before** class start through **30 minutes after** start; see `lib/checkInWindow.ts`), the app calls **`POST /studios/:studioId/bookings/:bookingId/qr`** and receives **`{ qrToken, expiresAt }`**. The JWT is rendered with **`react-native-qrcode-svg`** on a high-contrast white card.
+- **Expiry & regenerate** — A live countdown reflects **`expiresAt`**. When it reaches zero, the token is discarded from **component state** and the user can tap **Show new code** (POST again). **Refresh code** forces a new token while still valid.
+- **Manual refresh** — Pull-to-refresh re-fetches attendance, then refreshes schedule/booking context; if the code was expired or missing and the window is open, a new QR is requested.
+- **Errors** — User-facing copy maps **`404`** (booking not found), **`403`**, **`409`/`401`** messages (already checked in, invalid/expired/used token, confirmed-only rules), and **outside-window** states (**too early** with approximate open time, **too late** window closed). No raw JSON or debug dumps.
+
+### Token security (mobile)
+
+- The **QR JWT is never written to SecureStore, AsyncStorage, or files** — only **`useState`** on the check-in screen. Leaving the screen or refreshing attendance after check-in **clears** the in-memory token.
+- The API stores only a **hash** of the token server-side; the member app treats the string as **display-only** for encoding into the QR graphic.
 
 ## Schedule flow
 
@@ -68,7 +83,7 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 2. **My waitlist** — `GET .../waitlist/me` supplies **`WAITING`** and **`PROMOTED`** rows with **`queueRank`** / **`waitingCountForClass`** where applicable.
 3. **Cancel waitlist** — `POST .../waitlist/:entryId/cancel` (**`204`**). **`PROMOTED`** entries cannot be cancelled here (**`409`** from API) — UI explains promotion state on the class page.
 
-## Layout map (Phase 3C)
+## Layout map (Phase 3C–3D)
 
 | Area | Routes |
 |------|--------|
@@ -76,9 +91,10 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 | Unauthenticated | `app/(auth)/login`, `app/(auth)/register` |
 | Authenticated shell | `app/(app)/_layout.tsx` — membership gate + `StudioActivityProvider` + stack |
 | Tabs | `app/(app)/(tabs)/index` (home), `schedule`, `bookings`, `profile` |
-| Class detail | `app/(app)/class/[classId]` (stack modal/card over tabs) |
+| Class detail | `app/(app)/class/[classId]` |
+| Check-in QR | `app/(app)/check-in/[bookingId]` |
 
-Out of scope: payments, QR check-in UI, push, store builds, admin web, Stripe, uploads.
+Out of scope: payments, push, staff scanner UI, store builds, admin web, Stripe, uploads.
 
 ## Commands
 

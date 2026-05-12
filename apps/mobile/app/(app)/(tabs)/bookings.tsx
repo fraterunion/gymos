@@ -57,20 +57,33 @@ export default function MyBookingsScreen() {
               <EmptyHint title="No upcoming reservations" body="Pick a class from the schedule to book a spot." />
             ) : (
               myBookings.map((b) => (
-                <Pressable
+                <View
                   key={b.id}
-                  onPress={() => router.push(`/(app)/class/${b.scheduledClassId}`)}
-                  className="mb-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 dark:border-neutral-800 dark:bg-neutral-900">
-                  <Text className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                    {scheduledClassTitle(b.scheduledClassId, classes)}
-                  </Text>
-                  <Text className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                    {formatClassRange(b.scheduledClass.startsAt, b.scheduledClass.endsAt, timeZone)}
-                  </Text>
-                  <Text className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                    Confirmed
-                  </Text>
-                </Pressable>
+                  className="mb-3 overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+                  <Pressable
+                    onPress={() => router.push(`/(app)/class/${b.scheduledClassId}`)}
+                    className="px-4 py-3.5">
+                    <Text className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
+                      {scheduledClassTitle(b.scheduledClassId, classes)}
+                    </Text>
+                    <Text className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                      {formatClassRange(b.scheduledClass.startsAt, b.scheduledClass.endsAt, timeZone)}
+                    </Text>
+                    <Text className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                      Confirmed
+                    </Text>
+                  </Pressable>
+                  <View className="border-t border-neutral-100 px-4 py-3 dark:border-neutral-800">
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Open check-in QR code"
+                      onPress={() => router.push(`/(app)/check-in/${b.id}`)}>
+                      <Text className="text-base font-semibold" style={{ color: primaryColor }}>
+                        Check-in QR
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
               ))
             )}
 

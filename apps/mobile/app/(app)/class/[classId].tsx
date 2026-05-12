@@ -1,5 +1,5 @@
 import { useNavigation } from '@react-navigation/native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useLayoutEffect, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +17,7 @@ import { formatClassRange } from '@/lib/datetime';
 
 export default function ClassDetailScreen() {
   const navigation = useNavigation();
+  const router = useRouter();
   const raw = useLocalSearchParams<{ classId: string | string[] }>().classId;
   const classId = typeof raw === 'string' ? raw : raw?.[0] ?? '';
   const { primaryColor } = useBranding();
@@ -210,6 +211,14 @@ export default function ClassDetailScreen() {
         ) : null}
 
         <View className="mt-10 gap-3">
+          {booking ? (
+            <BrandButton
+              label="Check-in QR"
+              variant="ghost"
+              accentColor={primaryColor}
+              onPress={() => router.push(`/(app)/check-in/${booking.id}`)}
+            />
+          ) : null}
           {primary ? (
             <BrandButton
               label={primary.label}

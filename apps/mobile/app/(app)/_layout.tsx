@@ -82,6 +82,17 @@ function MemberShell() {
             headerBackTitle: 'Back',
           }}
         />
+        <Stack.Screen
+          name="check-in/[bookingId]"
+          options={{
+            headerShown: true,
+            title: 'Check-in',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: headerBg },
+            headerTintColor: colorScheme === 'dark' ? '#fafafa' : '#171717',
+            headerBackTitle: 'Back',
+          }}
+        />
       </Stack>
     </StudioActivityProvider>
   );
