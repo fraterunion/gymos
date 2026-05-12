@@ -201,6 +201,12 @@ All paths: `/studios/:studioId/members`.
 
 - **Never includes:** `passwordHash`, `stripeCustomerId`.
 
+#### `GET /studios/:studioId/members/me`
+
+- **Auth:** JWT + `StudioMemberGuard` (any role with an active studio membership).
+- **Response:** `200` — Same shape as staff **`GET /studios/:studioId/members/:userId`**, but **only** for the authenticated user (self-service). Includes **`activeSubscription`** when the caller has **`ACTIVE`** or **`TRIALING`** subscription in this studio.
+- **Errors:** `404` if the user has no active membership in this studio.
+
 #### `GET /studios/:studioId/members/:userId`
 
 - **Auth:** JWT + `StudioMemberGuard` + **OWNER**, **ADMIN**, or **STAFF**.
@@ -323,7 +329,7 @@ No waitlist, payments, attendance, or QR. **`studioId` and `classId` / `bookingI
   - Scheduled class must belong to `studioId`, `status === SCHEDULED`, and **`startsAt` in the future**.
   - **Capacity:** live `COUNT(*)` of rows with `status = CONFIRMED` for that class must be **&lt;** `capacity` before insert.
   - **Concurrency:** server takes `pg_advisory_xact_lock` on key **`booking_class_<scheduledClassId>`** (hashed via `hashtext`) inside the same DB transaction as the count + insert (only this lock uses raw SQL). The **same** lock is used for booking cancel, waitlist join/cancel, and waitlist promotion.
-  - **MEMBER** studio role: must have a subscription in this studio with status **`ACTIVE`** or **`TRIALING`**.
+  - **MEMBER** studio role: must have a subscription in this studio with status **`ACTIVE`** or **`TRIALING`**; otherwise **`403`** with message **`Active subscription required to book`**.
   - **STAFF**, **INSTRUCTOR**, **ADMIN**, **OWNER**: subscription check skipped.
   - **Partial unique index:** at most one **CONFIRMED** booking per `(studio_id, scheduled_class_id, user_id)`. On unique violation → **`409`** with message **`Already booked for this class`**.
   - When class is full → **`409`** with message indicating class is full.
@@ -351,7 +357,7 @@ No notifications, expiration jobs, Stripe, or UI. **`studioId`** and **`classId`
 #### `POST /studios/:studioId/classes/:classId/waitlist`
 
 - **Auth:** JWT + `StudioMemberGuard`.
-- **Rules:** Class must be **`SCHEDULED`** with **`startsAt` in the future**. **MEMBER** (non-elevated roles) need **`ACTIVE`** or **`TRIALING`** subscription in the studio; **STAFF** / **INSTRUCTOR** / **ADMIN** / **OWNER** bypass subscription. Inside a transaction with advisory lock **`booking_class_<classId>`**: live **`COUNT`** of **`CONFIRMED`** bookings must be **`>= capacity`** (class truly full); otherwise **`409`** **`Class has available spots — please book directly`**. Reject if the user already has a **`CONFIRMED`** booking, a **`WAITING`** waitlist row, or a **`PROMOTED`** row for this class. **`position`** is **`max(position)+1`** over all waitlist rows for that class (monotonic; no resequencing on cancel).
+- **Rules:** Class must be **`SCHEDULED`** with **`startsAt` in the future**. **MEMBER** (non-elevated roles) need **`ACTIVE`** or **`TRIALING`** subscription in the studio; otherwise **`403`** with message **`Active subscription required to join the waitlist`**. **STAFF** / **INSTRUCTOR** / **ADMIN** / **OWNER** bypass subscription. Inside a transaction with advisory lock **`booking_class_<classId>`**: live **`COUNT`** of **`CONFIRMED`** bookings must be **`>= capacity`** (class truly full); otherwise **`409`** **`Class has available spots — please book directly`**. Reject if the user already has a **`CONFIRMED`** booking, a **`WAITING`** waitlist row, or a **`PROMOTED`** row for this class. **`position`** is **`max(position)+1`** over all waitlist rows for that class (monotonic; no resequencing on cancel).
 - **Response:** `201` — `{ id, studioId, scheduledClassId, status, position, createdAt }` (no secrets).
 
 ### Cancel waitlist entry

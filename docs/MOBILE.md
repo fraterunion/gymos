@@ -48,8 +48,17 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 | `lib/api/bookingsApi.ts` | `GET .../bookings/me`, `POST .../classes/:classId/bookings`, `POST .../bookings/:id/cancel` |
 | `lib/api/waitlistApi.ts` | `GET .../waitlist/me`, `POST .../classes/:classId/waitlist`, `POST .../waitlist/:entryId/cancel` |
 | `lib/api/checkInsApi.ts` | `GET .../bookings/:bookingId/attendance`, `POST .../bookings/:bookingId/qr` |
+| `lib/api/membershipApi.ts` | `GET .../membership-plans`, `GET .../members/me`, `POST .../membership-plans/:planId/checkout`, `POST .../billing-portal` |
 
 `StudioActivityContext` loads schedule + my bookings + my waitlist in parallel, refreshes on tab **focus**, and exposes **`refresh()`** after mutations.
+
+### Membership & billing (Phase 4B)
+
+- **Tab** — **`/(app)/(tabs)/membership`** lists active plans, shows **your subscription** from **`GET /studios/:studioId/members/me`** when present, and exposes **Subscribe** (per plan) and **Manage billing**. Branding uses **`BrandingContext`** (`primaryColor`, `appDisplayName`); user-facing copy never references internal product codenames.
+- **Stripe Checkout** — **`POST .../membership-plans/:planId/checkout`** returns **`{ url }`**; the app opens it with **`Linking.openURL`**. The app does **not** treat return to the foreground or deep links as proof of payment; users are told to **pull to refresh** so **`members/me`** and schedule/bookings reload from the server.
+- **Billing portal** — **`POST .../billing-portal`**; same **`Linking.openURL`** pattern. **`400`** (e.g. no Stripe customer yet) is shown inline under **Manage billing**.
+- **After browser flows** — When returning from Checkout or the portal, an **`AppState`** **`active`** handler (armed only after a successful URL handoff) calls **`StudioActivityContext.refresh()`** and reloads membership data.
+- **Booking blocked** — If **`POST .../bookings`** or waitlist join returns **`403`** with a message containing **`Active subscription required`**, the class screen shows **`SubscriptionRequiredPanel`** with a CTA to the Membership tab.
 
 ## QR check-in (Phase 3D)
 
@@ -75,7 +84,8 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 
 1. **Book** — `POST /studios/:studioId/classes/:scheduledClassId/bookings` (empty JSON body). Success → `refresh()` so **My bookings** and home update.
 2. **Full class** — **`409`** with a message containing **“full”** (case-insensitive) does **not** invent capacity counts. The class screen switches to **Join waitlist** as the primary action, with **Try booking again** as a secondary ghost action.
-3. **Cancel** — `POST /studios/:studioId/bookings/:bookingId/cancel`; response may include **`promotion`** (handled by API; client refetches lists).
+3. **Subscription required** — **`403`** with **“Active subscription required”** in the message shows the membership gate panel and a shortcut to the **Membership** tab (same pattern for waitlist when the API returns the analogous **`403`**).
+4. **Cancel** — `POST /studios/:studioId/bookings/:bookingId/cancel`; response may include **`promotion`** (handled by API; client refetches lists).
 
 ## Waitlist flow
 
@@ -90,11 +100,11 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 | Boot | `app/index.tsx` |
 | Unauthenticated | `app/(auth)/login`, `app/(auth)/register` |
 | Authenticated shell | `app/(app)/_layout.tsx` — membership gate + `StudioActivityProvider` + stack |
-| Tabs | `app/(app)/(tabs)/index` (home), `schedule`, `bookings`, `profile` |
+| Tabs | `app/(app)/(tabs)/index` (home), `schedule`, `bookings`, `membership`, `profile` |
 | Class detail | `app/(app)/class/[classId]` |
 | Check-in QR | `app/(app)/check-in/[bookingId]` |
 
-Out of scope: payments, push, staff scanner UI, store builds, admin web, Stripe, uploads.
+Out of scope for this doc’s historical “Phase 3” note: native in-app purchases, push, staff scanner UI, store submission automation, admin web, uploads. **Hosted Stripe Checkout + Customer Portal** are implemented for members (Phase 4B); PaymentSheet / Apple Pay in-app purchase flows remain out of scope.
 
 ## Commands
 

@@ -122,6 +122,24 @@ describe('Billing / Stripe (e2e)', () => {
     expect((res.body as { url: string }).url).toContain('stripe.com');
   });
 
+  it('allows MEMBER to GET own profile at /members/me', async () => {
+    const studio = await createStudio(prisma);
+    const { id: userId, email, password } = await createUserWithPassword(prisma, {
+      email: 'mem-me@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, userId, studio.id, Role.MEMBER);
+    const token = await loginAccessToken(app, email, password);
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/members/me`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const body = res.body as { user: { email: string }; activeSubscription: unknown };
+    expect(body.user.email).toBe(email);
+    expect(body.activeSubscription).toBeNull();
+  });
+
   it('creates subscription from checkout.session.completed webhook', async () => {
     const studio = await createStudio(prisma);
     const plan = await createMembershipPlanForStudio(prisma, studio.id);

@@ -5,12 +5,14 @@ import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
+import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
 import { EmptyHint, LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { cancelBooking, createClassBooking } from '@/lib/api/bookingsApi';
 import { ApiError } from '@/lib/api/errors';
+import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionRequired';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
 import { formatClassRange } from '@/lib/datetime';
@@ -20,13 +22,14 @@ export default function ClassDetailScreen() {
   const router = useRouter();
   const raw = useLocalSearchParams<{ classId: string | string[] }>().classId;
   const classId = typeof raw === 'string' ? raw : raw?.[0] ?? '';
-  const { primaryColor } = useBranding();
+  const { primaryColor, appDisplayName } = useBranding();
   const matched = useMemberStudio().matched;
   const { myBookings, myWaitlist, loading, error, refresh, getClass } = useStudioActivity();
 
   const [busy, setBusy] = useState(false);
   const [offerWaitlist, setOfferWaitlist] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const [subscriptionRequired, setSubscriptionRequired] = useState(false);
 
   const studioId = matched?.studio.id;
   const timeZone = matched?.studio.timezone ?? 'UTC';
@@ -55,12 +58,18 @@ export default function ClassDetailScreen() {
 
   async function run(action: () => Promise<void>) {
     setInlineError(null);
+    setSubscriptionRequired(false);
     setBusy(true);
     try {
       await action();
       setOfferWaitlist(false);
+      setSubscriptionRequired(false);
       await refresh();
     } catch (e) {
+      if (isActiveSubscriptionRequiredError(e)) {
+        setSubscriptionRequired(true);
+        return;
+      }
       if (e instanceof ApiError && e.status === 409 && isClassFullMessage(e.message)) {
         setOfferWaitlist(true);
         return;
@@ -198,6 +207,10 @@ export default function ClassDetailScreen() {
               body="A seat may be held for you. Pull to refresh or check My bookings."
             />
           </View>
+        ) : null}
+
+        {subscriptionRequired ? (
+          <SubscriptionRequiredPanel accentColor={primaryColor} appDisplayName={appDisplayName} />
         ) : null}
 
         {inlineError ? (

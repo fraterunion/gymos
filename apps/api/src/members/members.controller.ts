@@ -20,6 +20,12 @@ export class MembersController {
     return this.membersService.listMembers(studioId);
   }
 
+  /** Same payload as staff `GET …/:userId`, but only for the authenticated user (any studio role). */
+  @Get('me')
+  getMyProfile(@Param('studioId') studioId: string, @CurrentUser('sub') userId: string) {
+    return this.membersService.getMemberProfile(studioId, userId);
+  }
+
   @Get(':userId')
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
