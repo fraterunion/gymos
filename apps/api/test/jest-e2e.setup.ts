@@ -4,3 +4,7 @@ if (!process.env['DATABASE_URL']?.trim()) {
 
 /** Disables rate limits so e2e suites can perform many logins without 429. */
 process.env['GYMOS_E2E'] = '1';
+
+if (!process.env['JWT_QR_SECRET']?.trim()) {
+  process.env['JWT_QR_SECRET'] = 'e2e-test-jwt-qr-secret-min-32-chars!!';
+}

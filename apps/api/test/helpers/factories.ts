@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Prisma, PrismaClient, Role } from '@prisma/client';
-import { BillingInterval, ClassStatus, SubscriptionStatus } from '@prisma/client';
+import { BillingInterval, BookingStatus, ClassStatus, SubscriptionStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 function bcryptRounds(): number {
@@ -141,6 +141,22 @@ export async function createMembership(
       studioId,
       role,
       deletedAt: deletedAt ?? null,
+    },
+  });
+}
+
+export async function createConfirmedBooking(
+  prisma: PrismaClient,
+  studioId: string,
+  scheduledClassId: string,
+  userId: string,
+) {
+  return prisma.booking.create({
+    data: {
+      studioId,
+      scheduledClassId,
+      userId,
+      status: BookingStatus.CONFIRMED,
     },
   });
 }

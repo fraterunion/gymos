@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { validateEnv } from './config/validate-env';
 import { AuthModule } from './auth/auth.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { CheckInsModule } from './check-ins/check-ins.module';
 import { ClassTemplatesModule } from './class-templates/class-templates.module';
 import { MembersModule } from './members/members.module';
 import { MembershipPlansModule } from './membership-plans/membership-plans.module';
@@ -46,6 +47,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     ClassTemplatesModule,
     ScheduleModule,
     BookingsModule,
+    CheckInsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

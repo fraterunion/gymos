@@ -289,6 +289,56 @@ No waitlist, payments, attendance, or QR. **`studioId` and `classId` / `bookingI
 
 ---
 
+## Phase 2D — Attendance & QR check-in (foundation)
+
+No payments, waitlists, notifications, or UI. **`studioId`**, **`bookingId`**, and **`classId`** are always from the URL (except manual body includes `bookingId` for the booking to check in).
+
+### QR token for a booking
+
+#### `POST /studios/:studioId/bookings/:bookingId/qr`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Rules:** Booking belongs to `studioId`. Only the **booking owner** may call. Booking must be **`CONFIRMED`**. Response includes a **signed JWT** (`JWT_QR_SECRET`, **5 minute** expiry). Server stores **`SHA-256`** of the token in **`qr_tokens.token_hash`** only — **never** stores the raw token.
+- **Response:** `201` — `{ "qrToken": string, "expiresAt": "<ISO>" }`.
+
+### QR check-in (staff)
+
+#### `POST /studios/:studioId/check-ins/qr`
+
+- **Auth:** JWT + `StudioMemberGuard` + **STAFF**, **INSTRUCTOR**, **ADMIN**, or **OWNER**.
+- **Body:** `{ "qrToken": string }`.
+- **Rules:** Verify JWT signature and claims `{ sub, studioId, bookingId }` match URL `studioId`. In one DB transaction: atomically claim the token with **`UPDATE … WHERE`** semantics (`updateMany` on `qr_tokens` for this `studioId` + `token_hash` with **`used_at` null**, **`invalidated_at` null**, **`expires_at` > now** → set **`used_at`**). If **no row** was updated → **`409`** **`QR token already used or expired`** (covers unknown hash, already used, expired, or invalidated). Then create **`Attendance`** (`method: QR`). Unique `(scheduled_class_id, user_id)` violation → **`409`** **`Already checked in`**. Invalid / expired **JWT** (before DB) → **`401`**. Outside window → **`400`**.
+
+### Manual check-in
+
+#### `POST /studios/:studioId/check-ins/manual`
+
+- **Auth:** JWT + `StudioMemberGuard` + **STAFF**, **INSTRUCTOR**, **ADMIN**, or **OWNER**.
+- **Body:** `{ "bookingId": string }` — must belong to `studioId`.
+- **Rules:** Same booking/class/window rules as QR (no token). **`Attendance.method`** = **`MANUAL`**; **`checked_in_by_user_id`** = authenticated user.
+- **Response:** `201` — Attendance summary (see below). Duplicate → **`409`** **`Already checked in`**.
+
+### Booking attendance (single)
+
+#### `GET /studios/:studioId/bookings/:bookingId/attendance`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Rules:** Booking owner **or** **STAFF** / **INSTRUCTOR** / **ADMIN** / **OWNER** may read.
+- **Response:** `200` — `{ "attendance": AttendanceSummary | null }` (null if not checked in yet).
+
+### Class attendance list
+
+#### `GET /studios/:studioId/classes/:classId/attendance`
+
+- **Auth:** JWT + `StudioMemberGuard` + **STAFF**, **INSTRUCTOR**, **ADMIN**, or **OWNER**.
+- **Response:** `200` — Array of **AttendanceSummary** objects ordered by `checkedInAt`. Nested **user** is safe subset only (no **`passwordHash`** / **`stripeCustomerId`**).
+
+### AttendanceSummary (stable shape)
+
+- `id`, `studioId`, `scheduledClassId`, `userId`, `checkInMethod` (`QR` \| `MANUAL` \| …), `checkedInAt`, `checkedInByUserId` (null for QR), `user`: `{ id, email, firstName, lastName, phone }`.
+
+---
+
 ## Phase 1 — Studio access smoke (internal / legacy)
 
 | Method | Path | Auth |

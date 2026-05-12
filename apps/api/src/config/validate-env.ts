@@ -83,6 +83,11 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
     throw new Error('JWT_SECRET is required and must be non-empty');
   }
 
+  const jwtQrSecret = out['JWT_QR_SECRET'];
+  if (typeof jwtQrSecret !== 'string' || jwtQrSecret.trim() === '') {
+    throw new Error('JWT_QR_SECRET is required and must be non-empty');
+  }
+
   let nodeEnvRaw = out['NODE_ENV'];
   if (nodeEnvRaw === undefined || nodeEnvRaw === null || nodeEnvRaw === '') {
     out['NODE_ENV'] = 'development';
