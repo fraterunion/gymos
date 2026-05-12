@@ -245,6 +245,50 @@ All paths are under `/studios/:studioId/...`. **`studioId` is always from the UR
 
 ---
 
+## Phase 2C — Bookings (foundation)
+
+No waitlist, payments, attendance, or QR. **`studioId` and `classId` / `bookingId` are always from the URL.**
+
+### Create booking
+
+#### `POST /studios/:studioId/classes/:classId/bookings`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Body:** none (books **for the authenticated user**).
+- **Rules:**
+  - Scheduled class must belong to `studioId`, `status === SCHEDULED`, and **`startsAt` in the future**.
+  - **Capacity:** live `COUNT(*)` of rows with `status = CONFIRMED` for that class must be **&lt;** `capacity` before insert.
+  - **Concurrency:** server takes `pg_advisory_xact_lock` (hashed key per studio+class) inside the same DB transaction as the count + insert (only this lock uses raw SQL).
+  - **MEMBER** studio role: must have a subscription in this studio with status **`ACTIVE`** or **`TRIALING`**.
+  - **STAFF**, **INSTRUCTOR**, **ADMIN**, **OWNER**: subscription check skipped.
+  - **Partial unique index:** at most one **CONFIRMED** booking per `(studio_id, scheduled_class_id, user_id)`. On unique violation → **`409`** with message **`Already booked for this class`**.
+  - When class is full → **`409`** with message indicating class is full.
+- **Response:** `201` — Booking with `status: CONFIRMED`.
+
+### Cancel booking
+
+#### `POST /studios/:studioId/bookings/:bookingId/cancel`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Rules:** Booking must belong to `studioId`. Caller may cancel **their own** booking, or staff (**STAFF**, **INSTRUCTOR**, **ADMIN**, **OWNER**) may cancel another member’s booking. Idempotent if already **`CANCELLED`**.
+- **Response:** `204` — Sets `status` to **`CANCELLED`**, sets `cancelSource` (`MEMBER` vs `STUDIO`), `cancelledAt`. **Never deletes** the row.
+
+### My upcoming bookings
+
+#### `GET /studios/:studioId/bookings/me`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Response:** `200` — Caller’s **`CONFIRMED`** bookings where the scheduled class is **`SCHEDULED`**, **`startsAt` ≥ now**, and the user is not soft-deleted. Includes `scheduledClass` summary (no secrets).
+
+### Class roster
+
+#### `GET /studios/:studioId/classes/:classId/roster`
+
+- **Auth:** JWT + `StudioMemberGuard` + **INSTRUCTOR**, **ADMIN**, or **OWNER** only (not **STAFF**).
+- **Response:** `200` — **`CONFIRMED`** bookings with **user** summary (id, email, firstName, lastName, phone). Never **`passwordHash`** or **`stripeCustomerId`**.
+
+---
+
 ## Phase 1 — Studio access smoke (internal / legacy)
 
 | Method | Path | Auth |

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Prisma, PrismaClient, Role } from '@prisma/client';
-import { ClassStatus } from '@prisma/client';
+import { BillingInterval, ClassStatus, SubscriptionStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 function bcryptRounds(): number {
@@ -71,6 +71,35 @@ export async function createScheduledClass(
       startsAt,
       endsAt,
       instructorId: opts.instructorId ?? null,
+    },
+  });
+}
+
+export async function createMembershipPlanForStudio(prisma: PrismaClient, studioId: string) {
+  return prisma.membershipPlan.create({
+    data: {
+      studioId,
+      name: 'E2E Plan',
+      priceCents: 1000,
+      currency: 'usd',
+      billingInterval: BillingInterval.MONTHLY,
+      active: true,
+    },
+  });
+}
+
+export async function createActiveSubscription(
+  prisma: PrismaClient,
+  studioId: string,
+  userId: string,
+  membershipPlanId: string,
+) {
+  return prisma.subscription.create({
+    data: {
+      studioId,
+      userId,
+      membershipPlanId,
+      status: SubscriptionStatus.ACTIVE,
     },
   });
 }

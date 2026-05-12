@@ -34,6 +34,24 @@ export class AuthThrottlerGuard extends ThrottlerGuard {
     super(options, storage, new Reflector());
   }
 
+  /**
+   * E2E suites perform many logins; register throttle is still enforced so
+   * auth.e2e-spec can assert 429 on repeated POST /auth/register.
+   */
+  override async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (process.env['GYMOS_E2E'] === '1') {
+      const req = context.switchToHttp().getRequest<{
+        url?: string;
+        originalUrl?: string;
+      }>();
+      const url = req.originalUrl ?? req.url ?? '';
+      if (url.includes('/auth/login') || url.includes('/auth/refresh')) {
+        return true;
+      }
+    }
+    return super.canActivate(context);
+  }
+
   protected override async throwThrottlingException(
     context: ExecutionContext,
     detail: ThrottlerLimitDetail,

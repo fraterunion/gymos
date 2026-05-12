@@ -22,7 +22,17 @@ Stored on `studio_memberships.role`. Values (Prisma / PostgreSQL):
 
 - **ClassTemplate** (`class_templates`) — `studio_id`, `name`, `duration_minutes`, `description`, **`default_capacity`** (default seat count for new scheduled classes), **`color`** (optional UI token), **`default_instructor_id`** (optional FK to `users`; must be an active member of the same studio in API rules), `deleted_at` (soft delete). Migration: `20260512140000_phase2b_class_template_schedule_fields`.
 
-- **ScheduledClass** (`scheduled_classes`) — `studio_id`, `class_template_id`, optional `instructor_id`, `starts_at`, `ends_at`, `capacity`, `status` (`ClassStatus`), **`cancel_reason`** (optional text when cancelled via API). **No hard delete** in Phase 2B: cancel flow sets `status = CANCELLED` and optional `cancel_reason`.
+- **ScheduledClass** (`scheduled_classes`) — see Phase 2B. Bookings only allowed when `status = SCHEDULED` and start time is in the future.
+
+- **Booking** (`bookings`) — `studio_id`, `scheduled_class_id`, `user_id`, `status`, optional `cancel_source` / `cancelled_at`. **No hard deletes** in Phase 2C: cancel updates status to `CANCELLED` only.
+
+### One CONFIRMED booking per member per class
+
+Partial unique index `bookings_one_confirmed_per_user_per_class_idx` on `(studio_id, scheduled_class_id, user_id)` **where `status = 'CONFIRMED'`** (see init migration). API maps duplicate insert (**P2002**) to HTTP **409** “Already booked for this class”.
+
+### Advisory lock (API)
+
+Booking creation runs in a transaction and calls **`pg_advisory_xact_lock((hashtext(...))::bigint)`** so capacity checks and insert serialize per class. This is the **only** intentional raw SQL path in the booking flow.
 
 ## Membership plans
 
@@ -41,12 +51,12 @@ Column **`class_credits`** (`classCredits` in Prisma) was added in the same migr
 
 ## Other domain tables
 
-- **Booking**, **WaitlistEntry**, **Attendance**, etc. exist in Prisma for later phases. Row-level **`studio_id`** scoping applies where modeled.
+- **WaitlistEntry**, **Attendance**, etc. exist in Prisma for later phases. Row-level **`studio_id`** scoping applies where modeled.
 
 ## Critical constraints
 
 - Studio-owned rows are tied to `studio_id` where applicable.
-- **No hard deletes** for tenant-facing entities in Phase 2A/2B flows; use `deleted_at` (and plan `active` flags where applicable). Scheduled classes are **cancelled in place** (`status = CANCELLED`), not removed.
+- **No hard deletes** for tenant-facing entities in Phase 2A–2C flows; use `deleted_at` (and plan `active` flags where applicable). Scheduled classes are **cancelled in place** (`status = CANCELLED`), not removed. Bookings are **cancelled in place** (`status = CANCELLED`), not removed.
 
 ## Related docs
 
