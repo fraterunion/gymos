@@ -114,6 +114,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       ...config.extra,
       whitelabelProfile: profile,
+      eas: {
+        projectId: "9f5697a5-b5cb-425b-850f-fa2f61068f20",
+      },
     },
   };
 };
