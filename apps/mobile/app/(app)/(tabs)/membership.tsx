@@ -183,8 +183,9 @@ export default function MembershipScreen() {
         }>
         <Text className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">Membership</Text>
         <Text className="mt-2 text-base text-neutral-600 dark:text-neutral-400">
-          Plans and billing for {appDisplayName}. Subscription status is confirmed by the studio after checkout —
-          refresh this screen when you return from the browser.
+          Plans and billing for {appDisplayName}. After Checkout or the billing portal, Stripe sends you back into this
+          app when your server is configured with the matching return URLs (see project docs). Subscription status always
+          comes from the server—pull to refresh on Membership if needed.
         </Text>
 
         {error ? (

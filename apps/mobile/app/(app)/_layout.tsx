@@ -93,6 +93,12 @@ function MemberShell() {
             headerBackTitle: 'Back',
           }}
         />
+        <Stack.Screen
+          name="billing"
+          options={{
+            headerShown: false,
+          }}
+        />
       </Stack>
     </StudioActivityProvider>
   );

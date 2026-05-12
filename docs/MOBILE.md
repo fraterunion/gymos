@@ -52,12 +52,14 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 
 `StudioActivityContext` loads schedule + my bookings + my waitlist in parallel, refreshes on tab **focus**, and exposes **`refresh()`** after mutations.
 
-### Membership & billing (Phase 4B)
+### Membership & billing (Phase 4B–4C)
 
 - **Tab** — **`/(app)/(tabs)/membership`** lists active plans, shows **your subscription** from **`GET /studios/:studioId/members/me`** when present, and exposes **Subscribe** (per plan) and **Manage billing**. Branding uses **`BrandingContext`** (`primaryColor`, `appDisplayName`); user-facing copy never references internal product codenames.
-- **Stripe Checkout** — **`POST .../membership-plans/:planId/checkout`** returns **`{ url }`**; the app opens it with **`Linking.openURL`**. The app does **not** treat return to the foreground or deep links as proof of payment; users are told to **pull to refresh** so **`members/me`** and schedule/bookings reload from the server.
+- **Stripe Checkout** — **`POST .../membership-plans/:planId/checkout`** returns **`{ url }`**; the app opens it with **`Linking.openURL`**. The app does **not** treat the return URL alone as proof of payment; **`/(app)/billing/success`** explains webhook confirmation and refreshes data from the server.
 - **Billing portal** — **`POST .../billing-portal`**; same **`Linking.openURL`** pattern. **`400`** (e.g. no Stripe customer yet) is shown inline under **Manage billing**.
-- **After browser flows** — When returning from Checkout or the portal, an **`AppState`** **`active`** handler (armed only after a successful URL handoff) calls **`StudioActivityContext.refresh()`** and reloads membership data.
+- **Deep links (Phase 4C)** — Routes **`/(app)/billing/success`**, **`/(app)/billing/cancel`**, **`/(app)/billing/return`**. Configure the API’s **`STRIPE_SUCCESS_URL`**, **`STRIPE_CANCEL_URL`**, and **`STRIPE_BILLING_PORTAL_RETURN_URL`** to absolute URLs that open your **Expo `scheme`** (see `apps/mobile/app.json` → `expo.scheme`; white-label builds override per app). Path segments are **`billing/success`**, **`billing/cancel`**, **`billing/return`**. Example for **this repository’s template scheme only** (replace with your shipped scheme): `gymos://billing/success`, `gymos://billing/cancel`, `gymos://billing/return`. To print the exact strings for the current dev client, use **`stripeMobileReturnUrlsFromExpoLinking()`** in `lib/billing/stripeReturnUrlHelpers.ts` (e.g. temporary log in Membership).
+- **After Stripe (success / portal return)** — On focus, those screens call **`refreshBillingClientState`** (membership plans + **`members/me`** + **`StudioActivityContext.refresh()`**). **Cancel** is informational only (optional light refresh removed to avoid noise).
+- **Fallback** — If the OS returns to the app without firing a deep link, Membership still arms an **`AppState`** refresh after opening Checkout or the portal (Phase 4B).
 - **Booking blocked** — If **`POST .../bookings`** or waitlist join returns **`403`** with a message containing **`Active subscription required`**, the class screen shows **`SubscriptionRequiredPanel`** with a CTA to the Membership tab.
 
 ## QR check-in (Phase 3D)
@@ -103,8 +105,9 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 | Tabs | `app/(app)/(tabs)/index` (home), `schedule`, `bookings`, `membership`, `profile` |
 | Class detail | `app/(app)/class/[classId]` |
 | Check-in QR | `app/(app)/check-in/[bookingId]` |
+| Billing return (Stripe) | `app/(app)/billing/success`, `cancel`, `return` (nested stack under `billing/_layout.tsx`) |
 
-Out of scope for this doc’s historical “Phase 3” note: native in-app purchases, push, staff scanner UI, store submission automation, admin web, uploads. **Hosted Stripe Checkout + Customer Portal** are implemented for members (Phase 4B); PaymentSheet / Apple Pay in-app purchase flows remain out of scope.
+Out of scope for this doc’s historical “Phase 3” note: native in-app purchases, push, staff scanner UI, store submission automation, admin web, uploads. **Hosted Stripe Checkout + Customer Portal** and **native return deep links** (Phase 4B–4C) are implemented; PaymentSheet / Apple Pay in-app purchase flows remain out of scope.
 
 ## Commands
 

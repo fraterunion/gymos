@@ -154,7 +154,7 @@ All paths: `/studios/:studioId/membership-plans`.
 ### `POST /studios/:studioId/membership-plans/:planId/checkout`
 
 - **Auth:** JWT + `StudioMemberGuard` + **MEMBER** only (self-service).
-- **Behavior:** Ensures a Stripe Customer for the user (`User.stripeCustomerId`), syncs Stripe Product/Price for the plan if needed, creates a **Stripe Checkout** session in **subscription** mode with metadata (`userId`, `studioId`, `planId`) on the session and on `subscription_data.metadata`.
+- **Behavior:** Ensures a Stripe Customer for the user (`User.stripeCustomerId`), syncs Stripe Product/Price for the plan if needed, creates a **Stripe Checkout** session in **subscription** mode with metadata (`userId`, `studioId`, `planId`) on the session and on `subscription_data.metadata`. **`success_url`** and **`cancel_url`** are taken from server env **`STRIPE_SUCCESS_URL`** and **`STRIPE_CANCEL_URL`** (absolute URLs; native apps typically use the app’s custom URL scheme + path—see `docs/MOBILE.md` / `docs/ENV_VARS.md`).
 - **Response:** `200` — `{ "url": "<Stripe-hosted checkout URL>" }`.
 - **Errors:** `403` if caller is not **MEMBER**; `404` if plan inactive/missing; `400` if Stripe does not return a URL.
 
@@ -162,6 +162,7 @@ All paths: `/studios/:studioId/membership-plans`.
 
 - **Auth:** JWT + `StudioMemberGuard`.
 - **Requires:** `User.stripeCustomerId` set (typically after a successful Checkout flow).
+- **Behavior:** Creates a Stripe Billing Portal session using **`STRIPE_BILLING_PORTAL_RETURN_URL`** as **`return_url`** (same native vs `https` guidance as Checkout).
 - **Response:** `200` — `{ "url": "<Stripe Customer Portal URL>" }`.
 - **Errors:** `400` if no Stripe customer on file.
 

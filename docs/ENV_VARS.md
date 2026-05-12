@@ -20,11 +20,11 @@
 | `PORT` | HTTP listen port (from config; default in `.env.example` is `3000`). |
 | `STRIPE_SECRET_KEY` | Stripe **secret** API key (server only; test vs live mode per key prefix). Required in **production**. |
 | `STRIPE_WEBHOOK_SECRET` | Signing secret for `POST /api/v1/stripe/webhook` (`whsec_…`). Required in **production**. |
-| `STRIPE_SUCCESS_URL` | Absolute URL Stripe Checkout redirects to after successful payment. Required in **production**. |
-| `STRIPE_CANCEL_URL` | Absolute URL Checkout redirects to when the user cancels. Required in **production**. |
-| `STRIPE_BILLING_PORTAL_RETURN_URL` | Absolute URL Stripe Billing Portal returns to after the customer exits. Required in **production**. |
+| `STRIPE_SUCCESS_URL` | Absolute URL Stripe Checkout redirects to after a successful payment. Required in **production**. For the **native member app**, set this to a URL that opens your app’s **billing success** route (same **URL scheme** as `expo.scheme` in the mobile app config, e.g. `<your-scheme>://billing/success`). **Do not** embed a specific gym’s brand name in the scheme; each white-label build supplies its own scheme. For **web** or server-hosted fallbacks, use an `https://` URL. Local API defaults use `http://localhost:…` (see `validate-env`). |
+| `STRIPE_CANCEL_URL` | Absolute URL when the customer abandons Checkout. Same rules as success; native pattern: `<your-scheme>://billing/cancel`. |
+| `STRIPE_BILLING_PORTAL_RETURN_URL` | Absolute URL when the customer leaves the Stripe Customer Portal. Native pattern: `<your-scheme>://billing/return`. |
 
-Non-production: `apps/api` `validateEnv` supplies safe **development defaults** when these are unset so local and CI boot without real Stripe keys; replace with your Dashboard keys and real URLs before charging customers.
+Non-production: `apps/api` `validateEnv` supplies safe **development defaults** when these are unset so local and CI boot without real Stripe keys; replace with your Dashboard keys and real URLs before charging customers. For **mobile E2E against a device or simulator**, point the three URLs at your app’s deep links (see `docs/MOBILE.md` Phase 4C and `apps/mobile/lib/billing/stripeReturnUrlHelpers.ts`).
 
 Future (document when implemented):
 
@@ -41,9 +41,12 @@ Expected patterns once auth and API URL exist:
 
 ## apps/mobile (Expo)
 
-Expected patterns:
+| Variable | Purpose |
+|----------|---------|
+| `EXPO_PUBLIC_API_URL` | Base URL for native client. |
+| `EXPO_PUBLIC_STUDIO_SLUG` | Tenant slug for branding + studio match. |
 
-- `EXPO_PUBLIC_API_URL` — Base URL for native client.
+**Stripe return URLs (server-side, not Expo env):** The API’s `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, and `STRIPE_BILLING_PORTAL_RETURN_URL` must match how users return from Stripe. For native builds, that is typically `<scheme>://billing/success` (and `cancel` / `return`) where `<scheme>` is `expo.scheme` in `apps/mobile/app.json` (overridden per white-label app). Use `stripeMobileReturnUrlsFromExpoLinking()` from `apps/mobile/lib/billing/stripeReturnUrlHelpers.ts` in a dev build to log the exact strings for your environment.
 
 ## Local development
 
