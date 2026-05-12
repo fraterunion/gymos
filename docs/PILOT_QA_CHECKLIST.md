@@ -41,7 +41,7 @@ Run before **investor demos**, **gym owner pilots**, or **regression** after mea
 - [ ] **Bookings tab** — confirmed booking rows; **Check-in QR** opens; QR regenerates or loads without crash.
 - [ ] **Waitlist row** — **WAITING** and **PROMOTED** copy readable (seed has examples on ARES).
 - [ ] **Membership tab** — plans list; subscription summary when present; **Subscribe** / **Manage billing** errors are user-friendly if API misconfigured.
-- [ ] **Stripe caveat** — demo seed uses **fake** `cus_` / `sub_` / `pi_` IDs; **no real money** moves unless you configure real Stripe test/live and real price IDs ([`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md)).
+- [ ] **Stripe caveat** — demo seed uses **fake** `cus_` / `sub_` / `pi_` IDs. For **real** test Checkout + webhooks, use [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) (`sk_test_`); fake seed alone is **not** a payment test.
 
 ---
 

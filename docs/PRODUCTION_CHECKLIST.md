@@ -31,7 +31,19 @@ Use for **staging** and **production** cutovers. Complement with [`PRODUCTION_DE
 
 ---
 
-## D. Stripe (live when appropriate)
+## D. Stripe
+
+### D1. Test-mode pilot lane (optional — staging / private pilot)
+
+Use when you need **real** Stripe **test** Checkout + webhooks (not fake seed IDs). See [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).
+
+- [ ] **`smoke:stripe-env`** — with `STRIPE_SECRET_KEY` (`sk_test_`), `STRIPE_WEBHOOK_SECRET` (`whsec_`), and the three return URLs exported: `pnpm --filter api smoke:stripe-env` exits **0**.
+- [ ] **Test webhook** — `POST /api/v1/stripe/webhook` registered in Stripe **test mode** (or CLI forward); events include `checkout.session.completed`, `customer.subscription.*`, `invoice.paid`, `invoice.payment_failed`.
+- [ ] **Checkout + portal** — member completes test Checkout; **Membership** reflects subscription after refresh; portal round-trip works.
+- [ ] **DB verification** — `subscriptions` has real test `sub_…`; `payments` updated when `invoice.paid` applies.
+- [ ] **No live keys** — confirm **`sk_live_`** is not set on this environment.
+
+### D2. Live Stripe (when appropriate)
 
 - [ ] **Webhook endpoint** — `https://<api>/api/v1/stripe/webhook` registered; **live** signing secret matches `STRIPE_WEBHOOK_SECRET`.
 - [ ] **Webhook smoke** — Dashboard “Send test event” (or test mode first on staging) returns **200**; check API logs for idempotent handling.

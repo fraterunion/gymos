@@ -48,6 +48,10 @@ See **`docs/WHITE_LABEL_BUILDS.md` → EAS Build** for `eas.json` profiles (`dev
 - **Sales demo script** — [`docs/PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md).
 - **Pre-flight QA checklist** — [`docs/PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
 
+### Stripe test-mode pilot (Phase 7A)
+
+- **Real `sk_test_` Checkout + webhooks** (separate from fake seed billing) — [`docs/STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md); return URLs must match **`APP_SCHEME`** / billing routes for this build.
+
 ## Boot sequence
 
 1. **Fonts / splash** — root `_layout.tsx`.

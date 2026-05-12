@@ -57,3 +57,7 @@ From repo root: `pnpm --filter admin dev`, `pnpm --filter admin build`, `pnpm --
 - **Demo accounts & seed** — [`docs/DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md) (`staff@ares.demo`, `admin@ares.demo`, etc.).
 - **Sales demo script** (includes desk segment) — [`docs/PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md).
 - **QA checklist** — [`docs/PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
+
+### Stripe test-mode pilot (Phase 7A)
+
+- **Real `sk_test_` lane** (Checkout + webhooks; API holds secrets) — [`docs/STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).

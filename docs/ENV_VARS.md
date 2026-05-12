@@ -26,6 +26,10 @@
 
 Non-production: `apps/api` `validateEnv` supplies safe **development defaults** when these are unset so local and CI boot without real Stripe keys; replace with your Dashboard keys and real URLs before charging customers. For **mobile E2E against a device or simulator**, point the three URLs at your app’s deep links (see `docs/MOBILE.md` Phase 4C and `apps/mobile/lib/billing/stripeReturnUrlHelpers.ts`).
 
+### Stripe test-mode pilot (Phase 7A)
+
+For **real** test Checkout, Customer Portal, and webhooks ( **`sk_test_`**, **`whsec_`** from a **test** endpoint or Stripe CLI), see [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md). Quick env shape check (no secrets printed): `pnpm --filter api smoke:stripe-env` from a shell where the Stripe variables are exported.
+
 Future (document when implemented):
 
 - `REDIS_URL` — if caching or rate limits require it.

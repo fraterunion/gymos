@@ -2,7 +2,9 @@
 
 This document describes the **Prisma seed** in `apps/api/prisma/seed.ts`: two white-label studios (**ARES Fitness**, **Pilates Toluca**), realistic schedules, roles, billing-shaped rows with **fake Stripe identifiers only**, and a **single shared demo password** for local or private pilot machines.
 
-**Related:** [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) (mobile `EXPO_PUBLIC_STUDIO_SLUG`), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) (never treat demo as production), [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md).
+**This is not Stripe test mode:** rows like `cus_demo_*` / `price_demo_*` are placeholders for UI and API shape only. For **real** Checkout, webhooks, and `sub_…` IDs, use a separate lane documented in [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) (`sk_test_`, real test prices created or synced by the API). The seed file is **unchanged** in Phase 7A — do not replace fake IDs with live keys in seed data.
+
+**Related:** [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) (mobile `EXPO_PUBLIC_STUDIO_SLUG`), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) (never treat demo as production), [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).
 
 ---
 
@@ -10,6 +12,7 @@ This document describes the **Prisma seed** in `apps/api/prisma/seed.ts`: two wh
 
 - **Do not** expose a database seeded with these accounts on a **public URL** without network access controls. The demo password is documented below and is trivial to guess.
 - **Do not** use demo Stripe IDs (`cus_demo_*`, `sub_demo_*`, `pi_demo_*`, etc.) in **live** Stripe Dashboard or production API env expecting real webhooks to reconcile.
+- **Do not** confuse this seed with **Stripe test mode** — for real `sk_test_` Checkout + webhooks, follow [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) on a suitable database/env.
 - **Do not** run `prisma migrate reset` or re-seed against **production** or any database containing real member data.
 
 ---
@@ -126,6 +129,10 @@ pnpm --filter api demo:reset-help
 
 - **Sales / walkthrough script** — [`PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md).
 - **Pre-demo QA checklist** — [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md) (seed, ARES/Pilates branding, mobile, desk, Stripe caveat, devices).
+
+## Stripe test-mode pilot (Phase 7A)
+
+- **Real test keys + webhooks** (separate from fake seed IDs) — [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).
 
 ---
 

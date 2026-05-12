@@ -56,7 +56,9 @@ Point at home/schedule chrome matching brand.
 
 **Membership / billing:** member app → **Membership** tab.
 
-> “Plans and subscription state live here. In production, **Stripe Checkout and the billing portal** hook in with your real products; in this demo, IDs are placeholders so we can walk the UX without charging a card.”
+> “Plans and subscription state live here. In production, **Stripe Checkout and the billing portal** hook in with your real products; in this demo, IDs in the database may be placeholders. For a **real card-free test run**, we wire **`sk_test_`** and webhooks separately—see our Stripe test-mode pilot doc.”
+
+Reference: [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).
 
 ---
 

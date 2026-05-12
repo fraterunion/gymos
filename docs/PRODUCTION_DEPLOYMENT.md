@@ -6,6 +6,8 @@ This document describes a **concrete** reference layout for deploying GymOS to m
 
 **Phase 6B (ops scripts):** `apps/api` exposes `db:migrate:deploy`, `db:generate`, `smoke:health`, and optional `smoke:auth` — see [Deploy scripts & smoke checks](#deploy-scripts--smoke-checks-phase-6b) below.
 
+**Phase 7A (Stripe test pilot):** [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) — real **`sk_test_`** lane, webhooks, and `pnpm --filter api smoke:stripe-env` (does not print secrets).
+
 ---
 
 ## Deployment targets (reference)
@@ -101,6 +103,7 @@ See [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) — EAS **secrets** must 
 
 ## Stripe webhook (production)
 
+- **Test-mode pilot (staging / private demos):** use **`sk_test_`** keys, test Dashboard webhook, and the checklist in [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md). **Do not** use **`sk_live_`** on shared demo hosts.
 - **Endpoint URL:** `https://<api-public-host>/api/v1/stripe/webhook`  
 - **Raw body:** API uses `express.raw` for this path only; do not put a proxy that re-serializes JSON between Stripe and Nest.  
 - **Events:** at minimum those documented in [`API_CONTRACTS.md`](./API_CONTRACTS.md) / architecture (checkout, subscription lifecycle, invoices).  
@@ -139,6 +142,7 @@ Omit wildcards unless you fully understand browser credential rules.
 |--------|------|--------|
 | `pnpm --filter api db:generate` | After dependency / Prisma schema changes locally or in CI build | `prisma generate`; `api` `build` already runs generate. |
 | `pnpm --filter api db:migrate:deploy` | **Before** or **with** each production API rollout that needs new DB schema | Requires `DATABASE_URL` in the environment of the shell or CI job (Neon URL). |
+| `pnpm --filter api smoke:stripe-env` | Before enabling Checkout/Portal on a host | Requires **`sk_test_`**, **`whsec_`**, and the three Stripe return URLs set in the shell ([`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md)). Prints **status lines only**, never secret values. Exits **1** on missing vars, bad URL shape, or **`sk_live_`**. |
 | `pnpm --filter api smoke:health` | After Railway (or any) deploy, in CI release step, or manually | Set `API_BASE_URL` to the public API origin (no trailing slash required). Exits **0** if `GET /health` returns `{ "status": "ok" }`, else **1**. |
 | `pnpm --filter api smoke:auth` | Optional; when a disposable pilot user exists | Set `API_BASE_URL`, `SMOKE_EMAIL`, `SMOKE_PASSWORD`. Exits **0** if login + `GET /api/v1/auth/me` succeed. **Never** commit real credentials; inject via CI secrets or local env only. |
 
