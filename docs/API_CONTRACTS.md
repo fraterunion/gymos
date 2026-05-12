@@ -258,7 +258,7 @@ No waitlist, payments, attendance, or QR. **`studioId` and `classId` / `bookingI
 - **Rules:**
   - Scheduled class must belong to `studioId`, `status === SCHEDULED`, and **`startsAt` in the future**.
   - **Capacity:** live `COUNT(*)` of rows with `status = CONFIRMED` for that class must be **&lt;** `capacity` before insert.
-  - **Concurrency:** server takes `pg_advisory_xact_lock` (hashed key per studio+class) inside the same DB transaction as the count + insert (only this lock uses raw SQL).
+  - **Concurrency:** server takes `pg_advisory_xact_lock` on key **`booking_class_<scheduledClassId>`** (hashed via `hashtext`) inside the same DB transaction as the count + insert (only this lock uses raw SQL). The **same** lock is used for booking cancel, waitlist join/cancel, and waitlist promotion.
   - **MEMBER** studio role: must have a subscription in this studio with status **`ACTIVE`** or **`TRIALING`**.
   - **STAFF**, **INSTRUCTOR**, **ADMIN**, **OWNER**: subscription check skipped.
   - **Partial unique index:** at most one **CONFIRMED** booking per `(studio_id, scheduled_class_id, user_id)`. On unique violation → **`409`** with message **`Already booked for this class`**.
@@ -270,8 +270,48 @@ No waitlist, payments, attendance, or QR. **`studioId` and `classId` / `bookingI
 #### `POST /studios/:studioId/bookings/:bookingId/cancel`
 
 - **Auth:** JWT + `StudioMemberGuard`.
-- **Rules:** Booking must belong to `studioId`. Caller may cancel **their own** booking, or staff (**STAFF**, **INSTRUCTOR**, **ADMIN**, **OWNER**) may cancel another member’s booking. Idempotent if already **`CANCELLED`**.
-- **Response:** `204` — Sets `status` to **`CANCELLED`**, sets `cancelSource` (`MEMBER` vs `STUDIO`), `cancelledAt`. **Never deletes** the row.
+- **Rules:** Booking must belong to `studioId`. Caller may cancel **their own** booking, or staff (**STAFF**, **INSTRUCTOR**, **ADMIN**, **OWNER**) may cancel another member’s booking. Idempotent if already **`CANCELLED`** (returns **`cancelled: false`**; no promotion).
+- **Response:** `200` — JSON body (never raw Prisma rows):
+  - **`cancelled`:** `true` if this call moved the booking to **`CANCELLED`**; `false` if it was already cancelled.
+  - **`promotion`:** `null`, or an object when the next **`WAITING`** waitlist member was promoted in the **same** transaction: `{ "performed": true, "bookingId", "waitlistEntryId", "userId" }`.
+- **Semantics:** Sets `status` to **`CANCELLED`**, `cancelSource` (`MEMBER` vs `STUDIO`), `cancelledAt`. **Never deletes** the booking row. If creating the promoted **`CONFIRMED`** booking hits a unique constraint (**P2002**), the **entire** transaction (including the cancellation) is rolled back and the client receives **`409`**.
+
+---
+
+## Phase 2E — Waitlist (foundation)
+
+No notifications, expiration jobs, Stripe, or UI. **`studioId`** and **`classId`** / **`entryId`** come from the URL.
+
+### Join waitlist
+
+#### `POST /studios/:studioId/classes/:classId/waitlist`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Rules:** Class must be **`SCHEDULED`** with **`startsAt` in the future**. **MEMBER** (non-elevated roles) need **`ACTIVE`** or **`TRIALING`** subscription in the studio; **STAFF** / **INSTRUCTOR** / **ADMIN** / **OWNER** bypass subscription. Inside a transaction with advisory lock **`booking_class_<classId>`**: live **`COUNT`** of **`CONFIRMED`** bookings must be **`>= capacity`** (class truly full); otherwise **`409`** **`Class has available spots — please book directly`**. Reject if the user already has a **`CONFIRMED`** booking, a **`WAITING`** waitlist row, or a **`PROMOTED`** row for this class. **`position`** is **`max(position)+1`** over all waitlist rows for that class (monotonic; no resequencing on cancel).
+- **Response:** `201` — `{ id, studioId, scheduledClassId, status, position, createdAt }` (no secrets).
+
+### Cancel waitlist entry
+
+#### `POST /studios/:studioId/waitlist/:entryId/cancel`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Rules:** Entry must belong to `studioId`. The waitlist member may cancel their own entry; **STAFF** / **INSTRUCTOR** / **ADMIN** / **OWNER** may cancel another member’s **`WAITING`** entry. Uses the same **`booking_class_<classId>`** advisory lock. **`WAITING`** → **`CANCELLED`** only; **never** hard-deletes. Idempotent if already **`CANCELLED`**. **`PROMOTED`** cannot be cancelled here → **`409`**.
+
+### Staff class waitlist
+
+#### `GET /studios/:studioId/classes/:classId/waitlist`
+
+- **Auth:** JWT + `StudioMemberGuard` + **STAFF**, **INSTRUCTOR**, **ADMIN**, or **OWNER**.
+- **Response:** `200` — Array ordered **`WAITING`** first (each with dynamic **`queueRank`** 1…n by `position` / `createdAt`), then **`PROMOTED`** entries with **`queueRank: null`**. User payload is safe subset only.
+
+### My waitlist
+
+#### `GET /studios/:studioId/waitlist/me`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Response:** `200` — Caller’s **`WAITING`** and **`PROMOTED`** entries for this studio (excludes **`CANCELLED`** / **`EXPIRED`**). Includes `queueRank`, `waitingCountForClass`, and `scheduledClass` summary.
+
+---
 
 ### My upcoming bookings
 

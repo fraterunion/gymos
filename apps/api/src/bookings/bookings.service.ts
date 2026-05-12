@@ -12,7 +12,12 @@ import {
   Role,
   SubscriptionStatus,
 } from '@prisma/client';
+import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  type BookingCancellationResult,
+  WaitlistService,
+} from '../waitlist/waitlist.service';
 
 const rosterUserSelect = {
   id: true,
@@ -31,12 +36,15 @@ const bypassSubscriptionRoles: ReadonlySet<Role> = new Set([
 
 @Injectable()
 export class BookingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly waitlistService: WaitlistService,
+  ) {}
 
   async createBooking(studioId: string, scheduledClassId: string, actorUserId: string) {
     return this.prisma.$transaction(
       async (tx) => {
-        await this.acquireBookingAdvisoryLock(tx, studioId, scheduledClassId);
+        await acquireBookingClassAdvisoryLock(tx, scheduledClassId);
 
         const [membership, scheduledClass] = await Promise.all([
           tx.studioMembership.findFirst({
@@ -99,7 +107,11 @@ export class BookingsService {
     );
   }
 
-  async cancelBooking(studioId: string, bookingId: string, actorUserId: string): Promise<void> {
+  async cancelBooking(
+    studioId: string,
+    bookingId: string,
+    actorUserId: string,
+  ): Promise<BookingCancellationResult> {
     const actorMembership = await this.prisma.studioMembership.findFirst({
       where: { studioId, userId: actorUserId, deletedAt: null },
     });
@@ -126,16 +138,49 @@ export class BookingsService {
       throw new ForbiddenException();
     }
     if (booking.status === BookingStatus.CANCELLED) {
-      return;
+      return { cancelled: false, promotion: null };
     }
-    await this.prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        status: BookingStatus.CANCELLED,
-        cancelSource: isSelf ? CancelSource.MEMBER : CancelSource.STUDIO,
-        cancelledAt: new Date(),
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        await acquireBookingClassAdvisoryLock(tx, booking.scheduledClassId);
+
+        const b = await tx.booking.findFirst({
+          where: { id: bookingId, studioId },
+          include: { user: { select: { deletedAt: true } } },
+        });
+        if (!b) {
+          throw new NotFoundException('Booking not found');
+        }
+        if (b.user.deletedAt) {
+          throw new NotFoundException('Booking not found');
+        }
+        const selfHere = b.userId === actorUserId;
+        if (!selfHere && !canManageOthers) {
+          throw new ForbiddenException();
+        }
+        if (b.status === BookingStatus.CANCELLED) {
+          return { cancelled: false, promotion: null };
+        }
+
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: {
+            status: BookingStatus.CANCELLED,
+            cancelSource: selfHere ? CancelSource.MEMBER : CancelSource.STUDIO,
+            cancelledAt: new Date(),
+          },
+        });
+
+        const promotion = await this.waitlistService.promoteNextAfterSpotOpenedInTx(
+          tx,
+          studioId,
+          b.scheduledClassId,
+        );
+        return { cancelled: true, promotion };
       },
-    });
+      { timeout: 15_000 },
+    );
   }
 
   async listMyUpcomingBookings(studioId: string, actorUserId: string) {
@@ -189,20 +234,6 @@ export class BookingsService {
       },
       orderBy: { createdAt: 'asc' },
     });
-  }
-
-  /**
-   * Only raw SQL permitted for locking. Must run inside a transaction.
-   */
-  private async acquireBookingAdvisoryLock(
-    tx: Prisma.TransactionClient,
-    studioId: string,
-    scheduledClassId: string,
-  ): Promise<void> {
-    const lockKey = `gymos:booking:${studioId}:${scheduledClassId}`;
-    await tx.$executeRaw(Prisma.sql`
-      SELECT pg_advisory_xact_lock((hashtext(${lockKey}))::bigint)
-    `);
   }
 
   private async assertSubscriptionForMemberIfNeeded(

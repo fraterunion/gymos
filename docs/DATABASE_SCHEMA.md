@@ -51,7 +51,7 @@ Column **`class_credits`** (`classCredits` in Prisma) was added in the same migr
 
 ## Other domain tables
 
-- **WaitlistEntry**, **Attendance**, **QRToken**, etc. exist in Prisma for later phases. Row-level **`studio_id`** scoping applies where modeled.
+- **WaitlistEntry** (`waitlist_entries`): **`position`** is monotonic (new joins use `max(position)+1` per class). Partial unique index allows at most one **`WAITING`** row per `(studio_id, scheduled_class_id, user_id)`. **`PROMOTED`** / **`CANCELLED`** / **`EXPIRED`** statuses; cancellations are status-only (no hard delete). Booking / waitlist / promotion paths share advisory lock key **`booking_class_<scheduledClassId>`** (see API contracts).
 - **Attendance** (`attendances`): one row per `(scheduled_class_id, user_id)` (unique). **`checked_in_by_user_id`** optional — set for **manual** check-ins (staff who recorded). **`method`** uses `CheckInMethod` (`QR`, `MANUAL`, …).
 - **QRToken** (`qr_tokens`): **`token_hash`** unique (SHA-256 of issued JWT). **`used_at`** set atomically when a QR check-in claims the row (single-use). Optional **`invalidated_at`** for future invalidation; claim requires it null. **`expires_at`** aligns with JWT expiry (5 minutes from issue).
 

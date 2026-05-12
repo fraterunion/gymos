@@ -13,6 +13,7 @@ import { MembershipPlansModule } from './membership-plans/membership-plans.modul
 import { PrismaModule } from './prisma/prisma.module';
 import { ScheduleModule } from './schedule/schedule.module';
 import { StudiosModule } from './studios/studios.module';
+import { WaitlistModule } from './waitlist/waitlist.module';
 
 function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
   if (process.env['GYMOS_E2E'] !== '1') {
@@ -46,6 +47,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     MembersModule,
     ClassTemplatesModule,
     ScheduleModule,
+    WaitlistModule,
     BookingsModule,
     CheckInsModule,
   ],

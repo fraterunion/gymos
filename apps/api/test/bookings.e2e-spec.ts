@@ -186,7 +186,7 @@ describe('Bookings (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/api/v1/studios/${studio.id}/bookings/${bookingId}/cancel`)
       .set('Authorization', `Bearer ${token}`)
-      .expect(204);
+      .expect(200);
 
     const row = await prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
     expect(row.status).toBe(BookingStatus.CANCELLED);

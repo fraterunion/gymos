@@ -2,25 +2,25 @@ import { Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { BookingsService } from './bookings.service';
+import { WaitlistService } from './waitlist.service';
 
-@Controller('studios/:studioId/bookings')
+@Controller('studios/:studioId/waitlist')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
-export class BookingsController {
-  constructor(private readonly bookingsService: BookingsService) {}
+export class StudioWaitlistController {
+  constructor(private readonly waitlistService: WaitlistService) {}
 
   @Get('me')
   listMine(@Param('studioId') studioId: string, @CurrentUser('sub') userId: string) {
-    return this.bookingsService.listMyUpcomingBookings(studioId, userId);
+    return this.waitlistService.listMyWaitlist(studioId, userId);
   }
 
-  @Post(':bookingId/cancel')
-  @HttpCode(HttpStatus.OK)
+  @Post(':entryId/cancel')
+  @HttpCode(HttpStatus.NO_CONTENT)
   async cancel(
     @Param('studioId') studioId: string,
-    @Param('bookingId') bookingId: string,
+    @Param('entryId') entryId: string,
     @CurrentUser('sub') userId: string,
-  ) {
-    return this.bookingsService.cancelBooking(studioId, bookingId, userId);
+  ): Promise<void> {
+    await this.waitlistService.cancelWaitlistEntry(studioId, entryId, userId);
   }
 }
