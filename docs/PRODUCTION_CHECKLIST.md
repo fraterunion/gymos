@@ -15,16 +15,17 @@ Use for **staging** and **production** cutovers. Complement with [`PRODUCTION_DE
 
 ## B. Database
 
-- [ ] **Migrations applied** — `pnpm exec prisma migrate deploy` against target DB **before** or **with** API rollout per runbook ([`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md)).
+- [ ] **Migrations applied** — `pnpm --filter api db:migrate:deploy` (from monorepo root) or `pnpm db:migrate:deploy` from `apps/api`, against target DB **before** or **with** API rollout ([`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md)).
 - [ ] **Backup** taken (or verified auto-backup) before risky migration.
 
 ---
 
 ## C. API health & auth
 
-- [ ] **`GET /health`** returns `200` and `{ "status": "ok" }` on public URL.
-- [ ] **Auth smoke** — `POST /api/v1/auth/login` with pilot user; `GET /api/v1/auth/me` with bearer token.
-- [ ] **CORS** — browser admin login succeeds (no CORS console errors).
+- [ ] **`smoke:health`** — `API_BASE_URL=https://<api-host> pnpm --filter api smoke:health` exits **0** (or manual `GET /health` → `200` + `{ "status": "ok" }`).
+- [ ] **Optional `smoke:auth`** — `API_BASE_URL`, `SMOKE_EMAIL`, `SMOKE_PASSWORD` set; `pnpm --filter api smoke:auth` exits **0** (pilot user only; never commit credentials).
+- [ ] **Auth smoke (manual)** — `POST /api/v1/auth/login`; `GET /api/v1/auth/me` with bearer token if not using `smoke:auth`.
+- [ ] **CORS** — browser admin login succeeds (no CORS console errors). **Vercel admin** is not covered by API smoke scripts — confirm in browser after deploy.
 
 ---
 
@@ -58,7 +59,8 @@ Use for **staging** and **production** cutovers. Complement with [`PRODUCTION_DE
 
 ## G. Post-deploy monitoring (first 24–48h)
 
-- [ ] **Error rate** — Railway (or host) logs; no spike in 5xx.
+- [ ] **API logs** — Railway (or host) shows `api_started` / listen line after deploy; **no** passwords, tokens, or Stripe secrets in stdout rules enforced ([`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md) § Logging).
+- [ ] **Error rate** — no spike in 5xx.
 - [ ] **Stripe webhook delivery** — no sustained 4xx/5xx from API URL.
 - [ ] **Support inbox** — pilot channel monitored.
 

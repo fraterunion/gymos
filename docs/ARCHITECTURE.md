@@ -74,5 +74,11 @@ Product and process docs live under `docs/`. This file is the structural source 
 
 - **Reference topology:** API on **Railway**, Postgres on **Neon**, admin on **Vercel**, mobile via **EAS**, Stripe **webhooks** to the API (`POST /api/v1/stripe/webhook`). Details and ordering: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md).
 - **Health:** `GET /health` on the API host (outside `api/v1` prefix) returns `{ "status": "ok" }` for probes.
-- **Migrations:** `prisma migrate deploy` against the target `DATABASE_URL` before serving traffic that depends on new schema (see deployment doc + [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md)).
+- **Migrations:** `pnpm --filter api db:migrate:deploy` (or `prisma migrate deploy` in `apps/api`) against the target `DATABASE_URL` before serving traffic that depends on new schema (see deployment doc + [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md)).
 - **CORS:** API `CORS_ORIGIN` must list the Vercel admin origin(s) in production ([`apps/api/src/http-app.setup.ts`](../apps/api/src/http-app.setup.ts)).
+
+## Observability & deploy scripts (Phase 6B)
+
+- **Prisma:** `apps/api/package.json` defines `db:generate` and `db:migrate:deploy` for CI and operators ([`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md)).
+- **Smoke:** `apps/api/scripts/smoke-health.mjs` and `smoke-auth.mjs` — `pnpm --filter api smoke:health` / `smoke:auth`; env vars in [`ENV_VARS.md`](./ENV_VARS.md) § Ops scripts & smoke env.
+- **Startup logs:** `apps/api/src/main.ts` logs `env` (NODE_ENV), `port`, `healthPath`, and `apiPrefix` as plain text plus one JSON line (`event: api_started`). **Do not** log secrets, JWTs, refresh tokens, or Stripe keys ([`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md) § Logging).

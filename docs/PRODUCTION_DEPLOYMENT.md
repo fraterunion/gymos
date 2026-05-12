@@ -4,6 +4,8 @@ This document describes a **concrete** reference layout for deploying GymOS to m
 
 **Related:** [`ENV_VARS.md`](./ENV_VARS.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
+**Phase 6B (ops scripts):** `apps/api` exposes `db:migrate:deploy`, `db:generate`, `smoke:health`, and optional `smoke:auth` — see [Deploy scripts & smoke checks](#deploy-scripts--smoke-checks-phase-6b) below.
+
 ---
 
 ## Deployment targets (reference)
@@ -48,9 +50,10 @@ This document describes a **concrete** reference layout for deploying GymOS to m
 1. **Neon** — Create database (prod). Note **connection string** (`DATABASE_URL` with `sslmode=require` as Neon recommends). Optional: create **preview branch** DB for staging.
 2. **API (Railway)** — Create service from repo; root directory `apps/api` (or monorepo build command you use); set **all** API env vars (below). **Do not** start traffic until migrations succeed.
 3. **Migrations** — From CI or a trusted operator machine with `DATABASE_URL` pointed at **that** Neon DB:  
-   `cd apps/api && pnpm exec prisma migrate deploy`  
-   (Uses committed migrations under `apps/api/prisma/migrations`.)
-4. **Smoke API** — `GET /health`; then `POST /auth/login` with a seed pilot user (or temporary create flow).
+   **From repo root:** `pnpm --filter api db:migrate:deploy`  
+   **Or** from `apps/api`: `pnpm db:migrate:deploy` (runs `prisma migrate deploy`).  
+   Uses committed migrations under `apps/api/prisma/migrations`. Run **before** the new API revision serves traffic that depends on the new schema (or in the same release window with zero-downtime discipline).
+4. **Smoke API** — `pnpm --filter api smoke:health` with `API_BASE_URL=https://<api-public-host>`; optional `pnpm --filter api smoke:auth` with pilot `SMOKE_EMAIL` / `SMOKE_PASSWORD` (see [Deploy scripts & smoke checks](#deploy-scripts--smoke-checks-phase-6b)). Manual `POST /api/v1/auth/login` remains valid.
 5. **Stripe** — Create **live** webhook endpoint → same URL as table above; set `STRIPE_WEBHOOK_SECRET` on API; run **Send test webhook** from Dashboard.
 6. **CORS** — Set `CORS_ORIGIN` on API to include `https://<admin>.vercel.app` (add `http://localhost:<admin-dev-port>` only for local dev, not prod).
 7. **Admin (Vercel)** — Deploy `apps/admin`; set `NEXT_PUBLIC_API_URL=https://<api-public-host>`; verify login in browser.
@@ -111,8 +114,8 @@ See [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) — EAS **secrets** must 
 |------|--------|
 | 1 | Freeze writes (optional) or announce maintenance if breaking migration. |
 | 2 | **Backup** Neon (manual snapshot or automated) before `migrate deploy`. |
-| 3 | Run `pnpm exec prisma migrate deploy` with **`DATABASE_URL`** for **target** DB. |
-| 4 | Verify `GET /health` and a read query / smoke login. |
+| 3 | Run `pnpm --filter api db:migrate:deploy` (or `cd apps/api && pnpm db:migrate:deploy`) with **`DATABASE_URL`** for **target** DB. |
+| 4 | Verify with `pnpm --filter api smoke:health` (`API_BASE_URL=…`) and optional `smoke:auth`, or manual `GET /health` + login. |
 | 5 | If app expects new columns, deploy **API** that contains new code **after** migration succeeds (or same window with zero-downtime discipline). |
 
 **Rollback:** Prisma does not auto-downgrade production. See [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md).
@@ -130,13 +133,36 @@ Omit wildcards unless you fully understand browser credential rules.
 
 ---
 
-## Logging & errors (review only)
+## Deploy scripts & smoke checks (Phase 6B)
 
-- **Nest default:** unhandled exceptions return JSON error responses; avoid logging **passwords**, **refresh tokens**, **Stripe raw signing payloads**, or **full JWTs**.  
-- **Railway:** ship stdout/stderr to Railway logs; attach alerts on **5xx rate** or **health check failures**.  
-- **Stripe Dashboard:** webhook delivery tab for 4xx/5xx from API.
+| Script | When | Notes |
+|--------|------|--------|
+| `pnpm --filter api db:generate` | After dependency / Prisma schema changes locally or in CI build | `prisma generate`; `api` `build` already runs generate. |
+| `pnpm --filter api db:migrate:deploy` | **Before** or **with** each production API rollout that needs new DB schema | Requires `DATABASE_URL` in the environment of the shell or CI job (Neon URL). |
+| `pnpm --filter api smoke:health` | After Railway (or any) deploy, in CI release step, or manually | Set `API_BASE_URL` to the public API origin (no trailing slash required). Exits **0** if `GET /health` returns `{ "status": "ok" }`, else **1**. |
+| `pnpm --filter api smoke:auth` | Optional; when a disposable pilot user exists | Set `API_BASE_URL`, `SMOKE_EMAIL`, `SMOKE_PASSWORD`. Exits **0** if login + `GET /api/v1/auth/me` succeed. **Never** commit real credentials; inject via CI secrets or local env only. |
 
-No code changes required for Phase 6A; tighten logging in a later hardening pass if audits require it.
+**Railway deployment smoke flow (typical):**
+
+1. Run `db:migrate:deploy` in a release phase or one-off job with production `DATABASE_URL` (many teams run this **before** `railway up` / redeploy).
+2. Deploy the API service.
+3. In the same pipeline or manually: `API_BASE_URL=https://<your-railway-host> pnpm --filter api smoke:health`.
+4. Optionally: set `SMOKE_*` from secrets and run `smoke:auth`.
+
+If `API_BASE_URL` is unset or the host is down, `smoke:health` exits **1** with a short message (no stack traces with secrets).
+
+**Admin (Vercel) smoke:** these Node scripts only hit the **API**. The admin app still needs a **manual** browser check (login, CORS) as in [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) — Vercel does not run `smoke:health` unless you add a CI workflow that invokes it against your deployed API.
+
+---
+
+## Logging & errors (Phase 6B)
+
+- **Startup:** the API logs a single human-readable line and one **JSON** line (`event: api_started`, `env`, `port`, `healthPath`, `apiPrefix`) — **no** secrets, tokens, or Stripe keys.  
+- **Runtime:** unhandled exceptions return JSON error responses; do **not** log **passwords**, **refresh tokens**, **Stripe signing secrets**, or **full JWTs** in request/response logs.  
+- **Railway:** stdout/stderr; alert on **5xx rate** or health check failures.  
+- **Stripe Dashboard:** webhook delivery tab for 4xx/5xx from the API URL.
+
+**Future (not wired in code):** optional error tracking via `SENTRY_DSN` on the API — see [`ENV_VARS.md`](./ENV_VARS.md). Prefer adding `@sentry/node` only when you want release tracking and PII policies defined.
 
 ---
 

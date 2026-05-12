@@ -15,7 +15,7 @@
 | `JWT_QR_SECRET` | Signs short-lived QR / check-in JWTs; separate from user access tokens. Required. |
 | `JWT_ACCESS_TTL` | Access token lifetime (e.g. `15m`). Parsed in `apps/api` for Nest `JwtModule`. |
 | `JWT_REFRESH_TTL_DAYS` | Refresh token row lifetime (opaque tokens stored hashed in DB; rotation + reuse detection). |
-| `CORS_ORIGIN` | Comma-separated allowed browser origins for the API (explicit CORS in `main.ts`). |
+| `CORS_ORIGIN` | Comma-separated allowed browser origins for the API (explicit CORS in `http-app.setup.ts`). |
 | `BCRYPT_ROUNDS` | Cost factor for password hashing (integer; validated in `validateEnv`). |
 | `PORT` | HTTP listen port (from config; default in `.env.example` is `3000`). |
 | `STRIPE_SECRET_KEY` | Stripe **secret** API key (server only; test vs live mode per key prefix). Required in **production**. |
@@ -71,6 +71,20 @@ These are read by **`app.config.ts`** when Expo resolves the config (not inlined
 ## Production & pilot (Phase 6A)
 
 Reference hosts (**Railway / Neon / Vercel / EAS / Stripe**) and runbooks: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md).
+
+## Ops scripts & smoke env (Phase 6B)
+
+These variables are for **operators / CI** running `apps/api` smoke scripts from a shell — **not** required for the Nest process at runtime unless you invoke those scripts on the same host.
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `API_BASE_URL` | `pnpm --filter api smoke:health`, `smoke:auth` | Public API origin (e.g. `https://api.example.com`). No trailing slash required. |
+| `SMOKE_EMAIL` | `smoke:auth` | Pilot user email (inject via secrets; never commit). |
+| `SMOKE_PASSWORD` | `smoke:auth` | Pilot user password (inject via secrets; never commit). |
+
+**API runtime (unchanged):** `DATABASE_URL`, JWT, Stripe, etc. — see table above.
+
+**Future:** `SENTRY_DSN` — optional Sentry DSN for the API when you add `@sentry/node` (or similar); not read by the app today. Define retention/PII policy before enabling.
 
 ## Local development
 
