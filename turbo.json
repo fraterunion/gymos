@@ -1,5 +1,15 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "NODE_ENV",
+    "CORS_ORIGIN",
+    "BCRYPT_ROUNDS",
+    "JWT_ACCESS_TTL",
+    "JWT_REFRESH_TTL_DAYS",
+    "PORT"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -11,6 +21,22 @@
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "inputs": ["src/**", "jest.config.*.ts", "tsconfig*.json"]
+    },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "cache": false,
+      "inputs": ["src/**", "test/**", "jest.config.*.ts", "tsconfig*.json"]
+    },
+    "test:cov": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": ["src/**", "jest.config.*.ts", "tsconfig*.json"]
     },
     "dev": {
       "cache": false,

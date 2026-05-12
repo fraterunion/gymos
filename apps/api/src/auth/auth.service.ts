@@ -12,8 +12,6 @@ import type { LoginDto } from './dto/login.dto';
 import type { RefreshTokenDto } from './dto/refresh-token.dto';
 import type { RegisterDto } from './dto/register.dto';
 
-const BCRYPT_COST = 12;
-
 export type SafeUser = {
   id: string;
   email: string;
@@ -43,7 +41,7 @@ export class AuthService {
     if (existing) {
       throw new ConflictException('Email already registered');
     }
-    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_COST);
+    const passwordHash = await bcrypt.hash(dto.password, this.getBcryptRounds());
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
@@ -179,6 +177,15 @@ export class AuthService {
 
   private hashRefreshToken(plain: string): string {
     return createHash('sha256').update(plain, 'utf8').digest('hex');
+  }
+
+  private getBcryptRounds(): number {
+    const raw = this.config.get<string>('BCRYPT_ROUNDS', '12');
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isInteger(n) || n < 1 || n > 31) {
+      return 12;
+    }
+    return n;
   }
 
   private refreshExpiryDate(): Date {

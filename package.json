@@ -7,6 +7,8 @@
     "dev": "turbo run dev --filter=admin --filter=api --filter=mobile",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "test": "turbo run test --filter=api",
+    "test:e2e": "turbo run test:e2e --filter=api",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
