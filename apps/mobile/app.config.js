@@ -1,8 +1,8 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+const fs = require('node:fs');
+const path = require('node:path');
 
-import dotenv from 'dotenv';
-import type { ConfigContext, ExpoConfig } from 'expo/config';
+const dotenv = require('dotenv');
+
 
 const MOBILE_ROOT = __dirname;
 
@@ -16,14 +16,11 @@ const LOCAL_TEMPLATE_DEFAULTS = {
   APP_ICON_PATH: './assets/images/icon.png',
   APP_SPLASH_PATH: './assets/images/splash-icon.png',
   APP_ADAPTIVE_ICON_PATH: './assets/images/adaptive-icon.png',
-} as const;
+};
 
-type AssetKey = keyof Pick<
-  typeof LOCAL_TEMPLATE_DEFAULTS,
-  'APP_ICON_PATH' | 'APP_SPLASH_PATH' | 'APP_ADAPTIVE_ICON_PATH'
->;
 
-function loadProfileEnvFiles(): string {
+
+function loadProfileEnvFiles() {
   const profile = (process.env.WHITELABEL_PROFILE ?? 'local').trim() || 'local';
   const tenantFile = path.join(MOBILE_ROOT, 'env', `.env.${profile}`);
   const rootEnv = path.join(MOBILE_ROOT, '.env');
@@ -37,14 +34,14 @@ function loadProfileEnvFiles(): string {
   return profile;
 }
 
-function isClientProfile(profile: string): boolean {
+function isClientProfile(profile) {
   return profile !== 'local';
 }
 
 function requireOrDefault(
-  profile: string,
+  profile,
   key: keyof typeof LOCAL_TEMPLATE_DEFAULTS,
-): string {
+) {
   const raw = process.env[key]?.trim();
   if (raw) return raw;
   if (!isClientProfile(profile)) {
@@ -55,7 +52,7 @@ function requireOrDefault(
   );
 }
 
-function resolveAssetPath(profile: string, key: AssetKey): string {
+function resolveAssetPath(profile, key) {
   return requireOrDefault(profile, key);
 }
 
