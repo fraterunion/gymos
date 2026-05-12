@@ -207,3 +207,8 @@ All `eas build` commands require **EAS login** and a linked project when you act
 ## Production & pilot (Phase 6A)
 
 Target layout (**Railway API**, **Neon DB**, **Vercel admin**, **EAS mobile**, **Stripe webhooks**) and ordering: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md). Use [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) before widening pilot traffic.
+
+### Release candidate & pilot flow (Phase 7B)
+
+- **RC freeze & sign-off** — [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
+- **Ordered pilot runbook** — [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) (reset → seed → build → migrate → smoke → Stripe → admin → EAS preview → TestFlight → walkthrough).

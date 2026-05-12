@@ -104,6 +104,8 @@ Gitignored `env/.env.<client>` is **not** on EAS workers by default.
 
 ## Phase 7 — Release (manual; automation out of scope)
 
+> **Naming:** This “Phase 7” is the **client store release** checklist. Engineering **pilot RC** freeze and runbook live in [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md) and [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
+
 - [ ] **Final release approval** — client sign-off on metadata + screenshots + version notes.
 - [ ] **App Store submission** — human runs Apple submission (not automated here).
 - [ ] **Play submission** — human runs staged rollout (not automated here).

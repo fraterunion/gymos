@@ -2,9 +2,11 @@
 
 This document describes a **concrete** reference layout for deploying GymOS to managed hosts: **API on Railway**, **PostgreSQL on Neon**, **Admin on Vercel**, **Mobile via EAS**, **Stripe webhooks** to the API. Swap host names for your org if you self-host elsewhere—the **ordering and env contracts** still apply.
 
-**Related:** [`ENV_VARS.md`](./ENV_VARS.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+**Related:** [`ENV_VARS.md`](./ENV_VARS.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
 
 **Phase 6B (ops scripts):** `apps/api` exposes `db:migrate:deploy`, `db:generate`, `smoke:health`, and optional `smoke:auth` — see [Deploy scripts & smoke checks](#deploy-scripts--smoke-checks-phase-6b) below.
+
+**Phase 7B (pilot RC):** [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) — feature/env freeze, ordered pilot runbook, go/no-go.
 
 **Phase 7A (Stripe test pilot):** [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) — real **`sk_test_`** lane, webhooks, and `pnpm --filter api smoke:stripe-env` (does not print secrets).
 

@@ -52,6 +52,11 @@ See **`docs/WHITE_LABEL_BUILDS.md` → EAS Build** for `eas.json` profiles (`dev
 
 - **Real `sk_test_` Checkout + webhooks** (separate from fake seed billing) — [`docs/STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md); return URLs must match **`APP_SCHEME`** / billing routes for this build.
 
+### Release candidate & pilot flow (Phase 7B)
+
+- **RC freeze + sign-off** — [`docs/RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
+- **Ordered steps** (reset → migrate → smoke → EAS preview → TestFlight → walkthrough) — [`docs/PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
+
 ## Boot sequence
 
 1. **Fonts / splash** — root `_layout.tsx`.

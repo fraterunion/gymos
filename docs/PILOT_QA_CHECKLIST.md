@@ -1,6 +1,6 @@
 # Pilot & demo QA checklist
 
-Run before **investor demos**, **gym owner pilots**, or **regression** after meaningful API/mobile/admin changes. Complement with [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md), and [`PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md).
+Run before **investor demos**, **gym owner pilots**, or **regression** after meaningful API/mobile/admin changes. Complement with [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md), [`PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md). For a **frozen RC**, also use [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md) and the ordered steps in [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
 
 ---
 

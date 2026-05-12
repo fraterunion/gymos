@@ -1,6 +1,6 @@
 # Pilot demo script (sales & gym owners)
 
-Use for **live or screen-share demos** (~6–10 minutes). Pair with seeded data in [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md) and QA ticks in [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
+Use for **live or screen-share demos** (~6–10 minutes). Pair with seeded data in [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md) and QA ticks in [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md). For a **formal RC**, align prep with [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) and [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
 
 **Prep:** API running with seed; mobile **ARES** build (`WHITELABEL_PROFILE=ares`); admin at `NEXT_PUBLIC_API_URL` with CORS; second mobile build or profile switch for **Pilates Toluca** at the end.
 

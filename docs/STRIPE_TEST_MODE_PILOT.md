@@ -1,8 +1,8 @@
 # Stripe test-mode pilot lane
 
-Use this path for **real pilot demos** where money must **never** move on live Stripe: **test API keys**, **test-mode Dashboard webhooks**, and (optionally) **Stripe CLI** for local forwarding. This is separate from the **Prisma demo seed**, which uses **fake** `cus_demo_*` / `sub_demo_*` / `price_demo_*` IDs that Stripe does not recognize ([`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md)).
+Use this path for **real pilot demos** where money must **never** move on live Stripe: **test API keys**, **test-mode Dashboard webhooks**, and (optionally) **Stripe CLI** for local forwarding. This is separate from the **Prisma demo seed**, which uses **fake** `cus_demo_*` / `sub_demo_*` / `price_demo_*` IDs that Stripe does not recognize ([`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md)). For **pilot RC** gates, combine the [billing smoke checklist](#billing-smoke-checklist-test-mode) in this doc with the Stripe test verification section in [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
 
-**Related:** [`ENV_VARS.md`](./ENV_VARS.md), [`MOBILE.md`](./MOBILE.md) (return URLs + deep links), [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md).
+**Related:** [`ENV_VARS.md`](./ENV_VARS.md), [`MOBILE.md`](./MOBILE.md) (return URLs + deep links), [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
 
 ---
 
@@ -16,7 +16,7 @@ Use this path for **real pilot demos** where money must **never** move on live S
 | **Webhooks** | Not meaningful for fake IDs | **Required** for subscription + invoice sync |
 | **Risk** | Data is obviously non-production | Still use a **non-prod DB**; never `sk_live_` on shared demos |
 
-**Do not** remove or replace fake IDs in `seed.ts` for Phase 7A — keep seed for layout demos; use a **different database** or re-seed after wiping if you want a clean switch from fake-only to Stripe-test.
+**Do not** remove or replace fake IDs in `seed.ts` for Stripe pilot docs (Phase 7A/7B) — keep seed for layout demos; use a **different database** or re-seed after wiping if you want a clean switch from fake-only to Stripe-test.
 
 ---
 

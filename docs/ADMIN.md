@@ -61,3 +61,8 @@ From repo root: `pnpm --filter admin dev`, `pnpm --filter admin build`, `pnpm --
 ### Stripe test-mode pilot (Phase 7A)
 
 - **Real `sk_test_` lane** (Checkout + webhooks; API holds secrets) — [`docs/STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).
+
+### Release candidate & pilot flow (Phase 7B)
+
+- **RC checklist** — [`docs/RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
+- **Pilot runbook** — [`docs/PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).

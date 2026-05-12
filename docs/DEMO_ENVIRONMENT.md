@@ -2,7 +2,7 @@
 
 This document describes the **Prisma seed** in `apps/api/prisma/seed.ts`: two white-label studios (**ARES Fitness**, **Pilates Toluca**), realistic schedules, roles, billing-shaped rows with **fake Stripe identifiers only**, and a **single shared demo password** for local or private pilot machines.
 
-**This is not Stripe test mode:** rows like `cus_demo_*` / `price_demo_*` are placeholders for UI and API shape only. For **real** Checkout, webhooks, and `sub_…` IDs, use a separate lane documented in [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) (`sk_test_`, real test prices created or synced by the API). The seed file is **unchanged** in Phase 7A — do not replace fake IDs with live keys in seed data.
+**This is not Stripe test mode:** rows like `cus_demo_*` / `price_demo_*` are placeholders for UI and API shape only. For **real** Checkout, webhooks, and `sub_…` IDs, use a separate lane documented in [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) (`sk_test_`, real test prices created or synced by the API). The seed file is **unchanged** for Stripe pilot docs (Phase 7A/7B) — do not replace fake IDs with live keys in seed data.
 
 **Related:** [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) (mobile `EXPO_PUBLIC_STUDIO_SLUG`), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) (never treat demo as production), [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).
 
@@ -133,6 +133,11 @@ pnpm --filter api demo:reset-help
 ## Stripe test-mode pilot (Phase 7A)
 
 - **Real test keys + webhooks** (separate from fake seed IDs) — [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md).
+
+## Release candidate & pilot flow (Phase 7B)
+
+- **RC checklist** — [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
+- **Ordered pilot runbook** — [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
 
 ---
 
