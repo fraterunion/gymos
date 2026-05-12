@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Prisma, PrismaClient, Role } from '@prisma/client';
+import { ClassStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 function bcryptRounds(): number {
@@ -22,6 +23,56 @@ export async function createStudio(
     select: { id: true, slug: true },
   });
   return studio;
+}
+
+export async function createClassTemplate(
+  prisma: PrismaClient,
+  studioId: string,
+  opts: {
+    name?: string;
+    durationMinutes?: number;
+    defaultCapacity?: number;
+    description?: string | null;
+    deletedAt?: Date | null;
+  } = {},
+) {
+  return prisma.classTemplate.create({
+    data: {
+      studioId,
+      name: opts.name ?? 'Yoga',
+      durationMinutes: opts.durationMinutes ?? 60,
+      defaultCapacity: opts.defaultCapacity ?? 12,
+      description: opts.description ?? null,
+      deletedAt: opts.deletedAt ?? null,
+    },
+  });
+}
+
+export async function createScheduledClass(
+  prisma: PrismaClient,
+  studioId: string,
+  templateId: string,
+  opts: {
+    startsAt?: Date;
+    endsAt?: Date;
+    capacity?: number;
+    status?: ClassStatus;
+    instructorId?: string | null;
+  } = {},
+) {
+  const startsAt = opts.startsAt ?? new Date('2030-06-15T12:00:00.000Z');
+  const endsAt = opts.endsAt ?? new Date('2030-06-15T13:00:00.000Z');
+  return prisma.scheduledClass.create({
+    data: {
+      studioId,
+      classTemplateId: templateId,
+      capacity: opts.capacity ?? 10,
+      status: opts.status ?? ClassStatus.SCHEDULED,
+      startsAt,
+      endsAt,
+      instructorId: opts.instructorId ?? null,
+    },
+  });
 }
 
 export async function createUserWithPassword(

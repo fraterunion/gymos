@@ -18,6 +18,12 @@ Stored on `studio_memberships.role`. Values (Prisma / PostgreSQL):
 
 **`STAFF`** was added in migration `20260512120000_phase2a_role_staff_and_plan_class_credits` (`ALTER TYPE "Role" ADD VALUE 'STAFF'`). Use it for staff-scoped directory/read endpoints as defined in the API layer.
 
+## Class templates and schedule
+
+- **ClassTemplate** (`class_templates`) — `studio_id`, `name`, `duration_minutes`, `description`, **`default_capacity`** (default seat count for new scheduled classes), **`color`** (optional UI token), **`default_instructor_id`** (optional FK to `users`; must be an active member of the same studio in API rules), `deleted_at` (soft delete). Migration: `20260512140000_phase2b_class_template_schedule_fields`.
+
+- **ScheduledClass** (`scheduled_classes`) — `studio_id`, `class_template_id`, optional `instructor_id`, `starts_at`, `ends_at`, `capacity`, `status` (`ClassStatus`), **`cancel_reason`** (optional text when cancelled via API). **No hard delete** in Phase 2B: cancel flow sets `status = CANCELLED` and optional `cancel_reason`.
+
 ## Membership plans
 
 - **MembershipPlan** (`membership_plans`) — Belongs to `studio_id`. Fields include `price_cents`, `currency`, `billing_interval`, `active`, `deleted_at` (soft delete).
@@ -29,14 +35,18 @@ Column **`class_credits`** (`classCredits` in Prisma) was added in the same migr
 - **`NULL`** — treated as **unlimited** class credits for the plan (product semantics in the API).
 - **Non-null** — finite credit allowance for the plan.
 
-## Subscriptions and scheduling (summary)
+## Subscriptions (summary)
 
-- **Subscription**, **ClassTemplate**, **ScheduledClass**, **Booking**, **Attendance**, etc. exist in Prisma for future phases. Row-level **`studio_id`** scoping applies where modeled.
+- **Subscription** — Belongs to `studio_id` / member / plan; Stripe ids stored but not exposed on member directory endpoints.
+
+## Other domain tables
+
+- **Booking**, **WaitlistEntry**, **Attendance**, etc. exist in Prisma for later phases. Row-level **`studio_id`** scoping applies where modeled.
 
 ## Critical constraints
 
 - Studio-owned rows are tied to `studio_id` where applicable.
-- **No hard deletes** for tenant-facing entities in Phase 2A flows; use `deleted_at` (and plan `active` flags where applicable).
+- **No hard deletes** for tenant-facing entities in Phase 2A/2B flows; use `deleted_at` (and plan `active` flags where applicable). Scheduled classes are **cancelled in place** (`status = CANCELLED`), not removed.
 
 ## Related docs
 

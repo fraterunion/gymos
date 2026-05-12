@@ -165,6 +165,86 @@ All paths: `/studios/:studioId/members`.
 
 ---
 
+## Phase 2B — Class templates and schedule
+
+All paths are under `/studios/:studioId/...`. **`studioId` is always from the URL.** No booking, waitlist, or payment logic.
+
+### Class templates — `/studios/:studioId/class-templates`
+
+#### `GET /studios/:studioId/class-templates`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Response:** `200` — Non–soft-deleted templates for the studio, including optional **`defaultInstructor`** summary (id, email, firstName, lastName, phone only — no secrets).
+
+#### `POST /studios/:studioId/class-templates`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER** or **ADMIN**.
+- **Body:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|--------|
+| `name` | string | yes | Trimmed. |
+| `description` | string \| null | no | Trimmed. |
+| `durationMinutes` | int | yes | 1–1440. |
+| `defaultCapacity` | int | no | Default **10** when omitted; used when creating scheduled classes without explicit capacity. |
+| `color` | string \| null | no | Short token (e.g. hex), max 32 chars. |
+| `instructorId` | string \| null | no | Maps to template default instructor; if set, user must have an **active** `StudioMembership` in this studio and not be soft-deleted. |
+
+- **Response:** `201` — Created `ClassTemplate`.
+
+#### `PATCH /studios/:studioId/class-templates/:templateId`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER** or **ADMIN**.
+- **Body:** Partial; safe fields only: `name`, `description`, `durationMinutes`, `defaultCapacity`, `color`, `instructorId` (including `null` to clear default instructor).
+- **Response:** `200` — Updated template.
+- **Errors:** `404` if template missing, wrong studio, or already soft-deleted.
+
+#### `DELETE /studios/:studioId/class-templates/:templateId`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER** or **ADMIN**.
+- **Response:** `204` — Soft delete (`deletedAt` set). No hard delete.
+
+---
+
+### Schedule — `/studios/:studioId/schedule`
+
+#### `GET /studios/:studioId/schedule`
+
+- **Auth:** JWT + `StudioMemberGuard`.
+- **Query (required):** `from`, `to` — ISO 8601 date strings (`IsDateString`); **`from` &lt; `to`**.
+- **Semantics:** Returns scheduled classes whose interval **overlaps** `[from, to)`, scoped to `studioId`, and whose **template is not soft-deleted**.
+- **Response:** `200` — Array of scheduled classes with **`classTemplate`** summary (id, name, durationMinutes, description, defaultCapacity, color) and **`instructor`** summary (or `null`) — no `passwordHash` / `stripeCustomerId`.
+
+#### `POST /studios/:studioId/schedule`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER**, **ADMIN**, or **STAFF**.
+- **Body:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|--------|
+| `templateId` | string | yes | Must belong to this studio and not be soft-deleted. |
+| `startTime` | datetime (ISO) | yes | Parsed to `Date`. |
+| `endTime` | datetime (ISO) | yes | Must be **after** `startTime`. |
+| `capacity` | int | no | If omitted, uses template **`defaultCapacity`**. Must be **&gt; 0** when set or defaulted. |
+| `instructorId` | string \| null | no | If set, user must be an active member of this studio (not soft-deleted). |
+
+- **Response:** `201` — Created `ScheduledClass` with `status: SCHEDULED`.
+
+#### `PATCH /studios/:studioId/schedule/:scheduledClassId`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER**, **ADMIN**, or **STAFF**.
+- **Body:** Partial; safe fields: `startTime`, `endTime`, `capacity` (&gt; 0), `instructorId` (nullable), `status` (`ClassStatus`), `cancelReason` (nullable).
+- **Validation:** Resulting (or existing) window must have **start &lt; end**. Tenant: row must belong to `studioId`.
+- **Response:** `200` — Updated row. No hard delete.
+
+#### `DELETE /studios/:studioId/schedule/:scheduledClassId`
+
+- **Auth:** JWT + `StudioMemberGuard` + **OWNER** or **ADMIN** only.
+- **Body (optional):** `{ "cancelReason"?: string }` — omit body or send `{}` if no reason.
+- **Response:** `204` — Sets `status` to **`CANCELLED`**; sets **`cancelReason`** when provided in body. Row remains in DB.
+
+---
+
 ## Phase 1 — Studio access smoke (internal / legacy)
 
 | Method | Path | Auth |

@@ -122,6 +122,7 @@ model User {
   payments            Payment[]
   refreshTokens       RefreshToken[]
   instructedClasses   ScheduledClass[]   @relation("ScheduledClassInstructor")
+  defaultClassTemplates ClassTemplate[] @relation("ClassTemplateDefaultInstructor")
 
   @@map("users")
 }
@@ -193,19 +194,24 @@ model Subscription {
 }
 
 model ClassTemplate {
-  id              String    @id @default(cuid())
-  studioId        String    @map("studio_id")
-  name            String
-  durationMinutes Int       @map("duration_minutes")
-  description     String?
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-  deletedAt       DateTime? @map("deleted_at")
+  id                   String    @id @default(cuid())
+  studioId             String    @map("studio_id")
+  name                 String
+  durationMinutes      Int       @map("duration_minutes")
+  description          String?
+  defaultCapacity      Int       @default(10) @map("default_capacity")
+  color                String?
+  defaultInstructorId  String?   @map("default_instructor_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  deletedAt            DateTime? @map("deleted_at")
 
-  studio  Studio            @relation(fields: [studioId], references: [id], onDelete: Restrict)
-  classes ScheduledClass[]
+  studio             Studio            @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  defaultInstructor  User?             @relation("ClassTemplateDefaultInstructor", fields: [defaultInstructorId], references: [id], onDelete: SetNull)
+  classes            ScheduledClass[]
 
   @@index([studioId])
+  @@index([defaultInstructorId])
   @@map("class_templates")
 }
 
@@ -218,6 +224,7 @@ model ScheduledClass {
   endsAt          DateTime    @map("ends_at")
   capacity        Int
   status          ClassStatus
+  cancelReason    String?     @map("cancel_reason")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
 
