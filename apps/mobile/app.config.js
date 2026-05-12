@@ -40,7 +40,7 @@ function isClientProfile(profile) {
 
 function requireOrDefault(
   profile,
-  key: keyof typeof LOCAL_TEMPLATE_DEFAULTS,
+  key,
 ) {
   const raw = process.env[key]?.trim();
   if (raw) return raw;
