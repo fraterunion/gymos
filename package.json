@@ -9,7 +9,8 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test --filter=api",
     "test:e2e": "turbo run test:e2e --filter=api",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "mobile:config:print": "pnpm --filter mobile config:print"
   },
   "devDependencies": {
     "turbo": "^2.5.4",

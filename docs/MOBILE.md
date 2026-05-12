@@ -1,6 +1,6 @@
 # GymOS mobile (Expo)
 
-White-label member app under `apps/mobile`. Each gym ships its own build; **studio identity** comes from `EXPO_PUBLIC_STUDIO_SLUG` plus **`GET /api/v1/public/studios/:slug/branding`** on boot.
+White-label member app under `apps/mobile`. Each gym ships its own build; **native identity** (name, scheme, bundle ids, icons) comes from **`app.config.ts`** + **`apps/mobile/env/.env.<profile>`** (see `docs/WHITE_LABEL_BUILDS.md`). **Studio identity in-app** still comes from `EXPO_PUBLIC_STUDIO_SLUG` plus **`GET /api/v1/public/studios/:slug/branding`** on boot.
 
 ## Stack
 
@@ -16,7 +16,15 @@ White-label member app under `apps/mobile`. Each gym ships its own build; **stud
 | `EXPO_PUBLIC_API_URL` | API origin, e.g. `https://api.example.com` or `http://localhost:3000` |
 | `EXPO_PUBLIC_STUDIO_SLUG` | Public studio slug for branding boot and tenant selection (must match a studio the user belongs to) |
 
-Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev. Values are inlined at **bundle** time; change requires restart / rebuild.
+### White-label build profiles (Phase 5A)
+
+- **`WHITELABEL_PROFILE`** — Selects `apps/mobile/env/.env.<profile>` before `apps/mobile/.env`. Default **`local`** uses safe template defaults for native shell fields (internal dev only).
+- **Native shell variables** — `APP_DISPLAY_NAME`, `APP_SCHEME`, `IOS_BUNDLE_IDENTIFIER`, `ANDROID_PACKAGE`, `APP_ICON_PATH`, `APP_SPLASH_PATH`, `APP_ADAPTIVE_ICON_PATH`, optional `EXPO_SLUG`. Documented in **`docs/WHITE_LABEL_BUILDS.md`** and **`docs/ENV_VARS.md`**.
+- **Examples** — `apps/mobile/env/.env.local.example`, `.env.ares.example`, `.env.pilates-toluca.example` (copy to drop `.example`).
+
+Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev, or use **`env/.env.local`** with `WHITELABEL_PROFILE=local`. Values are inlined at **bundle** time for `EXPO_PUBLIC_*`; native config is resolved when Expo loads **`app.config.ts`**.
+
+**Verify config:** `pnpm --filter mobile config:print`
 
 ## Boot sequence
 
@@ -31,7 +39,7 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 
 - **Match** — `MemberStudioContext` exposes the row; `StudioActivityProvider` mounts with that **`studio.id`** for all schedule/booking/waitlist calls.
 - **No match** — the user is not a member of this studio build: a full-screen **membership required** state is shown (support email from branding when present, **Try again**, **Sign out**). No schedule data is fetched.
-- **Branding vs membership** — `SelectedStudioContext` + `BrandingContext` still describe the **app shell** (name, colors, logo) from public branding; **API studio timezone** for the matched row is preferred when formatting schedule times.
+- **Branding vs membership** — `SelectedStudioContext` + `BrandingContext` describe the **in-app shell** (name, colors, logo) from public branding; the **home screen / store listing name** comes from **`APP_DISPLAY_NAME`** in the native build (`docs/WHITE_LABEL_BUILDS.md`). **API studio timezone** for the matched row is preferred when formatting schedule times.
 
 ## Auth & API client
 
@@ -57,7 +65,7 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 - **Tab** — **`/(app)/(tabs)/membership`** lists active plans, shows **your subscription** from **`GET /studios/:studioId/members/me`** when present, and exposes **Subscribe** (per plan) and **Manage billing**. Branding uses **`BrandingContext`** (`primaryColor`, `appDisplayName`); user-facing copy never references internal product codenames.
 - **Stripe Checkout** — **`POST .../membership-plans/:planId/checkout`** returns **`{ url }`**; the app opens it with **`Linking.openURL`**. The app does **not** treat the return URL alone as proof of payment; **`/(app)/billing/success`** explains webhook confirmation and refreshes data from the server.
 - **Billing portal** — **`POST .../billing-portal`**; same **`Linking.openURL`** pattern. **`400`** (e.g. no Stripe customer yet) is shown inline under **Manage billing**.
-- **Deep links (Phase 4C)** — Routes **`/(app)/billing/success`**, **`/(app)/billing/cancel`**, **`/(app)/billing/return`**. Configure the API’s **`STRIPE_SUCCESS_URL`**, **`STRIPE_CANCEL_URL`**, and **`STRIPE_BILLING_PORTAL_RETURN_URL`** to absolute URLs that open your **Expo `scheme`** (see `apps/mobile/app.json` → `expo.scheme`; white-label builds override per app). Path segments are **`billing/success`**, **`billing/cancel`**, **`billing/return`**. Example for **this repository’s template scheme only** (replace with your shipped scheme): `gymos://billing/success`, `gymos://billing/cancel`, `gymos://billing/return`. To print the exact strings for the current dev client, use **`stripeMobileReturnUrlsFromExpoLinking()`** in `lib/billing/stripeReturnUrlHelpers.ts` (e.g. temporary log in Membership).
+- **Deep links (Phase 4C)** — Routes **`/(app)/billing/success`**, **`/(app)/billing/cancel`**, **`/(app)/billing/return`**. Configure the API’s **`STRIPE_SUCCESS_URL`**, **`STRIPE_CANCEL_URL`**, and **`STRIPE_BILLING_PORTAL_RETURN_URL`** to absolute URLs that use the built app’s **`APP_SCHEME`** from **`app.config.ts`** (see **`docs/WHITE_LABEL_BUILDS.md`**). Path segments are **`billing/success`**, **`billing/cancel`**, **`billing/return`**. Example for **template `local` defaults only**: `gymos://billing/success`, `gymos://billing/cancel`, `gymos://billing/return`. To print the exact strings for the current dev client, use **`stripeMobileReturnUrlsFromExpoLinking()`** in `lib/billing/stripeReturnUrlHelpers.ts` (e.g. temporary log in Membership).
 - **After Stripe (success / portal return)** — On focus, those screens call **`refreshBillingClientState`** (membership plans + **`members/me`** + **`StudioActivityContext.refresh()`**). **Cancel** is informational only (optional light refresh removed to avoid noise).
 - **Fallback** — If the OS returns to the app without firing a deep link, Membership still arms an **`AppState`** refresh after opening Checkout or the portal (Phase 4B).
 - **Booking blocked** — If **`POST .../bookings`** or waitlist join returns **`403`** with a message containing **`Active subscription required`**, the class screen shows **`SubscriptionRequiredPanel`** with a CTA to the Membership tab.

@@ -43,10 +43,26 @@ Expected patterns once auth and API URL exist:
 
 | Variable | Purpose |
 |----------|---------|
-| `EXPO_PUBLIC_API_URL` | Base URL for native client. |
-| `EXPO_PUBLIC_STUDIO_SLUG` | Tenant slug for branding + studio match. |
+| `EXPO_PUBLIC_API_URL` | Base URL for native client (Metro bundle). |
+| `EXPO_PUBLIC_STUDIO_SLUG` | Tenant slug for branding fetch + `me/studios` match. |
 
-**Stripe return URLs (server-side, not Expo env):** The API’s `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, and `STRIPE_BILLING_PORTAL_RETURN_URL` must match how users return from Stripe. For native builds, that is typically `<scheme>://billing/success` (and `cancel` / `return`) where `<scheme>` is `expo.scheme` in `apps/mobile/app.json` (overridden per white-label app). Use `stripeMobileReturnUrlsFromExpoLinking()` from `apps/mobile/lib/billing/stripeReturnUrlHelpers.ts` in a dev build to log the exact strings for your environment.
+### Build-time native identity (`apps/mobile`, Expo config)
+
+These are read by **`app.config.ts`** when Expo resolves the config (not inlined by Metro unless also prefixed with `EXPO_PUBLIC_`). Use `apps/mobile/env/.env.<WHITELABEL_PROFILE>` — see **`docs/WHITE_LABEL_BUILDS.md`**.
+
+| Variable | Purpose |
+|----------|---------|
+| `WHITELABEL_PROFILE` | Selects `env/.env.<profile>` (default **`local`** = template-safe native defaults for dev only). |
+| `APP_DISPLAY_NAME` | Native app display name (home screen, task switcher). **Required** for non-`local` profiles. |
+| `APP_SCHEME` | URL scheme for deep links; must align with API Stripe return URLs. **Required** for non-`local` profiles. |
+| `IOS_BUNDLE_IDENTIFIER` | iOS bundle id. **Required** for non-`local` profiles; must be unique per client. |
+| `ANDROID_PACKAGE` | Android application id. **Required** for non-`local` profiles; must be unique per client. |
+| `APP_ICON_PATH` | App icon path relative to `apps/mobile/`. **Required** for non-`local` profiles. |
+| `APP_SPLASH_PATH` | Splash image path relative to `apps/mobile/`. **Required** for non-`local` profiles. |
+| `APP_ADAPTIVE_ICON_PATH` | Android adaptive icon foreground path relative to `apps/mobile/`. **Required** for non-`local` profiles. |
+| `EXPO_SLUG` | Expo project slug (optional; defaults for `local` only). |
+
+**Stripe return URLs (server-side, not Expo env):** The API’s `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, and `STRIPE_BILLING_PORTAL_RETURN_URL` must match how users return from Stripe. For native builds, that is typically `<APP_SCHEME>://billing/success` (and `cancel` / `return`) where **`APP_SCHEME`** is set for that client in `apps/mobile/env/.env.<profile>` (resolved via **`app.config.ts`**). Use `stripeMobileReturnUrlsFromExpoLinking()` from `apps/mobile/lib/billing/stripeReturnUrlHelpers.ts` in a dev build to log the exact strings for your environment.
 
 ## Local development
 

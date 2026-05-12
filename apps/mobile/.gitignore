@@ -33,6 +33,10 @@ yarn-error.*
 # local env files
 .env*.local
 
+# White-label tenant env (keep *.example tracked)
+env/.env.*
+!env/.env.*.example
+
 # typescript
 *.tsbuildinfo
 
