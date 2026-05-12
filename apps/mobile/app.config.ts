@@ -108,6 +108,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       favicon: icon,
     },
     plugins: ['expo-router'],
+    updates: {
+      url: "https://u.expo.dev/9f5697a5-b5cb-425b-850f-fa2f61068f20",
+    },
+    runtimeVersion: {
+      policy: "appVersion",
+    },
     experiments: {
       typedRoutes: true,
     },
