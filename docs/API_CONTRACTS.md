@@ -30,6 +30,8 @@ No Stripe, mobile UI, app store builds, uploads, or refactors of booking/waitlis
 - **One backend**, many branded apps: runtime identity comes from **`slug`** + **`GET /public/studios/:slug/branding`** (and authenticated branding admin routes).
 - **Future**: EAS / CI may generate per-tenant native projects from these fields; not in 3A.
 
+**Mobile (Phase 3B):** the member app reads **`EXPO_PUBLIC_STUDIO_SLUG`** and calls this endpoint on launch before auth. See **`docs/MOBILE.md`**.
+
 ### Public branding (boot)
 
 #### `GET /public/studios/:slug/branding`

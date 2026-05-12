@@ -41,6 +41,14 @@ Future / optional packages: `packages/ui`, CI templates, Docker compose variants
 - **Studio-scoped** `GET` / `PATCH /api/v1/studios/:studioId/branding` is **OWNER** / **ADMIN** only for read/update of the same fields plus `id` for admin forms.
 - **Future**: EAS / native build pipelines can consume these fields to generate per-client app config; not implemented in 3A.
 
+## Mobile member app (Phase 3B)
+
+- **`apps/mobile`** is the Expo Router + React Native + NativeWind client. It is **not** a generic Expo demo: routing is split into **branding boot** → **auth** → **protected tabs** (home/profile placeholders only in 3B).
+- **White-label boot**: `EXPO_PUBLIC_STUDIO_SLUG` selects the tenant; **`GET /api/v1/public/studios/:slug/branding`** (no auth) drives **app name**, **primary/secondary colors**, and optional **logo URL** in UI. Missing env or failed fetch shows a dedicated error screen with retry.
+- **Auth**: Same Phase 1 auth API as admin (`/auth/login`, `/auth/register`, `/auth/refresh`, `/auth/logout`, `/auth/me`). **Access JWT** lives **only in memory**; **refresh token** is stored with **Expo SecureStore**. The shared **`lib/api/client.ts`** attaches `Authorization: Bearer`, refreshes once on **401** (single-flight, no infinite loop), and clears the session if refresh fails.
+- **Studio context**: The app build is bound to one slug; **`SelectedStudioProvider`** exposes slug, display name, and timezone from branding + API for downstream features.
+- **Documentation**: `docs/MOBILE.md` describes env vars, boot order, and layout map.
+
 ## Cross-cutting concerns
 
 - **Idempotency** for Stripe webhooks and payment-adjacent mutations.
@@ -57,4 +65,4 @@ Check-in and QR flows use short-lived, signed tokens issued by the API (`JWT_QR_
 
 ## Documentation map
 
-Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership.
+Product and process docs live under `docs/`. This file is the structural source of truth; `DATABASE_SCHEMA.md` and `ENV_VARS.md` complement it for data and configuration ownership. **`docs/MOBILE.md`** covers the Expo app (env, boot, auth, routing).

@@ -8,7 +8,9 @@
     "BCRYPT_ROUNDS",
     "JWT_ACCESS_TTL",
     "JWT_REFRESH_TTL_DAYS",
-    "PORT"
+    "PORT",
+    "EXPO_PUBLIC_API_URL",
+    "EXPO_PUBLIC_STUDIO_SLUG"
   ],
   "tasks": {
     "build": {
