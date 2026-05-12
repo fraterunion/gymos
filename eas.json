@@ -1,0 +1,54 @@
+{
+  "cli": {
+    "version": ">= 18.12.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "WHITELABEL_PROFILE": "local"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "WHITELABEL_PROFILE": "local"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "WHITELABEL_PROFILE": "local"
+      }
+    },
+    "preview-ares": {
+      "extends": "preview",
+      "env": {
+        "WHITELABEL_PROFILE": "ares"
+      }
+    },
+    "production-ares": {
+      "extends": "production",
+      "env": {
+        "WHITELABEL_PROFILE": "ares"
+      }
+    },
+    "preview-pilates-toluca": {
+      "extends": "preview",
+      "env": {
+        "WHITELABEL_PROFILE": "pilates-toluca"
+      }
+    },
+    "production-pilates-toluca": {
+      "extends": "production",
+      "env": {
+        "WHITELABEL_PROFILE": "pilates-toluca"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
