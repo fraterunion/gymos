@@ -1,6 +1,6 @@
 # Pilot release flow (recommended order)
 
-Step-by-step **operator runbook** for a pilot or demo **release candidate**. Pair with [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md), [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md), and [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
+Step-by-step **operator runbook** for a pilot or demo **release candidate**. Pair with [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`ARES_PILOT_DEPLOYMENT_PLAN.md`](./ARES_PILOT_DEPLOYMENT_PLAN.md) (concrete first ARES deploy on Neon / Railway / Vercel / EAS + Stripe test), [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md), [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md), and [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
 
 **Not in scope:** CI/CD automation, App Store / Play submission automation, push notifications.
 
@@ -25,6 +25,8 @@ Step-by-step **operator runbook** for a pilot or demo **release candidate**. Pai
 ---
 
 ## ARES Fitness example
+
+**Full stack execution plan:** [`ARES_PILOT_DEPLOYMENT_PLAN.md`](./ARES_PILOT_DEPLOYMENT_PLAN.md) (Phase 8A — Neon, Railway, Vercel, EAS `preview-ares`, Stripe test mode, smoke commands, QA + go/no-go).
 
 1. Seed includes **`ares-fitness`** slug; mobile **`WHITELABEL_PROFILE=ares`**, **`EXPO_PUBLIC_STUDIO_SLUG=ares-fitness`** ([`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md), `env/.env.ares.example`).
 2. EAS: **`preview-ares`** for internal pilot; API `CORS_ORIGIN` includes admin origin if desk is browser-based.
@@ -68,6 +70,7 @@ Use after each pilot session (support themes, bugs, stakeholder quotes). For a *
 ## Related docs
 
 - [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md) — freeze + sign-off.
+- [`ARES_PILOT_DEPLOYMENT_PLAN.md`](./ARES_PILOT_DEPLOYMENT_PLAN.md) — first real ARES pilot (stack + order + env).
 - [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md) — when and how to tag RC commits.
 - [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md) — pilot retro sections + go/no-go.
 - [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md) — if something breaks mid-pilot.
