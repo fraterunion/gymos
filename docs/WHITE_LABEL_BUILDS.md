@@ -11,6 +11,8 @@ Each gym ships its **own** App Store / Google Play listing from the shared codeb
 
 Changing **only** runtime branding does **not** require a new store binary. Changing **bundle id**, **package name**, **scheme**, or bundled **icon/splash** files requires a **new build** and usually a **new store listing** (same listing can receive updates only when the app id is unchanged).
 
+**Launch operations (Phase 5C):** use [`CLIENT_LAUNCH_CHECKLIST.md`](./CLIENT_LAUNCH_CHECKLIST.md) (end-to-end checklist) and [`STORE_METADATA_TEMPLATE.md`](./STORE_METADATA_TEMPLATE.md) (App Store / Play copy worksheet). **Store submission** itself stays a manual process outside this repo.
+
 ## Profiles and env files
 
 1. Choose a profile id (e.g. `local`, `ares`, `pilates-toluca`).

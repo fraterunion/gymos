@@ -66,6 +66,8 @@ These are read by **`app.config.ts`** when Expo resolves the config (not inlined
 
 **Stripe return URLs (server-side, not Expo env):** The API’s `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, and `STRIPE_BILLING_PORTAL_RETURN_URL` must match how users return from Stripe. For native builds, that is typically `<APP_SCHEME>://billing/success` (and `cancel` / `return`) where **`APP_SCHEME`** is set for that client in `apps/mobile/env/.env.<profile>` (resolved via **`app.config.ts`**). Use `stripeMobileReturnUrlsFromExpoLinking()` from `apps/mobile/lib/billing/stripeReturnUrlHelpers.ts` in a dev build to log the exact strings for your environment.
 
+**Client launch:** cross-platform checklist and store listing worksheet: [`CLIENT_LAUNCH_CHECKLIST.md`](./CLIENT_LAUNCH_CHECKLIST.md), [`STORE_METADATA_TEMPLATE.md`](./STORE_METADATA_TEMPLATE.md).
+
 ## Local development
 
 - Copy `apps/api/.env.example` to `.env` (gitignored) and fill placeholders locally.

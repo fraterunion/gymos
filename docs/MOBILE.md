@@ -30,6 +30,11 @@ Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev, or use **`e
 
 See **`docs/WHITE_LABEL_BUILDS.md` → EAS Build** for `eas.json` profiles (`development`, `preview`, `production`, `preview-ares`, `production-ares`, `preview-pilates-toluca`, `production-pilates-toluca`), login, secrets vs gitignored `env/`, and `pnpm --filter mobile eas:build:*` scripts. EAS is optional for local `expo export` / `pnpm build`.
 
+### Client launch & store metadata (Phase 5C)
+
+- **Checklist** — [`docs/CLIENT_LAUNCH_CHECKLIST.md`](./CLIENT_LAUNCH_CHECKLIST.md) (accounts, env, assets, Stripe, testing, approval gates). **Not** automated submission.
+- **Store copy template** — [`docs/STORE_METADATA_TEMPLATE.md`](./STORE_METADATA_TEMPLATE.md) (titles, descriptions, keywords, legal/support; **unique** copy per client).
+
 ## Boot sequence
 
 1. **Fonts / splash** — root `_layout.tsx`.
