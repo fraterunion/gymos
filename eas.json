@@ -26,7 +26,17 @@
     "preview-ares": {
       "extends": "preview",
       "env": {
-        "WHITELABEL_PROFILE": "ares"
+        "WHITELABEL_PROFILE": "ares",
+        "EXPO_PUBLIC_API_URL": "https://api-production-8a0e.up.railway.app",
+        "EXPO_PUBLIC_STUDIO_SLUG": "ares-fitness",
+        "APP_DISPLAY_NAME": "ARES Fitness",
+        "APP_SCHEME": "aresfitness",
+        "EXPO_SLUG": "gymos",
+        "IOS_BUNDLE_IDENTIFIER": "com.fraterunion.aresfitness",
+        "ANDROID_PACKAGE": "com.fraterunion.aresfitness",
+        "APP_ICON_PATH": "./assets/images/icon.png",
+        "APP_SPLASH_PATH": "./assets/images/splash-icon.png",
+        "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png"
       }
     },
     "production-ares": {
