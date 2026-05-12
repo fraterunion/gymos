@@ -62,6 +62,8 @@ These are read by **`app.config.ts`** when Expo resolves the config (not inlined
 | `APP_ADAPTIVE_ICON_PATH` | Android adaptive icon foreground path relative to `apps/mobile/`. **Required** for non-`local` profiles. |
 | `EXPO_SLUG` | Expo project slug (optional; defaults for `local` only). |
 
+**EAS:** `apps/mobile/eas.json` defines build profiles and per-profile `WHITELABEL_PROFILE`. Other variables for cloud builds must be set as **EAS Environment variables / secrets** (see `docs/WHITE_LABEL_BUILDS.md`).
+
 **Stripe return URLs (server-side, not Expo env):** The API’s `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, and `STRIPE_BILLING_PORTAL_RETURN_URL` must match how users return from Stripe. For native builds, that is typically `<APP_SCHEME>://billing/success` (and `cancel` / `return`) where **`APP_SCHEME`** is set for that client in `apps/mobile/env/.env.<profile>` (resolved via **`app.config.ts`**). Use `stripeMobileReturnUrlsFromExpoLinking()` from `apps/mobile/lib/billing/stripeReturnUrlHelpers.ts` in a dev build to log the exact strings for your environment.
 
 ## Local development

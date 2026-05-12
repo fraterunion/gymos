@@ -26,6 +26,10 @@ Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev, or use **`e
 
 **Verify config:** `pnpm --filter mobile config:print`
 
+### EAS Build profiles (Phase 5B)
+
+See **`docs/WHITE_LABEL_BUILDS.md` → EAS Build** for `eas.json` profiles (`development`, `preview`, `production`, `preview-ares`, `production-ares`, `preview-pilates-toluca`, `production-pilates-toluca`), login, secrets vs gitignored `env/`, and `pnpm --filter mobile eas:build:*` scripts. EAS is optional for local `expo export` / `pnpm build`.
+
 ## Boot sequence
 
 1. **Fonts / splash** — root `_layout.tsx`.
@@ -114,9 +118,10 @@ After sign-in, the app calls **`GET /api/v1/me/studios`** and picks the row whos
 | Class detail | `app/(app)/class/[classId]` |
 | Check-in QR | `app/(app)/check-in/[bookingId]` |
 | Billing return (Stripe) | `app/(app)/billing/success`, `cancel`, `return` (nested stack under `billing/_layout.tsx`) |
+| EAS Build profiles | `apps/mobile/eas.json` (see `docs/WHITE_LABEL_BUILDS.md`) |
 
 Out of scope for this doc’s historical “Phase 3” note: native in-app purchases, push, staff scanner UI, store submission automation, admin web, uploads. **Hosted Stripe Checkout + Customer Portal** and **native return deep links** (Phase 4B–4C) are implemented; PaymentSheet / Apple Pay in-app purchase flows remain out of scope.
 
 ## Commands
 
-From repo root: `pnpm --filter mobile dev` (Expo), or `pnpm --filter mobile build` (static web export). See root `package.json` / Turborepo for `lint` and `typecheck`.
+From repo root: `pnpm --filter mobile dev` (Expo), or `pnpm --filter mobile build` (static web export). EAS: `pnpm --filter mobile exec eas --help` and **`docs/WHITE_LABEL_BUILDS.md`**. See root `package.json` / Turborepo for `lint` and `typecheck`.

@@ -1,0 +1,62 @@
+{
+  "cli": {
+    "version": ">= 16.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development",
+      "ios": {
+        "simulator": true
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "WHITELABEL_PROFILE": "local"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "WHITELABEL_PROFILE": "local"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "env": {
+        "WHITELABEL_PROFILE": "local"
+      }
+    },
+    "preview-ares": {
+      "extends": "preview",
+      "channel": "preview-ares",
+      "env": {
+        "WHITELABEL_PROFILE": "ares"
+      }
+    },
+    "production-ares": {
+      "extends": "production",
+      "channel": "production-ares",
+      "env": {
+        "WHITELABEL_PROFILE": "ares"
+      }
+    },
+    "preview-pilates-toluca": {
+      "extends": "preview",
+      "channel": "preview-pilates-toluca",
+      "env": {
+        "WHITELABEL_PROFILE": "pilates-toluca"
+      }
+    },
+    "production-pilates-toluca": {
+      "extends": "production",
+      "channel": "production-pilates-toluca",
+      "env": {
+        "WHITELABEL_PROFILE": "pilates-toluca"
+      }
+    }
+  }
+}

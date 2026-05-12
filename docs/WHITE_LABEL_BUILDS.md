@@ -83,6 +83,119 @@ This prints a JSON summary: profile, `name`, `slug`, `scheme`, bundle id / packa
 2. **Env file** — Add `apps/mobile/env/.env.<profile>.example` (copy from `env/.env.ares.example` as a template) and fill client-specific values; commit the **`.example`** only, not secrets.
 3. **Assets** — Add icon, splash, and adaptive foreground under `apps/mobile/assets/...` and point `APP_*_PATH` at them.
 4. **API** — Set `EXPO_PUBLIC_API_URL`, studio slug, and Stripe return URLs to match `APP_SCHEME` + billing paths.
-5. **Build** — Run `WHITELABEL_PROFILE=<profile> pnpm exec expo prebuild` (or EAS Build with the same env). Submit the generated native projects per store process (automation out of scope).
+5. **Build** — Local: `WHITELABEL_PROFILE=<profile> pnpm exec expo prebuild`. Cloud: **`eas build`** with a profile from **`apps/mobile/eas.json`** (see `docs/WHITE_LABEL_BUILDS.md` → EAS); mirror env in EAS secrets. Store submission automation is out of scope.
 
 Runtime colors and marketing logos that change without a store update remain on the **branding** API for that studio slug.
+
+---
+
+## EAS Build (Phase 5B)
+
+Configuration lives in **`apps/mobile/eas.json`**. It does **not** run builds by itself; you run the EAS CLI locally or from a future CI job.
+
+### Install and log in
+
+1. Install the CLI (already a **devDependency** of `apps/mobile`): `pnpm --filter mobile exec eas --version`
+2. Log in once per machine: `pnpm --filter mobile exec eas login` (Expo account with access to the EAS project).
+
+Do **not** commit tokens. CI can use `EXPO_TOKEN` later (out of scope for this phase).
+
+### Link the app to an EAS project (first time)
+
+From `apps/mobile` (or with `--filter mobile`), run **`eas init`** when prompted to create or link an Expo project. That writes **`extra.eas.projectId`** into app config / project state—run interactively when you are ready; this repo does not require a project id for `pnpm build` / `expo export`.
+
+We intentionally do **not** run `eas build:configure --non-interactive` in automation here.
+
+### Build profiles (`eas.json`)
+
+| Profile | Intent |
+|---------|--------|
+| **`development`** | Dev client (`developmentClient: true`), internal distribution, **iOS simulator** + Android **APK**. Sets `WHITELABEL_PROFILE=local`. |
+| **`preview`** | Internal preview builds (TestFlight internal / installable Android). `WHITELABEL_PROFILE=local` unless you override. |
+| **`production`** | Store-facing pipeline. `WHITELABEL_PROFILE=local` for the template; real gyms use client profiles below. |
+| **`preview-ares`** / **`production-ares`** | Same as preview/production, with **`WHITELABEL_PROFILE=ares`**. |
+| **`preview-pilates-toluca`** / **`production-pilates-toluca`** | Same with **`WHITELABEL_PROFILE=pilates-toluca`**. |
+
+`extends` reuses the base profile’s options; **`env`** adds variables available when **`app.config.ts`** runs on EAS builders.
+
+### `WHITELABEL_PROFILE` and secrets on EAS
+
+`eas.json` only sets **`WHITELABEL_PROFILE`** per client profile. **`app.config.ts`** still needs every **native** and **`EXPO_PUBLIC_*`** variable (see tables above).
+
+- **Gitignored files** such as `env/.env.ares` are **not** uploaded to EAS by default. Cloud builds will **not** see them unless you use a different workflow.
+- For **preview/production** client builds, configure the same variables in **EAS Environment variables** or **EAS Secrets** (Expo dashboard: Project → Environment variables, or `eas env:create` / `eas secret:create`). Names must match what `app.config.ts` reads (`APP_DISPLAY_NAME`, `APP_SCHEME`, `EXPO_PUBLIC_API_URL`, etc.).
+
+After secrets exist, use the **Expo dashboard** (Project → **Environment variables** / **Secrets**) or your installed **`eas-cli`** commands as the source of truth—not committed `.env` files.
+
+### Stripe and `APP_SCHEME`
+
+Set API **`STRIPE_*_URL`** values to the **same `APP_SCHEME`** as the binary you ship (see [Stripe return URLs](#stripe-return-urls-and-app_scheme)). Preview and production binaries for the same client must use the **same** scheme if they share one Stripe mode; if you use different schemes per track, align API env per environment.
+
+### Verify config before `eas build`
+
+Always print resolved native identity locally (with the same profile and env files you expect EAS to mirror):
+
+```bash
+pnpm --filter mobile config:print
+pnpm --filter mobile eas:config:ares
+pnpm --filter mobile eas:config:pilates
+```
+
+### Example commands (manual; do not run in CI without credentials)
+
+**iOS preview (template `local`):**
+
+```bash
+pnpm --filter mobile eas:build:ios:preview
+```
+
+**Android preview (template `local`):**
+
+```bash
+pnpm --filter mobile eas:build:android:preview
+```
+
+**Production (template `local`):**
+
+```bash
+pnpm --filter mobile eas:build:ios:production
+pnpm --filter mobile eas:build:android:production
+```
+
+**Client preview (examples in `package.json`):**
+
+```bash
+pnpm --filter mobile eas:build:ios:ares
+pnpm --filter mobile eas:build:android:ares
+pnpm --filter mobile eas:build:ios:pilates
+pnpm --filter mobile eas:build:android:pilates
+```
+
+**Client production** (swap profile name):
+
+```bash
+pnpm --filter mobile exec eas build --platform ios --profile production-ares
+pnpm --filter mobile exec eas build --platform android --profile production-pilates-toluca
+```
+
+### Bundle id / package immutability (again)
+
+EAS does not change Apple/Google rules: **changing `IOS_BUNDLE_IDENTIFIER` or `ANDROID_PACKAGE` after users install the app is treated as a new app.** Keep one pair per brand per store listing.
+
+### Scripts reference (`apps/mobile/package.json`)
+
+| Script | Purpose |
+|--------|---------|
+| `config:print` | Resolved Expo config (default / current env). |
+| `eas:config:ares` | `config:print` with `WHITELABEL_PROFILE=ares` (needs `env/.env.ares` locally). |
+| `eas:config:pilates` | Same for `pilates-toluca`. |
+| `eas:build:ios:ares` | `eas build --platform ios --profile preview-ares` |
+| `eas:build:android:ares` | `eas build --platform android --profile preview-ares` |
+| `eas:build:ios:pilates` | `eas build --platform ios --profile preview-pilates-toluca` |
+| `eas:build:android:pilates` | `eas build --platform android --profile preview-pilates-toluca` |
+| `eas:build:ios:preview` | Base **preview** profile, iOS. |
+| `eas:build:android:preview` | Base **preview** profile, Android. |
+| `eas:build:ios:production` | Base **production** profile, iOS. |
+| `eas:build:android:production` | Base **production** profile, Android. |
+
+All `eas build` commands require **EAS login** and a linked project when you actually run them; they are not executed in this repo’s validation scripts.
