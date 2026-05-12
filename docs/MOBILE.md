@@ -55,7 +55,12 @@ See **`docs/WHITE_LABEL_BUILDS.md` → EAS Build** for `eas.json` profiles (`dev
 ### Release candidate & pilot flow (Phase 7B)
 
 - **RC freeze + sign-off** — [`docs/RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
-- **Ordered steps** (reset → migrate → smoke → EAS preview → TestFlight → walkthrough) — [`docs/PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
+- **Ordered steps** (reset → migrate → smoke → EAS preview → TestFlight → RC git tag → walkthrough) — [`docs/PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
+
+### RC tagging & pilot retro (Phase 7C)
+
+- **Git tags for RC baselines** — [`docs/RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md).
+- **Pilot retro template** — [`docs/PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md).
 
 ## Boot sequence
 

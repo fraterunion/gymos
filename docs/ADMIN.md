@@ -66,3 +66,8 @@ From repo root: `pnpm --filter admin dev`, `pnpm --filter admin build`, `pnpm --
 
 - **RC checklist** — [`docs/RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
 - **Pilot runbook** — [`docs/PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
+
+### RC tagging & pilot retro (Phase 7C)
+
+- **Git tags for RC baselines** — [`docs/RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md).
+- **Pilot retro template** — [`docs/PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md).

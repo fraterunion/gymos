@@ -2,7 +2,7 @@
 
 Use this when freezing a **pilot or demo release candidate (RC)**—not full public App Store launch. Goal: **discipline**, **known-good env**, and **launch confidence** without new product scope.
 
-**Related:** [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) (ordered runbook), [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md) (functional QA), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) (staging/prod cutover), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md), [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md), [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md), [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md).
+**Related:** [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) (ordered runbook), [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md) (git tag naming + when to tag), [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md) (structured pilot retro), [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md) (functional QA), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md) (staging/prod cutover), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md), [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md), [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md), [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md).
 
 **Note:** [`CLIENT_LAUNCH_CHECKLIST.md`](./CLIENT_LAUNCH_CHECKLIST.md) “Phase 7 — Release” is **store listing / manual submission** focus; this RC doc is **engineering + ops** readiness before widening a pilot.
 
@@ -10,7 +10,8 @@ Use this when freezing a **pilot or demo release candidate (RC)**—not full pub
 
 ## 1. Feature freeze
 
-- [ ] **No new scope** — only fixes and doc updates since RC tag; product backlog items deferred are written down.
+- [ ] **No new scope** — once the **RC git tag** is pushed (if you use tags), only hotfixes on top of that baseline; defer other work ([`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md)). Backlog deferrals written down.
+- [ ] **RC git tag** (recommended) — annotated tag per [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md), `git push origin <tag>`, tag name recorded in sign-off; **or** explicit waiver if you track builds by EAS id only.
 - [ ] **Changelog / delta** — short list of commits or PRs since last pilot (for stakeholders and support).
 - [ ] **Known bugs** — P0/P1 issues triaged; show-stoppers either fixed or explicitly listed under [Known limitations](#12-known-limitations-accepted-before-release).
 
@@ -111,11 +112,11 @@ Document anything stakeholders must **not** expect in this RC (examples: no push
 | Pilot / studio contact | | | |
 | Optional: exec sponsor | | | |
 
-**RC identifier:** (e.g. git tag `rc-pilot-2026-05-12`, EAS build id, or release name)
+**RC identifier:** (git tag per [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md), e.g. `rc-pilot-ares-v1`, plus EAS build id or release name)
 
 ---
 
 ## Recommended next phase
 
-- **Post-pilot retro** — capture metrics and support themes in `PILOT_RELEASE_FLOW.md` post-demo section.
+- **Post-pilot retro** — copy [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md) for a full structured retro; keep a short log in [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) post-demo table for quick session notes.
 - **Hardening** — optional Sentry, synthetic `smoke:health` from outside the host ([`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md)).

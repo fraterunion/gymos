@@ -211,4 +211,9 @@ Target layout (**Railway API**, **Neon DB**, **Vercel admin**, **EAS mobile**, *
 ### Release candidate & pilot flow (Phase 7B)
 
 - **RC freeze & sign-off** — [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
-- **Ordered pilot runbook** — [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) (reset → seed → build → migrate → smoke → Stripe → admin → EAS preview → TestFlight → walkthrough).
+- **Ordered pilot runbook** — [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md) (reset → seed → build → migrate → smoke → Stripe → admin → EAS preview → TestFlight → RC git tag → walkthrough).
+
+### RC tagging & pilot retro (Phase 7C)
+
+- **Git tag discipline** — [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md).
+- **Structured retro** — [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md).

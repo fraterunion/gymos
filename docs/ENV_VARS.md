@@ -74,7 +74,7 @@ These are read by **`app.config.ts`** when Expo resolves the config (not inlined
 
 ## Production & pilot (Phase 6A)
 
-Reference hosts (**Railway / Neon / Vercel / EAS / Stripe**) and runbooks: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md). **Pilot RC:** [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
+Reference hosts (**Railway / Neon / Vercel / EAS / Stripe**) and runbooks: [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md), [`PRODUCTION_CHECKLIST.md`](./PRODUCTION_CHECKLIST.md), [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md), [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md). **Pilot RC:** [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md). **RC tags & retro:** [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md), [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md).
 
 **Local / private pilot data:** [`DEMO_ENVIRONMENT.md`](./DEMO_ENVIRONMENT.md) (Prisma seed, demo password, reset notes).
 

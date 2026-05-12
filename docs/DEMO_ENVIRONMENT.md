@@ -139,6 +139,11 @@ pnpm --filter api demo:reset-help
 - **RC checklist** — [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md).
 - **Ordered pilot runbook** — [`PILOT_RELEASE_FLOW.md`](./PILOT_RELEASE_FLOW.md).
 
+## RC tagging & pilot retro (Phase 7C)
+
+- **Git tag discipline** — [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md).
+- **Structured retro** — [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md).
+
 ---
 
 ## Recommended next phase

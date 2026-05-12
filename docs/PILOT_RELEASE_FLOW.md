@@ -1,6 +1,6 @@
 # Pilot release flow (recommended order)
 
-Step-by-step **operator runbook** for a pilot or demo **release candidate**. Pair with [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md) and [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
+Step-by-step **operator runbook** for a pilot or demo **release candidate**. Pair with [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md), [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md), [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md), and [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md).
 
 **Not in scope:** CI/CD automation, App Store / Play submission automation, push notifications.
 
@@ -19,7 +19,8 @@ Step-by-step **operator runbook** for a pilot or demo **release candidate**. Pai
 | **7** | **Vercel admin verify** | Deploy or open staging admin; `NEXT_PUBLIC_API_URL` → RC API; login + today’s schedule + one class workspace ([`ADMIN.md`](./ADMIN.md)). |
 | **8** | **EAS preview build** | `preview-ares` / `preview-pilates-toluca` (or base `preview`) with secrets matching RC API ([`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md)). **Preview** = internal / pilot; **production** EAS profile = store-bound when you intentionally ship. |
 | **9** | **TestFlight / internal QA** | Distribute to testers; run subset of [`REAL_DEVICE_TESTING.md`](./REAL_DEVICE_TESTING.md) + [`PILOT_QA_CHECKLIST.md`](./PILOT_QA_CHECKLIST.md). |
-| **10** | **Stakeholder walkthrough** | Use [`PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md); capture notes in [Post-demo notes](#post-demo-notes). |
+| **10** | **RC git tag (recommended)** | After internal QA and checklist are green, tag the commit per [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md) and `git push origin <tag>` so demos reference a fixed SHA. Skip only with a written reason on the RC checklist. |
+| **11** | **Stakeholder walkthrough** | Use [`PILOT_DEMO_SCRIPT.md`](./PILOT_DEMO_SCRIPT.md); capture notes in [Post-demo notes](#post-demo-notes); for a full retro use [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md). |
 
 ---
 
@@ -48,6 +49,7 @@ Use before inviting external stakeholders or widening tester list.
 | **RC checklist** | [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md) signed | Critical rows unchecked |
 | **Stripe story** | Clear: fake-seed demo *or* test-mode lane configured | Ambiguous keys / live key risk |
 | **Rollback** | Owner + prior build identified | Unknown |
+| **RC tag** | Tag name recorded (or waived with reason) | Tag missing while claiming a fixed baseline |
 
 **Decision:** Go / No-go — **Date:** ______ — **Approver:** ______
 
@@ -55,7 +57,7 @@ Use before inviting external stakeholders or widening tester list.
 
 ## Post-demo notes
 
-Use after each pilot session (support themes, bugs, stakeholder quotes).
+Use after each pilot session (support themes, bugs, stakeholder quotes). For a **structured close-out**, copy [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md) and link the **git tag** + **EAS build id** tested.
 
 | Date | Attendees | What worked | Issues / follow-ups |
 |------|-----------|-------------|----------------------|
@@ -66,4 +68,6 @@ Use after each pilot session (support themes, bugs, stakeholder quotes).
 ## Related docs
 
 - [`RELEASE_CANDIDATE_CHECKLIST.md`](./RELEASE_CANDIDATE_CHECKLIST.md) — freeze + sign-off.
+- [`RC_TAGGING_GUIDE.md`](./RC_TAGGING_GUIDE.md) — when and how to tag RC commits.
+- [`PILOT_RETRO_TEMPLATE.md`](./PILOT_RETRO_TEMPLATE.md) — pilot retro sections + go/no-go.
 - [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md) — if something breaks mid-pilot.
