@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { validateEnv } from './config/validate-env';
 import { AuthModule } from './auth/auth.module';
+import { BillingModule } from './billing/billing.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { BrandingModule } from './branding/branding.module';
 import { CheckInsModule } from './check-ins/check-ins.module';
@@ -43,6 +44,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     ]),
     PrismaModule,
     AuthModule,
+    BillingModule,
     BrandingModule,
     StudiosModule,
     MembershipPlansModule,

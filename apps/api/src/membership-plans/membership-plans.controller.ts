@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -15,6 +16,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
+import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
+import { BillingService } from '../billing/billing.service';
 import { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
 import { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
 import { MembershipPlansService } from './membership-plans.service';
@@ -22,11 +25,30 @@ import { MembershipPlansService } from './membership-plans.service';
 @Controller('studios/:studioId/membership-plans')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
 export class MembershipPlansController {
-  constructor(private readonly membershipPlansService: MembershipPlansService) {}
+  constructor(
+    private readonly membershipPlansService: MembershipPlansService,
+    private readonly billingService: BillingService,
+  ) {}
 
   @Get()
   list(@Param('studioId') studioId: string) {
     return this.membershipPlansService.listActivePlans(studioId);
+  }
+
+  @Post(':planId/checkout')
+  @UseGuards(RolesGuard)
+  @Roles(Role.MEMBER)
+  @HttpCode(HttpStatus.OK)
+  createMemberCheckout(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.billingService.createMemberCheckoutSession({
+      userId: req.user.sub,
+      studioId,
+      planId,
+    });
   }
 
   @Post()

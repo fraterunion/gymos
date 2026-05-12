@@ -172,6 +172,10 @@ model MembershipPlan {
   /// When null, plan grants unlimited class credits for billing purposes.
   classCredits     Int?            @map("class_credits")
   active           Boolean         @default(true)
+  /// Direct Stripe Billing (Phase 4A): synced product for this plan.
+  stripeProductId  String?        @map("stripe_product_id")
+  /// Direct Stripe Billing (Phase 4A): recurring price for this plan.
+  stripePriceId    String?        @map("stripe_price_id")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   deletedAt        DateTime?       @map("deleted_at")

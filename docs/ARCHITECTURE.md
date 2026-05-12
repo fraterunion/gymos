@@ -31,7 +31,7 @@ Future / optional packages: `packages/ui`, CI templates, Docker compose variants
 
 ### Phase 2A (API) — studio-scoped modules
 
-- Domain HTTP for studios, membership plans, directory-style members, and **white-label branding** lives in `apps/api/src/studios`, `membership-plans`, `members`, and `branding`.
+- Domain HTTP for studios, membership plans, directory-style members, **billing / Stripe**, and **white-label branding** lives in `apps/api/src/studios`, `membership-plans`, `members`, `billing`, `stripe`, and `branding`.
 - **`StudioMemberGuard`** ensures the JWT subject has a non-deleted `StudioMembership` and the studio is not soft-deleted. **`RolesGuard`** checks `Role` on that same membership; `studioId` is always taken from **route params**, never from the body, for scoping and authorization.
 
 ## White-label branding (Phase 3A)
@@ -56,9 +56,11 @@ Future / optional packages: `packages/ui`, CI templates, Docker compose variants
 - **Auditability** for schedule changes, membership changes, and staff overrides (implementation later; events originate in API).
 - **Time zones** — studio-local time for schedules; store UTC with studio timezone metadata.
 
-## Stripe (high level)
+## Stripe (Phase 4A)
 
-Stripe is the system of record for payments and subscription state that maps to GymOS membership. Webhooks are ingested only by `apps/api`. Admin surfaces read-only payment state and deep links to Stripe Customer Portal where applicable. No Stripe secret keys in admin or mobile.
+- **Direct Stripe Billing** (no Connect): `apps/api/src/stripe` wraps the official Stripe SDK; `apps/api/src/billing` owns Checkout creation, Billing Portal sessions, and **webhook processing** (`StripeWebhookService`). `MembershipPlansModule` imports `BillingModule` for the **MEMBER** Checkout route; `AppModule` imports `BillingModule` for `POST /stripe/webhook`.
+- **HTTP:** `main.ts` uses **`bodyParser: false`**; `http-app.setup.ts` applies **`express.raw`** only to `POST /api/v1/stripe/webhook`, then **`express.json` / `urlencoded` for all other routes**, so Stripe signature verification always sees the **raw** bytes. Never parse the webhook body before `constructEvent`.
+- **State sync:** Checkout and subscription webhooks upsert **`subscriptions`** from verified metadata + Stripe subscription payloads; **`invoice.paid`** / **`invoice.payment_failed`** upsert **`payments`** and may set subscription **`PAST_DUE`** on failure paths.
 
 ## QR and check-in (high level)
 

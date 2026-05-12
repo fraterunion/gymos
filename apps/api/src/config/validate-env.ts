@@ -102,6 +102,37 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
   out['JWT_ACCESS_TTL'] = assertJwtAccessTtl(out['JWT_ACCESS_TTL']);
   out['JWT_REFRESH_TTL_DAYS'] = assertJwtRefreshTtlDays(out['JWT_REFRESH_TTL_DAYS']);
   out['BCRYPT_ROUNDS'] = assertBcryptRounds(out['BCRYPT_ROUNDS']);
+  assertStripeBillingEnv(out, nodeEnv);
 
   return out;
+}
+
+const STRIPE_DEFAULTS: ReadonlyArray<[string, string]> = [
+  [
+    'STRIPE_SECRET_KEY',
+    // Stripe publishes this sample test secret for SDK examples (test mode only).
+    'sk_test_REPLACE_ME',
+  ],
+  ['STRIPE_WEBHOOK_SECRET', 'whsec_test_gymos_default_value_for_signature_tests_00001'],
+  ['STRIPE_SUCCESS_URL', 'http://localhost:3000/billing/success'],
+  ['STRIPE_CANCEL_URL', 'http://localhost:3000/billing/cancel'],
+  ['STRIPE_BILLING_PORTAL_RETURN_URL', 'http://localhost:3000/billing/portal-return'],
+];
+
+function assertStripeBillingEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): void {
+  if (nodeEnv === 'production') {
+    for (const [key] of STRIPE_DEFAULTS) {
+      const v = out[key];
+      if (typeof v !== 'string' || v.trim() === '') {
+        throw new Error(`${key} is required in production for Stripe billing`);
+      }
+    }
+    return;
+  }
+  for (const [key, def] of STRIPE_DEFAULTS) {
+    const v = out[key];
+    if (typeof v !== 'string' || v.trim() === '') {
+      out[key] = def;
+    }
+  }
 }

@@ -36,7 +36,7 @@ Booking creation runs in a transaction and calls **`pg_advisory_xact_lock((hasht
 
 ## Membership plans
 
-- **MembershipPlan** (`membership_plans`) — Belongs to `studio_id`. Fields include `price_cents`, `currency`, `billing_interval`, `active`, `deleted_at` (soft delete).
+- **MembershipPlan** (`membership_plans`) — Belongs to `studio_id`. Fields include `price_cents`, `currency`, `billing_interval`, `active`, `deleted_at` (soft delete). **Phase 4A** adds nullable **`stripe_product_id`** / **`stripe_price_id`** for direct Stripe Billing sync (no Connect columns).
 
 ### `class_credits`
 
@@ -47,7 +47,13 @@ Column **`class_credits`** (`classCredits` in Prisma) was added in the same migr
 
 ## Subscriptions (summary)
 
-- **Subscription** — Belongs to `studio_id` / member / plan; Stripe ids stored but not exposed on member directory endpoints.
+- **Subscription** — Belongs to `studio_id` / member / plan; **`stripe_subscription_id`** unique when set. **`current_period_start`**, **`current_period_end`**, **`cancel_at_period_end`** mirror Stripe after webhooks. Status is an app enum mapped from Stripe (see `mapStripeSubscriptionStatus` in API).
+
+## Payments and Stripe webhooks (Phase 4A)
+
+- **Payment** (`payments`) — `amount_cents`, `currency`, `status` (`PENDING`, `SUCCEEDED`, `FAILED`, …). Optional **`stripe_payment_intent_id`** and **`stripe_invoice_id`** (unique when non-null) for invoice-driven rows created from webhooks.
+- **User** — nullable **`stripe_customer_id`** (unique when set) links the member to Stripe Customer records created at Checkout.
+- **StripeWebhookEvent** (`stripe_webhook_events`) — **`stripe_event_id`** unique, **`event_type`**, **`payload`** (JSON), **`processed`** / **`processed_at`** for idempotent webhook ingestion.
 
 ## Other domain tables
 
