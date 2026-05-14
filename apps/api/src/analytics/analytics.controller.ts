@@ -38,4 +38,9 @@ export class AnalyticsController {
   ) {
     return this.analyticsService.getClassBreakdown(studioId, parseDays(days, 30));
   }
+
+  @Get('business')
+  getBusiness(@Param('studioId') studioId: string) {
+    return this.analyticsService.getBusinessAnalytics(studioId);
+  }
 }

@@ -42,6 +42,29 @@ export type ClassBreakdownDto = {
   peakHours: { hour: number; count: number }[];
 };
 
+export type BusinessAnalyticsDto = {
+  period: { days: number; from: string; to: string };
+  dataQuality: "empty" | "demo" | "live" | "mixed";
+  estimatedMrrCents: number;
+  activeSubscriptions: number;
+  trialingSubscriptions: number;
+  pastDueSubscriptions: number;
+  pausedSubscriptions: number;
+  canceledSubscriptionsTotal: number;
+  cancellationsLast30Days: number;
+  revenueLast30DaysCents: number;
+  averageRevenuePerMemberCents: number;
+  memberCountForArpu: number;
+  membersWithTwoPlusBookingsLast30Days: number;
+  repeatBookingRatePercent: number;
+  bookingFrequencyBuckets: { label: string; memberCount: number }[];
+  revenueTrend: { date: string; amountCents: number }[];
+  subscriptionStatusBreakdown: { status: string; count: number }[];
+  revenueByPlan: { planId: string; planName: string; revenueCents: number }[];
+  unattributedRevenueCents: number;
+  generatedAt: string;
+};
+
 // ── Fetchers ────────────────────────────────────────────────────────────────
 
 export async function fetchAnalyticsOverview(studioId: string): Promise<OverviewDto> {
@@ -63,4 +86,10 @@ export async function fetchAnalyticsClassBreakdown(
     `/studios/${studioId}/analytics/class-breakdown?days=${days}`,
     { method: "GET" },
   );
+}
+
+export async function fetchAnalyticsBusiness(studioId: string): Promise<BusinessAnalyticsDto> {
+  return apiRequest<BusinessAnalyticsDto>(`/studios/${studioId}/analytics/business`, {
+    method: "GET",
+  });
 }
