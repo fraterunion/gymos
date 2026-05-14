@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { DeskQrScanner } from "@/components/DeskQrScanner";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import { buildScheduleQueryRange, formatClassRange } from "@/lib/datetime";
@@ -17,6 +18,9 @@ import { fetchClassRoster, type RosterBooking } from "@/lib/api/roster";
 import { fetchStudioSchedule, type ScheduledClassDto } from "@/lib/api/schedule";
 
 function friendlyCheckInError(e: unknown): string {
+  if (e instanceof TypeError) {
+    return "Network error. Check your connection and try again.";
+  }
   if (e instanceof ApiError) {
     const m = e.message.toLowerCase();
     if (m.includes("already checked in")) return "This member is already checked in.";
@@ -24,6 +28,7 @@ function friendlyCheckInError(e: unknown): string {
     if (m.includes("invalid") && m.includes("token")) return "That code could not be read. Check for typos or ask for a fresh code.";
     if (m.includes("outside") || m.includes("window")) return "Check-in is outside the allowed time window for this class.";
     if (e.status === 403) return "You are not allowed to perform this check-in.";
+    if (e.status === 0) return "Network error. Check your connection and try again.";
     return e.message;
   }
   return "Something went wrong.";
@@ -44,6 +49,7 @@ export default function ClassCheckInPage() {
   const [busyBookingId, setBusyBookingId] = useState<string | null>(null);
   const [qrText, setQrText] = useState("");
   const [qrBusy, setQrBusy] = useState(false);
+  const submitQrLockRef = useRef(false);
   const [flash, setFlash] = useState<{ type: "ok" | "warn" | "err"; text: string } | null>(null);
 
   const attendedUserIds = useMemo(() => new Set(attendance.map((a) => a.userId)), [attendance]);
@@ -114,29 +120,42 @@ export default function ClassCheckInPage() {
     }
   };
 
-  const onQrSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!studioId || !qrText.trim()) return;
-    setQrBusy(true);
-    setFlash(null);
-    try {
-      const row = await checkInWithQr(studioId, qrText.trim());
-      setQrText("");
-      setAttendance((prev) => [...prev.filter((a) => a.userId !== row.userId), row]);
-      setFlash({
-        type: "ok",
-        text: `Checked in ${row.user.firstName} ${row.user.lastName} via QR.`,
-      });
-    } catch (e) {
-      const msg = friendlyCheckInError(e);
-      if (e instanceof ApiError && e.status === 409) {
-        setFlash({ type: "warn", text: msg });
-      } else {
-        setFlash({ type: "err", text: msg });
+  const submitQrToken = useCallback(
+    async (raw: string, options?: { clearPasteField?: boolean; keepExistingFlash?: boolean }) => {
+      const trimmed = raw.trim();
+      if (!studioId || !trimmed) return { success: false as const };
+      if (submitQrLockRef.current) return { success: false as const };
+      submitQrLockRef.current = true;
+      setQrBusy(true);
+      if (!options?.keepExistingFlash) setFlash(null);
+      try {
+        const row = await checkInWithQr(studioId, trimmed);
+        if (options?.clearPasteField !== false) setQrText("");
+        setAttendance((prev) => [...prev.filter((a) => a.userId !== row.userId), row]);
+        setFlash({
+          type: "ok",
+          text: `Checked in ${row.user.firstName} ${row.user.lastName} via QR.`,
+        });
+        return { success: true as const };
+      } catch (e) {
+        const msg = friendlyCheckInError(e);
+        if (e instanceof ApiError && e.status === 409) {
+          setFlash({ type: "warn", text: msg });
+        } else {
+          setFlash({ type: "err", text: msg });
+        }
+        return { success: false as const };
+      } finally {
+        submitQrLockRef.current = false;
+        setQrBusy(false);
       }
-    } finally {
-      setQrBusy(false);
-    }
+    },
+    [studioId],
+  );
+
+  const onQrSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void submitQrToken(qrText, { clearPasteField: true });
   };
 
   if (!studioId) {
@@ -194,14 +213,36 @@ export default function ClassCheckInPage() {
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">QR check-in</h2>
           <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
-            Paste the member&apos;s check-in token from their phone, then submit. Camera scanning can be added later.
+            Scan with the desk camera, or paste the member&apos;s token if the camera is unavailable.
           </p>
-          <form onSubmit={(e) => void onQrSubmit(e)} className="mt-4 space-y-3">
+
+          <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950 p-4 shadow-inner dark:border-zinc-700 dark:bg-zinc-950">
+            <DeskQrScanner
+              key={classId}
+              enabled={Boolean(studioId && cls)}
+              onScan={(token) => submitQrToken(token, { clearPasteField: false })}
+            />
+          </div>
+
+          <div className="relative mt-6">
+            <div className="absolute inset-x-0 top-0 flex items-center" aria-hidden>
+              <div className="w-full border-t border-zinc-200 dark:border-zinc-700" />
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-white px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:bg-zinc-900 dark:text-zinc-500">
+                Or paste token
+              </span>
+            </div>
+          </div>
+
+          <form onSubmit={onQrSubmit} className="mt-4 space-y-3">
             <textarea
               value={qrText}
               onChange={(e) => setQrText(e.target.value)}
               placeholder="Paste token here…"
               rows={5}
+              autoComplete="off"
+              spellCheck={false}
               className="w-full resize-y rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 font-mono text-xs leading-relaxed text-zinc-900 outline-none ring-zinc-400 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             />
             <button

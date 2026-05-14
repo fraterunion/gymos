@@ -1,6 +1,6 @@
 # GymOS admin (Next.js)
 
-Browser app for **staff-facing operational tools** that are not the full product admin console. Phase **3E** ships the **front desk check-in desk**: studio selection, today’s schedule, per-class **QR paste check-in**, **manual check-in**, and **attendance** views.
+Browser app for **staff-facing operational tools** that are not the full product admin console. Phase **3E** ships the **front desk check-in desk**: studio selection, today’s schedule, per-class **QR check-in** (camera scan + **paste-token fallback**), **manual check-in**, and **attendance** views. Phase **9A** adds **in-browser camera QR scanning** on the class workspace (`DeskQrScanner` + `html5-qrcode`); **no API or mobile changes** for that behavior—the same `POST .../check-ins/qr` endpoint is used.
 
 ## Stack
 
@@ -34,11 +34,14 @@ After login, **`GET /api/v1/me/studios`** loads in **`DeskStudioProvider`**. The
 | `/` | Redirects to `/check-in` if authenticated, else `/login`. |
 | `/login` | Email/password sign-in. |
 | `/check-in` | Today’s **scheduled** classes for the selected studio (studio-local “today” via timezone). |
-| `/check-in/[classId]` | Class workspace: **QR paste** form (`POST .../check-ins/qr`), **attendance list** (`GET .../classes/:classId/attendance`), **confirmed roster** + **manual check-in** (`POST .../check-ins/manual`). |
+| `/check-in/[classId]` | Class workspace: **QR check-in** via **camera scanner** or **paste token** (`POST .../check-ins/qr`), **attendance list** (`GET .../classes/:classId/attendance`), **confirmed roster** + **manual check-in** (`POST .../check-ins/manual`). |
 
 ## Check-in desk UX
 
-- **QR** — Large monospace **textarea** + **Submit token** (no camera in this phase). Success and **already checked in** paths show **inline banners** (success / warning / error) and refresh attendance.
+- **QR (Phase 9A)** — **Start camera** opens a live scanner (`html5-qrcode`) on `/check-in/[classId]`; decoded tokens are submitted to the same **`POST .../check-ins/qr`** flow as paste. **Paste token** remains the **fallback** (large monospace textarea + **Submit token**) if the camera is unavailable or permission is denied. Success and **already checked in** paths show **inline banners** (success / warning / error) and attendance updates in place.
+- **Camera requirements** — Browsers only expose the camera on **HTTPS** or **localhost**. Deploy the desk under HTTPS for production pilots; local dev on `http://localhost` is fine.
+- **Browsers** — **Chrome** first for desk scanning; **Safari** and **Edge** are acceptable **after** you smoke-test camera permission + scan on your target devices.
+- **Permission denied** — If the browser blocks camera access, use the **paste** path with the member’s token.
 - **Manual** — Each roster row has **Check in** until the member appears in the attendance list (**In** badge). Buttons disable while the row’s request is in flight.
 - **Roster** — `GET .../classes/:classId/roster` is available to **STAFF**, **INSTRUCTOR**, **ADMIN**, and **OWNER** (confirmed bookings with member summary). If the request fails (e.g. network), the UI shows a retry note.
 - **Refresh** — Header **Refresh** on attendance card; pull is not implemented on web list (use button).
@@ -50,7 +53,7 @@ From repo root: `pnpm --filter admin dev`, `pnpm --filter admin build`, `pnpm --
 ## Relationship to `apps/mobile`
 
 - **Mobile** — member QR **generation** and self-service.
-- **Admin desk** — staff **consumption** of pasted QR tokens and **manual** check-ins against the same attendance model.
+- **Admin desk** — staff **consumption** of QR via **camera scan** or **pasted token**, plus **manual** check-ins against the same attendance model.
 
 ### Pilot polish & QA (Phase 6D)
 
