@@ -23,6 +23,7 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
               { href: "/check-in", label: "Today" },
               { href: "/schedule", label: "Schedule" },
               { href: "/classes", label: "Class types" },
+              { href: "/members", label: "Members" },
               { href: "/analytics", label: "Analytics" },
             ].map(({ href, label }) => (
               <Link
