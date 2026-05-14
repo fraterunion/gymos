@@ -102,6 +102,23 @@ model Studio {
   appStoreUrl          String? @map("app_store_url")
   playStoreUrl         String? @map("play_store_url")
 
+  /// Phase 12 — desk settings (additive). Public API prefers these over legacy brand* when set.
+  logoUrl                       String? @map("logo_url")
+  coverImageUrl                 String? @map("cover_image_url")
+  primaryColor                  String? @map("primary_color")
+  accentColor                   String? @map("accent_color")
+  websiteUrl                    String? @map("website_url")
+  instagramHandle               String? @map("instagram_handle")
+  address                       String? @map("address")
+  allowWaitlist                 Boolean @default(true) @map("allow_waitlist")
+  autoConfirmWaitlist           Boolean @default(false) @map("auto_confirm_waitlist")
+  cancellationWindowHours       Int     @default(12) @map("cancellation_window_hours")
+  lateCancelPenaltyEnabled      Boolean @default(false) @map("late_cancel_penalty_enabled")
+  checkInWindowMinutes          Int     @default(15) @map("check_in_window_minutes")
+  appDisplayName                String? @map("app_display_name")
+  appScheme                     String? @map("app_scheme")
+  expoSlug                      String? @map("expo_slug")
+
   memberships    StudioMembership[]
   plans          MembershipPlan[]
   subscriptions  Subscription[]

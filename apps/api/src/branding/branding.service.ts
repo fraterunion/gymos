@@ -8,11 +8,16 @@ const publicBrandingSelect = {
   name: true,
   timezone: true,
   appName: true,
+  appDisplayName: true,
   brandPrimaryColor: true,
   brandSecondaryColor: true,
+  primaryColor: true,
+  accentColor: true,
   brandLogoUrl: true,
+  logoUrl: true,
   brandIconUrl: true,
   brandSplashUrl: true,
+  coverImageUrl: true,
   supportEmail: true,
   supportPhone: true,
   privacyUrl: true,
@@ -23,7 +28,25 @@ const publicBrandingSelect = {
   playStoreUrl: true,
 } satisfies Prisma.StudioSelect;
 
-export type PublicBrandingResponse = Prisma.StudioGetPayload<{ select: typeof publicBrandingSelect }>;
+export type PublicBrandingResponse = {
+  slug: string;
+  name: string;
+  timezone: string;
+  appName: string | null;
+  brandPrimaryColor: string | null;
+  brandSecondaryColor: string | null;
+  brandLogoUrl: string | null;
+  brandIconUrl: string | null;
+  brandSplashUrl: string | null;
+  supportEmail: string | null;
+  supportPhone: string | null;
+  privacyUrl: string | null;
+  termsUrl: string | null;
+  iosBundleId: string | null;
+  androidPackageName: string | null;
+  appStoreUrl: string | null;
+  playStoreUrl: string | null;
+};
 
 const adminBrandingSelect = {
   ...publicBrandingSelect,
@@ -37,14 +60,32 @@ export class BrandingService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getPublicBrandingBySlug(slug: string): Promise<PublicBrandingResponse> {
-    const studio = await this.prisma.studio.findFirst({
+    const s = await this.prisma.studio.findFirst({
       where: { slug, deletedAt: null },
       select: publicBrandingSelect,
     });
-    if (!studio) {
+    if (!s) {
       throw new NotFoundException('Studio not found');
     }
-    return studio;
+    return {
+      slug: s.slug,
+      name: s.name,
+      timezone: s.timezone,
+      appName: s.appDisplayName ?? s.appName,
+      brandPrimaryColor: s.primaryColor ?? s.brandPrimaryColor,
+      brandSecondaryColor: s.accentColor ?? s.brandSecondaryColor,
+      brandLogoUrl: s.logoUrl ?? s.brandLogoUrl,
+      brandIconUrl: s.brandIconUrl,
+      brandSplashUrl: s.brandSplashUrl,
+      supportEmail: s.supportEmail,
+      supportPhone: s.supportPhone,
+      privacyUrl: s.privacyUrl,
+      termsUrl: s.termsUrl,
+      iosBundleId: s.iosBundleId,
+      androidPackageName: s.androidPackageName,
+      appStoreUrl: s.appStoreUrl,
+      playStoreUrl: s.playStoreUrl,
+    };
   }
 
   async getBrandingForStudio(studioId: string): Promise<AdminBrandingResponse> {

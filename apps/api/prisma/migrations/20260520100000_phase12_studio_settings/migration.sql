@@ -1,0 +1,16 @@
+-- AlterTable
+ALTER TABLE "studios" ADD COLUMN     "logo_url" TEXT,
+ADD COLUMN     "cover_image_url" TEXT,
+ADD COLUMN     "primary_color" TEXT,
+ADD COLUMN     "accent_color" TEXT,
+ADD COLUMN     "website_url" TEXT,
+ADD COLUMN     "instagram_handle" TEXT,
+ADD COLUMN     "address" TEXT,
+ADD COLUMN     "allow_waitlist" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN     "auto_confirm_waitlist" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "cancellation_window_hours" INTEGER NOT NULL DEFAULT 12,
+ADD COLUMN     "late_cancel_penalty_enabled" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "check_in_window_minutes" INTEGER NOT NULL DEFAULT 15,
+ADD COLUMN     "app_display_name" TEXT,
+ADD COLUMN     "app_scheme" TEXT,
+ADD COLUMN     "expo_slug" TEXT;

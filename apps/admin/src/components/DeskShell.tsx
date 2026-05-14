@@ -11,6 +11,18 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const { studios, selectedStudioId, setStudioId, selected, loading } = useDeskStudio();
 
+  const canManageStudioSettings =
+    selected?.role === "OWNER" || selected?.role === "ADMIN";
+
+  const navItems = [
+    { href: "/check-in", label: "Today" },
+    { href: "/schedule", label: "Schedule" },
+    { href: "/classes", label: "Class types" },
+    { href: "/members", label: "Members" },
+    { href: "/analytics", label: "Analytics" },
+    ...(canManageStudioSettings ? ([{ href: "/settings", label: "Settings" }] as const) : []),
+  ];
+
   return (
     <div className="flex min-h-full flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <header className="sticky top-0 z-10 border-b border-zinc-200/80 bg-white/90 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
@@ -19,13 +31,7 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
             Check-in desk
           </Link>
           <nav className="flex flex-1 flex-wrap items-center gap-1 text-sm">
-            {[
-              { href: "/check-in", label: "Today" },
-              { href: "/schedule", label: "Schedule" },
-              { href: "/classes", label: "Class types" },
-              { href: "/members", label: "Members" },
-              { href: "/analytics", label: "Analytics" },
-            ].map(({ href, label }) => (
+            {navItems.map(({ href, label }) => (
               <Link
                 key={href}
                 href={href}
