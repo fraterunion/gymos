@@ -40,3 +40,46 @@ export async function fetchStudioSchedule(
     method: "GET",
   });
 }
+
+export async function createScheduledClass(
+  studioId: string,
+  input: {
+    templateId: string;
+    startTime: string;
+    endTime: string;
+    capacity?: number;
+    instructorId?: string | null;
+  },
+): Promise<unknown> {
+  return apiRequest<unknown>(`/studios/${studioId}/schedule`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateScheduledClass(
+  studioId: string,
+  scheduledClassId: string,
+  input: {
+    startTime?: string;
+    endTime?: string;
+    capacity?: number;
+    instructorId?: string | null;
+  },
+): Promise<unknown> {
+  return apiRequest<unknown>(`/studios/${studioId}/schedule/${scheduledClassId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function cancelScheduledClass(
+  studioId: string,
+  scheduledClassId: string,
+  cancelReason?: string,
+): Promise<void> {
+  await apiRequest<void>(`/studios/${studioId}/schedule/${scheduledClassId}`, {
+    method: "DELETE",
+    body: cancelReason ? JSON.stringify({ cancelReason }) : undefined,
+  });
+}

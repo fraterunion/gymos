@@ -18,17 +18,24 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
           <Link href="/check-in" className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             Check-in desk
           </Link>
-          <nav className="flex flex-1 flex-wrap items-center gap-3 text-sm">
-            <Link
-              href="/check-in"
-              className={`rounded-lg px-2 py-1 font-medium ${
-                pathname === "/check-in"
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-              }`}
-            >
-              Today
-            </Link>
+          <nav className="flex flex-1 flex-wrap items-center gap-1 text-sm">
+            {[
+              { href: "/check-in", label: "Today" },
+              { href: "/schedule", label: "Schedule" },
+              { href: "/classes", label: "Class types" },
+            ].map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                className={`rounded-lg px-2 py-1 font-medium ${
+                  pathname === href || pathname.startsWith(`${href}/`)
+                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                }`}
+              >
+                {label}
+              </Link>
+            ))}
           </nav>
           <div className="flex flex-wrap items-center gap-3">
             {loading ? (

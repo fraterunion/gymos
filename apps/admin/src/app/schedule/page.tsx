@@ -1,0 +1,728 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { useDeskStudio } from "@/contexts/DeskStudioContext";
+import { ApiError } from "@/lib/api/errors";
+import {
+  cancelScheduledClass,
+  createScheduledClass,
+  fetchStudioSchedule,
+  updateScheduledClass,
+  type ScheduledClassDto,
+} from "@/lib/api/schedule";
+import { fetchClassTemplates, type ClassTemplateDto } from "@/lib/api/classTemplates";
+import { fetchStudioMembers, type MemberDto } from "@/lib/api/members";
+import { calendarDayKeyInZone, todayKeyInZone } from "@/lib/datetime";
+
+// ── date helpers ──────────────────────────────────────────────────────────────
+
+function getMondayOf(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  return d;
+}
+
+function addDays(date: Date, n: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+function toLocalDatetimeString(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatTime(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+function formatDayHeader(date: Date, tz: string): { weekday: string; day: string } {
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(date);
+  const day = new Intl.DateTimeFormat("en-US", { timeZone: tz, day: "numeric" }).format(date);
+  return { weekday, day };
+}
+
+function formatWeekRange(start: Date, tz: string): string {
+  const end = addDays(start, 6);
+  const s = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    month: "short",
+    day: "numeric",
+  }).format(start);
+  const e = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(end);
+  return `${s} – ${e}`;
+}
+
+// ── schedule form ─────────────────────────────────────────────────────────────
+
+type ScheduleFormState = {
+  templateId: string;
+  startTime: string;
+  endTime: string;
+  capacity: string;
+  instructorId: string;
+};
+
+function makeDefaultStart(): string {
+  const d = new Date();
+  d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
+  return toLocalDatetimeString(d);
+}
+
+function makeDefaultEnd(startStr: string, durationMinutes: number): string {
+  const d = new Date(startStr);
+  d.setMinutes(d.getMinutes() + durationMinutes);
+  return toLocalDatetimeString(d);
+}
+
+type ScheduleModalState =
+  | { type: "closed" }
+  | { type: "create"; prefillDate?: string }
+  | { type: "edit"; cls: ScheduledClassDto };
+
+function ScheduleModal({
+  modal,
+  templates,
+  members,
+  studioId,
+  onClose,
+  onDone,
+}: {
+  modal: Exclude<ScheduleModalState, { type: "closed" }>;
+  templates: ClassTemplateDto[];
+  members: MemberDto[];
+  studioId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const buildCreateDefaults = (): ScheduleFormState => {
+    const firstTemplate = templates[0];
+    const startTime = modal.type === "create" && modal.prefillDate
+      ? `${modal.prefillDate}T09:00`
+      : makeDefaultStart();
+    return {
+      templateId: firstTemplate?.id ?? "",
+      startTime,
+      endTime: firstTemplate ? makeDefaultEnd(startTime, firstTemplate.durationMinutes) : startTime,
+      capacity: String(firstTemplate?.defaultCapacity ?? 10),
+      instructorId: firstTemplate?.defaultInstructorId ?? "",
+    };
+  };
+
+  const buildEditDefaults = (cls: ScheduledClassDto): ScheduleFormState => ({
+    templateId: cls.classTemplateId,
+    startTime: toLocalDatetimeString(new Date(cls.startsAt)),
+    endTime: toLocalDatetimeString(new Date(cls.endsAt)),
+    capacity: String(cls.capacity),
+    instructorId: cls.instructorId ?? "",
+  });
+
+  const [form, setForm] = useState<ScheduleFormState>(
+    modal.type === "edit" ? buildEditDefaults(modal.cls) : buildCreateDefaults(),
+  );
+  const [saving, setSaving] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleTemplateChange = (templateId: string) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    setForm((prev) => ({
+      ...prev,
+      templateId,
+      endTime: tpl ? makeDefaultEnd(prev.startTime, tpl.durationMinutes) : prev.endTime,
+      capacity: tpl ? String(tpl.defaultCapacity) : prev.capacity,
+      instructorId: tpl?.defaultInstructorId ?? prev.instructorId,
+    }));
+  };
+
+  const handleStartChange = (startTime: string) => {
+    const tpl = templates.find((t) => t.id === form.templateId);
+    setForm((prev) => ({
+      ...prev,
+      startTime,
+      endTime: tpl ? makeDefaultEnd(startTime, tpl.durationMinutes) : prev.endTime,
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      const startIso = new Date(form.startTime).toISOString();
+      const endIso = new Date(form.endTime).toISOString();
+      if (modal.type === "edit") {
+        await updateScheduledClass(studioId, modal.cls.id, {
+          startTime: startIso,
+          endTime: endIso,
+          capacity: parseInt(form.capacity, 10),
+          instructorId: form.instructorId || null,
+        });
+      } else {
+        await createScheduledClass(studioId, {
+          templateId: form.templateId,
+          startTime: startIso,
+          endTime: endIso,
+          capacity: parseInt(form.capacity, 10),
+          instructorId: form.instructorId || null,
+        });
+      }
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save class");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (modal.type !== "edit") return;
+    setCancelling(true);
+    setError(null);
+    try {
+      await cancelScheduledClass(studioId, modal.cls.id, cancelReason.trim() || undefined);
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not cancel class");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const isCancelled = modal.type === "edit" && modal.cls.status === "CANCELLED";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+            {modal.type === "edit" ? "Edit class" : "Schedule a class"}
+          </h2>
+          {isCancelled ? (
+            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700 dark:bg-red-900/50 dark:text-red-300">
+              Cancelled
+            </span>
+          ) : null}
+        </div>
+
+        {showCancelConfirm ? (
+          <div className="mt-5 space-y-4">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Cancel this scheduled class? This cannot be undone. Bookings will be affected.
+            </p>
+            <div>
+              <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                Reason (optional)
+              </label>
+              <input
+                type="text"
+                maxLength={2000}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="e.g. Instructor unavailable"
+                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              />
+            </div>
+            {error ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+                {error}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowCancelConfirm(false)}
+                className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                disabled={cancelling}
+                onClick={() => void handleCancel()}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                {cancelling ? "Cancelling…" : "Confirm cancel"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={(e) => void handleSubmit(e)} className="mt-5 space-y-4">
+            {modal.type === "create" ? (
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Class type
+                </label>
+                <select
+                  required
+                  value={form.templateId}
+                  onChange={(e) => handleTemplateChange(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                >
+                  {templates.length === 0 ? (
+                    <option value="">No class types — create one first</option>
+                  ) : (
+                    templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · {t.durationMinutes} min
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            ) : (
+              <div>
+                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Class type</p>
+                <p className="mt-0.5 text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                  {modal.cls.classTemplate.name}
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Start
+                </label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={form.startTime}
+                  onChange={(e) => handleStartChange(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  End
+                </label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={form.endTime}
+                  onChange={(e) => setForm((prev) => ({ ...prev, endTime: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Capacity
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={1}
+                  max={10000}
+                  value={form.capacity}
+                  onChange={(e) => setForm((prev) => ({ ...prev, capacity: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Instructor
+                </label>
+                <select
+                  value={form.instructorId}
+                  onChange={(e) => setForm((prev) => ({ ...prev, instructorId: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                >
+                  <option value="">— None —</option>
+                  {members.map((m) => (
+                    <option key={m.user.id} value={m.user.id}>
+                      {m.user.firstName} {m.user.lastName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {error ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+                {error}
+              </p>
+            ) : null}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <div>
+                {modal.type === "edit" && !isCancelled ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowCancelConfirm(true)}
+                    className="rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                  >
+                    Cancel class
+                  </button>
+                ) : null}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Close
+                </button>
+                {!isCancelled ? (
+                  <button
+                    type="submit"
+                    disabled={saving || templates.length === 0}
+                    className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                  >
+                    {saving ? "Saving…" : modal.type === "edit" ? "Save changes" : "Schedule"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── class card ─────────────────────────────────────────────────────────────────
+
+function ClassCard({
+  cls,
+  tz,
+  onClick,
+}: {
+  cls: ScheduledClassDto;
+  tz: string;
+  onClick: () => void;
+}) {
+  const isCancelled = cls.status === "CANCELLED";
+  const accentColor = cls.classTemplate.color;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-xl border p-2.5 text-left transition ${
+        isCancelled
+          ? "border-zinc-200 bg-zinc-50 opacity-50 dark:border-zinc-800 dark:bg-zinc-900/30"
+          : "border-zinc-200 bg-white shadow-sm hover:border-zinc-300 hover:shadow dark:border-zinc-700/80 dark:bg-zinc-800/60 dark:hover:border-zinc-600"
+      }`}
+    >
+      {accentColor && !isCancelled ? (
+        <div className="mb-1.5 h-0.5 w-8 rounded-full" style={{ backgroundColor: accentColor }} />
+      ) : null}
+      <p className={`text-xs font-semibold leading-snug ${isCancelled ? "line-through text-zinc-400 dark:text-zinc-600" : "text-zinc-900 dark:text-zinc-50"}`}>
+        {cls.classTemplate.name}
+      </p>
+      <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+        {formatTime(cls.startsAt, tz)} – {formatTime(cls.endsAt, tz)}
+      </p>
+      {cls.instructor ? (
+        <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+          {cls.instructor.firstName} {cls.instructor.lastName}
+        </p>
+      ) : null}
+    </button>
+  );
+}
+
+// ── page ───────────────────────────────────────────────────────────────────────
+
+export default function SchedulePage() {
+  const { selectedStudioId, selected, loading: studioLoading, error: studioError } = useDeskStudio();
+  const tz = selected?.studio.timezone ?? "UTC";
+
+  const [weekStart, setWeekStart] = useState<Date>(() => getMondayOf(new Date()));
+  const [classes, setClasses] = useState<ScheduledClassDto[]>([]);
+  const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
+  const [members, setMembers] = useState<MemberDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [modal, setModal] = useState<ScheduleModalState>({ type: "closed" });
+
+  const weekEnd = useMemo(() => addDays(weekStart, 7), [weekStart]);
+
+  const load = useCallback(async () => {
+    if (!selectedStudioId) {
+      setClasses([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const [cls, tpl, mem] = await Promise.all([
+        fetchStudioSchedule(selectedStudioId, weekStart.toISOString(), weekEnd.toISOString()),
+        fetchClassTemplates(selectedStudioId),
+        fetchStudioMembers(selectedStudioId),
+      ]);
+      setClasses(cls);
+      setTemplates(tpl);
+      setMembers(mem);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not load schedule");
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedStudioId, weekStart, weekEnd]);
+
+  useEffect(() => {
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  const weekDays = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  );
+
+  const classesByDay = useMemo(() => {
+    const map = new Map<string, ScheduledClassDto[]>();
+    for (const cls of classes) {
+      const key = calendarDayKeyInZone(cls.startsAt, tz);
+      const arr = map.get(key) ?? [];
+      arr.push(cls);
+      map.set(key, arr);
+    }
+    return map;
+  }, [classes, tz]);
+
+  const todayKey = useMemo(() => todayKeyInZone(tz), [tz]);
+
+  const handleModalDone = () => {
+    setModal({ type: "closed" });
+    void load();
+  };
+
+  if (studioLoading) {
+    return <p className="text-sm text-zinc-500">Loading studios…</p>;
+  }
+
+  if (studioError) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+        {studioError}
+      </div>
+    );
+  }
+
+  if (!selectedStudioId) {
+    return (
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center dark:border-zinc-800 dark:bg-zinc-900">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">No studio memberships found for this account.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+              Schedule
+            </h1>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              {formatWeekRange(weekStart, tz)}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setWeekStart(getMondayOf(new Date()))}
+              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              Today
+            </button>
+            <div className="flex rounded-lg border border-zinc-200 dark:border-zinc-700">
+              <button
+                type="button"
+                onClick={() => setWeekStart((w) => addDays(w, -7))}
+                className="px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800 rounded-l-lg"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                onClick={() => setWeekStart((w) => addDays(w, 7))}
+                className="border-l border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800 rounded-r-lg"
+              >
+                ›
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setModal({ type: "create" })}
+              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+            >
+              Schedule a class
+            </button>
+          </div>
+        </div>
+
+        {error ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+            {error}
+            <button type="button" className="ml-3 font-semibold underline" onClick={() => void load()}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {/* Week grid */}
+        <div className="overflow-x-auto rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="min-w-[700px]">
+            {/* Day headers */}
+            <div className="grid grid-cols-7 border-b border-zinc-100 dark:border-zinc-800">
+              {weekDays.map((day) => {
+                const key = calendarDayKeyInZone(day.toISOString(), tz);
+                const { weekday, day: dayNum } = formatDayHeader(day, tz);
+                const isToday = key === todayKey;
+                return (
+                  <div
+                    key={key}
+                    className="border-r border-zinc-100 px-3 py-3 text-center last:border-r-0 dark:border-zinc-800"
+                  >
+                    <p className={`text-[11px] font-medium uppercase tracking-wider ${isToday ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500"}`}>
+                      {weekday}
+                    </p>
+                    <p
+                      className={`mt-0.5 text-lg font-semibold leading-none ${
+                        isToday
+                          ? "flex h-7 w-7 items-center justify-center rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                          : "text-zinc-700 dark:text-zinc-300"
+                      }`}
+                      style={isToday ? { margin: "2px auto 0" } : {}}
+                    >
+                      {dayNum}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Day columns */}
+            <div className="grid grid-cols-7 divide-x divide-zinc-100 dark:divide-zinc-800">
+              {weekDays.map((day) => {
+                const key = calendarDayKeyInZone(day.toISOString(), tz);
+                const dayCls = (classesByDay.get(key) ?? []).sort(
+                  (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+                );
+                return (
+                  <div key={key} className="min-h-[120px] p-2">
+                    {loading ? (
+                      <div className="space-y-1.5">
+                        <div className="h-14 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+                      </div>
+                    ) : dayCls.length === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setModal({ type: "create", prefillDate: key })}
+                        className="flex h-full w-full min-h-[80px] items-center justify-center rounded-lg text-zinc-300 hover:bg-zinc-50 hover:text-zinc-400 dark:text-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-500"
+                      >
+                        <span className="text-lg leading-none">+</span>
+                      </button>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {dayCls.map((cls) => (
+                          <ClassCard
+                            key={cls.id}
+                            cls={cls}
+                            tz={tz}
+                            onClick={() => setModal({ type: "edit", cls })}
+                          />
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setModal({ type: "create", prefillDate: key })}
+                          className="w-full rounded-lg py-1 text-center text-xs text-zinc-300 hover:bg-zinc-50 hover:text-zinc-500 dark:text-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-400"
+                        >
+                          + Add
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Upcoming list */}
+        {!loading && classes.filter((c) => c.status === "SCHEDULED").length > 0 ? (
+          <div>
+            <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+              This week · {classes.filter((c) => c.status === "SCHEDULED").length} scheduled
+            </h2>
+            <ul className="space-y-2">
+              {classes
+                .filter((c) => c.status === "SCHEDULED")
+                .map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => setModal({ type: "edit", cls: c })}
+                      className="flex w-full items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-600"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        {c.classTemplate.color ? (
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: c.classTemplate.color }}
+                          />
+                        ) : null}
+                        <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                          {c.classTemplate.name}
+                        </span>
+                      </div>
+                      <div className="shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400">
+                        <p>{calendarDayKeyInZone(c.startsAt, tz)}</p>
+                        <p>{formatTime(c.startsAt, tz)} – {formatTime(c.endsAt, tz)}</p>
+                      </div>
+                      {c.instructor ? (
+                        <span className="hidden shrink-0 text-xs text-zinc-400 dark:text-zinc-500 sm:block">
+                          {c.instructor.firstName} {c.instructor.lastName}
+                        </span>
+                      ) : null}
+                      <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
+                        Cap {c.capacity}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+
+      {modal.type !== "closed" && selectedStudioId ? (
+        <ScheduleModal
+          modal={modal as Exclude<ScheduleModalState, { type: "closed" }>}
+          templates={templates}
+          members={members}
+          studioId={selectedStudioId}
+          onClose={() => setModal({ type: "closed" })}
+          onDone={handleModalDone}
+        />
+      ) : null}
+    </>
+  );
+}
