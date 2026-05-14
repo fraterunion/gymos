@@ -10,6 +10,7 @@ import { BookingsModule } from './bookings/bookings.module';
 import { BrandingModule } from './branding/branding.module';
 import { CheckInsModule } from './check-ins/check-ins.module';
 import { ClassTemplatesModule } from './class-templates/class-templates.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { MembersModule } from './members/members.module';
 import { MembershipPlansModule } from './membership-plans/membership-plans.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -44,6 +45,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     ]),
     PrismaModule,
     AuthModule,
+    AnalyticsModule,
     BillingModule,
     BrandingModule,
     StudiosModule,
