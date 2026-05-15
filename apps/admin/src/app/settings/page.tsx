@@ -9,7 +9,6 @@ import {
   updateBookingRules,
   updateBrandingSettings,
   updateGeneralSettings,
-  updateMobileConfig,
   type StudioSettingsDto,
 } from "@/lib/api/settings";
 
@@ -74,39 +73,6 @@ function SectionCard({
   );
 }
 
-function CopyField({ label, value }: { label: string; value: string | null }) {
-  const [copied, setCopied] = useState(false);
-  const display = value?.trim() ? value : "—";
-
-  const onCopy = useCallback(async () => {
-    if (!value?.trim()) return;
-    try {
-      await navigator.clipboard.writeText(value.trim());
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // ignore
-    }
-  }, [value]);
-
-  return (
-    <div className="flex flex-col gap-1.5 rounded-xl border border-zinc-800/80 bg-zinc-950/60 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">{label}</p>
-        <p className="mt-0.5 truncate font-mono text-sm text-zinc-200">{display}</p>
-      </div>
-      <button
-        type="button"
-        onClick={() => void onCopy()}
-        disabled={!value?.trim()}
-        className="shrink-0 rounded-lg border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
-    </div>
-  );
-}
-
 function ToggleRow({
   label,
   description,
@@ -161,17 +127,10 @@ function formsFromDto(res: StudioSettingsDto) {
         res.branding.effectiveAccentColor,
     },
     booking: { ...res.bookingRules },
-    mobile: {
-      appDisplayName: res.mobile.appDisplayName ?? "",
-      appScheme: res.mobile.appScheme ?? "",
-      expoSlug: res.mobile.expoSlug ?? "",
-      iosBundleIdentifier: res.mobile.iosBundleIdentifier ?? "",
-      androidPackage: res.mobile.androidPackage ?? "",
-    },
   };
 }
 
-type SaveKey = "general" | "branding" | "booking" | "mobile";
+type SaveKey = "general" | "branding" | "booking";
 
 export default function StudioSettingsPage() {
   const { selectedStudioId, selected, loading: studiosLoading, error: studiosError } = useDeskStudio();
@@ -184,7 +143,6 @@ export default function StudioSettingsPage() {
   const [saving, setSaving] = useState<SaveKey | null>(null);
   const [sectionError, setSectionError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
-  const [buildNote, setBuildNote] = useState<string | null>(null);
 
   const [general, setGeneral] = useState({
     name: "",
@@ -211,21 +169,12 @@ export default function StudioSettingsPage() {
     checkInWindowMinutes: 15,
   });
 
-  const [mobile, setMobile] = useState({
-    appDisplayName: "",
-    appScheme: "",
-    expoSlug: "",
-    iosBundleIdentifier: "",
-    androidPackage: "",
-  });
-
   const applyServerData = useCallback((res: StudioSettingsDto) => {
     setData(res);
     const f = formsFromDto(res);
     setGeneral(f.general);
     setBranding(f.branding);
     setBooking(f.booking);
-    setMobile(f.mobile);
   }, []);
 
   const reload = useCallback(async () => {
@@ -268,17 +217,6 @@ export default function StudioSettingsPage() {
     () => mergeIntOptions(CHECKIN_MINUTES_BASE, booking.checkInWindowMinutes),
     [booking.checkInWindowMinutes],
   );
-
-  const mobileDraftReady = useMemo(() => {
-    const fields = [
-      mobile.appDisplayName,
-      mobile.appScheme,
-      mobile.expoSlug,
-      mobile.iosBundleIdentifier,
-      mobile.androidPackage,
-    ].map((x) => x.trim());
-    return fields.every((x) => x.length > 0);
-  }, [mobile]);
 
   const preview = useMemo(() => {
     const primary = branding.primaryColor || "#7c3aed";
@@ -345,19 +283,6 @@ export default function StudioSettingsPage() {
     );
   };
 
-  const onSaveMobile = () => {
-    if (!selectedStudioId) return;
-    void runSave("mobile", () =>
-      updateMobileConfig(selectedStudioId, {
-        appDisplayName: mobile.appDisplayName.trim() || null,
-        appScheme: mobile.appScheme.trim() || null,
-        expoSlug: mobile.expoSlug.trim() || null,
-        iosBundleIdentifier: mobile.iosBundleIdentifier.trim() || null,
-        androidPackage: mobile.androidPackage.trim() || null,
-      }),
-    );
-  };
-
   if (studiosLoading) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
@@ -414,7 +339,8 @@ export default function StudioSettingsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">Studio settings</h1>
           <p className="mt-1 max-w-2xl text-sm text-zinc-500">
-            Branding, booking rules, and mobile identifiers for this desk. Changes apply to your live studio profile.
+            Branding and booking rules for your studio. FraterUnion manages native app identifiers in the internal
+            platform console.
           </p>
         </div>
         {flash ? (
@@ -700,107 +626,6 @@ export default function StudioSettingsPage() {
             className="rounded-xl bg-zinc-100 px-4 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-wait disabled:opacity-60 dark:bg-violet-600 dark:text-white dark:hover:bg-violet-500"
           >
             {saving === "booking" ? "Saving…" : "Save booking rules"}
-          </button>
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Mobile app branding"
-        subtitle="Identifiers for white-label builds. These map to native bundle IDs and Expo configuration."
-      >
-        <div className="mb-6 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-zinc-100">White-label build configuration</p>
-              <p className="mt-1 text-xs text-zinc-500">
-                All fields must be set for a complete mobile release profile.
-              </p>
-            </div>
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                mobileDraftReady
-                  ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
-                  : "bg-amber-500/10 text-amber-200 ring-1 ring-amber-500/25"
-              }`}
-            >
-              {mobileDraftReady ? "Ready" : "Incomplete"}
-            </span>
-          </div>
-          <div className="mt-4 space-y-2">
-            <CopyField label="App display name" value={mobile.appDisplayName || null} />
-            <CopyField label="App scheme" value={mobile.appScheme || null} />
-            <CopyField label="Expo slug" value={mobile.expoSlug || null} />
-            <CopyField label="iOS bundle identifier" value={mobile.iosBundleIdentifier || null} />
-            <CopyField label="Android package" value={mobile.androidPackage || null} />
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setBuildNote("Build automation is not wired yet — this button is UI-only.");
-                window.setTimeout(() => setBuildNote(null), 4000);
-              }}
-              className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500"
-            >
-              Generate build
-            </button>
-            {buildNote ? <span className="text-xs text-zinc-400">{buildNote}</span> : null}
-          </div>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">App display name</span>
-            <input
-              className={INPUT}
-              value={mobile.appDisplayName}
-              onChange={(e) => setMobile((m) => ({ ...m, appDisplayName: e.target.value }))}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">App scheme</span>
-            <input
-              className={INPUT}
-              placeholder="mygym"
-              value={mobile.appScheme}
-              onChange={(e) => setMobile((m) => ({ ...m, appScheme: e.target.value }))}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Expo slug</span>
-            <input
-              className={INPUT}
-              value={mobile.expoSlug}
-              onChange={(e) => setMobile((m) => ({ ...m, expoSlug: e.target.value }))}
-            />
-          </label>
-          <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">iOS bundle identifier</span>
-            <input
-              className={INPUT}
-              placeholder="com.studio.app"
-              value={mobile.iosBundleIdentifier}
-              onChange={(e) => setMobile((m) => ({ ...m, iosBundleIdentifier: e.target.value }))}
-            />
-          </label>
-          <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Android package</span>
-            <input
-              className={INPUT}
-              placeholder="com.studio.app"
-              value={mobile.androidPackage}
-              onChange={(e) => setMobile((m) => ({ ...m, androidPackage: e.target.value }))}
-            />
-          </label>
-        </div>
-        <div className="mt-6 flex justify-end">
-          <button
-            type="button"
-            disabled={saving === "mobile"}
-            onClick={onSaveMobile}
-            className="rounded-xl bg-zinc-100 px-4 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-wait disabled:opacity-60 dark:bg-violet-600 dark:text-white dark:hover:bg-violet-500"
-          >
-            {saving === "mobile" ? "Saving…" : "Save mobile config"}
           </button>
         </div>
       </SectionCard>

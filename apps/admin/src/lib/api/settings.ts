@@ -48,8 +48,9 @@ export type StudioSettingsDto = {
   general: StudioSettingsGeneral;
   branding: StudioSettingsBranding;
   bookingRules: StudioSettingsBookingRules;
-  mobile: StudioSettingsMobile;
-  mobileWhiteLabelStatus: "ready" | "incomplete";
+  /** Present only for FraterUnion platform operators (see API redaction). */
+  mobile?: StudioSettingsMobile;
+  mobileWhiteLabelStatus?: "ready" | "incomplete";
   storeLinks: { appStoreUrl: string | null; playStoreUrl: string | null };
   updatedAt: string;
 };
@@ -62,6 +63,8 @@ export type PatchGeneralBody = Partial<{
   websiteUrl: string | null;
   instagramHandle: string | null;
   address: string | null;
+  privacyUrl: string | null;
+  termsUrl: string | null;
 }>;
 
 export type PatchBrandingBody = Partial<{
