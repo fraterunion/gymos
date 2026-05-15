@@ -185,9 +185,11 @@ export class EasBuildExecutorService {
    * Runs `npx eas-cli build` with fixed argv (no shell interpolation). Env carries snapshot values only.
    * `--json` implies non-interactive (EAS CLI); JSON is written to stdout, status lines to stderr.
    *
-   * A temporary workspace with a real git repo is created before each build because EAS CLI calls
-   * `git rev-parse --show-toplevel` internally even when EAS_NO_VCS=1, and Railway containers
-   * have no .git directory.
+   * A temporary workspace is created before each build for two reasons:
+   * 1. EAS CLI calls `git rev-parse --show-toplevel` — Railway containers have no .git directory.
+   * 2. EAS CLI runs `npx expo config --json` which requires dotenv to be resolvable; the temp
+   *    workspace includes stub modules for dotenv/dotenv-expand so config evaluation always succeeds
+   *    regardless of npx cache state.
    */
   async execute(job: EasBuildJobContext, studioSlug: string): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
     const mobileRoot = this.resolveMobileAppRoot();
@@ -220,6 +222,10 @@ export class EasBuildExecutorService {
       CI: 'true',
       EAS_NO_VCS: '1',
       EXPO_NO_GIT_STATUS: '1',
+      // Belt-and-suspenders: also set EXPO_NO_DOTENV so expo CLI's @expo/env.load() returns
+      // early before touching require('dotenv'). EAS CLI already sets this for its own subprocess
+      // call to `npx expo config`, but explicit is safer across eas-cli versions.
+      EXPO_NO_DOTENV: '1',
       EXPO_TOKEN: easToken,
       EXPO_NO_INTERACTIVE: '1',
       WHITELABEL_PROFILE: 'local',
@@ -246,6 +252,11 @@ export class EasBuildExecutorService {
 
     const keepWorkspace = (this.config.get<string>('DEBUG_KEEP_BUILD_WORKSPACE') ?? '').toLowerCase() === 'true';
     const workspace = await this.createWorkspace(job.id, mobileRoot);
+
+    // --- TEMPORARY DIAGNOSTICS: log workspace state and run pre-flight expo config ---
+    await this.logWorkspaceDiagnostics(job.id, workspace);
+    await this.runExpoConfigDiagnostic(job.id, workspace, childEnv);
+    // --- END TEMPORARY DIAGNOSTICS ---
 
     this.logger.log(
       JSON.stringify({
@@ -301,10 +312,102 @@ export class EasBuildExecutorService {
     return { easBuildUrl, artifactUrl };
   }
 
+  // ---------------------------------------------------------------------------
+  // TEMPORARY DIAGNOSTICS — remove once dotenv resolution is confirmed stable
+  // ---------------------------------------------------------------------------
+
+  /** Logs workspace structure to help confirm what's present before EAS runs. */
+  private logWorkspaceDiagnostics(jobId: string, workspace: string): void {
+    let lsOutput = '';
+    try {
+      const entries = fs.readdirSync(workspace, { withFileTypes: true });
+      lsOutput = entries
+        .map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`)
+        .join('\n');
+    } catch (err) {
+      lsOutput = `readdir failed: ${String(err)}`;
+    }
+
+    let appConfigContents = '';
+    try {
+      const p = path.join(workspace, 'app.config.js');
+      appConfigContents = fs.existsSync(p) ? fs.readFileSync(p, 'utf8').slice(0, 800) : '(not found)';
+    } catch (err) {
+      appConfigContents = `read failed: ${String(err)}`;
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'workspace_diagnostics',
+        jobId,
+        workspace,
+        cwd: workspace,
+        hasPackageJson: fs.existsSync(path.join(workspace, 'package.json')),
+        hasNodeModules: fs.existsSync(path.join(workspace, 'node_modules')),
+        hasDotenvStub: fs.existsSync(path.join(workspace, 'node_modules', 'dotenv', 'lib', 'main.js')),
+        hasEasJson: fs.existsSync(path.join(workspace, 'eas.json')),
+        ls: lsOutput,
+        appConfigHead: appConfigContents,
+      }),
+    );
+  }
+
+  /**
+   * Runs `npx expo config --json` in the workspace and logs the full stdout/stderr.
+   * This diagnostic runs BEFORE the EAS build so that if expo config still fails we can
+   * see the exact require stack in Railway logs.
+   */
+  private async runExpoConfigDiagnostic(
+    jobId: string,
+    workspace: string,
+    baseEnv: NodeJS.ProcessEnv,
+  ): Promise<void> {
+    const diagEnv: NodeJS.ProcessEnv = {
+      ...baseEnv,
+      EXPO_NO_DOTENV: '1',
+    };
+
+    const { code, stdout, stderr } = await new Promise<{ code: number; stdout: string; stderr: string }>(
+      (resolve) => {
+        const child = spawn('npx', ['expo', 'config', '--json'], {
+          cwd: workspace,
+          env: diagEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        });
+        let out = '';
+        let err = '';
+        child.stdout?.setEncoding('utf8');
+        child.stderr?.setEncoding('utf8');
+        child.stdout?.on('data', (c: string) => { out += c; });
+        child.stderr?.on('data', (c: string) => { err += c; });
+        const timer = setTimeout(() => { child.kill('SIGTERM'); resolve({ code: 1, stdout: out, stderr: 'DIAGNOSTIC TIMEOUT' }); }, 60_000);
+        child.on('error', (e) => { clearTimeout(timer); resolve({ code: 1, stdout: '', stderr: String(e) }); });
+        child.on('close', (c) => { clearTimeout(timer); resolve({ code: c ?? 1, stdout: out, stderr: err }); });
+      },
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'expo_config_diagnostic',
+        jobId,
+        exitCode: code,
+        // Full output so we can see the require stack if it still fails
+        stdout: truncateMessage(stdout, 2000),
+        stderr: truncateMessage(stderr, 2000),
+      }),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // END TEMPORARY DIAGNOSTICS
+  // ---------------------------------------------------------------------------
+
   /**
    * Creates a temp directory, copies the mobile app source into it (excluding build artifacts and
-   * node_modules so EAS installs a clean dependency tree), then initialises a minimal git repo so
-   * EAS CLI's `git rev-parse` call succeeds in containers that have no .git directory.
+   * node_modules so EAS installs a clean dependency tree on the build server), initialises a
+   * minimal git repo, and injects dotenv/dotenv-expand stubs so `npx expo config` can always
+   * resolve those modules regardless of npx cache state.
    */
   private async createWorkspace(jobId: string, sourceDir: string): Promise<string> {
     const workspaceDir = path.join(os.tmpdir(), `gymos-build-${jobId}`);
@@ -333,8 +436,58 @@ export class EasBuildExecutorService {
 
     copyRecursive(sourceDir, workspaceDir);
 
+    // Inject stub modules so `npx expo config` can load without needing the project's
+    // full node_modules. EAS CLI (and expo CLI) both call require('dotenv') through
+    // @expo/env — these stubs satisfy that require without touching actual .env files
+    // (our app.config.js handles env loading itself via applyEnvFile()).
+    this.injectDotenvStubs(workspaceDir);
+
     await this.initGitRepo(workspaceDir, jobId);
     return workspaceDir;
+  }
+
+  /**
+   * Creates minimal dotenv and dotenv-expand stubs in node_modules so that any
+   * require('dotenv') or require('dotenv-expand') inside expo/eas tooling succeeds
+   * without needing the project's full node_modules to be present.
+   */
+  private injectDotenvStubs(workspaceDir: string): void {
+    // dotenv stub
+    const dotenvLib = path.join(workspaceDir, 'node_modules', 'dotenv', 'lib');
+    fs.mkdirSync(dotenvLib, { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, 'node_modules', 'dotenv', 'package.json'),
+      JSON.stringify({ name: 'dotenv', version: '16.4.7', main: './lib/main.js' }),
+    );
+    fs.writeFileSync(
+      path.join(dotenvLib, 'main.js'),
+      [
+        "'use strict';",
+        '// Stub — env loading is handled by app.config.js applyEnvFile()',
+        'exports.config = function() { return { parsed: {} }; };',
+        'exports.parse = function() { return {}; };',
+        'exports.populate = function() {};',
+        'exports.decrypt = function() { return ""; };',
+      ].join('\n'),
+    );
+
+    // dotenv-expand stub
+    const dotenvExpandLib = path.join(workspaceDir, 'node_modules', 'dotenv-expand', 'lib');
+    fs.mkdirSync(dotenvExpandLib, { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, 'node_modules', 'dotenv-expand', 'package.json'),
+      JSON.stringify({ name: 'dotenv-expand', version: '11.0.7', main: './lib/main.js' }),
+    );
+    fs.writeFileSync(
+      path.join(dotenvExpandLib, 'main.js'),
+      [
+        "'use strict';",
+        'exports.expand = function(opts) { return opts || {}; };',
+        'exports.config = function(opts) { return opts || {}; };',
+      ].join('\n'),
+    );
+
+    this.logger.log(JSON.stringify({ event: 'dotenv_stubs_injected', workspaceDir }));
   }
 
   private async initGitRepo(dir: string, jobId: string): Promise<void> {
