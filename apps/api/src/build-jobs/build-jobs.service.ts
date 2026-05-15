@@ -1,4 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EasBuildExecutorService } from './eas-build-executor.service';
@@ -41,6 +48,8 @@ export type BuildJobResponse = Prisma.BuildJobGetPayload<{ select: typeof buildJ
 
 @Injectable()
 export class BuildJobsService {
+  private readonly logger = new Logger(BuildJobsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly easExecutor: EasBuildExecutorService,
@@ -54,6 +63,18 @@ export class BuildJobsService {
       take: 50,
       select: buildJobSelect,
     });
+  }
+
+  async getById(studioId: string, jobId: string): Promise<BuildJobResponse> {
+    await this.assertStudioExists(studioId);
+    const job = await this.prisma.buildJob.findFirst({
+      where: { id: jobId, studioId },
+      select: buildJobSelect,
+    });
+    if (!job) {
+      throw new NotFoundException('Build job not found');
+    }
+    return job;
   }
 
   async create(
@@ -93,11 +114,13 @@ export class BuildJobsService {
     return { workerEnabled: this.easExecutor.isWorkerEnabled() };
   }
 
+  /**
+   * Enqueues (or re-queues) a build for the async worker. Does not invoke EAS on the HTTP thread.
+   */
   async run(studioId: string, jobId: string): Promise<BuildJobResponse> {
     if (!this.easExecutor.isWorkerEnabled()) {
       throw new ForbiddenException('Build worker is disabled in this environment.');
     }
-    this.easExecutor.assertReadyForExecution();
 
     const job = await this.prisma.buildJob.findFirst({
       where: { id: jobId, studioId },
@@ -106,60 +129,142 @@ export class BuildJobsService {
     if (!job) {
       throw new NotFoundException('Build job not found');
     }
+    if (job.status === 'RUNNING') {
+      throw new ConflictException('Build job is already running.');
+    }
     if (job.status !== 'QUEUED' && job.status !== 'FAILED') {
-      throw new BadRequestException('Only QUEUED or FAILED build jobs can be run.');
+      throw new BadRequestException('Only QUEUED or FAILED build jobs can be enqueued.');
     }
 
-    const studio = await this.prisma.studio.findFirst({
-      where: { id: studioId, deletedAt: null },
-      select: { slug: true },
-    });
-    if (!studio) {
-      throw new NotFoundException('Studio not found');
-    }
-
-    const transition = await this.prisma.buildJob.updateMany({
-      where: {
-        id: jobId,
-        studioId,
-        status: { in: ['QUEUED', 'FAILED'] },
-      },
+    return this.prisma.buildJob.update({
+      where: { id: jobId },
       data: {
-        status: 'RUNNING',
-        startedAt: new Date(),
+        status: 'QUEUED',
         errorMessage: null,
         easBuildUrl: null,
         artifactUrl: null,
+        startedAt: null,
+        finishedAt: null,
+      },
+      select: buildJobSelect,
+    });
+  }
+
+  /**
+   * Atomically claims the oldest QUEUED job (PostgreSQL SKIP LOCKED). Returns null if none.
+   */
+  async claimNextQueuedJob(): Promise<{ job: BuildJobResponse; studioSlug: string } | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        WITH picked AS (
+          SELECT id FROM build_jobs
+          WHERE status = 'QUEUED'::"BuildJobStatus"
+          ORDER BY requested_at ASC
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE build_jobs AS b
+        SET
+          status = 'RUNNING'::"BuildJobStatus",
+          started_at = ${now},
+          error_message = NULL,
+          eas_build_url = NULL,
+          artifact_url = NULL,
+          finished_at = NULL
+        FROM picked
+        WHERE b.id = picked.id
+        RETURNING b.id
+      `;
+      const id = rows[0]?.id;
+      if (!id) {
+        return null;
+      }
+
+      const job = await tx.buildJob.findUnique({
+        where: { id },
+        select: buildJobSelect,
+      });
+      if (!job) {
+        return null;
+      }
+
+      const studio = await tx.studio.findFirst({
+        where: { id: job.studioId, deletedAt: null },
+        select: { slug: true },
+      });
+      if (!studio) {
+        await tx.buildJob.update({
+          where: { id },
+          data: {
+            status: 'FAILED',
+            finishedAt: new Date(),
+            errorMessage: 'Studio not found; cannot run EAS build.',
+          },
+        });
+        this.logger.warn(
+          JSON.stringify({
+            event: 'build_job_aborted',
+            jobId: id,
+            studioId: job.studioId,
+            reason: 'studio_missing',
+          }),
+        );
+        return null;
+      }
+
+      return { job, studioSlug: studio.slug };
+    });
+  }
+
+  async finalizeBuildSuccess(
+    job: BuildJobResponse,
+    urls: { easBuildUrl: string | null; artifactUrl: string | null },
+  ): Promise<void> {
+    await this.prisma.buildJob.update({
+      where: { id: job.id },
+      data: {
+        status: 'SUCCEEDED',
+        finishedAt: new Date(),
+        easBuildUrl: urls.easBuildUrl ?? null,
+        artifactUrl: urls.artifactUrl ?? null,
+        errorMessage: null,
       },
     });
-    if (transition.count === 0) {
-      throw new BadRequestException('Build job is no longer in a runnable state.');
-    }
+    this.logger.log(
+      JSON.stringify({
+        event: 'build_job_status',
+        jobId: job.id,
+        studioId: job.studioId,
+        platform: job.platform,
+        profile: job.profile,
+        from: 'RUNNING',
+        to: 'SUCCEEDED',
+      }),
+    );
+  }
 
-    try {
-      const { easBuildUrl, artifactUrl } = await this.easExecutor.execute(job, studio.slug);
-      return await this.prisma.buildJob.update({
-        where: { id: jobId },
-        data: {
-          status: 'SUCCEEDED',
-          finishedAt: new Date(),
-          easBuildUrl: easBuildUrl ?? null,
-          artifactUrl: artifactUrl ?? null,
-        },
-        select: buildJobSelect,
-      });
-    } catch (e) {
-      const errorMessage = this.sanitizeBuildError(e);
-      return await this.prisma.buildJob.update({
-        where: { id: jobId },
-        data: {
-          status: 'FAILED',
-          finishedAt: new Date(),
-          errorMessage,
-        },
-        select: buildJobSelect,
-      });
-    }
+  async finalizeBuildFailure(job: BuildJobResponse, error: unknown): Promise<void> {
+    const errorMessage = this.sanitizeBuildError(error);
+    await this.prisma.buildJob.update({
+      where: { id: job.id },
+      data: {
+        status: 'FAILED',
+        finishedAt: new Date(),
+        errorMessage,
+      },
+    });
+    this.logger.warn(
+      JSON.stringify({
+        event: 'build_job_status',
+        jobId: job.id,
+        studioId: job.studioId,
+        platform: job.platform,
+        profile: job.profile,
+        from: 'RUNNING',
+        to: 'FAILED',
+      }),
+    );
   }
 
   private sanitizeBuildError(e: unknown): string {

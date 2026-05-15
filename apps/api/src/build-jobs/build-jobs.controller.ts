@@ -26,6 +26,11 @@ export class BuildJobsController {
     return this.buildJobsService.listForStudio(studioId);
   }
 
+  @Get(':jobId')
+  getOne(@Param('studioId') studioId: string, @Param('jobId') jobId: string) {
+    return this.buildJobsService.getById(studioId, jobId);
+  }
+
   @Post()
   create(
     @Param('studioId') studioId: string,

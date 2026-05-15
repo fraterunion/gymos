@@ -30,6 +30,10 @@ export async function fetchBuildJobs(studioId: string): Promise<BuildJobDto[]> {
   return apiRequest<BuildJobDto[]>(`/studios/${studioId}/build-jobs`, { method: "GET" });
 }
 
+export async function fetchBuildJob(studioId: string, jobId: string): Promise<BuildJobDto> {
+  return apiRequest<BuildJobDto>(`/studios/${studioId}/build-jobs/${encodeURIComponent(jobId)}`, { method: "GET" });
+}
+
 export async function createBuildJob(
   studioId: string,
   body: { platform: BuildJobPlatform; profile: BuildJobProfile },

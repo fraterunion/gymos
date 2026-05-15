@@ -140,6 +140,15 @@ export class EasBuildExecutorService {
     const platformArg = easPlatformArg(job.platform);
     const profileArg = easProfileName(job.profile);
 
+    this.logger.log(
+      JSON.stringify({
+        event: 'eas_build_started',
+        jobId: job.id,
+        platform: job.platform,
+        profile: job.profile,
+      }),
+    );
+
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
       CI: '1',

@@ -24,7 +24,15 @@ import {
 const INPUT =
   "w-full rounded-xl border border-zinc-700/90 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30";
 
-function StatusBadge({ status }: { status: BuildJobDto["status"] }) {
+const STATUS_HELP: Record<BuildJobDto["status"], string> = {
+  QUEUED: "Waiting for worker",
+  RUNNING: "EAS build in progress",
+  SUCCEEDED: "Build finished",
+  FAILED: "Failed; can re-queue",
+  CANCELED: "Canceled",
+};
+
+function StatusCell({ status }: { status: BuildJobDto["status"] }) {
   const styles: Record<BuildJobDto["status"], string> = {
     QUEUED: "bg-zinc-500/15 text-zinc-300 ring-1 ring-zinc-500/30",
     RUNNING: "bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/35",
@@ -33,9 +41,12 @@ function StatusBadge({ status }: { status: BuildJobDto["status"] }) {
     CANCELED: "bg-zinc-600/20 text-zinc-400 ring-1 ring-zinc-600/40",
   };
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles[status]}`}>
-      {status}
-    </span>
+    <div className="flex flex-col gap-0.5">
+      <span className={`inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles[status]}`}>
+        {status}
+      </span>
+      <span className="max-w-[140px] text-[10px] leading-tight text-zinc-500">{STATUS_HELP[status]}</span>
+    </div>
   );
 }
 
@@ -123,7 +134,7 @@ export default function PlatformConsolePage() {
   const [buildProfile, setBuildProfile] = useState<BuildJobProfile>("PREVIEW");
   const [createJobPending, setCreateJobPending] = useState(false);
   const [workerEnabled, setWorkerEnabled] = useState(false);
-  const [runningJobId, setRunningJobId] = useState<string | null>(null);
+  const [enqueuingJobId, setEnqueuingJobId] = useState<string | null>(null);
 
   const [mobile, setMobile] = useState({
     appDisplayName: "",
@@ -203,6 +214,19 @@ export default function PlatformConsolePage() {
       void loadBuildJobs();
     });
   }, [loadBuildJobs]);
+
+  const activeBuildWatch = useMemo(
+    () => jobs.some((j) => j.status === "QUEUED" || j.status === "RUNNING"),
+    [jobs],
+  );
+
+  useEffect(() => {
+    if (!selectedStudioId || !canManage || !activeBuildWatch) return;
+    const id = window.setInterval(() => {
+      void loadBuildJobs();
+    }, 8000);
+    return () => window.clearInterval(id);
+  }, [selectedStudioId, canManage, activeBuildWatch, loadBuildJobs]);
 
   const loadWorkerInfo = useCallback(async () => {
     if (!selectedStudioId || !canManage) {
@@ -312,20 +336,20 @@ export default function PlatformConsolePage() {
     }
   };
 
-  const onRunJob = async (jobId: string) => {
+  const onEnqueueJob = async (jobId: string) => {
     if (!selectedStudioId) return;
     setSectionError(null);
-    setRunningJobId(jobId);
+    setEnqueuingJobId(jobId);
     try {
       await runBuildJob(selectedStudioId, jobId);
-      setFlash("Build run finished");
-      window.setTimeout(() => setFlash(null), 2200);
+      setFlash("Build queued — the API worker will pick it up shortly.");
+      window.setTimeout(() => setFlash(null), 2800);
       await loadBuildJobs();
     } catch (e) {
-      setSectionError(e instanceof ApiError ? e.message : "Run failed.");
+      setSectionError(e instanceof ApiError ? e.message : "Could not enqueue build.");
       await loadBuildJobs();
     } finally {
-      setRunningJobId(null);
+      setEnqueuingJobId(null);
     }
   };
 
@@ -463,14 +487,15 @@ export default function PlatformConsolePage() {
 
       <SectionCard
         title="White-label build requests"
-        subtitle="Queue tracked requests, then run them against EAS when the API worker is enabled (no store publishing from GymOS)."
+        subtitle="Queue tracked requests; the API worker runs EAS builds asynchronously when enabled (no store publishing from GymOS)."
       >
         <p className="rounded-xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm leading-relaxed text-zinc-400">
           <strong className="font-medium text-zinc-200">Store releases are separate.</strong> This flow only starts Expo
           Application Services (EAS) cloud builds and records URLs on the job. When{" "}
           <span className="font-mono text-zinc-300">BUILD_WORKER_ENABLED=true</span> on the API, use{" "}
-          <strong className="text-zinc-200">Run</strong> in the jobs table to execute <span className="font-mono text-zinc-300">QUEUED</span>{" "}
-          or <span className="font-mono text-zinc-300">FAILED</span> rows.
+          <strong className="text-zinc-200">Enqueue</strong> so a background worker picks up{" "}
+          <span className="font-mono text-zinc-300">QUEUED</span> rows (or re-queues{" "}
+          <span className="font-mono text-zinc-300">FAILED</span>).
         </p>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-4">
           <div>
@@ -504,19 +529,24 @@ export default function PlatformConsolePage() {
         title="Recent build jobs"
         subtitle="Latest 50 requests for this tenant (newest first)."
         headerExtra={
-          <button
-            type="button"
-            onClick={() => void loadBuildJobs()}
-            disabled={jobsLoading}
-            className="rounded-lg border border-zinc-600 px-2.5 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-50"
-          >
-            {jobsLoading ? "Refreshing…" : "Refresh"}
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              type="button"
+              onClick={() => void loadBuildJobs()}
+              disabled={jobsLoading}
+              className="rounded-lg border border-zinc-600 px-2.5 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-50"
+            >
+              {jobsLoading ? "Refreshing…" : "Refresh"}
+            </button>
+            {activeBuildWatch ? (
+              <span className="text-[10px] text-zinc-500">Auto-refresh every 8s while QUEUED/RUNNING</span>
+            ) : null}
+          </div>
         }
       >
         {!workerEnabled ? (
           <div className="mb-4 rounded-xl border border-amber-900/40 bg-amber-950/15 px-3 py-2 text-xs leading-relaxed text-amber-100">
-            <strong className="font-medium text-amber-200">Build worker is disabled in this environment.</strong> Run
+            <strong className="font-medium text-amber-200">Build worker is disabled in this environment.</strong> Enqueue
             actions stay disabled until the API sets{" "}
             <span className="font-mono text-amber-100/90">BUILD_WORKER_ENABLED=true</span> and EAS credentials.
           </div>
@@ -548,7 +578,7 @@ export default function PlatformConsolePage() {
                       {new Date(job.requestedAt).toLocaleString()}
                     </td>
                     <td className="px-3 py-2.5">
-                      <StatusBadge status={job.status} />
+                      <StatusCell status={job.status} />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5 text-zinc-300">
                       {job.platform} · {job.profile}
@@ -606,20 +636,20 @@ export default function PlatformConsolePage() {
                         type="button"
                         disabled={
                           !workerEnabled ||
-                          runningJobId === job.id ||
+                          enqueuingJobId === job.id ||
                           (job.status !== "QUEUED" && job.status !== "FAILED")
                         }
                         title={
                           !workerEnabled
                             ? "Build worker is disabled in this environment."
                             : job.status !== "QUEUED" && job.status !== "FAILED"
-                              ? "Only QUEUED or FAILED jobs can be run."
+                              ? "Only QUEUED or FAILED jobs can be enqueued."
                               : undefined
                         }
-                        onClick={() => void onRunJob(job.id)}
+                        onClick={() => void onEnqueueJob(job.id)}
                         className="rounded-lg border border-zinc-600 px-2.5 py-1 text-[11px] font-semibold text-zinc-100 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        {runningJobId === job.id ? "Running…" : "Run"}
+                        {enqueuingJobId === job.id ? "Enqueuing…" : "Enqueue"}
                       </button>
                     </td>
                   </tr>
@@ -699,7 +729,8 @@ export default function PlatformConsolePage() {
             </h3>
             <p className="mt-2 text-sm text-zinc-500">
               Queues a <span className="font-mono text-zinc-400">QUEUED</span> record with a snapshot of the
-              studio&apos;s saved mobile configuration. No EAS run is triggered from GymOS yet.
+              studio&apos;s saved mobile configuration. EAS runs asynchronously on the API when the build worker is
+              enabled.
             </p>
             <div className="mt-5 space-y-4">
               <fieldset>
