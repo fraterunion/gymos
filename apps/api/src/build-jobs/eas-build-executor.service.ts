@@ -22,6 +22,9 @@ const DEFAULT_ICON = './assets/images/icon.png';
 const DEFAULT_SPLASH = './assets/images/splash-icon.png';
 const DEFAULT_ADAPTIVE = './assets/images/adaptive-icon.png';
 
+// Must match `packageManager` in the root package.json.
+const PNPM_VERSION = '10.11.0';
+
 function easPlatformArg(p: BuildJobPlatform): 'ios' | 'android' {
   switch (p) {
     case 'IOS':
@@ -90,7 +93,6 @@ function extractEasErrorMessage(stderr: string, stdout: string, exitCode: number
     return deduped.join('\n');
   }
 
-  // fall back: last few non-noise stderr lines
   const fallback = stderr
     .split('\n')
     .map((l) => l.trim())
@@ -113,6 +115,28 @@ function extractArtifactUrl(text: string): string | null {
   return m2?.[0] ?? null;
 }
 
+/** Directories excluded when copying source into the temp workspace. */
+const COPY_EXCLUDED_DIRS = new Set([
+  '.git', 'node_modules', 'dist', '.next', '.expo', 'build', 'android', 'ios',
+]);
+const COPY_EXCLUDED_EXTS = new Set(['.log']);
+
+function copyRecursive(src: string, dest: string): void {
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (COPY_EXCLUDED_DIRS.has(entry.name)) continue;
+    if (!entry.isDirectory() && COPY_EXCLUDED_EXTS.has(path.extname(entry.name))) continue;
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      fs.mkdirSync(destPath, { recursive: true });
+      copyRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
 @Injectable()
 export class EasBuildExecutorService {
   private readonly logger = new Logger(EasBuildExecutorService.name);
@@ -124,7 +148,6 @@ export class EasBuildExecutorService {
     return raw.trim().toLowerCase() === 'true';
   }
 
-  /** Validates secrets and paths when worker is enabled and a run is requested. */
   assertReadyForExecution(): void {
     const missing: string[] = [];
     const token = this.config.get<string>('EAS_ACCESS_TOKEN')?.trim();
@@ -158,7 +181,6 @@ export class EasBuildExecutorService {
     return null;
   }
 
-  /** Path the API would use for EAS cwd, and whether eas.json is present (non-secret). */
   getMobileRootDiagnostics(): { path: string | null; exists: boolean } {
     const override = this.config.get<string>('MOBILE_APP_ROOT')?.trim();
     if (override) {
@@ -166,9 +188,7 @@ export class EasBuildExecutorService {
       return { path: p, exists: this.hasEasJsonUnder(p) };
     }
     const resolved = this.resolveMobileAppRoot();
-    if (resolved) {
-      return { path: resolved, exists: true };
-    }
+    if (resolved) return { path: resolved, exists: true };
     return { path: null, exists: false };
   }
 
@@ -182,16 +202,33 @@ export class EasBuildExecutorService {
   }
 
   /**
-   * Runs `npx eas-cli build` with fixed argv (no shell interpolation). Env carries snapshot values only.
-   * `--json` implies non-interactive (EAS CLI); JSON is written to stdout, status lines to stderr.
-   *
-   * A temporary workspace is created before each build for two reasons:
-   * 1. EAS CLI calls `git rev-parse --show-toplevel` — Railway containers have no .git directory.
-   * 2. EAS CLI runs `npx expo config --json` which requires dotenv to be resolvable; the temp
-   *    workspace includes stub modules for dotenv/dotenv-expand so config evaluation always succeeds
-   *    regardless of npx cache state.
+   * Finds the monorepo root by walking up from mobileRoot looking for pnpm-workspace.yaml.
+   * On Railway: mobileRoot = /app/apps/mobile → monoRoot = /app.
    */
-  async execute(job: EasBuildJobContext, studioSlug: string): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
+  private resolveMonorepoRoot(mobileRoot: string): string | null {
+    const candidates = [
+      path.join(mobileRoot, '..', '..'), // apps/mobile → root
+      path.join(mobileRoot, '..'),        // mobile → root
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(path.join(c, 'pnpm-workspace.yaml'))) {
+        return path.resolve(c);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Runs `npx eas-cli build` from a temporary workspace.
+   *
+   * The workspace mirrors the monorepo structure (root configs + apps/mobile + packages/*) so
+   * that `pnpm install` resolves workspace:* deps and populates node_modules before EAS CLI
+   * reads the Expo config. EAS then uploads the source to Expo's build servers.
+   */
+  async execute(
+    job: EasBuildJobContext,
+    studioSlug: string,
+  ): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
     const mobileRoot = this.resolveMobileAppRoot();
     if (!mobileRoot) {
       throw new Error('Could not resolve mobile app directory (eas.json not found).');
@@ -206,13 +243,13 @@ export class EasBuildExecutorService {
       this.config.get<string>('EXPO_PUBLIC_API_URL')?.trim() ||
       this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() ||
       '';
-
     if (!expoPublicApiUrl) {
       throw new Error('EXPO_PUBLIC_API_URL (or CORS_ORIGIN) must be set for white-label builds.');
     }
 
     const timeoutMs = Number(this.config.get<string>('EAS_BUILD_TIMEOUT_MS') ?? '600000');
-    const safeTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 1_800_000) : 600_000;
+    const safeTimeout =
+      Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 1_800_000) : 600_000;
 
     const platformArg = easPlatformArg(job.platform);
     const profileArg = easProfileName(job.profile);
@@ -222,9 +259,6 @@ export class EasBuildExecutorService {
       CI: 'true',
       EAS_NO_VCS: '1',
       EXPO_NO_GIT_STATUS: '1',
-      // Belt-and-suspenders: also set EXPO_NO_DOTENV so expo CLI's @expo/env.load() returns
-      // early before touching require('dotenv'). EAS CLI already sets this for its own subprocess
-      // call to `npx expo config`, but explicit is safer across eas-cli versions.
       EXPO_NO_DOTENV: '1',
       EXPO_TOKEN: easToken,
       EXPO_NO_INTERACTIVE: '1',
@@ -237,8 +271,10 @@ export class EasBuildExecutorService {
       IOS_BUNDLE_IDENTIFIER: job.iosBundleIdentifier,
       ANDROID_PACKAGE: job.androidPackage,
       APP_ICON_PATH: this.config.get<string>('BUNDLE_DEFAULT_ICON_PATH')?.trim() || DEFAULT_ICON,
-      APP_SPLASH_PATH: this.config.get<string>('BUNDLE_DEFAULT_SPLASH_PATH')?.trim() || DEFAULT_SPLASH,
-      APP_ADAPTIVE_ICON_PATH: this.config.get<string>('BUNDLE_DEFAULT_ADAPTIVE_ICON_PATH')?.trim() || DEFAULT_ADAPTIVE,
+      APP_SPLASH_PATH:
+        this.config.get<string>('BUNDLE_DEFAULT_SPLASH_PATH')?.trim() || DEFAULT_SPLASH,
+      APP_ADAPTIVE_ICON_PATH:
+        this.config.get<string>('BUNDLE_DEFAULT_ADAPTIVE_ICON_PATH')?.trim() || DEFAULT_ADAPTIVE,
     };
 
     const projectId = this.config.get<string>('EAS_PROJECT_ID')?.trim();
@@ -248,14 +284,32 @@ export class EasBuildExecutorService {
     if (projectSlug) childEnv.EAS_PROJECT_SLUG = projectSlug;
     if (accountName) childEnv.EAS_ACCOUNT_NAME = accountName;
 
-    const args = ['-y', 'eas-cli@latest', 'build', '--platform', platformArg, '--profile', profileArg, '--non-interactive', '--json'];
+    const easArgs = [
+      '-y',
+      'eas-cli@latest',
+      'build',
+      '--platform',
+      platformArg,
+      '--profile',
+      profileArg,
+      '--non-interactive',
+      '--json',
+    ];
 
-    const keepWorkspace = (this.config.get<string>('DEBUG_KEEP_BUILD_WORKSPACE') ?? '').toLowerCase() === 'true';
-    const workspace = await this.createWorkspace(job.id, mobileRoot);
+    const keepWorkspace =
+      (this.config.get<string>('DEBUG_KEEP_BUILD_WORKSPACE') ?? '').toLowerCase() === 'true';
 
-    // --- TEMPORARY DIAGNOSTICS: log workspace state and run pre-flight expo config ---
-    await this.logWorkspaceDiagnostics(job.id, workspace);
-    await this.runExpoConfigDiagnostic(job.id, workspace, childEnv);
+    const monoRoot = this.resolveMonorepoRoot(mobileRoot);
+    const { workspace, mobileDir } = await this.createWorkspace(
+      job.id,
+      mobileRoot,
+      monoRoot,
+      childEnv,
+    );
+
+    // --- TEMPORARY DIAGNOSTICS ---
+    this.logWorkspaceDiagnostics(job.id, workspace, mobileDir);
+    await this.runExpoConfigDiagnostic(job.id, mobileDir, childEnv);
     // --- END TEMPORARY DIAGNOSTICS ---
 
     this.logger.log(
@@ -265,6 +319,7 @@ export class EasBuildExecutorService {
         platform: job.platform,
         profile: job.profile,
         workspace,
+        mobileDir,
       }),
     );
 
@@ -273,12 +328,19 @@ export class EasBuildExecutorService {
     let stdout: string;
     let stderr: string;
     try {
-      ({ code, stdout, stderr } = await this.spawnNpx(args, { cwd: workspace, env: childEnv }, safeTimeout));
+      ({ code, stdout, stderr } = await this.spawnProc(
+        'npx',
+        easArgs,
+        { cwd: mobileDir, env: childEnv },
+        safeTimeout,
+      ));
     } finally {
       if (!keepWorkspace) {
         await this.cleanupWorkspace(workspace);
       } else {
-        this.logger.log(JSON.stringify({ event: 'workspace_kept', jobId: job.id, workspace }));
+        this.logger.log(
+          JSON.stringify({ event: 'workspace_kept', jobId: job.id, workspace, mobileDir }),
+        );
       }
     }
 
@@ -313,27 +375,286 @@ export class EasBuildExecutorService {
   }
 
   // ---------------------------------------------------------------------------
-  // TEMPORARY DIAGNOSTICS — remove once dotenv resolution is confirmed stable
+  // Workspace creation
   // ---------------------------------------------------------------------------
 
-  /** Logs workspace structure to help confirm what's present before EAS runs. */
-  private logWorkspaceDiagnostics(jobId: string, workspace: string): void {
-    let lsOutput = '';
-    try {
-      const entries = fs.readdirSync(workspace, { withFileTypes: true });
-      lsOutput = entries
-        .map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`)
-        .join('\n');
-    } catch (err) {
-      lsOutput = `readdir failed: ${String(err)}`;
+  /**
+   * Creates a temp build workspace, installs dependencies, and inits a git repo.
+   *
+   * Strategy (monorepo copy — preferred):
+   *   /tmp/gymos-build-<id>/          ← temp monorepo root (git root)
+   *     package.json                  ← copied from monoRoot
+   *     pnpm-lock.yaml                ← copied from monoRoot
+   *     pnpm-workspace.yaml           ← generated (only apps/mobile + packages/*)
+   *     .npmrc                        ← copied if present
+   *     apps/mobile/                  ← source copy (no node_modules)
+   *     packages/{config,types,utils}/ ← all workspace packages
+   *     node_modules/                 ← populated by pnpm install
+   *
+   * Fallback (if monoRoot not found): single-dir workspace with dotenv stubs + npm install.
+   *
+   * Returns workspace (temp monorepo root) and mobileDir (EAS build cwd).
+   */
+  private async createWorkspace(
+    jobId: string,
+    mobileRoot: string,
+    monoRoot: string | null,
+    installEnv: NodeJS.ProcessEnv,
+  ): Promise<{ workspace: string; mobileDir: string }> {
+    const workspaceDir = path.join(os.tmpdir(), `gymos-build-${jobId}`);
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    this.logger.log(
+      JSON.stringify({ event: 'workspace_created', jobId, workspace: workspaceDir, monoRoot }),
+    );
+
+    if (monoRoot) {
+      return this.buildMonorepoWorkspace(jobId, workspaceDir, mobileRoot, monoRoot, installEnv);
+    }
+    return this.buildSimpleWorkspace(jobId, workspaceDir, mobileRoot, installEnv);
+  }
+
+  /**
+   * Preferred path: partial monorepo copy + pnpm install.
+   * pnpm's content-addressable store makes reinstalls fast on Railway after the first run.
+   */
+  private async buildMonorepoWorkspace(
+    jobId: string,
+    workspaceDir: string,
+    mobileRoot: string,
+    monoRoot: string,
+    installEnv: NodeJS.ProcessEnv,
+  ): Promise<{ workspace: string; mobileDir: string }> {
+    // 1. Root config files
+    for (const f of ['package.json', 'pnpm-lock.yaml', '.npmrc']) {
+      const src = path.join(monoRoot, f);
+      if (fs.existsSync(src)) {
+        fs.copyFileSync(src, path.join(workspaceDir, f));
+      }
     }
 
-    let appConfigContents = '';
+    // 2. apps/mobile source (no node_modules)
+    const tempMobile = path.join(workspaceDir, 'apps', 'mobile');
+    fs.mkdirSync(path.join(workspaceDir, 'apps'), { recursive: true });
+    copyRecursive(mobileRoot, tempMobile);
+
+    // 3. All packages/* (tiny — just tsconfig presets and tailwind configs; needed for workspace:*)
+    const workspaceEntries: string[] = ['apps/mobile'];
+    const packagesRoot = path.join(monoRoot, 'packages');
+    if (fs.existsSync(packagesRoot)) {
+      const pkgDirs = fs
+        .readdirSync(packagesRoot, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+      const tempPackages = path.join(workspaceDir, 'packages');
+      fs.mkdirSync(tempPackages, { recursive: true });
+      for (const pkg of pkgDirs) {
+        const src = path.join(packagesRoot, pkg);
+        const dest = path.join(tempPackages, pkg);
+        fs.mkdirSync(dest, { recursive: true });
+        copyRecursive(src, dest);
+        workspaceEntries.push(`packages/${pkg}`);
+      }
+    }
+
+    // 4. Minimal pnpm-workspace.yaml covering only what we copied (prevents pnpm from looking
+    //    for apps/admin or apps/api which are not present in the temp dir).
+    //    nodeLinker: hoisted mirrors the project setting so deps land in node_modules/ at root.
+    const workspaceYaml = [
+      'packages:',
+      ...workspaceEntries.map((p) => `  - '${p}'`),
+      'nodeLinker: hoisted',
+      '',
+    ].join('\n');
+    fs.writeFileSync(path.join(workspaceDir, 'pnpm-workspace.yaml'), workspaceYaml);
+
+    // 5. Install dependencies
+    await this.installDependencies(workspaceDir, jobId, installEnv);
+
+    // 6. Git: ignore node_modules in the snapshot commit so it stays small
+    fs.writeFileSync(path.join(workspaceDir, '.gitignore'), 'node_modules/\n');
+    await this.initGitRepo(workspaceDir, jobId);
+
+    return { workspace: workspaceDir, mobileDir: tempMobile };
+  }
+
+  /**
+   * Fallback when monoRoot cannot be found.
+   * Creates a single-dir workspace, strips workspace:* devDeps, and runs npm install.
+   */
+  private async buildSimpleWorkspace(
+    jobId: string,
+    workspaceDir: string,
+    mobileRoot: string,
+    installEnv: NodeJS.ProcessEnv,
+  ): Promise<{ workspace: string; mobileDir: string }> {
+    this.logger.warn(
+      JSON.stringify({
+        event: 'workspace_monorepo_root_not_found',
+        jobId,
+        note: 'Falling back to simple workspace + npm install. Set MOBILE_APP_ROOT if this is unexpected.',
+      }),
+    );
+
+    copyRecursive(mobileRoot, workspaceDir);
+
+    // Rewrite package.json: remove devDependencies entirely to avoid workspace:* protocol errors
+    const pkgJsonPath = path.join(workspaceDir, 'package.json');
+    if (fs.existsSync(pkgJsonPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')) as Record<string, unknown>;
+      delete pkg['devDependencies'];
+      fs.writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2));
+    }
+
+    // npm install — only runtime deps, no scripts, legacy peer dep resolution
+    await this.npmInstall(workspaceDir, jobId, installEnv);
+
+    // Dotenv stubs in case npm install didn't fully resolve them
+    this.injectDotenvStubs(workspaceDir);
+
+    await this.initGitRepo(workspaceDir, jobId);
+    return { workspace: workspaceDir, mobileDir: workspaceDir };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dependency installation
+  // ---------------------------------------------------------------------------
+
+  private async installDependencies(
+    workspaceDir: string,
+    jobId: string,
+    baseEnv: NodeJS.ProcessEnv,
+  ): Promise<void> {
+    this.logger.log(JSON.stringify({ event: 'dependency_install_started', jobId, cwd: workspaceDir }));
+
+    const installEnv: NodeJS.ProcessEnv = {
+      ...baseEnv,
+      CI: 'true',
+      NPM_CONFIG_YES: 'true',
+      // Suppress funding/telemetry noise in logs
+      ADBLOCK: '1',
+      DISABLE_OPENCOLLECTIVE: '1',
+      // Do not inherit a token meant for Expo into pnpm registry calls
+      EXPO_TOKEN: undefined,
+    };
+
+    const { code, stdout, stderr } = await this.spawnProc(
+      'npx',
+      [
+        `pnpm@${PNPM_VERSION}`,
+        'install',
+        '--ignore-scripts',     // skip postinstall / native build scripts
+        '--prefer-offline',     // use pnpm store cache if available (fast on Railway)
+        '--no-frozen-lockfile', // allow partial-workspace lockfile regeneration
+      ],
+      { cwd: workspaceDir, env: installEnv },
+      300_000, // 5-minute cap
+    );
+
+    if (code !== 0) {
+      const combined = `${stderr}\n${stdout}`;
+      const errorLines = combined
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && /error|err!/i.test(l))
+        .slice(0, 10)
+        .join('\n');
+      const errMsg = truncateMessage(
+        errorLines || combined.split('\n').filter(Boolean).slice(-10).join('\n'),
+        500,
+      );
+      this.logger.error(
+        JSON.stringify({ event: 'dependency_install_failed', jobId, error: errMsg }),
+      );
+      throw new Error(`pnpm install failed in build workspace:\n${errMsg}`);
+    }
+
+    this.logger.log(JSON.stringify({ event: 'dependency_install_finished', jobId }));
+  }
+
+  /** Fallback installer for the simple (non-monorepo) workspace path. */
+  private async npmInstall(
+    workspaceDir: string,
+    jobId: string,
+    baseEnv: NodeJS.ProcessEnv,
+  ): Promise<void> {
+    this.logger.log(
+      JSON.stringify({ event: 'dependency_install_started', jobId, installer: 'npm', cwd: workspaceDir }),
+    );
+
+    const installEnv: NodeJS.ProcessEnv = {
+      ...baseEnv,
+      CI: 'true',
+      npm_config_yes: 'true',
+      EXPO_TOKEN: undefined,
+    };
+
+    const { code, stderr, stdout } = await this.spawnProc(
+      'npm',
+      [
+        'install',
+        '--omit=dev',
+        '--legacy-peer-deps',
+        '--no-audit',
+        '--no-fund',
+        '--ignore-scripts',
+        '--no-package-lock',
+      ],
+      { cwd: workspaceDir, env: installEnv },
+      420_000, // 7-minute cap (fresh npm download is slower)
+    );
+
+    if (code !== 0) {
+      const errMsg = truncateMessage(
+        stderr.split('\n').filter(Boolean).slice(-10).join('\n') || stdout,
+        500,
+      );
+      this.logger.error(
+        JSON.stringify({ event: 'dependency_install_failed', jobId, installer: 'npm', error: errMsg }),
+      );
+      throw new Error(`npm install failed in build workspace:\n${errMsg}`);
+    }
+
+    this.logger.log(
+      JSON.stringify({ event: 'dependency_install_finished', jobId, installer: 'npm' }),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEMPORARY DIAGNOSTICS — remove once plugin resolution is confirmed stable
+  // ---------------------------------------------------------------------------
+
+  private logWorkspaceDiagnostics(
+    jobId: string,
+    workspace: string,
+    mobileDir: string,
+  ): void {
+    let lsRoot = '';
+    let lsMobile = '';
     try {
-      const p = path.join(workspace, 'app.config.js');
-      appConfigContents = fs.existsSync(p) ? fs.readFileSync(p, 'utf8').slice(0, 800) : '(not found)';
-    } catch (err) {
-      appConfigContents = `read failed: ${String(err)}`;
+      lsRoot = fs
+        .readdirSync(workspace, { withFileTypes: true })
+        .map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`)
+        .join('\n');
+    } catch {
+      lsRoot = '(error reading workspace root)';
+    }
+    try {
+      lsMobile = fs
+        .readdirSync(mobileDir, { withFileTypes: true })
+        .map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`)
+        .join('\n');
+    } catch {
+      lsMobile = '(error reading mobileDir)';
+    }
+
+    let appConfigHead = '';
+    try {
+      const p = path.join(mobileDir, 'app.config.js');
+      appConfigHead = fs.existsSync(p)
+        ? fs.readFileSync(p, 'utf8').slice(0, 400)
+        : '(app.config.js not found)';
+    } catch {
+      appConfigHead = '(read error)';
     }
 
     this.logger.log(
@@ -341,50 +662,31 @@ export class EasBuildExecutorService {
         event: 'workspace_diagnostics',
         jobId,
         workspace,
-        cwd: workspace,
-        hasPackageJson: fs.existsSync(path.join(workspace, 'package.json')),
+        mobileDir,
+        hasPackageJson: fs.existsSync(path.join(mobileDir, 'package.json')),
         hasNodeModules: fs.existsSync(path.join(workspace, 'node_modules')),
-        hasDotenvStub: fs.existsSync(path.join(workspace, 'node_modules', 'dotenv', 'lib', 'main.js')),
-        hasEasJson: fs.existsSync(path.join(workspace, 'eas.json')),
-        ls: lsOutput,
-        appConfigHead: appConfigContents,
+        hasExpoRouter: fs.existsSync(path.join(workspace, 'node_modules', 'expo-router')),
+        hasEasJson: fs.existsSync(path.join(mobileDir, 'eas.json')),
+        lsRoot,
+        lsMobile,
+        appConfigHead,
       }),
     );
   }
 
-  /**
-   * Runs `npx expo config --json` in the workspace and logs the full stdout/stderr.
-   * This diagnostic runs BEFORE the EAS build so that if expo config still fails we can
-   * see the exact require stack in Railway logs.
-   */
+  /** Pre-flight: runs `npx expo config --json` in mobileDir and logs full stderr (with require stack). */
   private async runExpoConfigDiagnostic(
     jobId: string,
-    workspace: string,
+    mobileDir: string,
     baseEnv: NodeJS.ProcessEnv,
   ): Promise<void> {
-    const diagEnv: NodeJS.ProcessEnv = {
-      ...baseEnv,
-      EXPO_NO_DOTENV: '1',
-    };
+    const diagEnv: NodeJS.ProcessEnv = { ...baseEnv, EXPO_NO_DOTENV: '1' };
 
-    const { code, stdout, stderr } = await new Promise<{ code: number; stdout: string; stderr: string }>(
-      (resolve) => {
-        const child = spawn('npx', ['expo', 'config', '--json'], {
-          cwd: workspace,
-          env: diagEnv,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          shell: false,
-        });
-        let out = '';
-        let err = '';
-        child.stdout?.setEncoding('utf8');
-        child.stderr?.setEncoding('utf8');
-        child.stdout?.on('data', (c: string) => { out += c; });
-        child.stderr?.on('data', (c: string) => { err += c; });
-        const timer = setTimeout(() => { child.kill('SIGTERM'); resolve({ code: 1, stdout: out, stderr: 'DIAGNOSTIC TIMEOUT' }); }, 60_000);
-        child.on('error', (e) => { clearTimeout(timer); resolve({ code: 1, stdout: '', stderr: String(e) }); });
-        child.on('close', (c) => { clearTimeout(timer); resolve({ code: c ?? 1, stdout: out, stderr: err }); });
-      },
+    const { code, stdout, stderr } = await this.spawnProc(
+      'npx',
+      ['expo', 'config', '--json'],
+      { cwd: mobileDir, env: diagEnv },
+      60_000,
     );
 
     this.logger.log(
@@ -392,8 +694,7 @@ export class EasBuildExecutorService {
         event: 'expo_config_diagnostic',
         jobId,
         exitCode: code,
-        // Full output so we can see the require stack if it still fails
-        stdout: truncateMessage(stdout, 2000),
+        stdout: truncateMessage(stdout, 1000),
         stderr: truncateMessage(stderr, 2000),
       }),
     );
@@ -404,55 +705,10 @@ export class EasBuildExecutorService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Creates a temp directory, copies the mobile app source into it (excluding build artifacts and
-   * node_modules so EAS installs a clean dependency tree on the build server), initialises a
-   * minimal git repo, and injects dotenv/dotenv-expand stubs so `npx expo config` can always
-   * resolve those modules regardless of npx cache state.
-   */
-  private async createWorkspace(jobId: string, sourceDir: string): Promise<string> {
-    const workspaceDir = path.join(os.tmpdir(), `gymos-build-${jobId}`);
-
-    fs.mkdirSync(workspaceDir, { recursive: true });
-    this.logger.log(JSON.stringify({ event: 'workspace_created', jobId, workspace: workspaceDir }));
-
-    const EXCLUDED_DIRS = new Set(['.git', 'node_modules', 'dist', '.next', '.expo', 'build', 'android', 'ios']);
-    const EXCLUDED_EXTS = new Set(['.log']);
-
-    const copyRecursive = (src: string, dest: string): void => {
-      const entries = fs.readdirSync(src, { withFileTypes: true });
-      for (const entry of entries) {
-        if (EXCLUDED_DIRS.has(entry.name)) continue;
-        if (!entry.isDirectory() && EXCLUDED_EXTS.has(path.extname(entry.name))) continue;
-        const srcPath = path.join(src, entry.name);
-        const destPath = path.join(dest, entry.name);
-        if (entry.isDirectory()) {
-          fs.mkdirSync(destPath, { recursive: true });
-          copyRecursive(srcPath, destPath);
-        } else {
-          fs.copyFileSync(srcPath, destPath);
-        }
-      }
-    };
-
-    copyRecursive(sourceDir, workspaceDir);
-
-    // Inject stub modules so `npx expo config` can load without needing the project's
-    // full node_modules. EAS CLI (and expo CLI) both call require('dotenv') through
-    // @expo/env — these stubs satisfy that require without touching actual .env files
-    // (our app.config.js handles env loading itself via applyEnvFile()).
-    this.injectDotenvStubs(workspaceDir);
-
-    await this.initGitRepo(workspaceDir, jobId);
-    return workspaceDir;
-  }
-
-  /**
-   * Creates minimal dotenv and dotenv-expand stubs in node_modules so that any
-   * require('dotenv') or require('dotenv-expand') inside expo/eas tooling succeeds
-   * without needing the project's full node_modules to be present.
+   * Belt-and-suspenders stub injection used by the simple (npm) fallback path.
+   * Not needed when pnpm install is used (real dotenv is installed via hoisted node_modules).
    */
   private injectDotenvStubs(workspaceDir: string): void {
-    // dotenv stub
     const dotenvLib = path.join(workspaceDir, 'node_modules', 'dotenv', 'lib');
     fs.mkdirSync(dotenvLib, { recursive: true });
     fs.writeFileSync(
@@ -463,7 +719,6 @@ export class EasBuildExecutorService {
       path.join(dotenvLib, 'main.js'),
       [
         "'use strict';",
-        '// Stub — env loading is handled by app.config.js applyEnvFile()',
         'exports.config = function() { return { parsed: {} }; };',
         'exports.parse = function() { return {}; };',
         'exports.populate = function() {};',
@@ -471,7 +726,6 @@ export class EasBuildExecutorService {
       ].join('\n'),
     );
 
-    // dotenv-expand stub
     const dotenvExpandLib = path.join(workspaceDir, 'node_modules', 'dotenv-expand', 'lib');
     fs.mkdirSync(dotenvExpandLib, { recursive: true });
     fs.writeFileSync(
@@ -486,8 +740,6 @@ export class EasBuildExecutorService {
         'exports.config = function(opts) { return opts || {}; };',
       ].join('\n'),
     );
-
-    this.logger.log(JSON.stringify({ event: 'dotenv_stubs_injected', workspaceDir }));
   }
 
   private async initGitRepo(dir: string, jobId: string): Promise<void> {
@@ -512,7 +764,8 @@ export class EasBuildExecutorService {
         child.stderr?.on('data', (chunk: string) => { errOut += chunk; });
         child.on('error', reject);
         child.on('close', (code) => {
-          if (code !== 0) reject(new Error(`git ${args[0]} failed (exit ${code}): ${errOut.trim()}`));
+          if (code !== 0)
+            reject(new Error(`git ${args[0]} failed (exit ${code}): ${errOut.trim()}`));
           else resolve();
         });
       });
@@ -531,9 +784,15 @@ export class EasBuildExecutorService {
       fs.rmSync(dir, { recursive: true, force: true });
       this.logger.log(JSON.stringify({ event: 'workspace_cleaned', dir }));
     } catch (err) {
-      this.logger.warn(JSON.stringify({ event: 'workspace_cleanup_failed', dir, error: String(err) }));
+      this.logger.warn(
+        JSON.stringify({ event: 'workspace_cleanup_failed', dir, error: String(err) }),
+      );
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
 
   private tryParseEasJson(raw: string): Record<string, unknown> | null {
     const t = raw.trim();
@@ -585,13 +844,15 @@ export class EasBuildExecutorService {
     return null;
   }
 
-  private spawnNpx(
+  /** Generic process spawner used by all subprocess calls in this service. */
+  private spawnProc(
+    cmd: string,
     args: string[],
     opts: { cwd: string; env: NodeJS.ProcessEnv },
     timeoutMs: number,
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      const child = spawn('npx', args, {
+      const child = spawn(cmd, args, {
         cwd: opts.cwd,
         env: opts.env,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -601,15 +862,11 @@ export class EasBuildExecutorService {
       let stderr = '';
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
-      child.stdout?.on('data', (chunk: string) => {
-        stdout += chunk;
-      });
-      child.stderr?.on('data', (chunk: string) => {
-        stderr += chunk;
-      });
+      child.stdout?.on('data', (chunk: string) => { stdout += chunk; });
+      child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
       const timer = setTimeout(() => {
         child.kill('SIGTERM');
-        reject(new Error(`EAS build timed out after ${timeoutMs}ms`));
+        resolve({ code: 1, stdout, stderr: `${stderr}[TIMED OUT after ${timeoutMs}ms]` });
       }, timeoutMs);
       child.on('error', (err) => {
         clearTimeout(timer);
