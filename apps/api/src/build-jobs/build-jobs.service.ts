@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { classifyBuildError } from './build-job-error-category';
 import { BuildWorkerReadinessService, type BuildWorkerReadinessDto } from './build-worker-readiness.service';
 import { EasBuildExecutorService, type EasBuildExecuteResult } from './eas-build-executor.service';
+import type { EasRemoteBuildStatus } from './eas-status-poller.service';
 import type { CreateBuildJobDto } from './dto/create-build-job.dto';
 
 const STUCK_RUNNING_MS = 30 * 60 * 1000;
@@ -328,6 +329,86 @@ export class BuildJobsService {
         errorCategory,
       }),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // EAS remote status polling (called by BuildJobsStatusPollerService)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns SUCCEEDED jobs that have an expoBuildId and are not yet terminal on Expo's side.
+   * Ordered oldest-checked-first so stale jobs get priority on every tick.
+   */
+  async listPollableJobs(limit: number): Promise<BuildJobResponse[]> {
+    return this.prisma.buildJob.findMany({
+      where: {
+        status: 'SUCCEEDED',
+        expoBuildId: { not: null },
+        expoBuildStatus: { notIn: ['FINISHED', 'ERRORED', 'CANCELED'] },
+      },
+      orderBy: { lastCheckedAt: 'asc' },
+      take: limit,
+      select: buildJobSelect,
+    });
+  }
+
+  /** Updates only lastCheckedAt — used when the Expo API is unreachable. */
+  async touchLastChecked(jobId: string): Promise<void> {
+    await this.prisma.buildJob.update({
+      where: { id: jobId },
+      data: { lastCheckedAt: new Date() },
+    });
+  }
+
+  /**
+   * Applies an Expo API poll result to the DB row.
+   * - FINISHED → keeps SUCCEEDED, sets artifactUrl + finishedAt
+   * - ERRORED   → FAILED + BUILD_FAILED category + errorMessage
+   * - CANCELED  → CANCELED + finishedAt
+   * - Other     → updates expoBuildStatus + lastCheckedAt only
+   */
+  async syncEasBuildStatus(jobId: string, remote: EasRemoteBuildStatus): Promise<void> {
+    const now = new Date();
+    const { expoStatus, artifactUrl, completedAt, errorMessage } = remote;
+    const isTerminal = ['FINISHED', 'ERRORED', 'CANCELED'].includes(expoStatus);
+
+    type StatusLiteral = 'SUCCEEDED' | 'FAILED' | 'CANCELED';
+    let newStatus: StatusLiteral = 'SUCCEEDED';
+    let errorCategory: BuildJobErrorCategory | null = null;
+    let resolvedErrorMessage: string | null = null;
+
+    if (expoStatus === 'ERRORED') {
+      newStatus = 'FAILED';
+      errorCategory = BuildJobErrorCategory.BUILD_FAILED;
+      resolvedErrorMessage = errorMessage ?? 'Remote EAS build reported an error.';
+    } else if (expoStatus === 'CANCELED') {
+      newStatus = 'CANCELED';
+    }
+
+    await this.prisma.buildJob.update({
+      where: { id: jobId },
+      data: {
+        expoBuildStatus: expoStatus,
+        lastCheckedAt: now,
+        ...(newStatus !== 'SUCCEEDED' && { status: newStatus }),
+        ...(isTerminal && { finishedAt: completedAt ?? now }),
+        ...(artifactUrl != null && { artifactUrl }),
+        ...(errorCategory != null && { errorCategory }),
+        ...(resolvedErrorMessage != null && { errorMessage: resolvedErrorMessage }),
+      },
+    });
+
+    if (isTerminal) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'build_job_remote_finalized',
+          jobId,
+          expoStatus,
+          localStatus: newStatus,
+          hasArtifact: artifactUrl != null,
+        }),
+      );
+    }
   }
 
   private sanitizeBuildError(e: unknown): string {
