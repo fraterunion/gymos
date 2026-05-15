@@ -1,43 +1,64 @@
-import { ActivityIndicator, Pressable, Text, type PressableProps } from 'react-native';
+import { ActivityIndicator, Pressable, Text, useColorScheme } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
-type Props = PressableProps & {
+import { getColors } from '@/constants/Theme';
+
+type Props = {
   label: string;
   loading?: boolean;
   variant?: 'primary' | 'ghost';
   accentColor: string;
+  disabled?: boolean;
+  onPress?: () => void;
 };
 
-export function BrandButton({
-  label,
-  loading,
-  variant = 'primary',
-  accentColor,
-  disabled,
-  className,
-  ...rest
-}: Props) {
+export function BrandButton({ label, loading, variant = 'primary', accentColor, disabled, onPress }: Props) {
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
   const isPrimary = variant === 'primary';
+  const isDisabled = disabled || loading;
+
+  const scale = useSharedValue(1);
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled || loading}
-      className={`min-h-[52px] w-full items-center justify-center rounded-2xl px-5 active:opacity-90 ${
-        isPrimary ? '' : 'border border-neutral-300 dark:border-neutral-600'
-      } ${className ?? ''}`}
-      style={
-        isPrimary
-          ? { backgroundColor: accentColor, opacity: disabled || loading ? 0.55 : 1 }
-          : { opacity: disabled || loading ? 0.55 : 1 }
-      }
-      {...rest}>
-      {loading ? (
-        <ActivityIndicator color={isPrimary ? '#fff' : accentColor} />
-      ) : (
-        <Text
-          className={`text-base font-semibold ${isPrimary ? 'text-white' : 'text-neutral-900 dark:text-neutral-100'}`}>
-          {label}
-        </Text>
-      )}
-    </Pressable>
+    <Animated.View style={animStyle}>
+      <Pressable
+        accessibilityRole="button"
+        disabled={isDisabled}
+        onPress={onPress}
+        onPressIn={() => { scale.value = withSpring(0.968, { damping: 22, stiffness: 400 }); }}
+        onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 220 }); }}
+        style={[
+          {
+            minHeight: 56,
+            width: '100%',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 14,
+            paddingHorizontal: 20,
+            opacity: isDisabled ? 0.5 : 1,
+          },
+          isPrimary
+            ? { backgroundColor: accentColor }
+            : { backgroundColor: 'transparent', borderWidth: 1, borderColor: C.separator },
+        ]}
+      >
+        {loading ? (
+          <ActivityIndicator color={isPrimary ? '#fff' : accentColor} />
+        ) : (
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: '600',
+              letterSpacing: -0.1,
+              color: isPrimary ? '#FFFFFF' : C.textSub,
+            }}
+          >
+            {label}
+          </Text>
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }

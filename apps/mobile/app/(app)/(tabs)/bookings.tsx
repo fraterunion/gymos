@@ -1,117 +1,268 @@
 import { useRouter } from 'expo-router';
-import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
-import {
-  EmptyHint,
-  ErrorBanner,
-  LoadRetryPanel,
-  SectionLabel,
-  SkeletonBlock,
-  ScreenLoader,
-} from '@/components/StudioScreenChrome';
+import { EmptyHint, ErrorBanner, LoadRetryPanel, Skeleton, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
-import { formatClassRange } from '@/lib/datetime';
-import { scheduledClassTitle } from '@/lib/classUtils';
+import { formatClassTime } from '@/lib/datetime';
+import { getColors, Space } from '@/constants/Theme';
+import type { BookingWithClass, MyWaitlistEntry } from '@/lib/types/studio';
+
+// ---------------------------------------------------------------------------
+// Booking card
+// ---------------------------------------------------------------------------
+
+function BookingCard({
+  booking,
+  className,
+  timeZone,
+  primaryColor,
+  onPress,
+  onCheckIn,
+  index,
+}: {
+  booking: BookingWithClass;
+  className: string;
+  timeZone: string;
+  primaryColor: string;
+  onPress: () => void;
+  onCheckIn: () => void;
+  index: number;
+}) {
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
+  const time = formatClassTime(booking.scheduledClass.startsAt, timeZone);
+
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(index * 55).duration(400)}
+      style={{ marginBottom: Space.cardGap }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        onPress={onPress}
+        style={{ backgroundColor: C.surface2, borderRadius: 16, overflow: 'hidden' }}
+      >
+        <View style={{ paddingHorizontal: Space.cardH, paddingTop: Space.cardV, paddingBottom: 14 }}>
+          {/* Status + date row */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+            <View
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: C.positive,
+                marginRight: 6,
+              }}
+            />
+            <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.5, color: C.positive }}>
+              Confirmed
+            </Text>
+            <View style={{ flex: 1 }} />
+            <Text style={{ fontSize: 12, color: C.textMute }}>{time}</Text>
+          </View>
+
+          {/* Class name */}
+          <Text
+            numberOfLines={1}
+            style={{ fontSize: 18, fontWeight: '600', letterSpacing: -0.2, color: C.text }}
+          >
+            {className}
+          </Text>
+        </View>
+
+        {/* Check-in action */}
+        <View
+          style={{ borderTopWidth: 1, borderTopColor: C.separator, paddingHorizontal: Space.cardH, paddingVertical: 12 }}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open check-in QR code"
+            onPress={(e) => { e.stopPropagation?.(); onCheckIn(); }}
+            hitSlop={8}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor }}>
+              Check-in QR →
+            </Text>
+          </Pressable>
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Waitlist row
+// ---------------------------------------------------------------------------
+
+function WaitlistRow({
+  entry,
+  className,
+  onPress,
+  index,
+}: {
+  entry: MyWaitlistEntry;
+  className: string;
+  onPress: () => void;
+  index: number;
+}) {
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
+
+  const isPromoted = entry.status === 'PROMOTED';
+
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(index * 55).duration(400)}
+      style={{ marginBottom: 8 }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        onPress={onPress}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: C.surface1,
+          borderRadius: 12,
+          paddingHorizontal: Space.cardH,
+          paddingVertical: 14,
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <Text
+            numberOfLines={1}
+            style={{ fontSize: 15, fontWeight: '500', color: C.text }}
+          >
+            {className}
+          </Text>
+          <Text style={{ fontSize: 12, color: isPromoted ? C.caution : C.textMute, marginTop: 3 }}>
+            {isPromoted
+              ? 'Promoted — tap to finish booking'
+              : entry.queueRank != null
+                ? `#${entry.queueRank} · ${entry.waitingCountForClass} waiting`
+                : 'Waitlist'}
+          </Text>
+        </View>
+        <Text style={{ fontSize: 13, color: C.textMute, marginLeft: 8 }}>›</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
 
 export default function MyBookingsScreen() {
   const router = useRouter();
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
   const { primaryColor } = useBranding();
   const matched = useMemberStudio().matched;
   const { classes, myBookings, myWaitlist, loading, error, refresh } = useStudioActivity();
 
   const timeZone = matched?.studio.timezone ?? 'UTC';
 
-  if (!matched) {
-    return <ScreenLoader />;
-  }
-
+  if (!matched) return <ScreenLoader />;
   if (error && myBookings.length === 0 && myWaitlist.length === 0) {
     return <LoadRetryPanel message={error} onRetry={refresh} />;
   }
 
   const showSkeleton = loading && myBookings.length === 0 && myWaitlist.length === 0;
 
+  function resolveClassName(classId: string): string {
+    return classes.find((c) => c.id === classId)?.classTemplate.name ?? 'Class';
+  }
+
   return (
-    <SafeAreaView className="flex-1 bg-neutral-50 dark:bg-neutral-950" edges={['left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right']}>
       <ScrollView
-        className="flex-1 px-5 pt-2"
-        contentContainerClassName="pb-12"
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 48 }}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
-        }>
-        {error ? <ErrorBanner message={error} onRetry={refresh} /> : null}
+        }
+      >
+        {error ? (
+          <View style={{ paddingTop: 8 }}>
+            <ErrorBanner message={error} onRetry={refresh} />
+          </View>
+        ) : null}
 
         {showSkeleton ? (
-          <View className="mt-4 gap-3">
-            <SkeletonBlock className="h-8 w-1/2" />
-            <SkeletonBlock />
-            <SkeletonBlock />
+          <View style={{ paddingTop: 24, gap: 10 }}>
+            <Skeleton width="30%" height={11} radius={4} style={{ marginBottom: 4 }} />
+            <Skeleton height={96} radius={16} />
+            <Skeleton height={96} radius={16} />
           </View>
         ) : (
           <>
-            <SectionLabel>Bookings</SectionLabel>
-            {myBookings.length === 0 ? (
-              <EmptyHint title="No upcoming reservations" body="Pick a class from the schedule to book a spot." />
-            ) : (
-              myBookings.map((b) => (
-                <View
-                  key={b.id}
-                  className="mb-3 overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-                  <Pressable
-                    onPress={() => router.push(`/(app)/class/${b.scheduledClassId}`)}
-                    className="px-4 py-3.5">
-                    <Text className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                      {scheduledClassTitle(b.scheduledClassId, classes)}
-                    </Text>
-                    <Text className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                      {formatClassRange(b.scheduledClass.startsAt, b.scheduledClass.endsAt, timeZone)}
-                    </Text>
-                    <Text className="mt-2 text-xs font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                      Confirmed
-                    </Text>
-                  </Pressable>
-                  <View className="border-t border-neutral-100 px-4 py-3 dark:border-neutral-800">
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Open check-in QR code"
-                      onPress={() => router.push(`/(app)/check-in/${b.id}`)}>
-                      <Text className="text-base font-semibold" style={{ color: primaryColor }}>
-                        Check-in QR
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ))
-            )}
+            {/* ── Upcoming bookings ── */}
+            <View style={{ paddingTop: 24 }}>
+              {myBookings.length === 0 ? (
+                <EmptyHint
+                  title="No upcoming reservations"
+                  body="Reserve a spot from the schedule when you're ready."
+                />
+              ) : (
+                <>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: '600',
+                      letterSpacing: 0.8,
+                      textTransform: 'uppercase',
+                      color: C.textMute,
+                      marginBottom: 14,
+                    }}
+                  >
+                    Upcoming
+                  </Text>
+                  {myBookings.map((b, i) => (
+                    <BookingCard
+                      key={b.id}
+                      booking={b}
+                      className={resolveClassName(b.scheduledClassId)}
+                      timeZone={timeZone}
+                      primaryColor={primaryColor}
+                      index={i}
+                      onPress={() => router.push(`/(app)/class/${b.scheduledClassId}`)}
+                      onCheckIn={() => router.push(`/(app)/check-in/${b.id}`)}
+                    />
+                  ))}
+                </>
+              )}
+            </View>
 
-            <SectionLabel>Waitlist</SectionLabel>
-            {myWaitlist.length === 0 ? (
-              <EmptyHint title="No waitlist spots" body="Join a waitlist when a class you want is full." />
-            ) : (
-              myWaitlist.map((w) => (
-                <Pressable
-                  key={w.id}
-                  onPress={() => router.push(`/(app)/class/${w.scheduledClassId}`)}
-                  className="mb-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3.5 dark:border-neutral-800 dark:bg-neutral-900">
-                  <Text className="text-base font-semibold text-neutral-900 dark:text-neutral-50">
-                    {scheduledClassTitle(w.scheduledClassId, classes)}
-                  </Text>
-                  <Text className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                    {formatClassRange(w.scheduledClass.startsAt, w.scheduledClass.endsAt, timeZone)}
-                  </Text>
-                  <Text className="mt-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-                    {w.status === 'WAITING'
-                      ? `Waiting · #${w.queueRank ?? '—'} of ${w.waitingCountForClass}`
-                      : w.status === 'PROMOTED'
-                        ? 'You are next—open this class to finish booking'
-                        : w.status}
-                  </Text>
-                </Pressable>
-              ))
-            )}
+            {/* ── Waitlist ── */}
+            {myWaitlist.length > 0 ? (
+              <View style={{ marginTop: Space.sectionGap }}>
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '600',
+                    letterSpacing: 0.8,
+                    textTransform: 'uppercase',
+                    color: C.textMute,
+                    marginBottom: 14,
+                  }}
+                >
+                  Waitlist
+                </Text>
+                {myWaitlist.map((w, i) => (
+                  <WaitlistRow
+                    key={w.id}
+                    entry={w}
+                    className={resolveClassName(w.scheduledClassId)}
+                    onPress={() => router.push(`/(app)/class/${w.scheduledClassId}`)}
+                    index={i}
+                  />
+                ))}
+              </View>
+            ) : null}
           </>
         )}
       </ScrollView>

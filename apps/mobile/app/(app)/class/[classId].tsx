@@ -1,8 +1,9 @@
 import { useNavigation } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useLayoutEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, Text, View } from 'react-native';
+import { RefreshControl, ScrollView, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
 import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
@@ -16,13 +17,18 @@ import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionReq
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
-import { formatClassRange } from '@/lib/datetime';
+import { formatClassTime } from '@/lib/datetime';
+import { getColors, Space } from '@/constants/Theme';
 
 export default function ClassDetailScreen() {
   const navigation = useNavigation();
   const router = useRouter();
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
+
   const raw = useLocalSearchParams<{ classId: string | string[] }>().classId;
   const classId = typeof raw === 'string' ? raw : raw?.[0] ?? '';
+
   const { primaryColor, appDisplayName } = useBranding();
   const matched = useMemberStudio().matched;
   const { myBookings, myWaitlist, loading, error, refresh, getClass } = useStudioActivity();
@@ -48,14 +54,13 @@ export default function ClassDetailScreen() {
   );
 
   useLayoutEffect(() => {
-    navigation.setOptions({
-      title: cls?.classTemplate.name ?? 'Class',
-    });
+    navigation.setOptions({ title: cls?.classTemplate.name ?? 'Class' });
   }, [navigation, cls]);
 
   const now = Date.now();
   const hasStarted = cls ? new Date(cls.startsAt).getTime() <= now : true;
   const isScheduled = cls?.status === 'SCHEDULED';
+  const canAct = isScheduled && !hasStarted;
 
   async function run(action: () => Promise<void>) {
     setInlineError(null);
@@ -81,34 +86,24 @@ export default function ClassDetailScreen() {
     }
   }
 
-  if (!studioId || !matched) {
-    return <ScreenLoader />;
-  }
-
+  if (!studioId || !matched) return <ScreenLoader />;
   if (!classId) {
     return (
-      <SafeAreaView className="flex-1 bg-neutral-50 px-5 dark:bg-neutral-950">
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom']}>
         <EmptyHint title="Missing class" body="Go back and choose a class from the schedule." />
       </SafeAreaView>
     );
   }
-
-  if (error && !cls && !loading) {
-    return <LoadRetryPanel message={error} onRetry={refresh} />;
-  }
-
-  if (!cls && loading) {
-    return <ScreenLoader />;
-  }
-
+  if (error && !cls && !loading) return <LoadRetryPanel message={error} onRetry={refresh} />;
+  if (!cls && loading) return <ScreenLoader />;
   if (!cls) {
     return (
-      <SafeAreaView className="flex-1 bg-neutral-50 px-5 pt-4 dark:bg-neutral-950">
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg, paddingHorizontal: Space.screenH }} edges={['bottom']}>
         <EmptyHint
           title="Class not found"
           body="It may be outside the current schedule window. Try refreshing from the schedule tab."
         />
-        <View className="mt-6">
+        <View style={{ marginTop: 24 }}>
           <BrandButton label="Refresh" accentColor={primaryColor} onPress={() => void refresh()} />
         </View>
       </SafeAreaView>
@@ -119,112 +114,165 @@ export default function ClassDetailScreen() {
     ? `${cls.instructor.firstName} ${cls.instructor.lastName}`.trim()
     : null;
 
-  const canAct = isScheduled && !hasStarted;
+  const time = formatClassTime(cls.startsAt, timeZone);
+  const duration = cls.classTemplate.durationMinutes;
 
-  let primary:
-    | { label: string; onPress: () => void }
-    | null = null;
-  let secondary: { label: string; onPress: () => void } | null = null;
+  // CTA logic
+  let primaryCTA: { label: string; onPress: () => void } | null = null;
+  let secondaryCTA: { label: string; onPress: () => void } | null = null;
 
   if (booking) {
-    primary = {
+    primaryCTA = {
       label: 'Cancel booking',
-      onPress: () =>
-        void run(async () => {
-          await cancelBooking(studioId, booking.id);
-        }),
+      onPress: () => void run(async () => { await cancelBooking(studioId, booking.id); }),
     };
   } else if (waitlistEntry?.status === 'WAITING') {
-    primary = {
+    primaryCTA = {
       label: 'Leave waitlist',
-      onPress: () =>
-        void run(async () => {
-          await cancelWaitlistEntry(studioId, waitlistEntry.id);
-        }),
+      onPress: () => void run(async () => { await cancelWaitlistEntry(studioId, waitlistEntry.id); }),
     };
-  } else if (waitlistEntry?.status === 'PROMOTED' && !booking) {
-    primary = null;
   } else if (canAct) {
     if (offerWaitlist) {
-      primary = {
+      primaryCTA = {
         label: 'Join waitlist',
-        onPress: () =>
-          void run(async () => {
-            await joinClassWaitlist(studioId, classId);
-          }),
+        onPress: () => void run(async () => { await joinClassWaitlist(studioId, classId); }),
       };
-      secondary = {
+      secondaryCTA = {
         label: 'Try booking again',
-        onPress: () =>
-          void run(async () => {
-            await createClassBooking(studioId, classId);
-          }),
+        onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
       };
     } else {
-      primary = {
+      primaryCTA = {
         label: 'Book class',
-        onPress: () =>
-          void run(async () => {
-            await createClassBooking(studioId, classId);
-          }),
+        onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
       };
     }
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-neutral-50 dark:bg-neutral-950" edges={['bottom', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
+      {/* Scrollable content */}
       <ScrollView
-        className="flex-1 px-5 pt-2"
-        contentContainerClassName="pb-10"
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 24 }}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
-        }>
-        <Text className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-          {cls.classTemplate.name}
-        </Text>
-        <Text className="mt-2 text-base text-neutral-600 dark:text-neutral-400">
-          {formatClassRange(cls.startsAt, cls.endsAt, timeZone)}
-        </Text>
-        {ins ? (
-          <Text className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">Instructor · {ins}</Text>
-        ) : null}
-        <Text className="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-          Status · <Text className="font-medium text-neutral-700 dark:text-neutral-200">{cls.status}</Text>
-        </Text>
-        <Text className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">Capacity · {cls.capacity}</Text>
-
-        {!isScheduled ? (
-          <View className="mt-8">
-            <EmptyHint title="Not bookable" body="This session is not open for new bookings." />
-          </View>
-        ) : hasStarted ? (
-          <View className="mt-8">
-            <EmptyHint title="Class has started" body="Booking and waitlist changes are closed for this time." />
-          </View>
-        ) : waitlistEntry?.status === 'PROMOTED' && !booking ? (
-          <View className="mt-8">
-            <EmptyHint
-              title="You have been promoted"
-              body="A seat may be held for you. Pull to refresh or check My bookings."
-            />
-          </View>
-        ) : null}
-
-        {subscriptionRequired ? (
-          <SubscriptionRequiredPanel accentColor={primaryColor} appDisplayName={appDisplayName} />
-        ) : null}
-
-        {inlineError ? (
-          <Text className="mt-6 text-center text-sm text-red-600 dark:text-red-400">{inlineError}</Text>
-        ) : null}
-
-        {offerWaitlist ? (
-          <Text className="mt-4 text-center text-sm text-neutral-600 dark:text-neutral-400">
-            This class is full. Join the waitlist to be notified if a spot opens.
+        }
+      >
+        <Animated.View entering={FadeInDown.duration(380)}>
+          {/* Class name — hero */}
+          <Text
+            style={{
+              fontSize: 30,
+              fontWeight: '700',
+              letterSpacing: -0.7,
+              color: C.text,
+              marginTop: 28,
+              lineHeight: 36,
+            }}
+          >
+            {cls.classTemplate.name}
           </Text>
-        ) : null}
 
-        <View className="mt-10 gap-3">
+          {/* Time + duration — second tier */}
+          <Text
+            style={{
+              fontSize: 16,
+              color: C.textSub,
+              marginTop: 10,
+              letterSpacing: -0.1,
+            }}
+          >
+            {time}{'  ·  '}{duration} min
+          </Text>
+
+          {/* Instructor — whispered */}
+          {ins ? (
+            <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
+              {ins}
+            </Text>
+          ) : null}
+
+          {/* Description if available */}
+          {cls.classTemplate.description ? (
+            <Text
+              style={{
+                fontSize: 15,
+                lineHeight: 23,
+                color: C.textSub,
+                marginTop: 24,
+              }}
+            >
+              {cls.classTemplate.description}
+            </Text>
+          ) : null}
+
+          {/* Status messages — minimal, no "Status · SCHEDULED" labels */}
+          {!isScheduled ? (
+            <View style={{ marginTop: 36 }}>
+              <EmptyHint title="Not bookable" body="This session is not open for new bookings." />
+            </View>
+          ) : hasStarted ? (
+            <View style={{ marginTop: 36 }}>
+              <EmptyHint title="Class has started" body="Booking and waitlist changes are closed." />
+            </View>
+          ) : waitlistEntry?.status === 'PROMOTED' && !booking ? (
+            <View style={{ marginTop: 36 }}>
+              <EmptyHint
+                title="You've been promoted"
+                body="A seat may be held for you. Pull to refresh or check My bookings."
+              />
+            </View>
+          ) : null}
+
+          {offerWaitlist ? (
+            <Text
+              style={{
+                marginTop: 20,
+                textAlign: 'center',
+                fontSize: 14,
+                lineHeight: 21,
+                color: C.textMute,
+              }}
+            >
+              This class is full. Join the waitlist and we'll notify you if a spot opens.
+            </Text>
+          ) : null}
+
+          {inlineError ? (
+            <Text
+              style={{
+                marginTop: 20,
+                textAlign: 'center',
+                fontSize: 14,
+                color: C.negative,
+              }}
+            >
+              {inlineError}
+            </Text>
+          ) : null}
+
+          {subscriptionRequired ? (
+            <View style={{ marginTop: 24 }}>
+              <SubscriptionRequiredPanel accentColor={primaryColor} appDisplayName={appDisplayName} />
+            </View>
+          ) : null}
+        </Animated.View>
+      </ScrollView>
+
+      {/* ── Sticky CTA bar ── always visible, never scrolls away */}
+      {(primaryCTA || booking) ? (
+        <View
+          style={{
+            paddingHorizontal: Space.screenH,
+            paddingBottom: 12,
+            paddingTop: 12,
+            borderTopWidth: 1,
+            borderTopColor: C.separator,
+            backgroundColor: C.bg,
+            gap: 10,
+          }}
+        >
           {booking ? (
             <BrandButton
               label="Check-in QR"
@@ -233,25 +281,25 @@ export default function ClassDetailScreen() {
               onPress={() => router.push(`/(app)/check-in/${booking.id}`)}
             />
           ) : null}
-          {primary ? (
+          {primaryCTA ? (
             <BrandButton
-              label={primary.label}
+              label={primaryCTA.label}
               accentColor={primaryColor}
               loading={busy}
-              onPress={primary.onPress}
+              onPress={primaryCTA.onPress}
             />
           ) : null}
-          {secondary ? (
+          {secondaryCTA ? (
             <BrandButton
-              label={secondary.label}
+              label={secondaryCTA.label}
               variant="ghost"
               accentColor={primaryColor}
               loading={busy}
-              onPress={secondary.onPress}
+              onPress={secondaryCTA.onPress}
             />
           ) : null}
         </View>
-      </ScrollView>
+      ) : null}
     </SafeAreaView>
   );
 }

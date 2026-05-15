@@ -1,18 +1,20 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppState,
   Linking,
+  Pressable,
   RefreshControl,
   ScrollView,
   Text,
+  useColorScheme,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
-import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
+import { LoadRetryPanel, ScreenLoader, Skeleton } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
@@ -27,27 +29,241 @@ import {
   type MyMemberProfileDto,
 } from '@/lib/api/membershipApi';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
+import { getColors, Space } from '@/constants/Theme';
 
 function billingIntervalLabel(interval: BillingInterval): string {
   switch (interval) {
-    case 'MONTHLY':
-      return 'per month';
-    case 'YEARLY':
-      return 'per year';
-    case 'WEEKLY':
-      return 'per week';
-    default:
-      return '';
+    case 'MONTHLY': return '/mo';
+    case 'YEARLY':  return '/yr';
+    case 'WEEKLY':  return '/wk';
+    default:        return '';
   }
 }
 
 function creditsLabel(credits: number | null): string | null {
   if (credits === null) return 'Unlimited class visits';
   if (credits <= 0) return null;
-  return `${credits} class credits / billing period`;
+  return `${credits} visits per billing period`;
 }
 
+// ---------------------------------------------------------------------------
+// Active membership card (physical card aesthetic)
+// ---------------------------------------------------------------------------
+
+function MembershipCard({
+  planName,
+  status,
+  renewsAt,
+  primaryColor,
+  onManage,
+  portalBusy,
+}: {
+  planName: string;
+  status: string;
+  renewsAt: string;
+  primaryColor: string;
+  onManage: () => void;
+  portalBusy: boolean;
+}) {
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
+  const isActive = status === 'ACTIVE' || status === 'TRIALING';
+
+  return (
+    <Animated.View entering={FadeInDown.duration(450)}>
+      <View
+        style={{
+          backgroundColor: C.surface2,
+          borderRadius: 20,
+          padding: 24,
+          marginBottom: 8,
+        }}
+      >
+        {/* Top row: status dot */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
+          <View
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 4,
+              backgroundColor: isActive ? C.positive : C.textMute,
+              marginRight: 7,
+            }}
+          />
+          <Text
+            style={{
+              fontSize: 11,
+              fontWeight: '600',
+              letterSpacing: 0.7,
+              textTransform: 'uppercase',
+              color: isActive ? C.positive : C.textMute,
+            }}
+          >
+            {isActive ? 'Active' : status.toLowerCase()}
+          </Text>
+        </View>
+
+        {/* Plan name — the headline */}
+        <Text
+          style={{
+            fontSize: 24,
+            fontWeight: '700',
+            letterSpacing: -0.4,
+            color: C.text,
+            marginBottom: 8,
+          }}
+        >
+          {planName}
+        </Text>
+
+        {/* Renewal */}
+        <Text style={{ fontSize: 13, color: C.textMute }}>
+          {renewsAt}
+        </Text>
+
+        {/* Separator */}
+        <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 20 }} />
+
+        {/* Manage billing */}
+        <Pressable
+          accessibilityRole="button"
+          onPress={onManage}
+          disabled={portalBusy}
+          hitSlop={8}
+        >
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: '600',
+              color: portalBusy ? C.textMute : primaryColor,
+            }}
+          >
+            {portalBusy ? 'Opening…' : 'Manage billing →'}
+          </Text>
+        </Pressable>
+      </View>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Plan card
+// ---------------------------------------------------------------------------
+
+function PlanCard({
+  plan,
+  onSubscribe,
+  isLoading,
+  isDisabled,
+  primaryColor,
+  index,
+}: {
+  plan: MembershipPlanDto;
+  onSubscribe: () => void;
+  isLoading: boolean;
+  isDisabled: boolean;
+  primaryColor: string;
+  index: number;
+}) {
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
+
+  const priceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
+  const intervalStr = billingIntervalLabel(plan.billingInterval);
+  const credits = creditsLabel(plan.classCredits);
+
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(index * 80).duration(420)}
+      style={{ marginBottom: Space.cardGap }}
+    >
+      <View
+        style={{
+          backgroundColor: C.surface2,
+          borderRadius: 20,
+          padding: 24,
+        }}
+      >
+        {/* Plan name */}
+        <Text
+          style={{
+            fontSize: 17,
+            fontWeight: '600',
+            letterSpacing: -0.2,
+            color: C.text,
+            marginBottom: 4,
+          }}
+        >
+          {plan.name}
+        </Text>
+
+        {/* Price — the hero element */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16, marginTop: 8 }}>
+          <Text
+            style={{
+              fontSize: 36,
+              fontWeight: '700',
+              letterSpacing: -1,
+              color: C.text,
+              lineHeight: 42,
+            }}
+          >
+            {priceStr}
+          </Text>
+          <Text
+            style={{
+              fontSize: 14,
+              color: C.textMute,
+              marginBottom: 6,
+              marginLeft: 4,
+            }}
+          >
+            {intervalStr}
+          </Text>
+        </View>
+
+        {/* Description */}
+        {plan.description ? (
+          <Text
+            style={{
+              fontSize: 14,
+              lineHeight: 21,
+              color: C.textSub,
+              marginBottom: 12,
+            }}
+          >
+            {plan.description}
+          </Text>
+        ) : null}
+
+        {/* Credits */}
+        {credits ? (
+          <Text style={{ fontSize: 13, color: C.textMute, marginBottom: 20 }}>
+            {credits}
+          </Text>
+        ) : (
+          <View style={{ marginBottom: 20 }} />
+        )}
+
+        <BrandButton
+          label="Subscribe"
+          accentColor={primaryColor}
+          loading={isLoading}
+          disabled={isDisabled}
+          onPress={onSubscribe}
+        />
+      </View>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
+
 export default function MembershipScreen() {
+  const scheme = useColorScheme();
+  const C = getColors(scheme);
   const { primaryColor, appDisplayName } = useBranding();
   const { matched } = useMemberStudio();
   const { refresh: refreshStudioActivity } = useStudioActivity();
@@ -66,19 +282,14 @@ export default function MembershipScreen() {
   const expectReturnFromBrowser = useRef(false);
   const hasLoadedOnce = useRef(false);
 
-  useEffect(() => {
-    hasLoadedOnce.current = false;
-  }, [studioId]);
+  useEffect(() => { hasLoadedOnce.current = false; }, [studioId]);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh') => {
       if (!studioId) return;
       setError(null);
-      if (mode === 'initial') {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
+      if (mode === 'initial') setLoading(true);
+      else setRefreshing(true);
       try {
         const [p, prof] = await Promise.all([
           fetchMembershipPlans(studioId),
@@ -87,8 +298,7 @@ export default function MembershipScreen() {
         setPlans(p);
         setProfile(prof);
       } catch (e) {
-        const msg = userFacingApiMessage(e, 'We could not load plans right now. Pull to refresh.');
-        setError(msg);
+        setError(userFacingApiMessage(e, 'Could not load membership info. Pull to refresh.'));
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -99,10 +309,7 @@ export default function MembershipScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!studioId) {
-        setLoading(false);
-        return;
-      }
+      if (!studioId) { setLoading(false); return; }
       const mode = hasLoadedOnce.current ? 'refresh' : 'initial';
       hasLoadedOnce.current = true;
       void load(mode);
@@ -130,8 +337,7 @@ export default function MembershipScreen() {
       await Linking.openURL(url);
     } catch (e) {
       expectReturnFromBrowser.current = false;
-      const msg = userFacingApiMessage(e, 'Checkout could not be started. Please try again or contact the studio.');
-      setError(msg);
+      setError(userFacingApiMessage(e, 'Checkout could not be started. Please try again.'));
     } finally {
       setCheckoutPlanId(null);
     }
@@ -147,147 +353,142 @@ export default function MembershipScreen() {
       await Linking.openURL(url);
     } catch (e) {
       expectReturnFromBrowser.current = false;
-      const msg = userFacingApiMessage(e, 'Billing could not be opened. Please try again or contact the studio.');
-      setPortalError(msg);
+      setPortalError(userFacingApiMessage(e, 'Billing could not be opened. Please try again.'));
     } finally {
       setPortalBusy(false);
     }
   }
 
-  function onPullRefresh() {
-    void load('refresh');
-    void refreshStudioActivity();
-  }
-
-  if (!studioId || !matched) {
-    return <ScreenLoader />;
-  }
-
+  if (!studioId || !matched) return <ScreenLoader />;
   if (error && !profile && !plans.length && !loading) {
     return <LoadRetryPanel message={error} onRetry={() => void load('initial')} />;
   }
-
-  if (loading && !profile && !plans.length) {
-    return <ScreenLoader />;
-  }
+  if (loading && !profile && !plans.length) return <ScreenLoader />;
 
   const sub = profile?.activeSubscription;
 
+  const renewsLabel = sub
+    ? `Renews ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
+        new Date(sub.currentPeriodEnd),
+      )}${sub.cancelAtPeriodEnd ? ' · Cancelling' : ''}`
+    : '';
+
   return (
-    <SafeAreaView className="flex-1 bg-neutral-50 dark:bg-neutral-950" edges={['bottom', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
       <ScrollView
-        className="flex-1 px-5 pt-2"
-        contentContainerClassName="pb-12"
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 48 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} tintColor={primaryColor} />
-        }>
-        <Text className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">Membership</Text>
-        <Text className="mt-2 text-base text-neutral-600 dark:text-neutral-400">
-          Plans and billing for {appDisplayName}. Subscribe to unlock booking, or open billing to update your payment
-          method or plan. After you finish in the browser, return here and pull down to refresh so we show your latest
-          status.
-        </Text>
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { void load('refresh'); void refreshStudioActivity(); }}
+            tintColor={primaryColor}
+          />
+        }
+      >
+        {/* ── Page title ── */}
+        <View style={{ paddingTop: 28, marginBottom: 24 }}>
+          <Text
+            style={{
+              fontSize: 30,
+              fontWeight: '700',
+              letterSpacing: -0.7,
+              color: C.text,
+            }}
+          >
+            Membership
+          </Text>
+          <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
+            {appDisplayName}
+          </Text>
+        </View>
 
         {error ? (
-          <Text className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</Text>
+          <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16 }}>{error}</Text>
         ) : null}
 
-        <View className="mt-8 rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
-          <Text className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-            Your subscription
-          </Text>
-          {sub ? (
-            <View className="mt-3">
-              <Text className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{sub.plan.name}</Text>
-              <Text className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Status · {sub.status}
-                {sub.cancelAtPeriodEnd ? ' · Cancels at period end' : ''}
+        {/* ── Active subscription card ── */}
+        {sub ? (
+          <MembershipCard
+            planName={sub.plan.name}
+            status={sub.status}
+            renewsAt={renewsLabel}
+            primaryColor={primaryColor}
+            onManage={() => void openPortal()}
+            portalBusy={portalBusy}
+          />
+        ) : (
+          // No subscription — show skeleton row or "choose a plan" prompt
+          <View style={{ marginBottom: Space.sectionGap }}>
+            <View
+              style={{
+                backgroundColor: C.surface1,
+                borderRadius: 16,
+                paddingHorizontal: Space.cardH,
+                paddingVertical: 20,
+              }}
+            >
+              <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>
+                No active membership. Choose a plan below to unlock booking.
               </Text>
-              <Text className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-                Current period ·{' '}
-                {new Intl.DateTimeFormat(undefined, {
-                  timeZone,
-                  dateStyle: 'medium',
-                }).format(new Date(sub.currentPeriodEnd))}
-              </Text>
-              {sub.plan.classCredits !== null ? (
-                <Text className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                  {creditsLabel(sub.plan.classCredits)}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void openPortal()}
+                disabled={portalBusy}
+                hitSlop={8}
+                style={{ marginTop: 14 }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: portalBusy ? C.textMute : primaryColor }}>
+                  {portalBusy ? 'Opening…' : 'Manage billing →'}
                 </Text>
-              ) : (
-                <Text className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                  {creditsLabel(null)}
-                </Text>
-              )}
+              </Pressable>
             </View>
-          ) : (
-            <Text className="mt-3 text-base text-neutral-600 dark:text-neutral-400">
-              You do not have an active membership on file yet. Choose a plan below to start booking classes.
-            </Text>
-          )}
-          <View className="mt-5">
-            <BrandButton
-              label="Manage billing"
-              variant="ghost"
-              accentColor={primaryColor}
-              loading={portalBusy}
-              onPress={() => void openPortal()}
-            />
-            {portalError ? (
-              <Text className="mt-2 text-center text-sm text-neutral-600 dark:text-neutral-400">{portalError}</Text>
-            ) : null}
           </View>
-        </View>
+        )}
 
-        <View className="mt-10">
-          <Text className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">Available plans</Text>
-          {plans.length === 0 ? (
-            <Text className="mt-3 text-base text-neutral-600 dark:text-neutral-400">
-              There are no published plans yet. Check back later or contact the studio.
+        {portalError ? (
+          <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16, textAlign: 'center' }}>
+            {portalError}
+          </Text>
+        ) : null}
+
+        {/* ── Plans ── */}
+        {plans.length > 0 ? (
+          <View style={{ marginTop: sub ? Space.sectionGap : 0 }}>
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: '600',
+                letterSpacing: 0.8,
+                textTransform: 'uppercase',
+                color: C.textMute,
+                marginBottom: 16,
+              }}
+            >
+              Available plans
             </Text>
-          ) : (
-            <View className="mt-4 gap-4">
-              {plans.map((plan) => (
-                <View
-                  key={plan.id}
-                  className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
-                  <View className="flex-row items-start justify-between gap-3">
-                    <View className="min-w-0 flex-1">
-                      <Text className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">{plan.name}</Text>
-                      {plan.description ? (
-                        <Text className="mt-2 text-sm leading-5 text-neutral-600 dark:text-neutral-400">
-                          {plan.description}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <FontAwesome name="star" size={20} color={primaryColor} style={{ marginTop: 2 }} />
-                  </View>
-                  <Text className="mt-4 text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-                    {formatMoneyFromCents(plan.priceCents, plan.currency)}
-                    <Text className="text-base font-normal text-neutral-500 dark:text-neutral-400">
-                      {' '}
-                      · {billingIntervalLabel(plan.billingInterval)}
-                    </Text>
-                  </Text>
-                  {creditsLabel(plan.classCredits) ? (
-                    <Text className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-                      {creditsLabel(plan.classCredits)}
-                    </Text>
-                  ) : null}
-                  <View className="mt-5">
-                    <BrandButton
-                      label="Subscribe"
-                      accentColor={primaryColor}
-                      loading={checkoutPlanId === plan.id}
-                      disabled={checkoutPlanId !== null && checkoutPlanId !== plan.id}
-                      onPress={() => void openCheckout(plan.id)}
-                    />
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
+            {plans.map((plan, i) => (
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                primaryColor={primaryColor}
+                index={i}
+                isLoading={checkoutPlanId === plan.id}
+                isDisabled={checkoutPlanId !== null && checkoutPlanId !== plan.id}
+                onSubscribe={() => void openCheckout(plan.id)}
+              />
+            ))}
+          </View>
+        ) : loading ? (
+          <View style={{ gap: 10, marginTop: Space.sectionGap }}>
+            <Skeleton height={180} radius={20} />
+            <Skeleton height={180} radius={20} />
+          </View>
+        ) : (
+          <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 21, marginTop: Space.sectionGap }}>
+            No published plans yet. Check back later or contact the studio.
+          </Text>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
