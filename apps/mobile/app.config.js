@@ -1,9 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const dotenv = require('dotenv');
-
-
 const MOBILE_ROOT = __dirname;
 
 /** Safe defaults when `WHITELABEL_PROFILE=local` and keys are unset (internal template only). */
@@ -18,19 +15,53 @@ const LOCAL_TEMPLATE_DEFAULTS = {
   APP_ADAPTIVE_ICON_PATH: './assets/images/adaptive-icon.png',
 };
 
-
+/**
+ * Minimal .env parser (no dotenv package — works when node_modules is absent, e.g. EAS temp workspace).
+ * - KEY=value lines; first '=' separates key from value
+ * - Ignores blank lines and lines starting with #
+ * - Double/single-quoted values: strip outer quotes only
+ * - Unquoted: strips trailing ` # comment` (space + hash)
+ * Matches prior dotenv.config({ override: true }): file entries always set process.env[key].
+ */
+function applyEnvFile(absPath) {
+  if (!fs.existsSync(absPath)) return;
+  let raw;
+  try {
+    raw = fs.readFileSync(absPath, 'utf8');
+  } catch {
+    return;
+  }
+  const lines = raw.split(/\r?\n/);
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const eq = t.indexOf('=');
+    if (eq <= 0) continue;
+    const key = t.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let value = t.slice(eq + 1).trim();
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      value = value.slice(1, -1);
+    } else {
+      const hashIdx = value.search(/\s+#/);
+      if (hashIdx !== -1) {
+        value = value.slice(0, hashIdx).trimEnd();
+      }
+    }
+    process.env[key] = value;
+  }
+}
 
 function loadProfileEnvFiles() {
   const profile = (process.env.WHITELABEL_PROFILE ?? 'local').trim() || 'local';
   const tenantFile = path.join(MOBILE_ROOT, 'env', `.env.${profile}`);
   const rootEnv = path.join(MOBILE_ROOT, '.env');
 
-  if (fs.existsSync(tenantFile)) {
-    dotenv.config({ path: tenantFile, override: true });
-  }
-  if (fs.existsSync(rootEnv)) {
-    dotenv.config({ path: rootEnv, override: true });
-  }
+  applyEnvFile(tenantFile);
+  applyEnvFile(rootEnv);
   return profile;
 }
 
@@ -38,10 +69,7 @@ function isClientProfile(profile) {
   return profile !== 'local';
 }
 
-function requireOrDefault(
-  profile,
-  key,
-) {
+function requireOrDefault(profile, key) {
   const raw = process.env[key]?.trim();
   if (raw) return raw;
   if (!isClientProfile(profile)) {
@@ -106,10 +134,10 @@ module.exports = ({ config }) => {
     },
     plugins: ['expo-router'],
     updates: {
-      url: "https://u.expo.dev/9f5697a5-b5cb-425b-850f-fa2f61068f20",
+      url: 'https://u.expo.dev/9f5697a5-b5cb-425b-850f-fa2f61068f20',
     },
     runtimeVersion: {
-      policy: "appVersion",
+      policy: 'appVersion',
     },
     experiments: {
       typedRoutes: true,
@@ -118,7 +146,7 @@ module.exports = ({ config }) => {
       ...config.extra,
       whitelabelProfile: profile,
       eas: {
-        projectId: "9f5697a5-b5cb-425b-850f-fa2f61068f20",
+        projectId: '9f5697a5-b5cb-425b-850f-fa2f61068f20',
       },
     },
   };
