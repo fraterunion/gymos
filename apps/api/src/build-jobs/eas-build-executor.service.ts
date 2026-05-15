@@ -51,6 +51,16 @@ function easProfileName(p: BuildJobProfile): 'preview' | 'production' {
   }
 }
 
+/**
+ * Normalises a raw EXPO_PUBLIC_API_URL value to an origin-only string.
+ * Strips trailing slashes and any trailing /api/v1 segment so we never write
+ * "host/api/v1" into eas.json — that would cause the mobile app to build a
+ * double-prefix URL: "host/api/v1/api/v1/…"
+ */
+function sanitizeApiOrigin(raw: string): string {
+  return raw.trim().replace(/\/+$/, '').replace(/\/api\/v1\/?$/, '');
+}
+
 function truncateMessage(msg: string, max = 4000): string {
   const t = msg.trim();
   if (t.length <= max) return t;
@@ -338,12 +348,22 @@ export class EasBuildExecutorService {
       throw new Error('EAS_ACCESS_TOKEN is not set.');
     }
 
-    const expoPublicApiUrl =
+    const rawApiUrl =
       this.config.get<string>('EXPO_PUBLIC_API_URL')?.trim() ||
       this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() ||
       '';
-    if (!expoPublicApiUrl) {
+    if (!rawApiUrl) {
       throw new Error('EXPO_PUBLIC_API_URL (or CORS_ORIGIN) must be set for white-label builds.');
+    }
+    // Always use origin-only. If the Railway env has "/api/v1" appended (a common mistake),
+    // strip it here so the mobile app never produces double /api/v1/api/v1 URLs.
+    const expoPublicApiUrl = sanitizeApiOrigin(rawApiUrl);
+    if (expoPublicApiUrl !== rawApiUrl) {
+      this.logger.warn(
+        `[EAS_WORKER] api_url_sanitized jobId=${job.id}: raw="${rawApiUrl}" → sanitized="${expoPublicApiUrl}" (stripped /api/v1 suffix)`,
+      );
+    } else {
+      this.logger.log(`[EAS_WORKER] api_url jobId=${job.id}: "${expoPublicApiUrl}"`);
     }
 
     const timeoutMs = Number(this.config.get<string>('EAS_BUILD_TIMEOUT_MS') ?? '600000');
@@ -416,10 +436,12 @@ export class EasBuildExecutorService {
     // Patch eas.json so that Expo's remote Metro bundler receives the per-build env vars.
     // EXPO_PUBLIC_* vars are Metro-inlined at bundle time on Expo's servers — they must live in
     // the eas.json profile's `env` section, not just in the local childEnv passed to eas-cli.
+    const easJsonInWorkspace = path.join(mobileDir, 'eas.json');
     this.patchEasJsonForBuild(
-      path.join(mobileDir, 'eas.json'),
+      easJsonInWorkspace,
       profileArg,
       {
+        // App identity — read by app.config.js requireOrDefault() on the remote Metro server
         WHITELABEL_PROFILE: 'local',
         APP_DISPLAY_NAME: job.appDisplayName ?? '',
         APP_SCHEME: job.appScheme ?? '',
@@ -429,11 +451,17 @@ export class EasBuildExecutorService {
         APP_ICON_PATH: childEnv.APP_ICON_PATH ?? DEFAULT_ICON,
         APP_SPLASH_PATH: childEnv.APP_SPLASH_PATH ?? DEFAULT_SPLASH,
         APP_ADAPTIVE_ICON_PATH: childEnv.APP_ADAPTIVE_ICON_PATH ?? DEFAULT_ADAPTIVE,
-        EXPO_PUBLIC_API_URL: expoPublicApiUrl,
+        // Runtime constants — Metro inlines these as bundle-time replacements
+        EXPO_PUBLIC_API_URL: expoPublicApiUrl,   // MUST be origin-only (sanitized above)
         EXPO_PUBLIC_STUDIO_SLUG: studioSlug,
+        // Prevent Expo's remote build server from loading .env files that could override our values
+        EXPO_NO_DOTENV: '1',
       },
       job.id,
     );
+
+    // Validate the patch before submitting to EAS — fail locally rather than waste a cloud build slot
+    this.validatePatchedEasJson(easJsonInWorkspace, profileArg, studioSlug, expoPublicApiUrl, job.id);
 
     // --- TEMPORARY DIAGNOSTICS ---
     this.logWorkspaceDiagnostics(job.id, workspace, mobileDir);
@@ -992,6 +1020,92 @@ export class EasBuildExecutorService {
     } catch (err) {
       this.logger.warn(`[EAS_WORKER] eas_json_patch_write_error jobId=${jobId}: ${String(err)}`);
     }
+  }
+
+  /**
+   * Reads back the patched eas.json and validates critical env vars before submitting to EAS.
+   * Throws if validation fails so we get a clear local error instead of a wasted cloud build.
+   *
+   * Checks:
+   * - EXPO_PUBLIC_API_URL is present, is origin-only (no /api/v1 suffix), and matches expected
+   * - EXPO_PUBLIC_STUDIO_SLUG is present and matches the build job's studio
+   * - All required app identity vars (APP_DISPLAY_NAME, APP_SCHEME, etc.) are non-empty
+   * - Logs the exact branding URL the APK will call at runtime
+   */
+  private validatePatchedEasJson(
+    easJsonPath: string,
+    profile: 'preview' | 'production',
+    expectedStudioSlug: string,
+    expectedApiOrigin: string,
+    jobId: string,
+  ): void {
+    if (!fs.existsSync(easJsonPath)) {
+      // Can't validate if file is missing — patchEasJsonForBuild already warned
+      return;
+    }
+
+    let easJson: Record<string, unknown>;
+    try {
+      easJson = JSON.parse(fs.readFileSync(easJsonPath, 'utf8')) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error(`[EAS_WORKER] pre-build validation: cannot parse eas.json: ${String(err)}`);
+    }
+
+    const build = (easJson['build'] ?? {}) as Record<string, unknown>;
+    const profileObj = (build[profile] ?? {}) as Record<string, unknown>;
+    const env = (profileObj['env'] ?? {}) as Record<string, string>;
+
+    const errors: string[] = [];
+
+    const apiUrl = (env['EXPO_PUBLIC_API_URL'] ?? '').trim();
+    if (!apiUrl) {
+      errors.push('EXPO_PUBLIC_API_URL is missing from eas.json profile env');
+    } else if (/\/api\/v1\/?$/.test(apiUrl)) {
+      errors.push(
+        `EXPO_PUBLIC_API_URL ends with /api/v1 — the mobile app will produce double /api/v1 URLs: "${apiUrl}"`,
+      );
+    } else if (apiUrl !== expectedApiOrigin) {
+      errors.push(
+        `EXPO_PUBLIC_API_URL mismatch: expected "${expectedApiOrigin}", got "${apiUrl}"`,
+      );
+    }
+
+    const slug = (env['EXPO_PUBLIC_STUDIO_SLUG'] ?? '').trim();
+    if (!slug) {
+      errors.push('EXPO_PUBLIC_STUDIO_SLUG is missing from eas.json profile env');
+    } else if (slug !== expectedStudioSlug) {
+      errors.push(
+        `EXPO_PUBLIC_STUDIO_SLUG mismatch: expected "${expectedStudioSlug}", got "${slug}"`,
+      );
+    }
+
+    const requiredAppVars = [
+      'APP_DISPLAY_NAME',
+      'APP_SCHEME',
+      'EXPO_SLUG',
+      'IOS_BUNDLE_IDENTIFIER',
+      'ANDROID_PACKAGE',
+    ];
+    for (const key of requiredAppVars) {
+      if (!(env[key] ?? '').trim()) {
+        errors.push(`${key} is missing or empty in eas.json profile env`);
+      }
+    }
+
+    if (errors.length > 0) {
+      const msg = `Pre-build EAS config validation failed (jobId=${jobId}):\n${errors.map((e) => `  • ${e}`).join('\n')}`;
+      this.logger.error(`[EAS_WORKER] pre_build_validation_failed jobId=${jobId}:\n${errors.join('\n')}`);
+      throw new Error(msg);
+    }
+
+    const brandingUrl = `${apiUrl}/api/v1/public/studios/${encodeURIComponent(slug)}/branding`;
+    this.logger.log(
+      `[EAS_WORKER] pre_build_validation_passed jobId=${jobId} profile=${profile} apiOrigin=${apiUrl} slug=${slug}`,
+    );
+    this.logger.log(`[EAS_WORKER] expected_branding_url jobId=${jobId}: ${brandingUrl}`);
+    this.logger.log(
+      `[EAS_WORKER] eas_json_preview jobId=${jobId} profile=${profile} env: APP_DISPLAY_NAME=${env['APP_DISPLAY_NAME']} APP_SCHEME=${env['APP_SCHEME']} EXPO_SLUG=${env['EXPO_SLUG']} IOS_BUNDLE_IDENTIFIER=${env['IOS_BUNDLE_IDENTIFIER']} ANDROID_PACKAGE=${env['ANDROID_PACKAGE']}`,
+    );
   }
 
   private tryParseEasJson(raw: string): Record<string, unknown> | null {

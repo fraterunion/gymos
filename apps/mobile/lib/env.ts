@@ -9,7 +9,10 @@ export function getPublicApiUrl(): string {
   if (!raw || typeof raw !== 'string' || raw.trim() === '') {
     return '';
   }
-  return raw.replace(/\/+$/, '');
+  // Strip trailing slashes, then any trailing /api/v1 segment.
+  // Guards against EXPO_PUBLIC_API_URL being set to "host/api/v1" instead of the origin
+  // only — without this, getApiV1BaseUrl() would produce "host/api/v1/api/v1/…".
+  return raw.trim().replace(/\/+$/, '').replace(/\/api\/v1\/?$/, '');
 }
 
 export function getStudioSlug(): string {
