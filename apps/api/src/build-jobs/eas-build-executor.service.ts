@@ -400,7 +400,6 @@ export class EasBuildExecutorService {
       profileArg,
       '--non-interactive',
       '--no-wait',
-      '--verbose',
     ];
 
     const keepWorkspace =
