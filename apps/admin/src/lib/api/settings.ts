@@ -90,6 +90,31 @@ export type PatchMobileBody = Partial<{
   androidPackage: string | null;
 }>;
 
+/** Full flat body for PATCH mobile-config (all keys sent; empty strings become null). */
+export type MobileConfigFlatPayload = {
+  appDisplayName: string | null;
+  appScheme: string | null;
+  expoSlug: string | null;
+  iosBundleIdentifier: string | null;
+  androidPackage: string | null;
+};
+
+export function buildMobileConfigFlatPayload(fields: {
+  appDisplayName: string;
+  appScheme: string;
+  expoSlug: string;
+  iosBundleIdentifier: string;
+  androidPackage: string;
+}): MobileConfigFlatPayload {
+  return {
+    appDisplayName: fields.appDisplayName.trim() || null,
+    appScheme: fields.appScheme.trim() || null,
+    expoSlug: fields.expoSlug.trim() || null,
+    iosBundleIdentifier: fields.iosBundleIdentifier.trim() || null,
+    androidPackage: fields.androidPackage.trim() || null,
+  };
+}
+
 export async function fetchStudioSettings(studioId: string): Promise<StudioSettingsDto> {
   return apiRequest<StudioSettingsDto>(`/studios/${studioId}/settings`, { method: "GET" });
 }
@@ -126,7 +151,7 @@ export async function updateBookingRules(
 
 export async function updateMobileConfig(
   studioId: string,
-  body: PatchMobileBody,
+  body: PatchMobileBody | MobileConfigFlatPayload,
 ): Promise<StudioSettingsDto> {
   return apiRequest<StudioSettingsDto>(`/studios/${studioId}/settings/mobile-config`, {
     method: "PATCH",

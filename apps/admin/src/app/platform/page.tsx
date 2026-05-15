@@ -16,6 +16,7 @@ import {
   type BuildWorkerReadinessDto,
 } from "@/lib/api/buildJobs";
 import {
+  buildMobileConfigFlatPayload,
   fetchStudioSettings,
   updateGeneralSettings,
   updateMobileConfig,
@@ -284,6 +285,23 @@ export default function PlatformConsolePage() {
     return fields.every((x) => x.length > 0);
   }, [mobile]);
 
+  /** Matches API / build-job validation: persisted studio mobile fields (after Save). */
+  const persistedMobileReady = useMemo(
+    () => data?.mobileWhiteLabelStatus === "ready",
+    [data?.mobileWhiteLabelStatus],
+  );
+
+  const hasUnsavedMobileChanges = useMemo(() => {
+    const m = data?.mobile;
+    if (!m) return false;
+    return (
+      mobile.appDisplayName.trim() !== (m.appDisplayName ?? "").trim() ||
+      mobile.appScheme.trim() !== (m.appScheme ?? "").trim() ||
+      mobile.expoSlug.trim() !== (m.expoSlug ?? "").trim() ||
+      mobile.iosBundleIdentifier.trim() !== (m.iosBundleIdentifier ?? "").trim() ||
+      mobile.androidPackage.trim() !== (m.androidPackage ?? "").trim()
+    );
+  }, [mobile, data?.mobile]);
   const checklist = useMemo(() => {
     if (!data) return null;
     const logoOk = !!(data.branding.effectiveLogoUrl?.trim() || data.branding.logoUrl?.trim());
@@ -325,15 +343,25 @@ export default function PlatformConsolePage() {
     setSectionError(null);
     setSaving(key);
     try {
-      const next = await fn();
-      if (!next.mobile) {
-        setSectionError("Save succeeded but mobile payload was missing — check platform operator configuration.");
-        return;
+      if (key === "mobile") {
+        await fn();
+        const latest = await fetchStudioSettings(selectedStudioId);
+        if (!latest.mobile) {
+          setSectionError("Could not load mobile settings from the server after save.");
+          return;
+        }
+        applyServerData(latest);
+      } else {
+        const next = await fn();
+        if (!next.mobile) {
+          setSectionError("Save succeeded but mobile payload was missing — check platform operator configuration.");
+          return;
+        }
+        applyServerData(next);
       }
-      applyServerData(next);
       void loadBuildJobs();
-      setFlash("Saved");
-      window.setTimeout(() => setFlash(null), 2200);
+      setFlash(key === "mobile" ? "Mobile configuration saved." : "Saved");
+      window.setTimeout(() => setFlash(null), key === "mobile" ? 3200 : 2200);
     } catch (e) {
       setSectionError(e instanceof ApiError ? e.message : "Save failed.");
     } finally {
@@ -344,13 +372,7 @@ export default function PlatformConsolePage() {
   const onSaveMobile = () => {
     if (!selectedStudioId) return;
     void runSave("mobile", () =>
-      updateMobileConfig(selectedStudioId, {
-        appDisplayName: mobile.appDisplayName.trim() || null,
-        appScheme: mobile.appScheme.trim() || null,
-        expoSlug: mobile.expoSlug.trim() || null,
-        iosBundleIdentifier: mobile.iosBundleIdentifier.trim() || null,
-        androidPackage: mobile.androidPackage.trim() || null,
-      }),
+      updateMobileConfig(selectedStudioId, buildMobileConfigFlatPayload(mobile)),
     );
   };
 
@@ -554,23 +576,32 @@ export default function PlatformConsolePage() {
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-4">
           <div>
             <p className="text-sm font-medium text-zinc-100">Mobile snapshot readiness</p>
-            <p className="mt-1 text-xs text-zinc-500">All mobile fields must be saved on the studio before queuing a job.</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Based on <strong className="text-zinc-400">saved</strong> studio data (same rules as Generate build).
+              {hasUnsavedMobileChanges ? " You have unsaved edits in the form above — save before queuing a build." : null}
+            </p>
           </div>
           <span
             className={`rounded-full px-3 py-1 text-xs font-semibold ${
-              mobileDraftReady
+              persistedMobileReady
                 ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
                 : "bg-amber-500/10 text-amber-200 ring-1 ring-amber-500/25"
             }`}
           >
-            {mobileDraftReady ? "Ready" : "Incomplete"}
+            {persistedMobileReady ? "Ready" : "Incomplete"}
           </span>
         </div>
         <div className="mt-4">
           <button
             type="button"
-            disabled={!mobileDraftReady}
-            title={!mobileDraftReady ? "Complete and save mobile configuration first." : undefined}
+            disabled={!persistedMobileReady}
+            title={
+              !persistedMobileReady
+                ? mobileDraftReady
+                  ? "Save mobile configuration below to persist all fields, then try again."
+                  : "Complete every mobile field and save — required fields are missing on the server."
+                : undefined
+            }
             onClick={() => setBuildModalOpen(true)}
             className="rounded-xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -908,7 +939,8 @@ export default function PlatformConsolePage() {
               </button>
               <button
                 type="button"
-                disabled={createJobPending}
+                disabled={createJobPending || !persistedMobileReady}
+                title={!persistedMobileReady ? "Persisted mobile config is incomplete — close and save mobile config." : undefined}
                 onClick={() => void onCreateBuildJob()}
                 className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-amber-400 disabled:cursor-wait disabled:opacity-60"
               >
