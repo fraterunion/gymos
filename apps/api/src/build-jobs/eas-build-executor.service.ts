@@ -413,6 +413,28 @@ export class EasBuildExecutorService {
       childEnv,
     );
 
+    // Patch eas.json so that Expo's remote Metro bundler receives the per-build env vars.
+    // EXPO_PUBLIC_* vars are Metro-inlined at bundle time on Expo's servers — they must live in
+    // the eas.json profile's `env` section, not just in the local childEnv passed to eas-cli.
+    this.patchEasJsonForBuild(
+      path.join(mobileDir, 'eas.json'),
+      profileArg,
+      {
+        WHITELABEL_PROFILE: 'local',
+        APP_DISPLAY_NAME: job.appDisplayName ?? '',
+        APP_SCHEME: job.appScheme ?? '',
+        EXPO_SLUG: job.expoSlug ?? '',
+        IOS_BUNDLE_IDENTIFIER: job.iosBundleIdentifier ?? '',
+        ANDROID_PACKAGE: job.androidPackage ?? '',
+        APP_ICON_PATH: childEnv.APP_ICON_PATH ?? DEFAULT_ICON,
+        APP_SPLASH_PATH: childEnv.APP_SPLASH_PATH ?? DEFAULT_SPLASH,
+        APP_ADAPTIVE_ICON_PATH: childEnv.APP_ADAPTIVE_ICON_PATH ?? DEFAULT_ADAPTIVE,
+        EXPO_PUBLIC_API_URL: expoPublicApiUrl,
+        EXPO_PUBLIC_STUDIO_SLUG: studioSlug,
+      },
+      job.id,
+    );
+
     // --- TEMPORARY DIAGNOSTICS ---
     this.logWorkspaceDiagnostics(job.id, workspace, mobileDir);
     try {
@@ -926,6 +948,51 @@ export class EasBuildExecutorService {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Patches the eas.json at `easJsonPath` so the specified `profile`'s `env` section contains all
+   * of `envVars`. Existing profile keys are preserved; `envVars` entries win on collision.
+   *
+   * This is necessary because EXPO_PUBLIC_* variables are Metro-inlined at bundle time on Expo's
+   * remote build servers. Passing them only in the local child process env (childEnv) has no
+   * effect on the remote Metro run. They must be in the eas.json profile's `env` block so EAS CLI
+   * forwards them to Expo's servers during source upload.
+   */
+  private patchEasJsonForBuild(
+    easJsonPath: string,
+    profile: 'preview' | 'production',
+    envVars: Record<string, string>,
+    jobId: string,
+  ): void {
+    if (!fs.existsSync(easJsonPath)) {
+      this.logger.warn(`[EAS_WORKER] eas_json_patch_skip jobId=${jobId}: file not found at ${easJsonPath}`);
+      return;
+    }
+
+    let easJson: Record<string, unknown>;
+    try {
+      easJson = JSON.parse(fs.readFileSync(easJsonPath, 'utf8')) as Record<string, unknown>;
+    } catch (err) {
+      this.logger.warn(`[EAS_WORKER] eas_json_patch_parse_error jobId=${jobId}: ${String(err)}`);
+      return;
+    }
+
+    const build = (easJson['build'] ?? {}) as Record<string, unknown>;
+    const existing = (build[profile] ?? {}) as Record<string, unknown>;
+    const existingEnv = (existing['env'] ?? {}) as Record<string, string>;
+
+    build[profile] = { ...existing, env: { ...existingEnv, ...envVars } };
+    easJson['build'] = build;
+
+    try {
+      fs.writeFileSync(easJsonPath, JSON.stringify(easJson, null, 2));
+      this.logger.log(
+        `[EAS_WORKER] eas_json_patched jobId=${jobId} profile=${profile} injected=[${Object.keys(envVars).join(',')}]`,
+      );
+    } catch (err) {
+      this.logger.warn(`[EAS_WORKER] eas_json_patch_write_error jobId=${jobId}: ${String(err)}`);
+    }
+  }
 
   private tryParseEasJson(raw: string): Record<string, unknown> | null {
     const t = raw.trim();
