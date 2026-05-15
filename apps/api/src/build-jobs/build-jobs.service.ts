@@ -1,13 +1,13 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { BuildWorkerReadinessService, type BuildWorkerReadinessDto } from './build-worker-readiness.service';
 import { EasBuildExecutorService } from './eas-build-executor.service';
 import type { CreateBuildJobDto } from './dto/create-build-job.dto';
 
@@ -53,6 +53,7 @@ export class BuildJobsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly easExecutor: EasBuildExecutorService,
+    private readonly workerReadiness: BuildWorkerReadinessService,
   ) {}
 
   async listForStudio(studioId: string): Promise<BuildJobResponse[]> {
@@ -110,18 +111,16 @@ export class BuildJobsService {
     });
   }
 
-  getWorkerInfo(): { workerEnabled: boolean } {
-    return { workerEnabled: this.easExecutor.isWorkerEnabled() };
+  async getWorkerReadiness(studioId: string): Promise<BuildWorkerReadinessDto> {
+    await this.assertStudioExists(studioId);
+    return this.workerReadiness.gatherWorkerReadiness();
   }
 
   /**
    * Enqueues (or re-queues) a build for the async worker. Does not invoke EAS on the HTTP thread.
+   * Allowed even when BUILD_WORKER_ENABLED is false — jobs remain QUEUED until the worker is enabled.
    */
   async run(studioId: string, jobId: string): Promise<BuildJobResponse> {
-    if (!this.easExecutor.isWorkerEnabled()) {
-      throw new ForbiddenException('Build worker is disabled in this environment.');
-    }
-
     const job = await this.prisma.buildJob.findFirst({
       where: { id: jobId, studioId },
       select: buildJobSelect,

@@ -44,12 +44,25 @@ export async function createBuildJob(
   });
 }
 
-export type BuildWorkerInfoDto = {
+export type BuildWorkerReadinessDto = {
   workerEnabled: boolean;
+  pollIntervalMs: number;
+  mobileAppRoot: string | null;
+  mobileAppRootExists: boolean;
+  easTokenConfigured: boolean;
+  expoPublicApiUrlConfigured: boolean;
+  npxAvailable: boolean;
+  easCliReachable: boolean;
+  easCliVersion?: string;
+  canExecuteBuilds: boolean;
+  blockingReasons: string[];
 };
 
-export async function fetchBuildWorkerInfo(studioId: string): Promise<BuildWorkerInfoDto> {
-  return apiRequest<BuildWorkerInfoDto>(`/studios/${studioId}/build-jobs/worker-info`, { method: "GET" });
+/** @deprecated Use BuildWorkerReadinessDto */
+export type BuildWorkerInfoDto = BuildWorkerReadinessDto;
+
+export async function fetchBuildWorkerInfo(studioId: string): Promise<BuildWorkerReadinessDto> {
+  return apiRequest<BuildWorkerReadinessDto>(`/studios/${studioId}/build-jobs/worker-info`, { method: "GET" });
 }
 
 export async function runBuildJob(studioId: string, jobId: string): Promise<BuildJobDto> {

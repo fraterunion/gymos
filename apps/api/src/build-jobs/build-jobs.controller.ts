@@ -17,8 +17,8 @@ export class BuildJobsController {
   constructor(private readonly buildJobsService: BuildJobsService) {}
 
   @Get('worker-info')
-  workerInfo() {
-    return this.buildJobsService.getWorkerInfo();
+  async workerInfo(@Param('studioId') studioId: string) {
+    return this.buildJobsService.getWorkerReadiness(studioId);
   }
 
   @Get()

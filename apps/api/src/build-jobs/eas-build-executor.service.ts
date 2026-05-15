@@ -110,6 +110,29 @@ export class EasBuildExecutorService {
     return null;
   }
 
+  /** Path the API would use for EAS cwd, and whether eas.json is present (non-secret). */
+  getMobileRootDiagnostics(): { path: string | null; exists: boolean } {
+    const override = this.config.get<string>('MOBILE_APP_ROOT')?.trim();
+    if (override) {
+      const p = path.resolve(override);
+      return { path: p, exists: this.hasEasJsonUnder(p) };
+    }
+    const resolved = this.resolveMobileAppRoot();
+    if (resolved) {
+      return { path: resolved, exists: true };
+    }
+    return { path: null, exists: false };
+  }
+
+  private hasEasJsonUnder(dir: string): boolean {
+    try {
+      fs.accessSync(path.join(dir, 'eas.json'));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Runs `npx eas-cli build` with fixed argv (no shell interpolation). Env carries snapshot values only.
    * `--json` implies non-interactive (EAS CLI); JSON is written to stdout, status lines to stderr.

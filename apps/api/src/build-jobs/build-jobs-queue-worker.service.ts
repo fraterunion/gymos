@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { resolveBuildQueuePollIntervalMs } from './build-worker-readiness.service';
 import { BuildJobsService } from './build-jobs.service';
 import { EasBuildExecutorService } from './eas-build-executor.service';
 
@@ -17,7 +18,7 @@ export class BuildJobsQueueWorkerService implements OnModuleInit, OnModuleDestro
   ) {}
 
   onModuleInit(): void {
-    const ms = this.resolvePollIntervalMs();
+    const ms = resolveBuildQueuePollIntervalMs(this.config);
     this.interval = setInterval(() => {
       void this.safePollTick();
     }, ms);
@@ -34,13 +35,6 @@ export class BuildJobsQueueWorkerService implements OnModuleInit, OnModuleDestro
       clearInterval(this.interval);
       this.interval = null;
     }
-  }
-
-  private resolvePollIntervalMs(): number {
-    const raw = this.config.get<string>('BUILD_QUEUE_POLL_INTERVAL_MS');
-    const n = raw !== undefined && raw !== null && raw !== '' ? Number(raw) : 45_000;
-    if (!Number.isFinite(n)) return 45_000;
-    return Math.min(120_000, Math.max(30_000, Math.floor(n)));
   }
 
   private async safePollTick(): Promise<void> {
