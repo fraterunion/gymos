@@ -9,6 +9,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { StudioMemberGuard } from './guards/studio-member.guard';
 import { AuthThrottlerGuard } from './guards/auth-throttler.guard';
+import { PlatformOperatorGuard } from './guards/platform-operator.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { StudioAccessController } from './studio-access.controller';
 import { PlatformOperatorService } from './platform-operator.service';
@@ -36,7 +37,15 @@ import { PlatformOperatorService } from './platform-operator.service';
     RolesGuard,
     AuthThrottlerGuard,
     PlatformOperatorService,
+    PlatformOperatorGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, StudioMemberGuard, RolesGuard, PlatformOperatorService],
+  exports: [
+    AuthService,
+    JwtAuthGuard,
+    StudioMemberGuard,
+    RolesGuard,
+    PlatformOperatorService,
+    PlatformOperatorGuard,
+  ],
 })
 export class AuthModule {}

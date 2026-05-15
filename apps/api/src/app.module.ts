@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { BillingModule } from './billing/billing.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { BrandingModule } from './branding/branding.module';
+import { BuildJobsModule } from './build-jobs/build-jobs.module';
 import { CheckInsModule } from './check-ins/check-ins.module';
 import { ClassTemplatesModule } from './class-templates/class-templates.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -49,6 +50,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     AnalyticsModule,
     BillingModule,
     BrandingModule,
+    BuildJobsModule,
     StudiosModule,
     MembershipPlansModule,
     MembersModule,
