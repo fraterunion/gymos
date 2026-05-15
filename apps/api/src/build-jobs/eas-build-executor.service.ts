@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { BuildJob, BuildJobPlatform, BuildJobProfile } from '@prisma/client';
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 export type EasBuildJobContext = Pick<
@@ -183,6 +184,10 @@ export class EasBuildExecutorService {
   /**
    * Runs `npx eas-cli build` with fixed argv (no shell interpolation). Env carries snapshot values only.
    * `--json` implies non-interactive (EAS CLI); JSON is written to stdout, status lines to stderr.
+   *
+   * A temporary workspace with a real git repo is created before each build because EAS CLI calls
+   * `git rev-parse --show-toplevel` internally even when EAS_NO_VCS=1, and Railway containers
+   * have no .git directory.
    */
   async execute(job: EasBuildJobContext, studioSlug: string): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
     const mobileRoot = this.resolveMobileAppRoot();
@@ -209,15 +214,6 @@ export class EasBuildExecutorService {
 
     const platformArg = easPlatformArg(job.platform);
     const profileArg = easProfileName(job.profile);
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'eas_build_started',
-        jobId: job.id,
-        platform: job.platform,
-        profile: job.profile,
-      }),
-    );
 
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
@@ -248,8 +244,33 @@ export class EasBuildExecutorService {
 
     const args = ['-y', 'eas-cli@latest', 'build', '--platform', platformArg, '--profile', profileArg, '--non-interactive', '--json'];
 
+    const keepWorkspace = (this.config.get<string>('DEBUG_KEEP_BUILD_WORKSPACE') ?? '').toLowerCase() === 'true';
+    const workspace = await this.createWorkspace(job.id, mobileRoot);
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'eas_build_started',
+        jobId: job.id,
+        platform: job.platform,
+        profile: job.profile,
+        workspace,
+      }),
+    );
+
     const started = Date.now();
-    const { code, stdout, stderr } = await this.spawnNpx(args, { cwd: mobileRoot, env: childEnv }, safeTimeout);
+    let code: number;
+    let stdout: string;
+    let stderr: string;
+    try {
+      ({ code, stdout, stderr } = await this.spawnNpx(args, { cwd: workspace, env: childEnv }, safeTimeout));
+    } finally {
+      if (!keepWorkspace) {
+        await this.cleanupWorkspace(workspace);
+      } else {
+        this.logger.log(JSON.stringify({ event: 'workspace_kept', jobId: job.id, workspace }));
+      }
+    }
+
     const durationMs = Date.now() - started;
     const combined = `${stdout}\n${stderr}`;
     this.logger.log(
@@ -278,6 +299,87 @@ export class EasBuildExecutorService {
     }
 
     return { easBuildUrl, artifactUrl };
+  }
+
+  /**
+   * Creates a temp directory, copies the mobile app source into it (excluding build artifacts and
+   * node_modules so EAS installs a clean dependency tree), then initialises a minimal git repo so
+   * EAS CLI's `git rev-parse` call succeeds in containers that have no .git directory.
+   */
+  private async createWorkspace(jobId: string, sourceDir: string): Promise<string> {
+    const workspaceDir = path.join(os.tmpdir(), `gymos-build-${jobId}`);
+
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    this.logger.log(JSON.stringify({ event: 'workspace_created', jobId, workspace: workspaceDir }));
+
+    const EXCLUDED_DIRS = new Set(['.git', 'node_modules', 'dist', '.next', '.expo', 'build', 'android', 'ios']);
+    const EXCLUDED_EXTS = new Set(['.log']);
+
+    const copyRecursive = (src: string, dest: string): void => {
+      const entries = fs.readdirSync(src, { withFileTypes: true });
+      for (const entry of entries) {
+        if (EXCLUDED_DIRS.has(entry.name)) continue;
+        if (!entry.isDirectory() && EXCLUDED_EXTS.has(path.extname(entry.name))) continue;
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+          fs.mkdirSync(destPath, { recursive: true });
+          copyRecursive(srcPath, destPath);
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
+      }
+    };
+
+    copyRecursive(sourceDir, workspaceDir);
+
+    await this.initGitRepo(workspaceDir, jobId);
+    return workspaceDir;
+  }
+
+  private async initGitRepo(dir: string, jobId: string): Promise<void> {
+    const gitEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'GymOS Build Worker',
+      GIT_AUTHOR_EMAIL: 'builds@fraterunion.co',
+      GIT_COMMITTER_NAME: 'GymOS Build Worker',
+      GIT_COMMITTER_EMAIL: 'builds@fraterunion.co',
+    };
+
+    const run = (args: string[]): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const child = spawn('git', args, {
+          cwd: dir,
+          env: gitEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        });
+        let errOut = '';
+        child.stderr?.setEncoding('utf8');
+        child.stderr?.on('data', (chunk: string) => { errOut += chunk; });
+        child.on('error', reject);
+        child.on('close', (code) => {
+          if (code !== 0) reject(new Error(`git ${args[0]} failed (exit ${code}): ${errOut.trim()}`));
+          else resolve();
+        });
+      });
+
+    await run(['init']);
+    await run(['config', 'user.email', 'builds@fraterunion.co']);
+    await run(['config', 'user.name', 'GymOS Build Worker']);
+    await run(['add', '.']);
+    await run(['commit', '-m', 'build snapshot', '--allow-empty']);
+
+    this.logger.log(JSON.stringify({ event: 'git_initialized', jobId, dir }));
+  }
+
+  private async cleanupWorkspace(dir: string): Promise<void> {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      this.logger.log(JSON.stringify({ event: 'workspace_cleaned', dir }));
+    } catch (err) {
+      this.logger.warn(JSON.stringify({ event: 'workspace_cleanup_failed', dir, error: String(err) }));
+    }
   }
 
   private tryParseEasJson(raw: string): Record<string, unknown> | null {
