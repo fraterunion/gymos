@@ -8,9 +8,9 @@ import {
   ValidateIf,
 } from 'class-validator';
 
-function emptyToNull(v: unknown): unknown {
-  if (v === '' || v === undefined) return null;
-  return v;
+function emptyToNull({ value }: { value: unknown }): unknown {
+  if (value === '' || value === undefined) return null;
+  return value;
 }
 
 const iosBundlePattern = /^[a-zA-Z][a-zA-Z0-9-]*(\.[a-zA-Z][a-zA-Z0-9-]*)+$/;

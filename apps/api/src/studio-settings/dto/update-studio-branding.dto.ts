@@ -1,9 +1,9 @@
 import { Transform } from 'class-transformer';
 import { IsOptional, IsString, IsUrl, Matches, MaxLength, ValidateIf } from 'class-validator';
 
-function emptyToNull(v: unknown): unknown {
-  if (v === '' || v === undefined) return null;
-  return v;
+function emptyToNull({ value }: { value: unknown }): unknown {
+  if (value === '' || value === undefined) return null;
+  return value;
 }
 
 const hexColorPattern = /^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
