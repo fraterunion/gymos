@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { EasBuildExecutorService } from './eas-build-executor.service';
 import type { CreateBuildJobDto } from './dto/create-build-job.dto';
 
 const studioMobileSelect = {
@@ -40,7 +41,10 @@ export type BuildJobResponse = Prisma.BuildJobGetPayload<{ select: typeof buildJ
 
 @Injectable()
 export class BuildJobsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly easExecutor: EasBuildExecutorService,
+  ) {}
 
   async listForStudio(studioId: string): Promise<BuildJobResponse[]> {
     await this.assertStudioExists(studioId);
@@ -83,6 +87,88 @@ export class BuildJobsService {
       },
       select: buildJobSelect,
     });
+  }
+
+  getWorkerInfo(): { workerEnabled: boolean } {
+    return { workerEnabled: this.easExecutor.isWorkerEnabled() };
+  }
+
+  async run(studioId: string, jobId: string): Promise<BuildJobResponse> {
+    if (!this.easExecutor.isWorkerEnabled()) {
+      throw new ForbiddenException('Build worker is disabled in this environment.');
+    }
+    this.easExecutor.assertReadyForExecution();
+
+    const job = await this.prisma.buildJob.findFirst({
+      where: { id: jobId, studioId },
+      select: buildJobSelect,
+    });
+    if (!job) {
+      throw new NotFoundException('Build job not found');
+    }
+    if (job.status !== 'QUEUED' && job.status !== 'FAILED') {
+      throw new BadRequestException('Only QUEUED or FAILED build jobs can be run.');
+    }
+
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { slug: true },
+    });
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
+    }
+
+    const transition = await this.prisma.buildJob.updateMany({
+      where: {
+        id: jobId,
+        studioId,
+        status: { in: ['QUEUED', 'FAILED'] },
+      },
+      data: {
+        status: 'RUNNING',
+        startedAt: new Date(),
+        errorMessage: null,
+        easBuildUrl: null,
+        artifactUrl: null,
+      },
+    });
+    if (transition.count === 0) {
+      throw new BadRequestException('Build job is no longer in a runnable state.');
+    }
+
+    try {
+      const { easBuildUrl, artifactUrl } = await this.easExecutor.execute(job, studio.slug);
+      return await this.prisma.buildJob.update({
+        where: { id: jobId },
+        data: {
+          status: 'SUCCEEDED',
+          finishedAt: new Date(),
+          easBuildUrl: easBuildUrl ?? null,
+          artifactUrl: artifactUrl ?? null,
+        },
+        select: buildJobSelect,
+      });
+    } catch (e) {
+      const errorMessage = this.sanitizeBuildError(e);
+      return await this.prisma.buildJob.update({
+        where: { id: jobId },
+        data: {
+          status: 'FAILED',
+          finishedAt: new Date(),
+          errorMessage,
+        },
+        select: buildJobSelect,
+      });
+    }
+  }
+
+  private sanitizeBuildError(e: unknown): string {
+    let msg = e instanceof Error ? e.message : String(e);
+    msg = msg.replace(/sk_(live|test)_[a-z0-9]+/gi, '[REDACTED]');
+    msg = msg.replace(/Bearer\s+[a-z0-9._-]+/gi, 'Bearer [REDACTED]');
+    const max = 4000;
+    if (msg.length > max) return `${msg.slice(0, max)}…`;
+    return msg;
   }
 
   private snapshotFromStudio(s: StudioMobileRow) {

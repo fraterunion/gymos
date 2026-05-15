@@ -70,6 +70,12 @@ function assertCorsOrigin(v: unknown, nodeEnv: NodeEnv): string {
   return raw;
 }
 
+function normalizeBuildWorkerEnabled(v: unknown): string {
+  if (v === undefined || v === null || v === '') return 'false';
+  if (typeof v === 'string' && v.trim().toLowerCase() === 'true') return 'true';
+  return 'false';
+}
+
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...config };
 
@@ -99,6 +105,14 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
   const nodeEnv = nodeEnvRaw;
 
   out['CORS_ORIGIN'] = assertCorsOrigin(out['CORS_ORIGIN'], nodeEnv);
+  const corsFirst =
+    typeof out['CORS_ORIGIN'] === 'string' ? out['CORS_ORIGIN'].split(',')[0]?.trim() : undefined;
+  if (!out['EXPO_PUBLIC_API_URL'] || (typeof out['EXPO_PUBLIC_API_URL'] === 'string' && out['EXPO_PUBLIC_API_URL'].trim() === '')) {
+    if (corsFirst) {
+      out['EXPO_PUBLIC_API_URL'] = corsFirst;
+    }
+  }
+  out['BUILD_WORKER_ENABLED'] = normalizeBuildWorkerEnabled(out['BUILD_WORKER_ENABLED']);
   out['JWT_ACCESS_TTL'] = assertJwtAccessTtl(out['JWT_ACCESS_TTL']);
   out['JWT_REFRESH_TTL_DAYS'] = assertJwtRefreshTtlDays(out['JWT_REFRESH_TTL_DAYS']);
   out['BCRYPT_ROUNDS'] = assertBcryptRounds(out['BCRYPT_ROUNDS']);

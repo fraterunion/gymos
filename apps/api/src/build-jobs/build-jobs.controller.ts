@@ -16,6 +16,11 @@ import { CreateBuildJobDto } from './dto/create-build-job.dto';
 export class BuildJobsController {
   constructor(private readonly buildJobsService: BuildJobsService) {}
 
+  @Get('worker-info')
+  workerInfo() {
+    return this.buildJobsService.getWorkerInfo();
+  }
+
   @Get()
   list(@Param('studioId') studioId: string) {
     return this.buildJobsService.listForStudio(studioId);
@@ -28,5 +33,10 @@ export class BuildJobsController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.buildJobsService.create(studioId, user.sub, dto);
+  }
+
+  @Post(':jobId/run')
+  run(@Param('studioId') studioId: string, @Param('jobId') jobId: string) {
+    return this.buildJobsService.run(studioId, jobId);
   }
 }
