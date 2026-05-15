@@ -117,8 +117,24 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
   out['JWT_REFRESH_TTL_DAYS'] = assertJwtRefreshTtlDays(out['JWT_REFRESH_TTL_DAYS']);
   out['BCRYPT_ROUNDS'] = assertBcryptRounds(out['BCRYPT_ROUNDS']);
   assertStripeBillingEnv(out, nodeEnv);
+  assertExpoBuildWebhookEnv(out, nodeEnv);
 
   return out;
+}
+
+function assertExpoBuildWebhookEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): void {
+  const secret = out['EXPO_BUILD_WEBHOOK_SECRET'];
+  if (nodeEnv === 'production') {
+    if (typeof secret !== 'string' || secret.trim().length < 16) {
+      throw new Error(
+        'EXPO_BUILD_WEBHOOK_SECRET is required in production (min 16 characters, same as eas webhook:create)',
+      );
+    }
+    return;
+  }
+  if (typeof secret === 'string' && secret.trim() !== '' && secret.trim().length < 16) {
+    throw new Error('EXPO_BUILD_WEBHOOK_SECRET must be at least 16 characters when set');
+  }
 }
 
 const STRIPE_DEFAULTS: ReadonlyArray<[string, string]> = [

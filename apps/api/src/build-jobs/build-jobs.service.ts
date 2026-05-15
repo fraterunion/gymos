@@ -339,6 +339,13 @@ export class BuildJobsService {
    * Returns SUCCEEDED jobs that have an expoBuildId and are not yet terminal on Expo's side.
    * Ordered oldest-checked-first so stale jobs get priority on every tick.
    */
+  async findByExpoBuildId(expoBuildId: string): Promise<BuildJobResponse | null> {
+    return this.prisma.buildJob.findFirst({
+      where: { expoBuildId },
+      select: buildJobSelect,
+    });
+  }
+
   async listPollableJobs(limit: number): Promise<BuildJobResponse[]> {
     return this.prisma.buildJob.findMany({
       where: {

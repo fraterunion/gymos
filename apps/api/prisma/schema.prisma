@@ -484,5 +484,19 @@ model BuildJob {
   @@index([status])
   @@index([requestedAt])
   @@index([startedAt])
+  @@index([expoBuildId])
   @@map("build_jobs")
+}
+
+/// Phase 18 — idempotent Expo EAS build webhook deliveries (dedupe by body hash).
+model ExpoWebhookDelivery {
+  id          String   @id @default(cuid())
+  deliveryKey String   @unique @map("delivery_key")
+  expoBuildId String   @map("expo_build_id")
+  processed   Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([expoBuildId])
+  @@index([createdAt])
+  @@map("expo_webhook_deliveries")
 }

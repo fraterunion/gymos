@@ -4,12 +4,20 @@ import type { Application, Request } from 'express';
 import express from 'express';
 import helmet from 'helmet';
 
+function webhookPath(req: Request): string {
+  return (req.originalUrl ?? req.url ?? '').split('?')[0];
+}
+
 function isStripeWebhookPost(req: Request): boolean {
-  if (req.method !== 'POST') {
-    return false;
-  }
-  const path = (req.originalUrl ?? req.url ?? '').split('?')[0];
-  return path === '/api/v1/stripe/webhook';
+  return req.method === 'POST' && webhookPath(req) === '/api/v1/stripe/webhook';
+}
+
+function isExpoBuildWebhookPost(req: Request): boolean {
+  return req.method === 'POST' && webhookPath(req) === '/api/v1/webhooks/expo/build';
+}
+
+function needsRawJsonBody(req: Request): boolean {
+  return isStripeWebhookPost(req) || isExpoBuildWebhookPost(req);
 }
 
 export function configureHttpApp(app: unknown): void {
@@ -19,19 +27,19 @@ export function configureHttpApp(app: unknown): void {
   expressApp.set('trust proxy', 1);
 
   expressApp.use((req, res, next) => {
-    if (isStripeWebhookPost(req)) {
+    if (needsRawJsonBody(req)) {
       return express.raw({ type: 'application/json', limit: '2mb' })(req, res, next);
     }
     next();
   });
   expressApp.use((req, res, next) => {
-    if (isStripeWebhookPost(req)) {
+    if (needsRawJsonBody(req)) {
       return next();
     }
     express.json({ limit: '2mb' })(req, res, next);
   });
   expressApp.use((req, res, next) => {
-    if (isStripeWebhookPost(req)) {
+    if (needsRawJsonBody(req)) {
       return next();
     }
     express.urlencoded({ extended: true, limit: '1mb' })(req, res, next);

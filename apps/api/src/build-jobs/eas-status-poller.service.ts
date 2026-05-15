@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as https from 'node:https';
 import { URL } from 'node:url';
+import { isExpoTerminalBuildStatus, normalizeExpoBuildStatus } from './expo-build-status';
 
 export type EasRemoteBuildStatus = {
   expoStatus: string;
@@ -10,10 +11,9 @@ export type EasRemoteBuildStatus = {
   errorMessage: string | null;
 };
 
-const EXPO_TERMINAL_STATUSES = new Set(['FINISHED', 'ERRORED', 'CANCELED']);
-
+/** @deprecated Use isExpoTerminalBuildStatus */
 export function isExpoTerminalStatus(status: string): boolean {
-  return EXPO_TERMINAL_STATUSES.has(status);
+  return isExpoTerminalBuildStatus(status);
 }
 
 @Injectable()
@@ -56,7 +56,7 @@ export class EasStatusPollerService {
       return null;
     }
 
-    const expoStatus = build['status'] as string;
+    const expoStatus = normalizeExpoBuildStatus(build['status'] as string);
     const artifacts = build['artifacts'] as {
       applicationArchiveUrl?: string | null;
       buildUrl?: string | null;

@@ -33,6 +33,77 @@ sequenceDiagram
 4. **Env** — Injects per-tenant values into the EAS profile `env` block in `eas.json` (required for remote Metro).
 5. **Submit** — `npx eas-cli build --platform ios|android --profile preview|production --non-interactive --no-wait`.
 6. **Complete** — Job moves to `SUCCEEDED` with `easBuildUrl` (and optional `artifactUrl` if CLI returns one). Finish the install on [expo.dev](https://expo.dev).
+7. **Remote status** — Expo pushes build lifecycle updates to the GymOS webhook; the status poller remains a backup.
+
+```mermaid
+sequenceDiagram
+  participant EAS as EAS / Expo
+  participant API as API webhook
+  participant DB as BuildJob
+  participant Poller as Status poller
+
+  EAS->>API: POST /webhooks/expo/build (signed)
+  API->>DB: sync expoBuildStatus / artifactUrl
+  Note over Poller: Every BUILD_STATUS_POLL_INTERVAL_MS
+  Poller->>DB: backup sync if webhook missed
+```
+
+## Expo build webhook (Phase 18)
+
+### Endpoint
+
+| Method | Path |
+|--------|------|
+| POST | `/api/v1/webhooks/expo/build` |
+
+- **No JWT** — authenticated via `expo-signature` HMAC when `EXPO_BUILD_WEBHOOK_SECRET` is set.
+- **Idempotent** — duplicate deliveries (same body) are deduped via `expo_webhook_deliveries`.
+- **Lookup** — matches `BuildJob` by `expoBuildId` (= webhook payload `id`).
+
+### Environment variable
+
+| Variable | Production | Development |
+|----------|------------|---------------|
+| `EXPO_BUILD_WEBHOOK_SECRET` | **Required** (≥ 16 chars, same value as `eas webhook:create`) | Optional; if unset, webhooks are accepted with a one-time warning (local/ngrok only) |
+
+### Create webhook in Expo
+
+From your Expo project directory (monorepo: `apps/mobile`):
+
+```sh
+cd apps/mobile
+eas webhook:create --event BUILD --url https://YOUR_API_HOST/api/v1/webhooks/expo/build
+```
+
+When prompted, enter the same secret you set as `EXPO_BUILD_WEBHOOK_SECRET` on the API service.
+
+List or update webhooks:
+
+```sh
+eas webhook:list
+eas webhook:update --id WEBHOOK_ID
+```
+
+### Status mapping
+
+| Expo webhook `status` | `expoBuildStatus` | GymOS `status` |
+|----------------------|-------------------|----------------|
+| `finished` | `FINISHED` | `SUCCEEDED` (+ `artifactUrl` from `artifacts.buildUrl`) |
+| `errored` | `ERRORED` | `FAILED` + `BUILD_FAILED` |
+| `canceled` | `CANCELED` | `CANCELED` |
+
+Non-terminal REST statuses (`NEW`, `IN_QUEUE`, `IN_PROGRESS`) are updated by the **status poller**; webhooks typically only fire for terminal build events.
+
+### Polling backup
+
+`BuildJobsStatusPollerService` continues to poll the Expo REST API for jobs with `expoBuildId` and non-terminal `expoBuildStatus`. Configure:
+
+| Variable | Default |
+|----------|---------|
+| `BUILD_STATUS_POLL_INTERVAL_MS` | 90000 |
+| `BUILD_STATUS_POLL_LIMIT` | 5 |
+
+Requires `EAS_ACCESS_TOKEN` (same as the build worker).
 
 ## Required API environment variables
 
@@ -115,6 +186,7 @@ Structured JSON events (no secrets):
 - `build_job_claimed`, `workspace_created`, `pre_build_validation_passed`
 - `eas_submitted`, `eas_build_url_captured`, `workspace_cleaned`
 - `build_job_succeeded`, `build_job_failed`, `build_jobs_stuck_recovered`
+- `expo_webhook_applied`, `expo_webhook_duplicate`, `expo_webhook_no_job`
 
 ## Troubleshooting
 
@@ -127,6 +199,8 @@ Structured JSON events (no secrets):
 | `Cannot find module 'dotenv'` | Old `app.config.js` on worker | Ensure `apps/mobile/app.config.js` uses built-in env loader (no `dotenv` package). |
 | Double `/api/v1` in app | `EXPO_PUBLIC_API_URL` includes path | Set origin-only URL on API host. |
 | Build succeeds in Expo but job `FAILED` locally | CLI exit non-zero despite URL | Check stderr in `errorMessage`; may need CLI flag/output parsing tweak. |
+| Artifact never appears in Admin | Webhook not configured or wrong secret | Create BUILD webhook; set `EXPO_BUILD_WEBHOOK_SECRET`; check `expo_webhook_applied` logs. |
+| Webhook 401 in production | Signature mismatch | Re-run `eas webhook:update` with the same secret as Railway env. |
 
 ## Local validation (mobile only)
 
