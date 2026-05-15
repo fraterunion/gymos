@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { CopyFieldRow } from "@/components/CopyFieldRow";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
@@ -8,6 +8,8 @@ import { ApiError } from "@/lib/api/errors";
 import {
   createBuildJob,
   fetchBuildJobs,
+  fetchBuildWorkerInfo,
+  runBuildJob,
   type BuildJobDto,
   type BuildJobPlatform,
   type BuildJobProfile,
@@ -40,17 +42,22 @@ function StatusBadge({ status }: { status: BuildJobDto["status"] }) {
 function SectionCard({
   title,
   subtitle,
+  headerExtra,
   children,
 }: {
   title: string;
   subtitle?: string;
+  headerExtra?: ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/35 p-6 shadow-sm backdrop-blur-sm">
-      <div className="mb-6">
-        <h2 className="text-lg font-semibold tracking-tight text-zinc-50">{title}</h2>
-        {subtitle ? <p className="mt-1 text-sm text-zinc-500">{subtitle}</p> : null}
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight text-zinc-50">{title}</h2>
+          {subtitle ? <p className="mt-1 text-sm text-zinc-500">{subtitle}</p> : null}
+        </div>
+        {headerExtra ? <div className="shrink-0">{headerExtra}</div> : null}
       </div>
       {children}
     </section>
@@ -115,6 +122,8 @@ export default function PlatformConsolePage() {
   const [buildPlatform, setBuildPlatform] = useState<BuildJobPlatform>("IOS");
   const [buildProfile, setBuildProfile] = useState<BuildJobProfile>("PREVIEW");
   const [createJobPending, setCreateJobPending] = useState(false);
+  const [workerEnabled, setWorkerEnabled] = useState(false);
+  const [runningJobId, setRunningJobId] = useState<string | null>(null);
 
   const [mobile, setMobile] = useState({
     appDisplayName: "",
@@ -194,6 +203,25 @@ export default function PlatformConsolePage() {
       void loadBuildJobs();
     });
   }, [loadBuildJobs]);
+
+  const loadWorkerInfo = useCallback(async () => {
+    if (!selectedStudioId || !canManage) {
+      setWorkerEnabled(false);
+      return;
+    }
+    try {
+      const r = await fetchBuildWorkerInfo(selectedStudioId);
+      setWorkerEnabled(r.workerEnabled);
+    } catch {
+      setWorkerEnabled(false);
+    }
+  }, [selectedStudioId, canManage]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadWorkerInfo();
+    });
+  }, [loadWorkerInfo]);
 
   const mobileDraftReady = useMemo(() => {
     const fields = [
@@ -276,10 +304,28 @@ export default function PlatformConsolePage() {
       setFlash("Build job queued");
       window.setTimeout(() => setFlash(null), 2200);
       await loadBuildJobs();
+      void loadWorkerInfo();
     } catch (e) {
       setSectionError(e instanceof ApiError ? e.message : "Could not create build job.");
     } finally {
       setCreateJobPending(false);
+    }
+  };
+
+  const onRunJob = async (jobId: string) => {
+    if (!selectedStudioId) return;
+    setSectionError(null);
+    setRunningJobId(jobId);
+    try {
+      await runBuildJob(selectedStudioId, jobId);
+      setFlash("Build run finished");
+      window.setTimeout(() => setFlash(null), 2200);
+      await loadBuildJobs();
+    } catch (e) {
+      setSectionError(e instanceof ApiError ? e.message : "Run failed.");
+      await loadBuildJobs();
+    } finally {
+      setRunningJobId(null);
     }
   };
 
@@ -417,12 +463,14 @@ export default function PlatformConsolePage() {
 
       <SectionCard
         title="White-label build requests"
-        subtitle="Tracked requests for FraterUnion operations. Execution is manual until EAS is wired."
+        subtitle="Queue tracked requests, then run them against EAS when the API worker is enabled (no store publishing from GymOS)."
       >
         <p className="rounded-xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm leading-relaxed text-zinc-400">
-          <strong className="font-medium text-zinc-200">Build execution is not automated yet.</strong> This creates a
-          tracked build request with a snapshot of the tenant&apos;s mobile identifiers. Operations can pick up{" "}
-          <span className="font-mono text-zinc-300">QUEUED</span> jobs from the table below.
+          <strong className="font-medium text-zinc-200">Store releases are separate.</strong> This flow only starts Expo
+          Application Services (EAS) cloud builds and records URLs on the job. When{" "}
+          <span className="font-mono text-zinc-300">BUILD_WORKER_ENABLED=true</span> on the API, use{" "}
+          <strong className="text-zinc-200">Run</strong> in the jobs table to execute <span className="font-mono text-zinc-300">QUEUED</span>{" "}
+          or <span className="font-mono text-zinc-300">FAILED</span> rows.
         </p>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-4">
           <div>
@@ -452,7 +500,27 @@ export default function PlatformConsolePage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Recent build jobs" subtitle="Latest 50 requests for this tenant (newest first).">
+      <SectionCard
+        title="Recent build jobs"
+        subtitle="Latest 50 requests for this tenant (newest first)."
+        headerExtra={
+          <button
+            type="button"
+            onClick={() => void loadBuildJobs()}
+            disabled={jobsLoading}
+            className="rounded-lg border border-zinc-600 px-2.5 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-50"
+          >
+            {jobsLoading ? "Refreshing…" : "Refresh"}
+          </button>
+        }
+      >
+        {!workerEnabled ? (
+          <div className="mb-4 rounded-xl border border-amber-900/40 bg-amber-950/15 px-3 py-2 text-xs leading-relaxed text-amber-100">
+            <strong className="font-medium text-amber-200">Build worker is disabled in this environment.</strong> Run
+            actions stay disabled until the API sets{" "}
+            <span className="font-mono text-amber-100/90">BUILD_WORKER_ENABLED=true</span> and EAS credentials.
+          </div>
+        ) : null}
         {jobsError ? (
           <p className="mb-3 text-sm text-red-300">{jobsError}</p>
         ) : null}
@@ -462,7 +530,7 @@ export default function PlatformConsolePage() {
           <p className="text-sm text-zinc-500">No build jobs yet. Queue one with Generate build.</p>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-zinc-800/80">
-            <table className="min-w-[920px] w-full border-collapse text-left text-xs">
+            <table className="min-w-[1000px] w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-950/80 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
                   <th className="px-3 py-2">Requested</th>
@@ -470,6 +538,7 @@ export default function PlatformConsolePage() {
                   <th className="px-3 py-2">Target</th>
                   <th className="px-3 py-2">Snapshot</th>
                   <th className="px-3 py-2">Links / errors</th>
+                  <th className="px-3 py-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -525,12 +594,33 @@ export default function PlatformConsolePage() {
                         ) : (
                           <span className="text-zinc-600">Artifact: —</span>
                         )}
-                        {job.status === "FAILED" && job.errorMessage ? (
+                        {job.errorMessage ? (
                           <p className="text-red-300/95" title={job.errorMessage}>
                             {job.errorMessage}
                           </p>
                         ) : null}
                       </div>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 align-top">
+                      <button
+                        type="button"
+                        disabled={
+                          !workerEnabled ||
+                          runningJobId === job.id ||
+                          (job.status !== "QUEUED" && job.status !== "FAILED")
+                        }
+                        title={
+                          !workerEnabled
+                            ? "Build worker is disabled in this environment."
+                            : job.status !== "QUEUED" && job.status !== "FAILED"
+                              ? "Only QUEUED or FAILED jobs can be run."
+                              : undefined
+                        }
+                        onClick={() => void onRunJob(job.id)}
+                        className="rounded-lg border border-zinc-600 px-2.5 py-1 text-[11px] font-semibold text-zinc-100 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {runningJobId === job.id ? "Running…" : "Run"}
+                      </button>
                     </td>
                   </tr>
                 ))}

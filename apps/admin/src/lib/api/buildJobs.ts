@@ -39,3 +39,17 @@ export async function createBuildJob(
     body: JSON.stringify(body),
   });
 }
+
+export type BuildWorkerInfoDto = {
+  workerEnabled: boolean;
+};
+
+export async function fetchBuildWorkerInfo(studioId: string): Promise<BuildWorkerInfoDto> {
+  return apiRequest<BuildWorkerInfoDto>(`/studios/${studioId}/build-jobs/worker-info`, { method: "GET" });
+}
+
+export async function runBuildJob(studioId: string, jobId: string): Promise<BuildJobDto> {
+  return apiRequest<BuildJobDto>(`/studios/${studioId}/build-jobs/${encodeURIComponent(jobId)}/run`, {
+    method: "POST",
+  });
+}
