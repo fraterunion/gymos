@@ -3,34 +3,27 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
 
 import { useBranding } from '@/contexts/BrandingContext';
-import { useColorScheme } from 'react-native';
+
+const BG = '#0A0A0A';
 
 function TabBarIcon(props: { name: ComponentProps<typeof FontAwesome>['name']; color: string }) {
   return <FontAwesome size={22} style={{ marginBottom: -2 }} {...props} />;
 }
 
 export default function MemberTabsLayout() {
-  const colorScheme = useColorScheme();
   const { primaryColor, appDisplayName } = useBranding();
-  const isDark = colorScheme === 'dark';
-  const headerBg = isDark ? '#0a0a0a' : '#fafafa';
 
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
         headerShadowVisible: false,
-        headerStyle: {
-          backgroundColor: headerBg,
-        },
-        headerTintColor: isDark ? '#fafafa' : '#171717',
-        headerTitleStyle: { fontWeight: '600', fontSize: 17 },
-        tabBarStyle: {
-          backgroundColor: headerBg,
-          borderTopColor: isDark ? '#262626' : '#e5e5e5',
-        },
+        headerStyle: { backgroundColor: BG },
+        headerTintColor: '#FAFAFA',
+        headerTitleStyle: { fontWeight: '600', fontSize: 17, color: '#FAFAFA' },
+        tabBarStyle: { backgroundColor: BG, borderTopColor: '#1E1E1E' },
         tabBarActiveTintColor: primaryColor,
-        tabBarInactiveTintColor: isDark ? '#737373' : '#a3a3a3',
+        tabBarInactiveTintColor: '#555555',
       }}>
       <Tabs.Screen
         name="index"

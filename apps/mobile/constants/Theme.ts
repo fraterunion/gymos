@@ -40,8 +40,13 @@ export type ThemeColors = {
   negative: string;
 };
 
-export function getColors(scheme: 'light' | 'dark' | null | undefined): ThemeColors {
-  return scheme === 'light' ? light : dark;
+/**
+ * Always returns dark colors — this is a dark-first premium app.
+ * Light mode support intentionally disabled until a separate light theme is designed.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function getColors(_scheme?: 'light' | 'dark' | null | undefined): ThemeColors {
+  return dark;
 }
 
 export const Radius = {

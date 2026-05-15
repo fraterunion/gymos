@@ -150,7 +150,7 @@ export default function ClassDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }} edges={['bottom', 'left', 'right']}>
       {/* Scrollable content */}
       <ScrollView
         style={{ flex: 1 }}

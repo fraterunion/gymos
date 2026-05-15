@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { ActivityIndicator, Text, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 
 import { BrandButton } from '@/components/BrandButton';
@@ -37,8 +37,7 @@ export default function AppGroupLayout() {
 }
 
 function MemberShell() {
-  const colorScheme = useColorScheme();
-  const headerBg = colorScheme === 'dark' ? '#0a0a0a' : '#fafafa';
+  const headerBg = '#0A0A0A';
   const { primaryColor } = useBranding();
   const ms = useMemberStudio();
 
@@ -48,13 +47,11 @@ function MemberShell() {
 
   if (ms.status === 'error') {
     return (
-      <View className="flex-1 justify-center bg-neutral-50 px-8 dark:bg-neutral-950">
-        <Text className="text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
+      <View style={{ flex: 1, justifyContent: 'center', backgroundColor: '#0A0A0A', paddingHorizontal: 32 }}>
+        <Text style={{ textAlign: 'center', fontSize: 15, lineHeight: 22, color: 'rgba(255,255,255,0.50)', marginBottom: 32 }}>
           {ms.error ?? 'Could not verify studio access.'}
         </Text>
-        <View className="mt-8">
-          <BrandButton label="Try again" accentColor={primaryColor} onPress={() => void ms.refetch()} />
-        </View>
+        <BrandButton label="Try again" accentColor={primaryColor} onPress={() => void ms.refetch()} />
       </View>
     );
   }
@@ -78,7 +75,7 @@ function MemberShell() {
             title: 'Class',
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
-            headerTintColor: colorScheme === 'dark' ? '#fafafa' : '#171717',
+            headerTintColor: '#FAFAFA',
             headerBackTitle: 'Back',
           }}
         />
@@ -89,7 +86,7 @@ function MemberShell() {
             title: 'Check-in',
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
-            headerTintColor: colorScheme === 'dark' ? '#fafafa' : '#171717',
+            headerTintColor: '#FAFAFA',
             headerBackTitle: 'Back',
           }}
         />

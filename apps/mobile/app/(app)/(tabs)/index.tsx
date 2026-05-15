@@ -201,6 +201,22 @@ export default function HomeScreen() {
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
         }
       >
+        {/* ── PHASE 19A VALIDATION MARKER — remove after confirming new build renders ── */}
+        <View
+          style={{
+            backgroundColor: '#DC2626',
+            paddingVertical: 10,
+            paddingHorizontal: 16,
+            borderRadius: 10,
+            marginTop: 16,
+            marginBottom: 4,
+          }}
+        >
+          <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '700', textAlign: 'center', letterSpacing: 0.5 }}>
+            ⚡ PHASE 19A ACTIVE
+          </Text>
+        </View>
+
         {error ? (
           <View style={{ paddingTop: 8 }}>
             <ErrorBanner message={error} onRetry={refresh} />
