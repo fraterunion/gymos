@@ -62,6 +62,7 @@ const MEANINGFUL_EAS_PATTERNS: RegExp[] = [
   /you haven't/i,
   /you need to/i,
   /\berror:/i,
+  /\bwarning:/i,
   /✖\s/,
   /✗\s/,
   /build (failed|error)/i,
@@ -76,31 +77,48 @@ const MEANINGFUL_EAS_PATTERNS: RegExp[] = [
   /eas\.json/i,
   /unauthorized/i,
   /invalid token/i,
+  /exception/i,
+  /stack trace/i,
+  /typeerror/i,
+  /syntaxerror/i,
+  /module not found/i,
+  /cannot read propert/i,
+  /is not a function/i,
+  /network request failed/i,
+  /connect econnrefused/i,
 ];
 
+const EAS_OUTPUT_CAP = 12_000;
+
 function extractEasErrorMessage(stderr: string, stdout: string, exitCode: number): string {
+  function stripSpinners(l: string): string {
+    return l.replace(/[⠀-⣿]/g, '').trim();
+  }
+
   function pickLines(text: string): string[] {
     return text
       .split('\n')
-      .map((l) => l.replace(/[⠀-⣿]/g, '').trim()) // strip braille spinner chars
+      .map(stripSpinners)
       .filter(Boolean)
       .filter((l) => MEANINGFUL_EAS_PATTERNS.some((p) => p.test(l)));
   }
 
   const meaningful = [...pickLines(stderr), ...pickLines(stdout)];
   if (meaningful.length > 0) {
-    const deduped = [...new Set(meaningful)].slice(0, 6);
+    const deduped = [...new Set(meaningful)].slice(0, 30);
     return deduped.join('\n');
   }
 
-  const fallback = stderr
+  // Fall back to the last 50 non-trivial lines of stderr, then stdout
+  const fallbackLines = (stderr || stdout)
     .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith('▸') && !l.startsWith('[') && l.length < 300)
-    .slice(-5)
+    .map(stripSpinners)
+    .filter((l) => l.length > 0 && l.length < 500)
+    .slice(-50)
     .join('\n');
 
-  return truncateMessage(fallback || stdout || `EAS build failed (exit code ${exitCode})`, 600);
+  const raw = fallbackLines || `EAS build failed (exit code ${exitCode})`;
+  return raw.length > EAS_OUTPUT_CAP ? raw.slice(-EAS_OUTPUT_CAP) : raw;
 }
 
 function extractExpoBuildUrl(text: string): string | null {
@@ -394,11 +412,12 @@ export class EasBuildExecutorService {
     let stdout: string;
     let stderr: string;
     try {
-      ({ code, stdout, stderr } = await this.spawnProc(
+      ({ code, stdout, stderr } = await this.spawnEasStream(
         'npx',
         easArgs,
         { cwd: mobileDir, env: childEnv },
         safeTimeout,
+        job.id,
       ));
     } finally {
       if (!keepWorkspace) {
@@ -423,7 +442,7 @@ export class EasBuildExecutorService {
 
     if (code !== 0) {
       const errText = extractEasErrorMessage(stderr, stdout, code);
-      throw new Error(errText);
+      throw new Error(`EAS build failed (exit ${code}): ${errText}`);
     }
 
     let easBuildUrl = extractExpoBuildUrl(combined);
@@ -914,6 +933,131 @@ export class EasBuildExecutorService {
       }
     }
     return null;
+  }
+
+  /**
+   * Streaming spawner used exclusively for the EAS CLI build command.
+   *
+   * Differences from spawnProc:
+   * - Logs stdout/stderr chunks progressively as they arrive (Railway sees output in real time).
+   * - Keeps a rolling 12 KB buffer for each stream (chunks are individually logged so nothing is
+   *   lost in Railway logs even if the buffer wraps).
+   * - Emits structured events: eas_spawn, eas_spawn_error, eas_build_stdout_chunk,
+   *   eas_build_stderr_chunk, eas_build_exit, eas_build_stdout_tail, eas_build_stderr_tail,
+   *   eas_build_timeout.
+   * - Captures exit signal alongside exit code.
+   */
+  private spawnEasStream(
+    cmd: string,
+    args: string[],
+    opts: { cwd: string; env: NodeJS.ProcessEnv },
+    timeoutMs: number,
+    jobId: string,
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      this.logger.log(
+        JSON.stringify({ event: 'eas_spawn', jobId, cmd, args: args.slice(0, 8) }),
+      );
+
+      const child = spawn(cmd, args, {
+        cwd: opts.cwd,
+        env: opts.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      });
+
+      // Attach an error listener immediately so Node does not throw on spawn failure
+      let spawnFailed = false;
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        spawnFailed = true;
+        this.logger.error(
+          JSON.stringify({ event: 'eas_spawn_error', jobId, error: String(err) }),
+        );
+        reject(err);
+      });
+
+      // Rolling 12 KB buffers — chunks are also individually logged so nothing is lost
+      const MAX_BUF = 12_000;
+      let stdoutBuf = '';
+      let stderrBuf = '';
+
+      const roll = (buf: string, chunk: string): string => {
+        const next = buf + chunk;
+        return next.length > MAX_BUF ? next.slice(-MAX_BUF) : next;
+      };
+
+      child.stdout?.setEncoding('utf8');
+      child.stderr?.setEncoding('utf8');
+
+      child.stdout?.on('data', (chunk: string) => {
+        stdoutBuf = roll(stdoutBuf, chunk);
+        const cleaned = chunk.replace(/[⠀-⣿]/g, '').trim();
+        if (cleaned) {
+          this.logger.log(
+            JSON.stringify({
+              event: 'eas_build_stdout_chunk',
+              jobId,
+              chunk: cleaned.slice(0, 3000),
+            }),
+          );
+        }
+      });
+
+      child.stderr?.on('data', (chunk: string) => {
+        stderrBuf = roll(stderrBuf, chunk);
+        const cleaned = chunk.replace(/[⠀-⣿]/g, '').trim();
+        if (cleaned) {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'eas_build_stderr_chunk',
+              jobId,
+              chunk: cleaned.slice(0, 3000),
+            }),
+          );
+        }
+      });
+
+      const timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        this.logger.error(
+          JSON.stringify({ event: 'eas_build_timeout', jobId, timeoutMs }),
+        );
+        resolve({
+          code: 1,
+          stdout: stdoutBuf,
+          stderr: `${stderrBuf}\n[TIMED OUT after ${timeoutMs}ms]`,
+        });
+      }, timeoutMs);
+
+      child.on('close', (code, signal) => {
+        if (spawnFailed) return; // error event already rejected
+        clearTimeout(timer);
+        const exitCode = code ?? 1;
+
+        this.logger.log(
+          JSON.stringify({ event: 'eas_build_exit', jobId, exitCode, signal: signal ?? null }),
+        );
+
+        // Always log raw tails so Railway shows what EAS actually printed
+        this.logger.log(
+          JSON.stringify({
+            event: 'eas_build_stdout_tail',
+            jobId,
+            tail: stdoutBuf.slice(-3000),
+          }),
+        );
+        this.logger.log(
+          JSON.stringify({
+            event: 'eas_build_stderr_tail',
+            jobId,
+            tail: stderrBuf.slice(-3000),
+          }),
+        );
+
+        resolve({ code: exitCode, stdout: stdoutBuf, stderr: stderrBuf });
+      });
+    });
   }
 
   /** Generic process spawner used by all subprocess calls in this service. */
