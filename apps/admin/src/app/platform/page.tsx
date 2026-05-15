@@ -6,6 +6,13 @@ import { CopyFieldRow } from "@/components/CopyFieldRow";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import {
+  createBuildJob,
+  fetchBuildJobs,
+  type BuildJobDto,
+  type BuildJobPlatform,
+  type BuildJobProfile,
+} from "@/lib/api/buildJobs";
+import {
   fetchStudioSettings,
   updateGeneralSettings,
   updateMobileConfig,
@@ -14,6 +21,21 @@ import {
 
 const INPUT =
   "w-full rounded-xl border border-zinc-700/90 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30";
+
+function StatusBadge({ status }: { status: BuildJobDto["status"] }) {
+  const styles: Record<BuildJobDto["status"], string> = {
+    QUEUED: "bg-zinc-500/15 text-zinc-300 ring-1 ring-zinc-500/30",
+    RUNNING: "bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/35",
+    SUCCEEDED: "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-500/35",
+    FAILED: "bg-red-500/15 text-red-200 ring-1 ring-red-500/35",
+    CANCELED: "bg-zinc-600/20 text-zinc-400 ring-1 ring-zinc-600/40",
+  };
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles[status]}`}>
+      {status}
+    </span>
+  );
+}
 
 function SectionCard({
   title,
@@ -86,7 +108,13 @@ export default function PlatformConsolePage() {
   const [saving, setSaving] = useState<SaveKey | null>(null);
   const [sectionError, setSectionError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
-  const [buildNote, setBuildNote] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<BuildJobDto[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [buildModalOpen, setBuildModalOpen] = useState(false);
+  const [buildPlatform, setBuildPlatform] = useState<BuildJobPlatform>("IOS");
+  const [buildProfile, setBuildProfile] = useState<BuildJobProfile>("PREVIEW");
+  const [createJobPending, setCreateJobPending] = useState(false);
 
   const [mobile, setMobile] = useState({
     appDisplayName: "",
@@ -143,6 +171,30 @@ export default function PlatformConsolePage() {
     });
   }, [reload]);
 
+  const loadBuildJobs = useCallback(async () => {
+    if (!selectedStudioId || !canManage) {
+      setJobs([]);
+      setJobsError(null);
+      return;
+    }
+    setJobsLoading(true);
+    setJobsError(null);
+    try {
+      setJobs(await fetchBuildJobs(selectedStudioId));
+    } catch (e) {
+      setJobs([]);
+      setJobsError(e instanceof ApiError ? e.message : "Could not load build jobs.");
+    } finally {
+      setJobsLoading(false);
+    }
+  }, [selectedStudioId, canManage]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadBuildJobs();
+    });
+  }, [loadBuildJobs]);
+
   const mobileDraftReady = useMemo(() => {
     const fields = [
       mobile.appDisplayName,
@@ -181,6 +233,7 @@ export default function PlatformConsolePage() {
         return;
       }
       applyServerData(next);
+      void loadBuildJobs();
       setFlash("Saved");
       window.setTimeout(() => setFlash(null), 2200);
     } catch (e) {
@@ -211,6 +264,23 @@ export default function PlatformConsolePage() {
         termsUrl: legal.termsUrl.trim() || null,
       }),
     );
+  };
+
+  const onCreateBuildJob = async () => {
+    if (!selectedStudioId) return;
+    setSectionError(null);
+    setCreateJobPending(true);
+    try {
+      await createBuildJob(selectedStudioId, { platform: buildPlatform, profile: buildProfile });
+      setBuildModalOpen(false);
+      setFlash("Build job queued");
+      window.setTimeout(() => setFlash(null), 2200);
+      await loadBuildJobs();
+    } catch (e) {
+      setSectionError(e instanceof ApiError ? e.message : "Could not create build job.");
+    } finally {
+      setCreateJobPending(false);
+    }
   };
 
   if (studiosLoading) {
@@ -345,11 +415,19 @@ export default function PlatformConsolePage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="White-label build" subtitle="Pipeline integration is not enabled in this environment.">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-4">
+      <SectionCard
+        title="White-label build requests"
+        subtitle="Tracked requests for FraterUnion operations. Execution is manual until EAS is wired."
+      >
+        <p className="rounded-xl border border-zinc-800/70 bg-zinc-950/40 px-4 py-3 text-sm leading-relaxed text-zinc-400">
+          <strong className="font-medium text-zinc-200">Build execution is not automated yet.</strong> This creates a
+          tracked build request with a snapshot of the tenant&apos;s mobile identifiers. Operations can pick up{" "}
+          <span className="font-mono text-zinc-300">QUEUED</span> jobs from the table below.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/80 bg-zinc-950/50 p-4">
           <div>
-            <p className="text-sm font-medium text-zinc-100">Release profile</p>
-            <p className="mt-1 text-xs text-zinc-500">Mobile identifiers complete: {mobileDraftReady ? "yes" : "no"}</p>
+            <p className="text-sm font-medium text-zinc-100">Mobile snapshot readiness</p>
+            <p className="mt-1 text-xs text-zinc-500">All mobile fields must be saved on the studio before queuing a job.</p>
           </div>
           <span
             className={`rounded-full px-3 py-1 text-xs font-semibold ${
@@ -361,29 +439,105 @@ export default function PlatformConsolePage() {
             {mobileDraftReady ? "Ready" : "Incomplete"}
           </span>
         </div>
-        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/40 px-3 py-2">
-            <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Build status</dt>
-            <dd className="mt-1 text-sm text-zinc-300">Not connected</dd>
-          </div>
-          <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/40 px-3 py-2">
-            <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Last build</dt>
-            <dd className="mt-1 text-sm text-zinc-300">—</dd>
-          </div>
-        </dl>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-4">
           <button
             type="button"
-            onClick={() => {
-              setBuildNote("Build queue is not wired — UI only.");
-              window.setTimeout(() => setBuildNote(null), 4000);
-            }}
-            className="rounded-xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-white"
+            disabled={!mobileDraftReady}
+            title={!mobileDraftReady ? "Complete and save mobile configuration first." : undefined}
+            onClick={() => setBuildModalOpen(true)}
+            className="rounded-xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
           >
             Generate build
           </button>
-          {buildNote ? <span className="text-xs text-zinc-500">{buildNote}</span> : null}
         </div>
+      </SectionCard>
+
+      <SectionCard title="Recent build jobs" subtitle="Latest 50 requests for this tenant (newest first).">
+        {jobsError ? (
+          <p className="mb-3 text-sm text-red-300">{jobsError}</p>
+        ) : null}
+        {jobsLoading ? (
+          <p className="text-sm text-zinc-500">Loading jobs…</p>
+        ) : jobs.length === 0 ? (
+          <p className="text-sm text-zinc-500">No build jobs yet. Queue one with Generate build.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-zinc-800/80">
+            <table className="min-w-[920px] w-full border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-950/80 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="px-3 py-2">Requested</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Target</th>
+                  <th className="px-3 py-2">Snapshot</th>
+                  <th className="px-3 py-2">Links / errors</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((job) => (
+                  <tr key={job.id} className="border-b border-zinc-800/60 last:border-0">
+                    <td className="whitespace-nowrap px-3 py-2.5 text-zinc-400">
+                      {new Date(job.requestedAt).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <StatusBadge status={job.status} />
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-zinc-300">
+                      {job.platform} · {job.profile}
+                    </td>
+                    <td className="max-w-[340px] px-3 py-2.5">
+                      <div className="space-y-0.5 font-mono text-[11px] leading-snug text-zinc-400">
+                        <div className="truncate text-zinc-300" title={job.appDisplayName}>
+                          {job.appDisplayName}
+                        </div>
+                        <div>scheme {job.appScheme}</div>
+                        <div>slug {job.expoSlug}</div>
+                        <div className="truncate" title={job.iosBundleIdentifier}>
+                          ios {job.iosBundleIdentifier}
+                        </div>
+                        <div className="truncate" title={job.androidPackage}>
+                          and {job.androidPackage}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="max-w-[220px] px-3 py-2.5 align-top">
+                      <div className="space-y-1.5 text-[11px]">
+                        {job.easBuildUrl ? (
+                          <a
+                            href={job.easBuildUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block truncate text-sky-400 hover:underline"
+                          >
+                            EAS build
+                          </a>
+                        ) : (
+                          <span className="text-zinc-600">EAS: —</span>
+                        )}
+                        {job.artifactUrl ? (
+                          <a
+                            href={job.artifactUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block truncate text-sky-400 hover:underline"
+                          >
+                            Artifact
+                          </a>
+                        ) : (
+                          <span className="text-zinc-600">Artifact: —</span>
+                        )}
+                        {job.status === "FAILED" && job.errorMessage ? (
+                          <p className="text-red-300/95" title={job.errorMessage}>
+                            {job.errorMessage}
+                          </p>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard title="App Store listing — legal URLs" subtitle="Required for review; stored on the studio record.">
@@ -434,6 +588,86 @@ export default function PlatformConsolePage() {
           App Store / Play Console assets and screenshots are managed outside GymOS.
         </p>
       </SectionCard>
+
+      {buildModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/75 backdrop-blur-[2px]"
+            aria-label="Close dialog"
+            disabled={createJobPending}
+            onClick={() => !createJobPending && setBuildModalOpen(false)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="build-modal-title"
+            className="relative z-10 w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl"
+          >
+            <h3 id="build-modal-title" className="text-lg font-semibold text-zinc-50">
+              New build job
+            </h3>
+            <p className="mt-2 text-sm text-zinc-500">
+              Queues a <span className="font-mono text-zinc-400">QUEUED</span> record with a snapshot of the
+              studio&apos;s saved mobile configuration. No EAS run is triggered from GymOS yet.
+            </p>
+            <div className="mt-5 space-y-4">
+              <fieldset>
+                <legend className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Platform</legend>
+                <div className="flex flex-wrap gap-3">
+                  {(["IOS", "ANDROID"] as const).map((p) => (
+                    <label key={p} className="flex cursor-pointer items-center gap-2 text-sm text-zinc-200">
+                      <input
+                        type="radio"
+                        name="build-platform"
+                        checked={buildPlatform === p}
+                        onChange={() => setBuildPlatform(p)}
+                        className="border-zinc-600 text-amber-600 focus:ring-amber-500/40"
+                      />
+                      {p === "IOS" ? "iOS" : "Android"}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Profile</legend>
+                <div className="flex flex-wrap gap-3">
+                  {(["PREVIEW", "PRODUCTION"] as const).map((p) => (
+                    <label key={p} className="flex cursor-pointer items-center gap-2 text-sm text-zinc-200">
+                      <input
+                        type="radio"
+                        name="build-profile"
+                        checked={buildProfile === p}
+                        onChange={() => setBuildProfile(p)}
+                        className="border-zinc-600 text-amber-600 focus:ring-amber-500/40"
+                      />
+                      {p === "PREVIEW" ? "Preview" : "Production"}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={createJobPending}
+                onClick={() => setBuildModalOpen(false)}
+                className="rounded-xl border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={createJobPending}
+                onClick={() => void onCreateBuildJob()}
+                className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-amber-400 disabled:cursor-wait disabled:opacity-60"
+              >
+                {createJobPending ? "Creating…" : "Queue build job"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
