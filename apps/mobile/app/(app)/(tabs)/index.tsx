@@ -201,7 +201,7 @@ export default function HomeScreen() {
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
         }
       >
-        {/* ── PHASE 19A VALIDATION MARKER — remove after confirming new build renders ── */}
+        {/* ── BUILD MARKER — remove after confirming new build renders ── */}
         <View
           style={{
             backgroundColor: '#DC2626',
@@ -213,8 +213,17 @@ export default function HomeScreen() {
           }}
         >
           <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '700', textAlign: 'center', letterSpacing: 0.5 }}>
-            ⚡ PHASE 19A ACTIVE
+            BUILD MARKER: PHASE19A-0e2ec91
           </Text>
+          {process.env.EXPO_PUBLIC_BUILD_MARKER ? (
+            <Text style={{ color: '#FFFFFF', fontSize: 11, textAlign: 'center', marginTop: 2, opacity: 0.85 }}>
+              ENV: {process.env.EXPO_PUBLIC_BUILD_MARKER}
+            </Text>
+          ) : (
+            <Text style={{ color: '#FFAAAA', fontSize: 11, textAlign: 'center', marginTop: 2 }}>
+              ENV MARKER MISSING
+            </Text>
+          )}
         </View>
 
         {error ? (

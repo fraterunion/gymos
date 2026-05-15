@@ -145,6 +145,7 @@ module.exports = ({ config }) => {
     extra: {
       ...config.extra,
       whitelabelProfile: profile,
+      buildMarker: 'PHASE19A-0e2ec91',
       eas: {
         projectId: '9f5697a5-b5cb-425b-850f-fa2f61068f20',
       },
