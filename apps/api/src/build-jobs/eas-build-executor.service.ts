@@ -121,7 +121,45 @@ const COPY_EXCLUDED_DIRS = new Set([
 ]);
 const COPY_EXCLUDED_EXTS = new Set(['.log']);
 
-function copyRecursive(src: string, dest: string): void {
+/**
+ * Files that are safe to skip when missing from the source tree.
+ * These include env files (gitignored on Railway), example templates, docs, and editor configs.
+ * Required files (package.json, app.config.js, eas.json, source code) are NOT in this set.
+ */
+function isOptionalFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    name.startsWith('.env') ||          // .env, .env.example, .env.local, .env.ares, etc.
+    name.endsWith('.example') ||        // *.example templates
+    lower === 'readme.md' ||
+    lower === 'readme' ||
+    lower === 'readme.txt' ||
+    lower === 'changelog.md' ||
+    lower === 'changelog' ||
+    lower === 'license' ||
+    lower === 'license.md' ||
+    lower === '.npmrc' ||
+    lower === '.gitattributes' ||
+    lower === '.editorconfig' ||
+    lower === '.ds_store' ||
+    lower === '.turbo'
+  );
+}
+
+/**
+ * Recursively copies src → dest, skipping excluded dirs/extensions.
+ * Files that are absent on the source filesystem (broken symlinks, gitignored files absent
+ * from a Railway deploy image, etc.) are skipped rather than crashing:
+ *   - optional files (env files, examples, docs): calls onSkip and continues
+ *   - unexpected missing required files: re-throws with a clear message
+ *
+ * @param onSkip called with the relative path when an optional file is silently skipped
+ */
+function copyRecursive(
+  src: string,
+  dest: string,
+  onSkip?: (relativePath: string) => void,
+): void {
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const entry of entries) {
     if (COPY_EXCLUDED_DIRS.has(entry.name)) continue;
@@ -130,8 +168,17 @@ function copyRecursive(src: string, dest: string): void {
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
       fs.mkdirSync(destPath, { recursive: true });
-      copyRecursive(srcPath, destPath);
+      copyRecursive(srcPath, destPath, onSkip);
     } else {
+      // Guard against broken symlinks or files absent from the Railway deploy image.
+      // fs.existsSync follows symlinks, so broken symlinks return false.
+      if (!fs.existsSync(srcPath)) {
+        if (isOptionalFile(entry.name)) {
+          onSkip?.(srcPath);
+          continue;
+        }
+        throw new Error(`Required source file is missing and cannot be copied: ${srcPath}`);
+      }
       fs.copyFileSync(srcPath, destPath);
     }
   }
@@ -435,7 +482,9 @@ export class EasBuildExecutorService {
     // 2. apps/mobile source (no node_modules)
     const tempMobile = path.join(workspaceDir, 'apps', 'mobile');
     fs.mkdirSync(path.join(workspaceDir, 'apps'), { recursive: true });
-    copyRecursive(mobileRoot, tempMobile);
+    copyRecursive(mobileRoot, tempMobile, (f) =>
+      this.logger.warn(JSON.stringify({ event: 'optional_file_skipped', file: path.relative(mobileRoot, f) })),
+    );
 
     // 3. All packages/* (tiny — just tsconfig presets and tailwind configs; needed for workspace:*)
     const workspaceEntries: string[] = ['apps/mobile'];
@@ -451,7 +500,9 @@ export class EasBuildExecutorService {
         const src = path.join(packagesRoot, pkg);
         const dest = path.join(tempPackages, pkg);
         fs.mkdirSync(dest, { recursive: true });
-        copyRecursive(src, dest);
+        copyRecursive(src, dest, (f) =>
+          this.logger.warn(JSON.stringify({ event: 'optional_file_skipped', file: path.relative(packagesRoot, f) })),
+        );
         workspaceEntries.push(`packages/${pkg}`);
       }
     }
@@ -495,7 +546,9 @@ export class EasBuildExecutorService {
       }),
     );
 
-    copyRecursive(mobileRoot, workspaceDir);
+    copyRecursive(mobileRoot, workspaceDir, (f) =>
+      this.logger.warn(JSON.stringify({ event: 'optional_file_skipped', file: path.relative(mobileRoot, f) })),
+    );
 
     // Rewrite package.json: remove devDependencies entirely to avoid workspace:* protocol errors
     const pkgJsonPath = path.join(workspaceDir, 'package.json');
