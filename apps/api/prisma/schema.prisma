@@ -92,6 +92,15 @@ enum BuildJobStatus {
   CANCELED
 }
 
+enum BuildJobErrorCategory {
+  CONFIG_ERROR
+  AUTH_ERROR
+  EAS_OUTAGE
+  BUILD_FAILED
+  TIMEOUT
+  UNKNOWN
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -454,9 +463,14 @@ model BuildJob {
   expoSlug            String           @map("expo_slug")
   iosBundleIdentifier String           @map("ios_bundle_identifier")
   androidPackage      String           @map("android_package")
-  easBuildUrl         String?          @map("eas_build_url")
-  artifactUrl         String?          @map("artifact_url")
-  errorMessage        String?          @map("error_message")
+  easBuildUrl         String?                @map("eas_build_url")
+  artifactUrl         String?                @map("artifact_url")
+  errorMessage        String?                @map("error_message")
+  errorCategory       BuildJobErrorCategory? @map("error_category")
+  submittedAt         DateTime?              @map("submitted_at")
+  expoBuildId         String?                @map("expo_build_id")
+  expoBuildStatus     String?                @map("expo_build_status")
+  lastCheckedAt       DateTime?              @map("last_checked_at")
   requestedAt         DateTime         @default(now()) @map("requested_at")
   startedAt           DateTime?        @map("started_at")
   finishedAt          DateTime?        @map("finished_at")
@@ -469,5 +483,6 @@ model BuildJob {
   @@index([studioId])
   @@index([status])
   @@index([requestedAt])
+  @@index([startedAt])
   @@map("build_jobs")
 }

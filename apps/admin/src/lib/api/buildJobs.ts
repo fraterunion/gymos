@@ -4,6 +4,14 @@ export type BuildJobPlatform = "IOS" | "ANDROID";
 export type BuildJobProfile = "PREVIEW" | "PRODUCTION";
 export type BuildJobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
 
+export type BuildJobErrorCategory =
+  | "CONFIG_ERROR"
+  | "AUTH_ERROR"
+  | "EAS_OUTAGE"
+  | "BUILD_FAILED"
+  | "TIMEOUT"
+  | "UNKNOWN";
+
 export type BuildJobDto = {
   id: string;
   studioId: string;
@@ -19,11 +27,55 @@ export type BuildJobDto = {
   easBuildUrl: string | null;
   artifactUrl: string | null;
   errorMessage: string | null;
+  errorCategory: BuildJobErrorCategory | null;
+  submittedAt: string | null;
+  expoBuildId: string | null;
+  expoBuildStatus: string | null;
+  lastCheckedAt: string | null;
   requestedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+/** Human-facing pipeline phase for Platform Console. */
+export type BuildPipelinePhase =
+  | "waiting"
+  | "submitting"
+  | "building_on_expo"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+export function getBuildPipelinePhase(job: BuildJobDto): BuildPipelinePhase {
+  if (job.status === "CANCELED") return "canceled";
+  if (job.status === "FAILED") return "failed";
+  if (job.status === "SUCCEEDED") return "completed";
+  if (job.status === "QUEUED") return "waiting";
+  if (job.status === "RUNNING") {
+    if (job.easBuildUrl || job.submittedAt) return "building_on_expo";
+    return "submitting";
+  }
+  return "waiting";
+}
+
+export const BUILD_PIPELINE_LABELS: Record<BuildPipelinePhase, string> = {
+  waiting: "Queued",
+  submitting: "Submitting to EAS",
+  building_on_expo: "Building on Expo",
+  completed: "Completed",
+  failed: "Failed",
+  canceled: "Canceled",
+};
+
+export const ERROR_CATEGORY_LABELS: Record<BuildJobErrorCategory, string> = {
+  CONFIG_ERROR: "Configuration",
+  AUTH_ERROR: "Authentication",
+  EAS_OUTAGE: "EAS / network",
+  BUILD_FAILED: "Build failed",
+  TIMEOUT: "Timeout",
+  UNKNOWN: "Unknown",
 };
 
 export async function fetchBuildJobs(studioId: string): Promise<BuildJobDto[]> {
@@ -57,9 +109,6 @@ export type BuildWorkerReadinessDto = {
   canExecuteBuilds: boolean;
   blockingReasons: string[];
 };
-
-/** @deprecated Use BuildWorkerReadinessDto */
-export type BuildWorkerInfoDto = BuildWorkerReadinessDto;
 
 export async function fetchBuildWorkerInfo(studioId: string): Promise<BuildWorkerReadinessDto> {
   return apiRequest<BuildWorkerReadinessDto>(`/studios/${studioId}/build-jobs/worker-info`, { method: "GET" });

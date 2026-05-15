@@ -5,11 +5,14 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BuildJobErrorCategory, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { classifyBuildError } from './build-job-error-category';
 import { BuildWorkerReadinessService, type BuildWorkerReadinessDto } from './build-worker-readiness.service';
-import { EasBuildExecutorService } from './eas-build-executor.service';
+import { EasBuildExecutorService, type EasBuildExecuteResult } from './eas-build-executor.service';
 import type { CreateBuildJobDto } from './dto/create-build-job.dto';
+
+const STUCK_RUNNING_MS = 30 * 60 * 1000;
 
 const studioMobileSelect = {
   appDisplayName: true,
@@ -37,6 +40,11 @@ const buildJobSelect = {
   easBuildUrl: true,
   artifactUrl: true,
   errorMessage: true,
+  errorCategory: true,
+  submittedAt: true,
+  expoBuildId: true,
+  expoBuildStatus: true,
+  lastCheckedAt: true,
   requestedAt: true,
   startedAt: true,
   finishedAt: true,
@@ -118,7 +126,6 @@ export class BuildJobsService {
 
   /**
    * Enqueues (or re-queues) a build for the async worker. Does not invoke EAS on the HTTP thread.
-   * Allowed even when BUILD_WORKER_ENABLED is false — jobs remain QUEUED until the worker is enabled.
    */
   async run(studioId: string, jobId: string): Promise<BuildJobResponse> {
     const job = await this.prisma.buildJob.findFirst({
@@ -140,8 +147,13 @@ export class BuildJobsService {
       data: {
         status: 'QUEUED',
         errorMessage: null,
+        errorCategory: null,
         easBuildUrl: null,
         artifactUrl: null,
+        submittedAt: null,
+        expoBuildId: null,
+        expoBuildStatus: null,
+        lastCheckedAt: null,
         startedAt: null,
         finishedAt: null,
       },
@@ -150,8 +162,43 @@ export class BuildJobsService {
   }
 
   /**
-   * Atomically claims the oldest QUEUED job (PostgreSQL SKIP LOCKED). Returns null if none.
+   * Marks RUNNING jobs stuck without an EAS URL as FAILED (TIMEOUT).
+   * Jobs that already have easBuildUrl are left alone (submitted to Expo).
    */
+  async recoverStuckRunningJobs(): Promise<number> {
+    const threshold = new Date(Date.now() - STUCK_RUNNING_MS);
+    const stuck = await this.prisma.buildJob.findMany({
+      where: {
+        status: 'RUNNING',
+        startedAt: { lt: threshold },
+        easBuildUrl: null,
+      },
+      select: buildJobSelect,
+    });
+
+    for (const job of stuck) {
+      await this.finalizeBuildFailure(
+        job,
+        new Error(
+          'Build timed out: no EAS build URL was captured within 30 minutes while the job was RUNNING.',
+        ),
+        BuildJobErrorCategory.TIMEOUT,
+      );
+    }
+
+    if (stuck.length > 0) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'build_jobs_stuck_recovered',
+          count: stuck.length,
+          jobIds: stuck.map((j) => j.id),
+        }),
+      );
+    }
+
+    return stuck.length;
+  }
+
   async claimNextQueuedJob(): Promise<{ job: BuildJobResponse; studioSlug: string } | null> {
     return this.prisma.$transaction(async (tx) => {
       const now = new Date();
@@ -168,8 +215,13 @@ export class BuildJobsService {
           status = 'RUNNING'::"BuildJobStatus",
           started_at = ${now},
           error_message = NULL,
+          error_category = NULL,
           eas_build_url = NULL,
           artifact_url = NULL,
+          submitted_at = NULL,
+          expo_build_id = NULL,
+          expo_build_status = NULL,
+          last_checked_at = ${now},
           finished_at = NULL
         FROM picked
         WHERE b.id = picked.id
@@ -199,11 +251,13 @@ export class BuildJobsService {
             status: 'FAILED',
             finishedAt: new Date(),
             errorMessage: 'Studio not found; cannot run EAS build.',
+            errorCategory: BuildJobErrorCategory.CONFIG_ERROR,
+            lastCheckedAt: new Date(),
           },
         });
         this.logger.warn(
           JSON.stringify({
-            event: 'build_job_aborted',
+            event: 'build_job_failed',
             jobId: id,
             studioId: job.studioId,
             reason: 'studio_missing',
@@ -216,52 +270,62 @@ export class BuildJobsService {
     });
   }
 
-  async finalizeBuildSuccess(
-    job: BuildJobResponse,
-    urls: { easBuildUrl: string | null; artifactUrl: string | null },
-  ): Promise<void> {
+  async finalizeBuildSuccess(job: BuildJobResponse, result: EasBuildExecuteResult): Promise<void> {
+    const now = new Date();
     await this.prisma.buildJob.update({
       where: { id: job.id },
       data: {
         status: 'SUCCEEDED',
-        finishedAt: new Date(),
-        easBuildUrl: urls.easBuildUrl ?? null,
-        artifactUrl: urls.artifactUrl ?? null,
+        finishedAt: now,
+        submittedAt: result.submittedAt ?? now,
+        easBuildUrl: result.easBuildUrl ?? null,
+        artifactUrl: result.artifactUrl ?? null,
+        expoBuildId: result.expoBuildId ?? null,
+        expoBuildStatus: result.expoBuildStatus ?? (result.easBuildUrl ? 'SUBMITTED' : null),
+        lastCheckedAt: now,
         errorMessage: null,
+        errorCategory: null,
       },
     });
     this.logger.log(
       JSON.stringify({
-        event: 'build_job_status',
+        event: 'build_job_succeeded',
         jobId: job.id,
         studioId: job.studioId,
         platform: job.platform,
         profile: job.profile,
-        from: 'RUNNING',
-        to: 'SUCCEEDED',
+        easBuildUrl: result.easBuildUrl ? true : false,
+        expoBuildId: result.expoBuildId ?? null,
       }),
     );
   }
 
-  async finalizeBuildFailure(job: BuildJobResponse, error: unknown): Promise<void> {
+  async finalizeBuildFailure(
+    job: BuildJobResponse,
+    error: unknown,
+    categoryOverride?: BuildJobErrorCategory,
+  ): Promise<void> {
     const errorMessage = this.sanitizeBuildError(error);
+    const errorCategory = categoryOverride ?? classifyBuildError(errorMessage);
+    const now = new Date();
     await this.prisma.buildJob.update({
       where: { id: job.id },
       data: {
         status: 'FAILED',
-        finishedAt: new Date(),
+        finishedAt: now,
         errorMessage,
+        errorCategory,
+        lastCheckedAt: now,
       },
     });
     this.logger.warn(
       JSON.stringify({
-        event: 'build_job_status',
+        event: 'build_job_failed',
         jobId: job.id,
         studioId: job.studioId,
         platform: job.platform,
         profile: job.profile,
-        from: 'RUNNING',
-        to: 'FAILED',
+        errorCategory,
       }),
     );
   }
@@ -270,7 +334,6 @@ export class BuildJobsService {
     let msg = e instanceof Error ? e.message : String(e);
     msg = msg.replace(/sk_(live|test)_[a-z0-9]+/gi, '[REDACTED]');
     msg = msg.replace(/Bearer\s+[a-z0-9._-]+/gi, 'Bearer [REDACTED]');
-    // 16 KB cap — large enough to hold extracted EAS error + raw stderr/stdout tails
     const max = 16_000;
     if (msg.length > max) return `${msg.slice(0, max)}…`;
     return msg;

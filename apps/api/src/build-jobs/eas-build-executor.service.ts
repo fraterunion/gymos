@@ -18,6 +18,14 @@ export type EasBuildJobContext = Pick<
   | 'androidPackage'
 >;
 
+export type EasBuildExecuteResult = {
+  easBuildUrl: string | null;
+  artifactUrl: string | null;
+  expoBuildId: string | null;
+  expoBuildStatus: string | null;
+  submittedAt: Date | null;
+};
+
 const DEFAULT_ICON = './assets/images/icon.png';
 const DEFAULT_SPLASH = './assets/images/splash-icon.png';
 const DEFAULT_ADAPTIVE = './assets/images/adaptive-icon.png';
@@ -134,6 +142,24 @@ function extractEasErrorMessage(stderr: string, stdout: string, exitCode: number
 function extractExpoBuildUrl(text: string): string | null {
   const m = text.match(/https:\/\/expo\.dev\/[^\s"'<>]+/);
   return m?.[0] ?? null;
+}
+
+function extractExpoBuildId(text: string): string | null {
+  const url = extractExpoBuildUrl(text);
+  if (!url) return null;
+  const m = url.match(/\/builds\/([a-f0-9-]{8,})/i);
+  return m?.[1] ?? null;
+}
+
+function structuredLog(
+  logger: Logger,
+  level: 'log' | 'warn' | 'error',
+  payload: Record<string, unknown>,
+): void {
+  const line = JSON.stringify(payload);
+  if (level === 'warn') logger.warn(line);
+  else if (level === 'error') logger.error(line);
+  else logger.log(line);
 }
 
 function extractArtifactUrl(text: string): string | null {
@@ -319,25 +345,20 @@ export class EasBuildExecutorService {
    * that `pnpm install` resolves workspace:* deps and populates node_modules before EAS CLI
    * reads the Expo config. EAS then uploads the source to Expo's build servers.
    */
-  async execute(
-    job: EasBuildJobContext,
-    studioSlug: string,
-  ): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
+  async execute(job: EasBuildJobContext, studioSlug: string): Promise<EasBuildExecuteResult> {
     try {
       return await this.runExecute(job, studioSlug);
     } catch (err) {
-      // Top-level catch: log the full stack so Railway always has context even if
-      // the error is re-thrown before any inner logging had a chance to run.
-      const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
-      this.logger.error(`[EAS_WORKER] execute_error jobId=${job.id}: ${stack.slice(0, 3000)}`);
+      structuredLog(this.logger, 'error', {
+        event: 'eas_build_failed',
+        jobId: job.id,
+        reason: err instanceof Error ? err.message : String(err),
+      });
       throw err;
     }
   }
 
-  private async runExecute(
-    job: EasBuildJobContext,
-    studioSlug: string,
-  ): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
+  private async runExecute(job: EasBuildJobContext, studioSlug: string): Promise<EasBuildExecuteResult> {
     const mobileRoot = this.resolveMobileAppRoot();
     if (!mobileRoot) {
       throw new Error('Could not resolve mobile app directory (eas.json not found).');
@@ -358,13 +379,6 @@ export class EasBuildExecutorService {
     // Always use origin-only. If the Railway env has "/api/v1" appended (a common mistake),
     // strip it here so the mobile app never produces double /api/v1/api/v1 URLs.
     const expoPublicApiUrl = sanitizeApiOrigin(rawApiUrl);
-    if (expoPublicApiUrl !== rawApiUrl) {
-      this.logger.warn(
-        `[EAS_WORKER] api_url_sanitized jobId=${job.id}: raw="${rawApiUrl}" → sanitized="${expoPublicApiUrl}" (stripped /api/v1 suffix)`,
-      );
-    } else {
-      this.logger.log(`[EAS_WORKER] api_url jobId=${job.id}: "${expoPublicApiUrl}"`);
-    }
 
     const timeoutMs = Number(this.config.get<string>('EAS_BUILD_TIMEOUT_MS') ?? '600000');
     const safeTimeout =
@@ -404,12 +418,7 @@ export class EasBuildExecutorService {
     if (projectSlug) childEnv.EAS_PROJECT_SLUG = projectSlug;
     if (accountName) childEnv.EAS_ACCOUNT_NAME = accountName;
 
-    // --no-wait: EAS CLI submits the build to Expo's servers and exits immediately with the build
-    // URL rather than blocking for 20-40 minutes waiting for the remote cloud build to finish.
-    // Without this flag every build would be killed by our timeout.
-    // --verbose: full output during submission so we can diagnose auth/project/credential errors.
-    // --json is intentionally omitted while debugging: it reformats errors and hides interactive
-    // messages that are critical for diagnosing failures.
+    // --no-wait: submit to Expo cloud and return the build URL without blocking for remote completion.
     const easArgs = [
       '-y',
       'eas-cli@latest',
@@ -463,32 +472,12 @@ export class EasBuildExecutorService {
     // Validate the patch before submitting to EAS — fail locally rather than waste a cloud build slot
     this.validatePatchedEasJson(easJsonInWorkspace, profileArg, studioSlug, expoPublicApiUrl, job.id);
 
-    // --- TEMPORARY DIAGNOSTICS ---
-    this.logWorkspaceDiagnostics(job.id, workspace, mobileDir);
-    try {
-      await this.runExpoConfigDiagnostic(job.id, mobileDir, childEnv);
-    } catch (diagErr) {
-      // Never let a diagnostic failure abort the build
-      this.logger.warn(`[EAS_WORKER] expo_config_diag_failed jobId=${job.id}: ${String(diagErr)}`);
-    }
-    // --- END TEMPORARY DIAGNOSTICS ---
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'eas_build_started',
-        jobId: job.id,
-        platform: job.platform,
-        profile: job.profile,
-        workspace,
-        mobileDir,
-      }),
-    );
-
-    // Pre-flight: log environment before spawning so Railway captures this even if spawn fails immediately
-    this.logger.log(`[EAS_WORKER] preflight_env: cwd=${mobileDir} cwdExists=${fs.existsSync(mobileDir)} node=${process.version} platform=${process.platform}`);
-    this.logger.log(`[EAS_WORKER] preflight_env: PATH=${(childEnv.PATH ?? process.env.PATH ?? '(unset)').slice(0, 600)}`);
-    this.logger.log(`[EAS_WORKER] preflight_env: command=npx ${easArgs.join(' ')}`);
-    await this.runEasPreflight(job.id, mobileDir, childEnv);
+    structuredLog(this.logger, 'log', {
+      event: 'pre_build_validation_passed',
+      jobId: job.id,
+      platform: job.platform,
+      profile: job.profile,
+    });
 
     const started = Date.now();
     let code: number;
@@ -500,7 +489,6 @@ export class EasBuildExecutorService {
         easArgs,
         { cwd: mobileDir, env: childEnv },
         safeTimeout,
-        job.id,
       ));
     } finally {
       if (!keepWorkspace) {
@@ -514,14 +502,6 @@ export class EasBuildExecutorService {
 
     const durationMs = Date.now() - started;
     const combined = `${stdout}\n${stderr}`;
-    this.logger.log(
-      JSON.stringify({
-        event: 'eas_build_finished',
-        jobId: job.id,
-        exitCode: code,
-        durationMs,
-      }),
-    );
 
     if (code !== 0) {
       const errText = extractEasErrorMessage(stderr, stdout, code);
@@ -548,7 +528,33 @@ export class EasBuildExecutorService {
       if (art) artifactUrl = artifactUrl ?? art;
     }
 
-    return { easBuildUrl, artifactUrl };
+    const expoBuildId = extractExpoBuildId(combined);
+    const submittedAt = easBuildUrl ? new Date() : null;
+
+    if (easBuildUrl) {
+      structuredLog(this.logger, 'log', {
+        event: 'eas_build_url_captured',
+        jobId: job.id,
+        durationMs,
+        expoBuildId,
+      });
+    }
+
+    structuredLog(this.logger, 'log', {
+      event: 'eas_submitted',
+      jobId: job.id,
+      exitCode: code,
+      durationMs,
+      hasBuildUrl: Boolean(easBuildUrl),
+    });
+
+    return {
+      easBuildUrl,
+      artifactUrl,
+      expoBuildId,
+      expoBuildStatus: easBuildUrl ? 'SUBMITTED' : null,
+      submittedAt,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -802,91 +808,6 @@ export class EasBuildExecutorService {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // TEMPORARY DIAGNOSTICS — remove once plugin resolution is confirmed stable
-  // ---------------------------------------------------------------------------
-
-  private logWorkspaceDiagnostics(
-    jobId: string,
-    workspace: string,
-    mobileDir: string,
-  ): void {
-    let lsRoot = '';
-    let lsMobile = '';
-    try {
-      lsRoot = fs
-        .readdirSync(workspace, { withFileTypes: true })
-        .map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`)
-        .join('\n');
-    } catch {
-      lsRoot = '(error reading workspace root)';
-    }
-    try {
-      lsMobile = fs
-        .readdirSync(mobileDir, { withFileTypes: true })
-        .map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`)
-        .join('\n');
-    } catch {
-      lsMobile = '(error reading mobileDir)';
-    }
-
-    let appConfigHead = '';
-    try {
-      const p = path.join(mobileDir, 'app.config.js');
-      appConfigHead = fs.existsSync(p)
-        ? fs.readFileSync(p, 'utf8').slice(0, 400)
-        : '(app.config.js not found)';
-    } catch {
-      appConfigHead = '(read error)';
-    }
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'workspace_diagnostics',
-        jobId,
-        workspace,
-        mobileDir,
-        hasPackageJson: fs.existsSync(path.join(mobileDir, 'package.json')),
-        hasNodeModules: fs.existsSync(path.join(workspace, 'node_modules')),
-        hasExpoRouter: fs.existsSync(path.join(workspace, 'node_modules', 'expo-router')),
-        hasEasJson: fs.existsSync(path.join(mobileDir, 'eas.json')),
-        lsRoot,
-        lsMobile,
-        appConfigHead,
-      }),
-    );
-  }
-
-  /** Pre-flight: runs `npx expo config --json` in mobileDir and logs full stderr (with require stack). */
-  private async runExpoConfigDiagnostic(
-    jobId: string,
-    mobileDir: string,
-    baseEnv: NodeJS.ProcessEnv,
-  ): Promise<void> {
-    const diagEnv: NodeJS.ProcessEnv = { ...baseEnv, EXPO_NO_DOTENV: '1' };
-
-    const { code, stdout, stderr } = await this.spawnProc(
-      'npx',
-      ['expo', 'config', '--json'],
-      { cwd: mobileDir, env: diagEnv },
-      60_000,
-    );
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'expo_config_diagnostic',
-        jobId,
-        exitCode: code,
-        stdout: truncateMessage(stdout, 1000),
-        stderr: truncateMessage(stderr, 2000),
-      }),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // END TEMPORARY DIAGNOSTICS
-  // ---------------------------------------------------------------------------
-
   /**
    * Belt-and-suspenders stub injection used by the simple (npm) fallback path.
    * Not needed when pnpm install is used (real dotenv is installed via hoisted node_modules).
@@ -993,15 +914,23 @@ export class EasBuildExecutorService {
     jobId: string,
   ): void {
     if (!fs.existsSync(easJsonPath)) {
-      this.logger.warn(`[EAS_WORKER] eas_json_patch_skip jobId=${jobId}: file not found at ${easJsonPath}`);
+      structuredLog(this.logger, 'warn', {
+        event: 'eas_json_patch_skipped',
+        jobId,
+        reason: 'file_not_found',
+      });
       return;
     }
 
     let easJson: Record<string, unknown>;
     try {
       easJson = JSON.parse(fs.readFileSync(easJsonPath, 'utf8')) as Record<string, unknown>;
-    } catch (err) {
-      this.logger.warn(`[EAS_WORKER] eas_json_patch_parse_error jobId=${jobId}: ${String(err)}`);
+    } catch {
+      structuredLog(this.logger, 'warn', {
+        event: 'eas_json_patch_skipped',
+        jobId,
+        reason: 'parse_error',
+      });
       return;
     }
 
@@ -1014,11 +943,13 @@ export class EasBuildExecutorService {
 
     try {
       fs.writeFileSync(easJsonPath, JSON.stringify(easJson, null, 2));
-      this.logger.log(
-        `[EAS_WORKER] eas_json_patched jobId=${jobId} profile=${profile} injected=[${Object.keys(envVars).join(',')}]`,
-      );
     } catch (err) {
-      this.logger.warn(`[EAS_WORKER] eas_json_patch_write_error jobId=${jobId}: ${String(err)}`);
+      structuredLog(this.logger, 'warn', {
+        event: 'eas_json_patch_skipped',
+        jobId,
+        reason: 'write_error',
+        message: String(err),
+      });
     }
   }
 
@@ -1094,18 +1025,13 @@ export class EasBuildExecutorService {
 
     if (errors.length > 0) {
       const msg = `Pre-build EAS config validation failed (jobId=${jobId}):\n${errors.map((e) => `  • ${e}`).join('\n')}`;
-      this.logger.error(`[EAS_WORKER] pre_build_validation_failed jobId=${jobId}:\n${errors.join('\n')}`);
+      structuredLog(this.logger, 'error', {
+        event: 'pre_build_validation_failed',
+        jobId,
+        errors,
+      });
       throw new Error(msg);
     }
-
-    const brandingUrl = `${apiUrl}/api/v1/public/studios/${encodeURIComponent(slug)}/branding`;
-    this.logger.log(
-      `[EAS_WORKER] pre_build_validation_passed jobId=${jobId} profile=${profile} apiOrigin=${apiUrl} slug=${slug}`,
-    );
-    this.logger.log(`[EAS_WORKER] expected_branding_url jobId=${jobId}: ${brandingUrl}`);
-    this.logger.log(
-      `[EAS_WORKER] eas_json_preview jobId=${jobId} profile=${profile} env: APP_DISPLAY_NAME=${env['APP_DISPLAY_NAME']} APP_SCHEME=${env['APP_SCHEME']} EXPO_SLUG=${env['EXPO_SLUG']} IOS_BUNDLE_IDENTIFIER=${env['IOS_BUNDLE_IDENTIFIER']} ANDROID_PACKAGE=${env['ANDROID_PACKAGE']}`,
-    );
   }
 
   private tryParseEasJson(raw: string): Record<string, unknown> | null {
@@ -1158,32 +1084,14 @@ export class EasBuildExecutorService {
     return null;
   }
 
-  /**
-   * Streaming spawner used exclusively for the EAS CLI build command.
-   *
-   * All logs use plain [EAS_WORKER] prefix (not JSON) so Railway cannot truncate a long JSON
-   * field and lose the actual error message.
-   *
-   * Hardening:
-   * - timer declared before error listener (no TDZ risk on the closure)
-   * - spawn() wrapped in try/catch for synchronous throws
-   * - child.pid logged immediately after spawn
-   * - stdout/stderr streamed as [EAS_WORKER] lines in real time
-   * - 12 KB rolling buffers (individually logged chunks mean nothing is lost)
-   * - exit code + signal captured; raw tails dumped on close
-   */
+  /** Spawns EAS CLI; buffers stdout/stderr (no per-chunk logging). */
   private spawnEasStream(
     cmd: string,
     args: string[],
     opts: { cwd: string; env: NodeJS.ProcessEnv },
     timeoutMs: number,
-    jobId: string,
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      this.logger.log(`[EAS_WORKER] spawn: cmd=${cmd} args=[${args.slice(0, 8).join(' ')}]`);
-      this.logger.log(`[EAS_WORKER] spawn: cwd=${opts.cwd} cwdExists=${fs.existsSync(opts.cwd)}`);
-
-      // Rolling 12 KB buffers — individually logged chunks mean nothing is lost even if buffer wraps
       const MAX_BUF = 12_000;
       let stdoutBuf = '';
       let stderrBuf = '';
@@ -1197,7 +1105,6 @@ export class EasBuildExecutorService {
       let timerFired = false;
       const timer = setTimeout(() => {
         timerFired = true;
-        this.logger.error(`[EAS_WORKER] timeout: killed after ${timeoutMs}ms`);
         try { child.kill('SIGTERM'); } catch { /* already exited */ }
         resolve({
           code: 1,
@@ -1219,12 +1126,9 @@ export class EasBuildExecutorService {
         });
       } catch (syncErr) {
         clearTimeout(timer);
-        this.logger.error(`[EAS_WORKER] spawn_failed: ${String(syncErr)}`);
         reject(syncErr instanceof Error ? syncErr : new Error(String(syncErr)));
         return;
       }
-
-      this.logger.log(`[EAS_WORKER] spawn_ok: pid=${child.pid ?? 'null'} jobId=${jobId}`);
 
       // Async error — OS could not exec binary (ENOENT, EACCES, etc.)
       let spawnErrored = false;
@@ -1232,7 +1136,6 @@ export class EasBuildExecutorService {
         if (timerFired) return;
         clearTimeout(timer);
         spawnErrored = true;
-        this.logger.error(`[EAS_WORKER] spawn_error: pid=${child.pid ?? 'null'} error=${String(err)}`);
         reject(err);
       });
 
@@ -1241,71 +1144,21 @@ export class EasBuildExecutorService {
 
       child.stdout?.on('data', (chunk: string) => {
         stdoutBuf = roll(stdoutBuf, chunk);
-        const cleaned = chunk.replace(/[⠀-⣿]/g, '').trim();
-        if (cleaned) {
-          this.logger.log(`[EAS_WORKER] stdout: ${cleaned.slice(0, 3000)}`);
-        }
       });
 
       child.stderr?.on('data', (chunk: string) => {
         stderrBuf = roll(stderrBuf, chunk);
-        const cleaned = chunk.replace(/[⠀-⣿]/g, '').trim();
-        if (cleaned) {
-          this.logger.warn(`[EAS_WORKER] stderr: ${cleaned.slice(0, 3000)}`);
-        }
       });
 
-      child.on('close', (code, signal) => {
+      child.on('close', (code) => {
         if (timerFired || spawnErrored) return;
         clearTimeout(timer);
-        const exitCode = code ?? 1;
-
-        this.logger.log(`[EAS_WORKER] exit: code=${exitCode} signal=${signal ?? 'null'} jobId=${jobId}`);
-        this.logger.log(`[EAS_WORKER] stdout_tail: ${stdoutBuf.slice(-3000)}`);
-        this.logger.log(`[EAS_WORKER] stderr_tail: ${stderrBuf.slice(-3000)}`);
-
-        resolve({ code: exitCode, stdout: stdoutBuf, stderr: stderrBuf });
+        resolve({ code: code ?? 1, stdout: stdoutBuf, stderr: stderrBuf });
       });
     });
   }
 
-  /**
-   * Six pre-flight checks run sequentially in the SAME cwd and env as the real EAS build.
-   * Each result is logged as [EAS_WORKER] plain text so Railway cannot truncate a JSON field.
-   *
-   * Order matters: we want to confirm node → ls → npx → eas-cli → auth before the real spawn.
-   * Auth failure (whoami) is the most common reason EAS exits 1 immediately.
-   */
-  private async runEasPreflight(
-    jobId: string,
-    cwd: string,
-    env: NodeJS.ProcessEnv,
-  ): Promise<void> {
-    // pwd is a shell builtin; log directly rather than spawning sh -c pwd
-    this.logger.log(`[EAS_WORKER] preflight pwd: ${cwd}`);
-
-    const run = async (label: string, cmd: string, args: string[], timeoutMs = 90_000): Promise<void> => {
-      this.logger.log(`[EAS_WORKER] preflight ${label}: running...`);
-      try {
-        const { code, stdout, stderr } = await this.spawnProc(cmd, args, { cwd, env }, timeoutMs);
-        const out = stdout.trim().slice(0, 600);
-        const err = stderr.trim().slice(0, 600);
-        this.logger.log(`[EAS_WORKER] preflight ${label}: exit=${code}${out ? ` stdout=${out}` : ''}${err ? ` stderr=${err}` : ''}`);
-      } catch (e) {
-        this.logger.error(`[EAS_WORKER] preflight ${label}: FAILED spawn error=${String(e)}`);
-      }
-    };
-
-    await run('node_version',    'node',  ['-v']);
-    await run('ls_cwd',          'ls',    ['-la']);
-    await run('npx_version',     'npx',   ['--version']);
-    // eas-cli@latest download — allow 3 min for cold npm cache on Railway
-    await run('eas_cli_version', 'npx',   ['-y', 'eas-cli@latest', '--version'], 180_000);
-    // whoami validates EXPO_TOKEN auth — the most common failure point
-    await run('eas_whoami',      'npx',   ['-y', 'eas-cli@latest', 'whoami', '--non-interactive'], 120_000);
-  }
-
-  /** Generic process spawner used by all subprocess calls except the EAS build itself. */
+  /** Generic process spawner used by install/git subprocesses. */
   private spawnProc(
     cmd: string,
     args: string[],
@@ -1322,7 +1175,6 @@ export class EasBuildExecutorService {
           shell: false,
         });
       } catch (syncErr) {
-        this.logger.error(`[EAS_WORKER] spawnProc_sync_error cmd=${cmd}: ${String(syncErr)}`);
         reject(syncErr instanceof Error ? syncErr : new Error(String(syncErr)));
         return;
       }
@@ -1335,14 +1187,12 @@ export class EasBuildExecutorService {
       child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
 
       const timer = setTimeout(() => {
-        this.logger.warn(`[EAS_WORKER] spawnProc_timeout cmd=${cmd} after ${timeoutMs}ms`);
         try { child.kill('SIGTERM'); } catch { /* already exited */ }
         resolve({ code: 1, stdout, stderr: `${stderr}[TIMED OUT after ${timeoutMs}ms]` });
       }, timeoutMs);
 
       child.on('error', (err) => {
         clearTimeout(timer);
-        this.logger.error(`[EAS_WORKER] spawnProc_error cmd=${cmd}: ${String(err)}`);
         reject(err);
       });
 

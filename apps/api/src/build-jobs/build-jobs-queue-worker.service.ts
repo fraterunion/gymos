@@ -1,6 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { resolveBuildQueuePollIntervalMs } from './build-worker-readiness.service';
+import {
+  BuildWorkerReadinessService,
+  resolveBuildQueuePollIntervalMs,
+} from './build-worker-readiness.service';
 import { BuildJobsService } from './build-jobs.service';
 import { EasBuildExecutorService } from './eas-build-executor.service';
 
@@ -15,6 +18,7 @@ export class BuildJobsQueueWorkerService implements OnModuleInit, OnModuleDestro
     private readonly config: ConfigService,
     private readonly buildJobs: BuildJobsService,
     private readonly easExecutor: EasBuildExecutorService,
+    private readonly workerReadiness: BuildWorkerReadinessService,
   ) {}
 
   onModuleInit(): void {
@@ -26,6 +30,7 @@ export class BuildJobsQueueWorkerService implements OnModuleInit, OnModuleDestro
       JSON.stringify({
         event: 'build_queue_worker_started',
         pollIntervalMs: ms,
+        workerEnabled: this.easExecutor.isWorkerEnabled(),
       }),
     );
   }
@@ -58,11 +63,13 @@ export class BuildJobsQueueWorkerService implements OnModuleInit, OnModuleDestro
     if (!this.easExecutor.isWorkerEnabled()) {
       return;
     }
-    try {
-      this.easExecutor.assertReadyForExecution();
-    } catch {
+
+    const readiness = await this.workerReadiness.gatherWorkerReadiness();
+    if (!readiness.canExecuteBuilds) {
       return;
     }
+
+    await this.buildJobs.recoverStuckRunningJobs();
 
     const claimed = await this.buildJobs.claimNextQueuedJob();
     if (!claimed) {
@@ -72,19 +79,17 @@ export class BuildJobsQueueWorkerService implements OnModuleInit, OnModuleDestro
     const { job, studioSlug } = claimed;
     this.logger.log(
       JSON.stringify({
-        event: 'build_job_status',
+        event: 'build_job_claimed',
         jobId: job.id,
         studioId: job.studioId,
         platform: job.platform,
         profile: job.profile,
-        from: 'QUEUED',
-        to: 'RUNNING',
       }),
     );
 
     try {
-      const { easBuildUrl, artifactUrl } = await this.easExecutor.execute(job, studioSlug);
-      await this.buildJobs.finalizeBuildSuccess(job, { easBuildUrl, artifactUrl });
+      const result = await this.easExecutor.execute(job, studioSlug);
+      await this.buildJobs.finalizeBuildSuccess(job, result);
     } catch (e) {
       await this.buildJobs.finalizeBuildFailure(job, e);
     }

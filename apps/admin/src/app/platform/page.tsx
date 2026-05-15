@@ -6,13 +6,17 @@ import { CopyFieldRow } from "@/components/CopyFieldRow";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import {
+  BUILD_PIPELINE_LABELS,
+  ERROR_CATEGORY_LABELS,
   createBuildJob,
   fetchBuildJobs,
   fetchBuildWorkerInfo,
+  getBuildPipelinePhase,
   runBuildJob,
   type BuildJobDto,
   type BuildJobPlatform,
   type BuildJobProfile,
+  type BuildPipelinePhase,
   type BuildWorkerReadinessDto,
 } from "@/lib/api/buildJobs";
 import {
@@ -26,28 +30,91 @@ import {
 const INPUT =
   "w-full rounded-xl border border-zinc-700/90 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30";
 
-const STATUS_HELP: Record<BuildJobDto["status"], string> = {
-  QUEUED: "Waiting for worker",
-  RUNNING: "EAS build in progress",
-  SUCCEEDED: "Build finished",
-  FAILED: "Failed; can re-queue",
-  CANCELED: "Canceled",
+const PIPELINE_STYLES: Record<BuildPipelinePhase, string> = {
+  waiting: "bg-zinc-500/15 text-zinc-300 ring-1 ring-zinc-500/30",
+  submitting: "bg-amber-500/15 text-amber-200 ring-1 ring-amber-500/35",
+  building_on_expo: "bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/35",
+  completed: "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-500/35",
+  failed: "bg-red-500/15 text-red-200 ring-1 ring-red-500/35",
+  canceled: "bg-zinc-600/20 text-zinc-400 ring-1 ring-zinc-600/40",
 };
 
-function StatusCell({ status }: { status: BuildJobDto["status"] }) {
-  const styles: Record<BuildJobDto["status"], string> = {
-    QUEUED: "bg-zinc-500/15 text-zinc-300 ring-1 ring-zinc-500/30",
-    RUNNING: "bg-sky-500/15 text-sky-200 ring-1 ring-sky-500/35",
-    SUCCEEDED: "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-500/35",
-    FAILED: "bg-red-500/15 text-red-200 ring-1 ring-red-500/35",
-    CANCELED: "bg-zinc-600/20 text-zinc-400 ring-1 ring-zinc-600/40",
-  };
+function PipelinePhaseCell({ job }: { job: BuildJobDto }) {
+  const phase = getBuildPipelinePhase(job);
   return (
     <div className="flex flex-col gap-0.5">
-      <span className={`inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles[status]}`}>
-        {status}
+      <span className={`inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold ${PIPELINE_STYLES[phase]}`}>
+        {BUILD_PIPELINE_LABELS[phase]}
       </span>
-      <span className="max-w-[140px] text-[10px] leading-tight text-zinc-500">{STATUS_HELP[status]}</span>
+      <span className="max-w-[160px] font-mono text-[10px] leading-tight text-zinc-600">{job.status}</span>
+      {job.expoBuildStatus ? (
+        <span className="text-[10px] text-zinc-500">Expo: {job.expoBuildStatus}</span>
+      ) : null}
+    </div>
+  );
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function BuildJobLinksCell({
+  job,
+  onCopyUrl,
+  urlCopied,
+}: {
+  job: BuildJobDto;
+  onCopyUrl: () => void;
+  urlCopied: boolean;
+}) {
+  return (
+    <div className="space-y-1.5 text-[11px]">
+      {job.easBuildUrl ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <a
+            href={job.easBuildUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="truncate text-sky-400 hover:underline"
+          >
+            Open EAS build
+          </a>
+          <button
+            type="button"
+            onClick={() => void onCopyUrl()}
+            className="shrink-0 rounded border border-zinc-600 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800"
+          >
+            {urlCopied ? "Copied" : "Copy URL"}
+          </button>
+        </div>
+      ) : (
+        <span className="text-zinc-600">EAS build: —</span>
+      )}
+      {job.artifactUrl ? (
+        <a
+          href={job.artifactUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block truncate text-sky-400 hover:underline"
+        >
+          Install artifact
+        </a>
+      ) : null}
+      {job.errorCategory ? (
+        <p className="text-amber-200/90">
+          {ERROR_CATEGORY_LABELS[job.errorCategory]}
+        </p>
+      ) : null}
+      {job.errorMessage ? (
+        <p className="text-red-300/95 line-clamp-4" title={job.errorMessage}>
+          {job.errorMessage}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -157,6 +224,7 @@ export default function PlatformConsolePage() {
   const [readinessLoading, setReadinessLoading] = useState(false);
   const [readinessError, setReadinessError] = useState<string | null>(null);
   const [enqueuingJobId, setEnqueuingJobId] = useState<string | null>(null);
+  const [copiedUrlJobId, setCopiedUrlJobId] = useState<string | null>(null);
 
   const [mobile, setMobile] = useState({
     appDisplayName: "",
@@ -748,7 +816,7 @@ export default function PlatformConsolePage() {
                       {new Date(job.requestedAt).toLocaleString()}
                     </td>
                     <td className="px-3 py-2.5">
-                      <StatusCell status={job.status} />
+                      <PipelinePhaseCell job={job} />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5 text-zinc-300">
                       {job.platform} · {job.profile}
@@ -768,38 +836,19 @@ export default function PlatformConsolePage() {
                         </div>
                       </div>
                     </td>
-                    <td className="max-w-[220px] px-3 py-2.5 align-top">
-                      <div className="space-y-1.5 text-[11px]">
-                        {job.easBuildUrl ? (
-                          <a
-                            href={job.easBuildUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block truncate text-sky-400 hover:underline"
-                          >
-                            EAS build
-                          </a>
-                        ) : (
-                          <span className="text-zinc-600">EAS: —</span>
-                        )}
-                        {job.artifactUrl ? (
-                          <a
-                            href={job.artifactUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block truncate text-sky-400 hover:underline"
-                          >
-                            Artifact
-                          </a>
-                        ) : (
-                          <span className="text-zinc-600">Artifact: —</span>
-                        )}
-                        {job.errorMessage ? (
-                          <p className="text-red-300/95" title={job.errorMessage}>
-                            {job.errorMessage}
-                          </p>
-                        ) : null}
-                      </div>
+                    <td className="max-w-[240px] px-3 py-2.5 align-top">
+                      <BuildJobLinksCell
+                        job={job}
+                        urlCopied={copiedUrlJobId === job.id}
+                        onCopyUrl={async () => {
+                          if (!job.easBuildUrl) return;
+                          const ok = await copyTextToClipboard(job.easBuildUrl);
+                          if (ok) {
+                            setCopiedUrlJobId(job.id);
+                            window.setTimeout(() => setCopiedUrlJobId(null), 2000);
+                          }
+                        }}
+                      />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5 align-top">
                       <button
