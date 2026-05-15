@@ -147,13 +147,36 @@ function isOptionalFile(name: string): boolean {
 }
 
 /**
+ * Copies src → dest, silently skipping if src doesn't exist or if the destination
+ * directory is absent (ENOENT on either side). Re-throws all other errors.
+ * Used for optional files where absence is expected (env files, example templates, etc.).
+ */
+function safeCopyOptionalFile(
+  src: string,
+  dest: string,
+  onSkip?: (src: string) => void,
+): void {
+  if (!fs.existsSync(src)) {
+    onSkip?.(src);
+    return;
+  }
+  try {
+    fs.copyFileSync(src, dest);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      onSkip?.(src);
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
  * Recursively copies src → dest, skipping excluded dirs/extensions.
- * Files that are absent on the source filesystem (broken symlinks, gitignored files absent
- * from a Railway deploy image, etc.) are skipped rather than crashing:
- *   - optional files (env files, examples, docs): calls onSkip and continues
- *   - unexpected missing required files: re-throws with a clear message
+ * Optional files (env files, examples, docs) are silently skipped when absent.
+ * Required files (package.json, app.config.js, source code) throw if missing.
  *
- * @param onSkip called with the relative path when an optional file is silently skipped
+ * @param onSkip called with the source path when an optional file is silently skipped
  */
 function copyRecursive(
   src: string,
@@ -169,14 +192,10 @@ function copyRecursive(
     if (entry.isDirectory()) {
       fs.mkdirSync(destPath, { recursive: true });
       copyRecursive(srcPath, destPath, onSkip);
+    } else if (isOptionalFile(entry.name)) {
+      safeCopyOptionalFile(srcPath, destPath, onSkip);
     } else {
-      // Guard against broken symlinks or files absent from the Railway deploy image.
-      // fs.existsSync follows symlinks, so broken symlinks return false.
       if (!fs.existsSync(srcPath)) {
-        if (isOptionalFile(entry.name)) {
-          onSkip?.(srcPath);
-          continue;
-        }
         throw new Error(`Required source file is missing and cannot be copied: ${srcPath}`);
       }
       fs.copyFileSync(srcPath, destPath);
@@ -481,7 +500,7 @@ export class EasBuildExecutorService {
 
     // 2. apps/mobile source (no node_modules)
     const tempMobile = path.join(workspaceDir, 'apps', 'mobile');
-    fs.mkdirSync(path.join(workspaceDir, 'apps'), { recursive: true });
+    fs.mkdirSync(tempMobile, { recursive: true });
     copyRecursive(mobileRoot, tempMobile, (f) =>
       this.logger.warn(JSON.stringify({ event: 'optional_file_skipped', file: path.relative(mobileRoot, f) })),
     );
