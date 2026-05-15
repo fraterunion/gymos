@@ -53,6 +53,53 @@ function truncateMessage(msg: string, max = 4000): string {
   return `${t.slice(0, max)}…`;
 }
 
+const MEANINGFUL_EAS_PATTERNS: RegExp[] = [
+  /it looks like/i,
+  /you haven't/i,
+  /you need to/i,
+  /\berror:/i,
+  /✖\s/,
+  /✗\s/,
+  /build (failed|error)/i,
+  /cannot find/i,
+  /could not (find|resolve)/i,
+  /failed to/i,
+  /authentication failed/i,
+  /project not found/i,
+  /requires?\s+(git|vcs)/i,
+  /git repository/i,
+  /no such file/i,
+  /eas\.json/i,
+  /unauthorized/i,
+  /invalid token/i,
+];
+
+function extractEasErrorMessage(stderr: string, stdout: string, exitCode: number): string {
+  function pickLines(text: string): string[] {
+    return text
+      .split('\n')
+      .map((l) => l.replace(/[⠀-⣿]/g, '').trim()) // strip braille spinner chars
+      .filter(Boolean)
+      .filter((l) => MEANINGFUL_EAS_PATTERNS.some((p) => p.test(l)));
+  }
+
+  const meaningful = [...pickLines(stderr), ...pickLines(stdout)];
+  if (meaningful.length > 0) {
+    const deduped = [...new Set(meaningful)].slice(0, 6);
+    return deduped.join('\n');
+  }
+
+  // fall back: last few non-noise stderr lines
+  const fallback = stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('▸') && !l.startsWith('[') && l.length < 300)
+    .slice(-5)
+    .join('\n');
+
+  return truncateMessage(fallback || stdout || `EAS build failed (exit code ${exitCode})`, 600);
+}
+
 function extractExpoBuildUrl(text: string): string | null {
   const m = text.match(/https:\/\/expo\.dev\/[^\s"'<>]+/);
   return m?.[0] ?? null;
@@ -174,7 +221,9 @@ export class EasBuildExecutorService {
 
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
-      CI: '1',
+      CI: 'true',
+      EAS_NO_VCS: '1',
+      EXPO_NO_GIT_STATUS: '1',
       EXPO_TOKEN: easToken,
       EXPO_NO_INTERACTIVE: '1',
       WHITELABEL_PROFILE: 'local',
@@ -197,7 +246,7 @@ export class EasBuildExecutorService {
     if (projectSlug) childEnv.EAS_PROJECT_SLUG = projectSlug;
     if (accountName) childEnv.EAS_ACCOUNT_NAME = accountName;
 
-    const args = ['-y', 'eas-cli@latest', 'build', '--platform', platformArg, '--profile', profileArg, '--json'];
+    const args = ['-y', 'eas-cli@latest', 'build', '--platform', platformArg, '--profile', profileArg, '--non-interactive', '--json'];
 
     const started = Date.now();
     const { code, stdout, stderr } = await this.spawnNpx(args, { cwd: mobileRoot, env: childEnv }, safeTimeout);
@@ -213,7 +262,7 @@ export class EasBuildExecutorService {
     );
 
     if (code !== 0) {
-      const errText = truncateMessage(stderr || stdout || `eas build exited with code ${code}`);
+      const errText = extractEasErrorMessage(stderr, stdout, code);
       throw new Error(errText);
     }
 
