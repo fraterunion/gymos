@@ -51,13 +51,46 @@ export type BuildPipelinePhase =
 export function getBuildPipelinePhase(job: BuildJobDto): BuildPipelinePhase {
   if (job.status === "CANCELED") return "canceled";
   if (job.status === "FAILED") return "failed";
-  if (job.status === "SUCCEEDED") return "completed";
   if (job.status === "QUEUED") return "waiting";
   if (job.status === "RUNNING") {
     if (job.easBuildUrl || job.submittedAt) return "building_on_expo";
     return "submitting";
   }
+  if (job.status === "SUCCEEDED") {
+    // Expo confirmed the remote build finished
+    if (job.expoBuildStatus === "FINISHED") return "completed";
+    // Submitted to Expo — remote build still in progress (--no-wait flow)
+    if (job.expoBuildId || job.easBuildUrl) return "building_on_expo";
+    // Edge case: SUCCEEDED with no EAS tracking info (pre-polling jobs)
+    return "completed";
+  }
   return "waiting";
+}
+
+/** True if the job is not yet in a terminal state and the UI should auto-refresh. */
+export function isBuildLive(job: BuildJobDto): boolean {
+  return (
+    job.status === "QUEUED" ||
+    job.status === "RUNNING" ||
+    (job.status === "SUCCEEDED" &&
+      job.expoBuildStatus !== "FINISHED" &&
+      (job.expoBuildId != null || job.easBuildUrl != null))
+  );
+}
+
+/** Human-readable label for Expo's remote build status value. */
+export function formatExpoBuildStatus(status: string | null | undefined): string | null {
+  if (!status) return null;
+  switch (status) {
+    case "SUBMITTED":   return "Submitted";
+    case "NEW":         return "Queued";
+    case "IN_QUEUE":    return "In queue";
+    case "IN_PROGRESS": return "Building";
+    case "FINISHED":    return "Finished";
+    case "ERRORED":     return "Error";
+    case "CANCELED":    return "Canceled";
+    default:            return status;
+  }
 }
 
 export const BUILD_PIPELINE_LABELS: Record<BuildPipelinePhase, string> = {
