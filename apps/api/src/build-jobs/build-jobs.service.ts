@@ -270,7 +270,8 @@ export class BuildJobsService {
     let msg = e instanceof Error ? e.message : String(e);
     msg = msg.replace(/sk_(live|test)_[a-z0-9]+/gi, '[REDACTED]');
     msg = msg.replace(/Bearer\s+[a-z0-9._-]+/gi, 'Bearer [REDACTED]');
-    const max = 4000;
+    // 16 KB cap — large enough to hold extracted EAS error + raw stderr/stdout tails
+    const max = 16_000;
     if (msg.length > max) return `${msg.slice(0, max)}…`;
     return msg;
   }

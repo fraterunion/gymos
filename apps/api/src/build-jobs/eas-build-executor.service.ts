@@ -313,6 +313,21 @@ export class EasBuildExecutorService {
     job: EasBuildJobContext,
     studioSlug: string,
   ): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
+    try {
+      return await this.runExecute(job, studioSlug);
+    } catch (err) {
+      // Top-level catch: log the full stack so Railway always has context even if
+      // the error is re-thrown before any inner logging had a chance to run.
+      const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      this.logger.error(`[EAS_WORKER] execute_error jobId=${job.id}: ${stack.slice(0, 3000)}`);
+      throw err;
+    }
+  }
+
+  private async runExecute(
+    job: EasBuildJobContext,
+    studioSlug: string,
+  ): Promise<{ easBuildUrl: string | null; artifactUrl: string | null }> {
     const mobileRoot = this.resolveMobileAppRoot();
     if (!mobileRoot) {
       throw new Error('Could not resolve mobile app directory (eas.json not found).');
@@ -345,6 +360,7 @@ export class EasBuildExecutorService {
       EXPO_NO_GIT_STATUS: '1',
       EXPO_NO_DOTENV: '1',
       EXPO_TOKEN: easToken,
+      EXPO_ACCESS_TOKEN: easToken, // eas-cli <16 compatibility alias
       EXPO_NO_INTERACTIVE: '1',
       WHITELABEL_PROFILE: 'local',
       EXPO_PUBLIC_API_URL: expoPublicApiUrl,
@@ -368,8 +384,12 @@ export class EasBuildExecutorService {
     if (projectSlug) childEnv.EAS_PROJECT_SLUG = projectSlug;
     if (accountName) childEnv.EAS_ACCOUNT_NAME = accountName;
 
-    // --verbose gives full output; --json is deliberately omitted while debugging because it
-    // reformats/suppresses interactive errors that are critical for diagnosing failures.
+    // --no-wait: EAS CLI submits the build to Expo's servers and exits immediately with the build
+    // URL rather than blocking for 20-40 minutes waiting for the remote cloud build to finish.
+    // Without this flag every build would be killed by our timeout.
+    // --verbose: full output during submission so we can diagnose auth/project/credential errors.
+    // --json is intentionally omitted while debugging: it reformats errors and hides interactive
+    // messages that are critical for diagnosing failures.
     const easArgs = [
       '-y',
       'eas-cli@latest',
@@ -379,6 +399,7 @@ export class EasBuildExecutorService {
       '--profile',
       profileArg,
       '--non-interactive',
+      '--no-wait',
       '--verbose',
     ];
 
@@ -395,7 +416,12 @@ export class EasBuildExecutorService {
 
     // --- TEMPORARY DIAGNOSTICS ---
     this.logWorkspaceDiagnostics(job.id, workspace, mobileDir);
-    await this.runExpoConfigDiagnostic(job.id, mobileDir, childEnv);
+    try {
+      await this.runExpoConfigDiagnostic(job.id, mobileDir, childEnv);
+    } catch (diagErr) {
+      // Never let a diagnostic failure abort the build
+      this.logger.warn(`[EAS_WORKER] expo_config_diag_failed jobId=${job.id}: ${String(diagErr)}`);
+    }
     // --- END TEMPORARY DIAGNOSTICS ---
 
     this.logger.log(
@@ -450,7 +476,16 @@ export class EasBuildExecutorService {
 
     if (code !== 0) {
       const errText = extractEasErrorMessage(stderr, stdout, code);
-      throw new Error(`EAS build failed (exit ${code}): ${errText}`);
+      // Append raw tails so DB stores maximum context for diagnosis.
+      // sanitizeBuildError caps the final string; raw tail is the most useful part.
+      const rawStderrTail = stderr.slice(-4000).trim();
+      const rawStdoutTail = stdout.slice(-2000).trim();
+      const fullMsg = [
+        `EAS build failed (exit ${code}): ${errText}`,
+        rawStderrTail ? `\n\n--- stderr ---\n${rawStderrTail}` : '',
+        rawStdoutTail ? `\n\n--- stdout ---\n${rawStdoutTail}` : '',
+      ].join('');
+      throw new Error(fullMsg);
     }
 
     let easBuildUrl = extractExpoBuildUrl(combined);
@@ -993,7 +1028,8 @@ export class EasBuildExecutorService {
 
       // Wrap spawn() in try/catch — synchronous ENOENT (bad cwd on some Node versions) would
       // otherwise escape the Promise constructor entirely with no log.
-      let child: ReturnType<typeof spawn>;
+      // Definite-assignment assertion: child is always assigned before any async event can fire.
+      let child!: ReturnType<typeof spawn>;
       try {
         child = spawn(cmd, args, {
           cwd: opts.cwd,
@@ -1089,7 +1125,7 @@ export class EasBuildExecutorService {
     await run('eas_whoami',      'npx',   ['-y', 'eas-cli@latest', 'whoami', '--non-interactive'], 120_000);
   }
 
-  /** Generic process spawner used by all subprocess calls in this service. */
+  /** Generic process spawner used by all subprocess calls except the EAS build itself. */
   private spawnProc(
     cmd: string,
     args: string[],
@@ -1097,26 +1133,39 @@ export class EasBuildExecutorService {
     timeoutMs: number,
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      const child = spawn(cmd, args, {
-        cwd: opts.cwd,
-        env: opts.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-      });
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(cmd, args, {
+          cwd: opts.cwd,
+          env: opts.env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        });
+      } catch (syncErr) {
+        this.logger.error(`[EAS_WORKER] spawnProc_sync_error cmd=${cmd}: ${String(syncErr)}`);
+        reject(syncErr instanceof Error ? syncErr : new Error(String(syncErr)));
+        return;
+      }
+
       let stdout = '';
       let stderr = '';
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (chunk: string) => { stdout += chunk; });
       child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
+
       const timer = setTimeout(() => {
-        child.kill('SIGTERM');
+        this.logger.warn(`[EAS_WORKER] spawnProc_timeout cmd=${cmd} after ${timeoutMs}ms`);
+        try { child.kill('SIGTERM'); } catch { /* already exited */ }
         resolve({ code: 1, stdout, stderr: `${stderr}[TIMED OUT after ${timeoutMs}ms]` });
       }, timeoutMs);
+
       child.on('error', (err) => {
         clearTimeout(timer);
+        this.logger.error(`[EAS_WORKER] spawnProc_error cmd=${cmd}: ${String(err)}`);
         reject(err);
       });
+
       child.on('close', (code) => {
         clearTimeout(timer);
         resolve({ code: code ?? 1, stdout, stderr });
