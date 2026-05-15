@@ -63,6 +63,8 @@ export class StudioSettingsService {
     if (dto.websiteUrl !== undefined) data.websiteUrl = dto.websiteUrl;
     if (dto.instagramHandle !== undefined) data.instagramHandle = dto.instagramHandle;
     if (dto.address !== undefined) data.address = dto.address;
+    if (dto.privacyUrl !== undefined) data.privacyUrl = dto.privacyUrl;
+    if (dto.termsUrl !== undefined) data.termsUrl = dto.termsUrl;
 
     if (Object.keys(data).length === 0) {
       return this.shapeResponse(await this.loadStudio(studioId));

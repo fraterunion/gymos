@@ -68,4 +68,20 @@ export class UpdateStudioSettingsDto {
   @MaxLength(2000)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   address?: string | null;
+
+  @IsOptional()
+  @Transform(emptyToNull)
+  @ValidateIf((_, v) => v != null)
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(2048)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  privacyUrl?: string | null;
+
+  @IsOptional()
+  @Transform(emptyToNull)
+  @ValidateIf((_, v) => v != null)
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(2048)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  termsUrl?: string | null;
 }

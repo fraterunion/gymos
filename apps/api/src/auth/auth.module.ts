@@ -11,6 +11,7 @@ import { StudioMemberGuard } from './guards/studio-member.guard';
 import { AuthThrottlerGuard } from './guards/auth-throttler.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { StudioAccessController } from './studio-access.controller';
+import { PlatformOperatorService } from './platform-operator.service';
 
 @Module({
   imports: [
@@ -34,7 +35,8 @@ import { StudioAccessController } from './studio-access.controller';
     StudioMemberGuard,
     RolesGuard,
     AuthThrottlerGuard,
+    PlatformOperatorService,
   ],
-  exports: [AuthService, JwtAuthGuard, StudioMemberGuard, RolesGuard],
+  exports: [AuthService, JwtAuthGuard, StudioMemberGuard, RolesGuard, PlatformOperatorService],
 })
 export class AuthModule {}
