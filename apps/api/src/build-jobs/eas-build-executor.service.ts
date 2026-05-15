@@ -407,6 +407,21 @@ export class EasBuildExecutorService {
       }),
     );
 
+    // Pre-flight: log runtime environment so Railway shows this even if spawn fails immediately
+    this.logger.log(
+      JSON.stringify({
+        event: 'eas_preflight_env',
+        jobId: job.id,
+        cwd: mobileDir,
+        cwdExists: fs.existsSync(mobileDir),
+        nodeVersion: process.version,
+        platform: process.platform,
+        PATH: (childEnv.PATH ?? process.env.PATH ?? '(unset)').slice(0, 600),
+        easArgs,
+      }),
+    );
+    await this.runEasPreflight(job.id, mobileDir, childEnv);
+
     const started = Date.now();
     let code: number;
     let stdout: string;
@@ -938,14 +953,15 @@ export class EasBuildExecutorService {
   /**
    * Streaming spawner used exclusively for the EAS CLI build command.
    *
-   * Differences from spawnProc:
-   * - Logs stdout/stderr chunks progressively as they arrive (Railway sees output in real time).
-   * - Keeps a rolling 12 KB buffer for each stream (chunks are individually logged so nothing is
-   *   lost in Railway logs even if the buffer wraps).
-   * - Emits structured events: eas_spawn, eas_spawn_error, eas_build_stdout_chunk,
-   *   eas_build_stderr_chunk, eas_build_exit, eas_build_stdout_tail, eas_build_stderr_tail,
-   *   eas_build_timeout.
-   * - Captures exit signal alongside exit code.
+   * Hardening vs spawnProc:
+   * - spawn() is wrapped in try/catch so synchronous throw (e.g. ENOENT on bad cwd) is logged
+   *   as eas_spawn_failed rather than escaping the Promise constructor silently.
+   * - timer is declared BEFORE the error listener so the closure reference is never in TDZ.
+   * - child.pid is logged immediately after spawn returns.
+   * - stdout/stderr chunks are logged progressively (Railway sees output in real time).
+   * - Rolling 12 KB buffers; chunks are individually logged so nothing is lost if buffer wraps.
+   * - eas_build_exit captures signal alongside exit code.
+   * - eas_build_stdout_tail + eas_build_stderr_tail give a final snapshot on close.
    */
   private spawnEasStream(
     cmd: string,
@@ -956,36 +972,74 @@ export class EasBuildExecutorService {
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
       this.logger.log(
-        JSON.stringify({ event: 'eas_spawn', jobId, cmd, args: args.slice(0, 8) }),
+        JSON.stringify({
+          event: 'eas_spawn',
+          jobId,
+          cmd,
+          args: args.slice(0, 8),
+          cwd: opts.cwd,
+          cwdExists: fs.existsSync(opts.cwd),
+        }),
       );
-
-      const child = spawn(cmd, args, {
-        cwd: opts.cwd,
-        env: opts.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-      });
-
-      // Attach an error listener immediately so Node does not throw on spawn failure
-      let spawnFailed = false;
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        spawnFailed = true;
-        this.logger.error(
-          JSON.stringify({ event: 'eas_spawn_error', jobId, error: String(err) }),
-        );
-        reject(err);
-      });
 
       // Rolling 12 KB buffers — chunks are also individually logged so nothing is lost
       const MAX_BUF = 12_000;
       let stdoutBuf = '';
       let stderrBuf = '';
-
       const roll = (buf: string, chunk: string): string => {
         const next = buf + chunk;
         return next.length > MAX_BUF ? next.slice(-MAX_BUF) : next;
       };
+
+      // Declare timer BEFORE the error listener so the closure never captures an uninitialised binding
+      let timerFired = false;
+      const timer = setTimeout(() => {
+        timerFired = true;
+        this.logger.error(
+          JSON.stringify({ event: 'eas_build_timeout', jobId, timeoutMs }),
+        );
+        try { child.kill('SIGTERM'); } catch { /* already exited */ }
+        resolve({
+          code: 1,
+          stdout: stdoutBuf,
+          stderr: `${stderrBuf}\n[TIMED OUT after ${timeoutMs}ms]`,
+        });
+      }, timeoutMs);
+
+      // Wrap spawn() in try/catch — a synchronous throw (bad cwd, missing binary in some envs)
+      // would otherwise escape the Promise constructor with no log.
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(cmd, args, {
+          cwd: opts.cwd,
+          env: opts.env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        });
+      } catch (syncErr) {
+        clearTimeout(timer);
+        this.logger.error(
+          JSON.stringify({ event: 'eas_spawn_failed', jobId, error: String(syncErr) }),
+        );
+        reject(syncErr instanceof Error ? syncErr : new Error(String(syncErr)));
+        return;
+      }
+
+      this.logger.log(
+        JSON.stringify({ event: 'eas_spawn_ok', jobId, pid: child.pid ?? null }),
+      );
+
+      // Error listener — fires asynchronously when the OS cannot exec the binary (ENOENT, EACCES, etc.)
+      let spawnErrored = false;
+      child.on('error', (err) => {
+        if (timerFired) return;
+        clearTimeout(timer);
+        spawnErrored = true;
+        this.logger.error(
+          JSON.stringify({ event: 'eas_spawn_error', jobId, pid: child.pid ?? null, error: String(err) }),
+        );
+        reject(err);
+      });
 
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
@@ -995,11 +1049,7 @@ export class EasBuildExecutorService {
         const cleaned = chunk.replace(/[⠀-⣿]/g, '').trim();
         if (cleaned) {
           this.logger.log(
-            JSON.stringify({
-              event: 'eas_build_stdout_chunk',
-              jobId,
-              chunk: cleaned.slice(0, 3000),
-            }),
+            JSON.stringify({ event: 'eas_build_stdout_chunk', jobId, chunk: cleaned.slice(0, 3000) }),
           );
         }
       });
@@ -1009,55 +1059,68 @@ export class EasBuildExecutorService {
         const cleaned = chunk.replace(/[⠀-⣿]/g, '').trim();
         if (cleaned) {
           this.logger.warn(
-            JSON.stringify({
-              event: 'eas_build_stderr_chunk',
-              jobId,
-              chunk: cleaned.slice(0, 3000),
-            }),
+            JSON.stringify({ event: 'eas_build_stderr_chunk', jobId, chunk: cleaned.slice(0, 3000) }),
           );
         }
       });
 
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        this.logger.error(
-          JSON.stringify({ event: 'eas_build_timeout', jobId, timeoutMs }),
-        );
-        resolve({
-          code: 1,
-          stdout: stdoutBuf,
-          stderr: `${stderrBuf}\n[TIMED OUT after ${timeoutMs}ms]`,
-        });
-      }, timeoutMs);
-
       child.on('close', (code, signal) => {
-        if (spawnFailed) return; // error event already rejected
+        if (timerFired || spawnErrored) return;
         clearTimeout(timer);
         const exitCode = code ?? 1;
 
         this.logger.log(
           JSON.stringify({ event: 'eas_build_exit', jobId, exitCode, signal: signal ?? null }),
         );
-
-        // Always log raw tails so Railway shows what EAS actually printed
         this.logger.log(
-          JSON.stringify({
-            event: 'eas_build_stdout_tail',
-            jobId,
-            tail: stdoutBuf.slice(-3000),
-          }),
+          JSON.stringify({ event: 'eas_build_stdout_tail', jobId, tail: stdoutBuf.slice(-3000) }),
         );
         this.logger.log(
-          JSON.stringify({
-            event: 'eas_build_stderr_tail',
-            jobId,
-            tail: stderrBuf.slice(-3000),
-          }),
+          JSON.stringify({ event: 'eas_build_stderr_tail', jobId, tail: stderrBuf.slice(-3000) }),
         );
 
         resolve({ code: exitCode, stdout: stdoutBuf, stderr: stderrBuf });
       });
     });
+  }
+
+  /**
+   * Pre-flight checks run inside the same cwd/env as the real EAS build.
+   * Logs results as structured events so Railway shows them even if the main spawn fails.
+   *
+   * Checks:
+   *   1. npx --version   — confirms npx is on PATH and executable
+   *   2. npx eas-cli@latest --version — confirms eas-cli can be resolved/downloaded
+   *   3. which npx       — shows the resolved binary path
+   */
+  private async runEasPreflight(
+    jobId: string,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ): Promise<void> {
+    const run = async (label: string, cmd: string, args: string[]): Promise<void> => {
+      try {
+        const { code, stdout, stderr } = await this.spawnProc(cmd, args, { cwd, env }, 60_000);
+        this.logger.log(
+          JSON.stringify({
+            event: 'eas_preflight_check',
+            jobId,
+            label,
+            exitCode: code,
+            stdout: stdout.trim().slice(0, 400),
+            stderr: stderr.trim().slice(0, 400),
+          }),
+        );
+      } catch (err) {
+        this.logger.error(
+          JSON.stringify({ event: 'eas_preflight_check_failed', jobId, label, error: String(err) }),
+        );
+      }
+    };
+
+    await run('npx_version',   'npx',  ['--version']);
+    await run('which_npx',     'which', ['npx']);
+    await run('eas_cli_version', 'npx', ['-y', 'eas-cli@latest', '--version']);
   }
 
   /** Generic process spawner used by all subprocess calls in this service. */
