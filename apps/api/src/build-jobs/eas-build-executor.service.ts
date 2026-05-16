@@ -93,6 +93,11 @@ const MEANINGFUL_EAS_PATTERNS: RegExp[] = [
   /git repository/i,
   /no such file/i,
   /eas\.json/i,
+  /cli\.version/i,
+  /appVersionSource/i,
+  /requires? eas-cli/i,
+  /update (eas-cli|expo)/i,
+  /outdated/i,
   /unauthorized/i,
   /invalid token/i,
   /exception/i,
@@ -108,15 +113,28 @@ const MEANINGFUL_EAS_PATTERNS: RegExp[] = [
 
 const EAS_OUTPUT_CAP = 12_000;
 
-function extractEasErrorMessage(stderr: string, stdout: string, exitCode: number): string {
-  function stripSpinners(l: string): string {
-    return l.replace(/[⠀-⣿]/g, '').trim();
-  }
+// Matches ANSI escape sequences: CSI (colors, cursor), character-set designations, and other two-byte ESC codes.
+// eslint-disable-next-line no-control-regex
+const ANSI_STRIP_RE = /\x1b(?:\[[0-9;]*[A-Za-z]|[()][AB01]|.)/g;
 
+/**
+ * Strips ANSI escape sequences and braille spinner chars.
+ * Handles \r-terminated progress lines by taking only the last segment after the final \r.
+ */
+function cleanOutputLine(l: string): string {
+  // When eas-cli overwrites a line with \r, take only the last \r-segment
+  const lastSegment = l.includes('\r') ? (l.split('\r').pop() ?? l) : l;
+  return lastSegment
+    .replace(ANSI_STRIP_RE, '')  // ANSI escape sequences (colors, cursor movement, etc.)
+    .replace(/[⠀-⣿]/g, '')      // braille spinner block
+    .trim();
+}
+
+function extractEasErrorMessage(stderr: string, stdout: string, exitCode: number): string {
   function pickLines(text: string): string[] {
     return text
-      .split('\n')
-      .map(stripSpinners)
+      .split(/\n/)
+      .map(cleanOutputLine)
       .filter(Boolean)
       .filter((l) => MEANINGFUL_EAS_PATTERNS.some((p) => p.test(l)));
   }
@@ -127,12 +145,14 @@ function extractEasErrorMessage(stderr: string, stdout: string, exitCode: number
     return deduped.join('\n');
   }
 
-  // Fall back to the last 50 non-trivial lines of stderr, then stdout
-  const fallbackLines = (stderr || stdout)
-    .split('\n')
-    .map(stripSpinners)
-    .filter((l) => l.length > 0 && l.length < 500)
-    .slice(-50)
+  // Fallback: return the last 100 non-empty cleaned lines of stderr (then stdout).
+  // Use raw text (ANSI-cleaned) without the pattern filter — every line is potentially useful.
+  const source = stderr.length > 0 ? stderr : stdout;
+  const fallbackLines = source
+    .split(/\n/)
+    .map(cleanOutputLine)
+    .filter((l) => l.length > 0 && l.length < 600)
+    .slice(-100)
     .join('\n');
 
   const raw = fallbackLines || `EAS build failed (exit code ${exitCode})`;
@@ -1064,11 +1084,41 @@ export class EasBuildExecutorService {
       throw new Error(`[EAS_WORKER] pre-build validation: cannot parse eas.json: ${String(err)}`);
     }
 
+    // Log the full patched eas.json with env values redacted so Railway logs show
+    // the exact document that will be submitted to EAS — including cli.version preservation.
+    const logSnapshot = JSON.parse(JSON.stringify(easJson)) as Record<string, unknown>;
+    const logBuild = (logSnapshot['build'] ?? {}) as Record<string, unknown>;
+    for (const profileKey of Object.keys(logBuild)) {
+      const p = logBuild[profileKey] as Record<string, unknown> | null;
+      if (p && typeof p === 'object' && p['env'] && typeof p['env'] === 'object') {
+        const envObj = p['env'] as Record<string, unknown>;
+        for (const k of Object.keys(envObj)) {
+          if (/token|secret|password|key|auth|slug|url|package|bundle|scheme|display/i.test(k)) {
+            envObj[k] = '[REDACTED]';
+          }
+        }
+      }
+    }
+    structuredLog(this.logger, 'log', {
+      event: 'patched_eas_json_snapshot',
+      jobId,
+      profile,
+      easJson: logSnapshot,
+    });
+
     const build = (easJson['build'] ?? {}) as Record<string, unknown>;
     const profileObj = (build[profile] ?? {}) as Record<string, unknown>;
     const env = (profileObj['env'] ?? {}) as Record<string, string>;
 
     const errors: string[] = [];
+
+    // Verify cli.version survived the patch (top-level key must not be lost)
+    const cliSection = (easJson['cli'] ?? {}) as Record<string, unknown>;
+    if (!cliSection['version']) {
+      errors.push(
+        'cli.version is missing from the patched eas.json — EAS CLI will reject the build. Check that patchEasJsonForBuild preserves all top-level keys.',
+      );
+    }
 
     const apiUrl = (env['EXPO_PUBLIC_API_URL'] ?? '').trim();
     if (!apiUrl) {
