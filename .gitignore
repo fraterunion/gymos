@@ -31,3 +31,4 @@ yarn-error.log*
 
 # Testing / coverage (future)
 coverage
+.claude/settings.json
