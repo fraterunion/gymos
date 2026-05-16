@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { spawn } from 'node:child_process';
-import * as os from 'node:os';
 import { EasBuildExecutorService } from './eas-build-executor.service';
 
 export type BuildWorkerReadinessDto = {
@@ -11,7 +10,10 @@ export type BuildWorkerReadinessDto = {
   mobileAppRootExists: boolean;
   easTokenConfigured: boolean;
   expoPublicApiUrlConfigured: boolean;
-  npxAvailable: boolean;
+  /** True when the local eas-cli binary is found and executable (no npx involved). */
+  easBinaryFound: boolean;
+  /** Path to the resolved eas binary, or null when not found. */
+  easBinaryPath: string | null;
   easCliReachable: boolean;
   easCliVersion?: string;
   canExecuteBuilds: boolean;
@@ -65,70 +67,34 @@ export class BuildWorkerReadinessService {
 
     const mobile = this.easExecutor.getMobileRootDiagnostics();
 
-    const probeCwd = os.tmpdir();
-    const probeEnv = envWithoutSecrets();
-
-    let npxAvailable = false;
-    {
-      const r = await this.spawnOnce('npx', ['--version'], {
-        cwd: probeCwd,
-        env: probeEnv,
-        timeoutMs: diagnosticsTimeoutMs,
-      });
-      npxAvailable = r.code === 0 && r.stdout.trim().length > 0;
-    }
+    // Resolve the local eas binary — no npx, no network, no cache to corrupt.
+    const easBinaryPath = this.easExecutor.resolveEasBinaryPath();
+    const easBinaryFound = easBinaryPath !== null;
 
     let easCliReachable = false;
     let easCliVersion: string | undefined;
-    let easCliProbeFailReason: string | undefined;
-    {
-      const doProbe = () =>
-        this.spawnOnce('npx', ['-y', 'eas-cli@latest', '--version'], {
-          cwd: probeCwd,
-          env: probeEnv,
-          timeoutMs: diagnosticsTimeoutMs,
-        });
-
-      let r = await doProbe();
-
-      if (r.code !== 0) {
-        const reason = r.timedOut
-          ? `probe_timeout (${diagnosticsTimeoutMs}ms)`
-          : `exit_code_${r.code}`;
-        this.logger.warn(
-          JSON.stringify({
-            event: 'eas_cli_probe_failed_attempt_1',
-            reason,
-            stderr: r.stderr.slice(-500).trim(),
-            stdout: r.stdout.slice(-200).trim(),
-            note: 'Cleaning npm cache and retrying once.',
-          }),
-        );
-
-        await this.cleanNpmCache(probeCwd, probeEnv);
-        r = await doProbe();
-
-        if (r.code !== 0) {
-          easCliProbeFailReason = r.timedOut
-            ? `probe_timeout (${diagnosticsTimeoutMs}ms)`
-            : `exit_code_${r.code}`;
-          this.logger.error(
-            JSON.stringify({
-              event: 'eas_cli_probe_failed_attempt_2',
-              reason: easCliProbeFailReason,
-              stderr: r.stderr.slice(-500).trim(),
-              stdout: r.stdout.slice(-200).trim(),
-            }),
-          );
-        }
-      }
-
+    if (easBinaryFound) {
+      const probeEnv = envWithoutSecrets();
+      const r = await this.spawnOnce(easBinaryPath!, ['--version'], {
+        cwd: mobile.path ?? process.cwd(),
+        env: probeEnv,
+        timeoutMs: diagnosticsTimeoutMs,
+      });
       easCliReachable = r.code === 0;
       if (easCliReachable) {
         const combined = `${r.stdout}\n${r.stderr}`.trim();
         const first = combined.split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ?? '';
         const cleaned = first.replace(/^eas-cli\//i, '').slice(0, 64);
         if (cleaned) easCliVersion = cleaned;
+      } else {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'eas_cli_probe_failed',
+            binary: easBinaryPath,
+            exitCode: r.code,
+            stderr: r.stderr.slice(-400).trim(),
+          }),
+        );
       }
     }
 
@@ -149,13 +115,13 @@ export class BuildWorkerReadinessService {
     } else if (!mobile.exists) {
       blockingReasons.push('Mobile app root path does not contain eas.json.');
     }
-    if (!npxAvailable) {
-      blockingReasons.push('npx is not available or did not respond before the diagnostics timeout.');
-    }
-    if (!easCliReachable) {
-      const detail = easCliProbeFailReason ? ` (${easCliProbeFailReason})` : '';
+    if (!easBinaryFound) {
       blockingReasons.push(
-        `eas-cli could not be reached via npx after cache-clean + retry${detail}. Check network, npm registry, or increase BUILD_WORKER_DIAGNOSTICS_TIMEOUT_MS.`,
+        'local eas-cli binary missing; run pnpm install and ensure eas-cli is in dependencies.',
+      );
+    } else if (!easCliReachable) {
+      blockingReasons.push(
+        `eas-cli binary found at ${easBinaryPath} but --version failed. Check file permissions or reinstall.`,
       );
     }
 
@@ -164,7 +130,7 @@ export class BuildWorkerReadinessService {
       easTokenConfigured &&
       expoPublicApiUrlConfigured &&
       Boolean(mobile.path && mobile.exists) &&
-      npxAvailable &&
+      easBinaryFound &&
       easCliReachable;
 
     return {
@@ -174,21 +140,13 @@ export class BuildWorkerReadinessService {
       mobileAppRootExists: mobile.exists,
       easTokenConfigured,
       expoPublicApiUrlConfigured,
-      npxAvailable,
+      easBinaryFound,
+      easBinaryPath,
       easCliReachable,
       easCliVersion,
       canExecuteBuilds,
       blockingReasons,
     };
-  }
-
-  private async cleanNpmCache(cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
-    const r = await this.spawnOnce('npm', ['cache', 'clean', '--force'], { cwd, env, timeoutMs: 30_000 });
-    if (r.code === 0) {
-      this.logger.log(JSON.stringify({ event: 'npm_cache_cleaned' }));
-    } else {
-      this.logger.warn(JSON.stringify({ event: 'npm_cache_clean_failed', stderr: r.stderr.slice(-200).trim() }));
-    }
   }
 
   private spawnOnce(

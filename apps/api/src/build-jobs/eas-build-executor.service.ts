@@ -263,6 +263,26 @@ export class EasBuildExecutorService {
 
   constructor(private readonly config: ConfigService) {}
 
+  /**
+   * Resolves the installed eas-cli binary without using npx.
+   * Checks process.cwd()/node_modules/.bin/eas, then the monorepo root,
+   * then /app/node_modules/.bin/eas (Railway standard deployment path).
+   * Returns null when the binary is not found (non-throwing, for diagnostics).
+   */
+  resolveEasBinaryPath(): string | null {
+    const mobileRoot = this.resolveMobileAppRoot();
+    const monoRoot = mobileRoot ? this.resolveMonorepoRoot(mobileRoot) : null;
+    const candidates = [
+      path.join(process.cwd(), 'node_modules', '.bin', 'eas'),
+      ...(monoRoot ? [path.join(monoRoot, 'node_modules', '.bin', 'eas')] : []),
+      '/app/node_modules/.bin/eas',
+    ];
+    for (const c of candidates) {
+      try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* try next */ }
+    }
+    return null;
+  }
+
   isWorkerEnabled(): boolean {
     const raw = this.config.get<string>('BUILD_WORKER_ENABLED') ?? 'false';
     return raw.trim().toLowerCase() === 'true';
@@ -339,7 +359,7 @@ export class EasBuildExecutorService {
   }
 
   /**
-   * Runs `npx eas-cli build` from a temporary workspace.
+   * Runs `eas build` from a temporary workspace using the locally installed binary.
    *
    * The workspace mirrors the monorepo structure (root configs + apps/mobile + packages/*) so
    * that `pnpm install` resolves workspace:* deps and populates node_modules before EAS CLI
@@ -420,8 +440,6 @@ export class EasBuildExecutorService {
 
     // --no-wait: submit to Expo cloud and return the build URL without blocking for remote completion.
     const easArgs = [
-      '-y',
-      'eas-cli@latest',
       'build',
       '--platform',
       platformArg,
@@ -435,6 +453,9 @@ export class EasBuildExecutorService {
       (this.config.get<string>('DEBUG_KEEP_BUILD_WORKSPACE') ?? '').toLowerCase() === 'true';
 
     const monoRoot = this.resolveMonorepoRoot(mobileRoot);
+
+    // Resolve the locally installed eas binary — never use npx to avoid cache corruption.
+    const easBin = this.requireEasBinary(monoRoot);
     const { workspace, mobileDir } = await this.createWorkspace(
       job.id,
       mobileRoot,
@@ -479,8 +500,8 @@ export class EasBuildExecutorService {
       profile: job.profile,
     });
 
-    // Verify eas-cli is reachable before submitting — auto-cleans corrupted npx cache on failure
-    await this.preflightEasCli(mobileDir, childEnv, job.id);
+    // Pre-flight: confirm the binary executes before consuming a cloud build slot.
+    await this.preflightEasCli(easBin, mobileDir, childEnv, job.id);
 
     const started = Date.now();
     let code: number;
@@ -488,7 +509,7 @@ export class EasBuildExecutorService {
     let stderr: string;
     try {
       ({ code, stdout, stderr } = await this.spawnEasStream(
-        'npx',
+        easBin,
         easArgs,
         { cwd: mobileDir, env: childEnv },
         safeTimeout,
@@ -898,46 +919,40 @@ export class EasBuildExecutorService {
     }
   }
 
-  private async cleanNpmCache(jobId: string): Promise<void> {
-    try {
-      await this.spawnProc('npm', ['cache', 'clean', '--force'], { cwd: os.tmpdir(), env: process.env }, 30_000);
-      this.logger.log(JSON.stringify({ event: 'npm_cache_cleaned', jobId }));
-    } catch (err) {
-      this.logger.warn(JSON.stringify({ event: 'npm_cache_clean_failed', jobId, error: String(err) }));
+  /**
+   * Throws a clear error when the local eas-cli binary cannot be found.
+   * Never falls back to npx — that is what caused the cache corruption in the first place.
+   */
+  private requireEasBinary(monoRoot: string | null): string {
+    const candidates = [
+      path.join(process.cwd(), 'node_modules', '.bin', 'eas'),
+      ...(monoRoot ? [path.join(monoRoot, 'node_modules', '.bin', 'eas')] : []),
+      '/app/node_modules/.bin/eas',
+    ];
+    for (const c of candidates) {
+      try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* try next */ }
     }
+    throw new Error(
+      `local eas-cli binary missing; run pnpm install and ensure eas-cli is in dependencies. Checked: ${candidates.join(', ')}`,
+    );
   }
 
-  private async preflightEasCli(cwd: string, env: NodeJS.ProcessEnv, jobId: string): Promise<void> {
-    this.logger.log(JSON.stringify({ event: 'eas_cli_preflight_start', jobId }));
+  private async preflightEasCli(
+    easBin: string,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    jobId: string,
+  ): Promise<void> {
+    this.logger.log(JSON.stringify({ event: 'eas_cli_preflight_start', jobId, binary: easBin }));
 
-    const runCheck = () =>
-      this.spawnProc('npx', ['-y', 'eas-cli@latest', '--version'], { cwd, env }, 90_000).catch(
-        (err: unknown) => ({ code: 1, stdout: '', stderr: String(err) }),
-      );
-
-    let r = await runCheck();
+    const r = await this.spawnProc(easBin, ['--version'], { cwd, env }, 30_000).catch(
+      (err: unknown) => ({ code: 1, stdout: '', stderr: String(err) }),
+    );
 
     if (r.code !== 0) {
-      const reason = r.stderr.includes('[TIMED OUT') ? 'timeout' : `exit_code_${r.code}`;
-      this.logger.warn(
-        JSON.stringify({
-          event: 'eas_cli_preflight_failed_attempt_1',
-          jobId,
-          reason,
-          stderr: r.stderr.slice(-400).trim(),
-          note: 'Cleaning npm cache and retrying.',
-        }),
+      throw new Error(
+        `eas-cli pre-flight check failed (exit ${r.code}):\n${r.stderr.slice(-400).trim()}\nBinary: ${easBin}`,
       );
-
-      await this.cleanNpmCache(jobId);
-      r = await runCheck();
-
-      if (r.code !== 0) {
-        const reason2 = r.stderr.includes('[TIMED OUT') ? 'timeout after 90s' : `exit_code_${r.code}`;
-        throw new Error(
-          `eas-cli pre-flight check failed after npm cache clean (${reason2}):\n${r.stderr.slice(-400).trim()}`,
-        );
-      }
     }
 
     const versionLine =
