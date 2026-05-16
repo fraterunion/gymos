@@ -21,6 +21,8 @@ type Props = {
   label?: string;
   /** Entrance animation delay in ms. */
   delay?: number;
+  /** Remote image URI. Falls back to atmospheric placeholder when absent. */
+  imageUri?: string;
 };
 
 export function FeaturedClassTile({
@@ -31,6 +33,7 @@ export function FeaturedClassTile({
   height = 240,
   label,
   delay = 0,
+  imageUri,
 }: Props) {
   const ins = item.instructor
     ? `${item.instructor.firstName} ${item.instructor.lastName}`.trim()
@@ -53,9 +56,9 @@ export function FeaturedClassTile({
         onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
         style={{ flex: 1 }}
       >
-        {/* Atmospheric background */}
+        {/* Cinematic background — real image fades in over atmospheric placeholder */}
         <ImageSlot
-          uri={item.classTemplate.color ? undefined : undefined}
+          uri={imageUri}
           vignette
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         />

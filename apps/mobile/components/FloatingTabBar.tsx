@@ -122,25 +122,51 @@ export function FloatingTabBar({ state, descriptors: _descriptors, navigation }:
         right: 24,
       }}
     >
-      {/* The actual pill */}
+      {/* The actual pill — glass morphism via layered translucency */}
       <View
         style={{
           flexDirection: 'row',
-          backgroundColor: 'rgba(10,10,10,0.96)',
+          backgroundColor: 'rgba(12,12,16,0.82)',
           borderRadius: 28,
           borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.07)',
+          borderColor: 'rgba(255,255,255,0.10)',
           height: BAR_HEIGHT,
           alignItems: 'center',
           paddingHorizontal: 4,
-          // Subtle shadow for depth
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: 8 },
-          shadowOpacity: 0.55,
-          shadowRadius: 20,
-          elevation: 20,
+          shadowOffset: { width: 0, height: 12 },
+          shadowOpacity: 0.65,
+          shadowRadius: 32,
+          elevation: 26,
         }}
       >
+        {/* Top edge highlight — simulates glass catching overhead light */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 1,
+            backgroundColor: 'rgba(255,255,255,0.14)',
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+          }}
+        />
+        {/* Subtle inner bottom shadow — depth below tabs */}
+        <View
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 18,
+            backgroundColor: 'rgba(0,0,0,0.10)',
+            borderBottomLeftRadius: 28,
+            borderBottomRightRadius: 28,
+          }}
+        />
+
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
 

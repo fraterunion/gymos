@@ -29,8 +29,14 @@ import {
   formatClassTime,
   todayKeyInZone,
 } from '@/lib/datetime';
+import {
+  resolveClassImageUri,
+  resolveCoachPortraitUri,
+  CATEGORY_MODULES,
+  type CategoryModule,
+} from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
-import type { BookingWithClass } from '@/lib/types/studio';
+import type { BookingWithClass, ScheduledClassDto } from '@/lib/types/studio';
 
 // ---------------------------------------------------------------------------
 // Greeting
@@ -43,6 +49,214 @@ function buildGreeting(firstName: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
+// Category strip — horizontal scroll of curated fitness categories
+// ---------------------------------------------------------------------------
+
+function CategoryTile({ category, delay }: { category: CategoryModule; delay: number }) {
+  const scale = useSharedValue(1);
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(delay).duration(480)}
+      style={[{ width: 118, height: 162, borderRadius: 16, overflow: 'hidden' }, animStyle]}
+    >
+      <Pressable
+        accessibilityRole="button"
+        onPressIn={() => { scale.value = withSpring(0.94, { damping: 20, stiffness: 400 }); }}
+        onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
+        style={{ flex: 1 }}
+      >
+        {/* Cinematic background */}
+        <ImageSlot
+          uri={category.imageUri}
+          vignette
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        />
+
+        {/* Accent dot — category color identifier */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 12,
+            left: 12,
+            width: 7,
+            height: 7,
+            borderRadius: 4,
+            backgroundColor: category.accent,
+          }}
+        />
+
+        {/* Category label */}
+        <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 14 }}>
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: '800',
+              letterSpacing: -0.4,
+              color: '#FFFFFF',
+              lineHeight: 16,
+            }}
+          >
+            {category.label}
+          </Text>
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function CategoryStrip() {
+  return (
+    <Animated.View entering={FadeInDown.delay(80).duration(500)} style={{ marginTop: 8, marginBottom: 36 }}>
+      <Text
+        style={{
+          fontSize: 11,
+          fontWeight: '700',
+          letterSpacing: 1.0,
+          textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.32)',
+          marginBottom: 14,
+        }}
+      >
+        Explore
+      </Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ marginHorizontal: -Space.screenH }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, gap: 10 }}
+      >
+        {CATEGORY_MODULES.map((cat, i) => (
+          <CategoryTile key={cat.id} category={cat} delay={100 + i * 45} />
+        ))}
+      </ScrollView>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Coach spotlight — instructors teaching upcoming classes
+// ---------------------------------------------------------------------------
+
+type CoachEntry = { key: string; firstName: string; lastName: string; classCount: number };
+
+function CoachCard({ coach }: { coach: CoachEntry }) {
+  const portraitUri = resolveCoachPortraitUri(coach.firstName, coach.lastName);
+  const initials = `${coach.firstName[0] ?? ''}${coach.lastName[0] ?? ''}`.toUpperCase();
+
+  return (
+    <View style={{ alignItems: 'center', width: 76 }}>
+      {/* Portrait circle */}
+      <View
+        style={{
+          width: 62,
+          height: 62,
+          borderRadius: 31,
+          overflow: 'hidden',
+          backgroundColor: '#1C1C1E',
+          marginBottom: 10,
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.08)',
+        }}
+      >
+        <ImageSlot uri={portraitUri} vignette={false} style={{ flex: 1 }} />
+        {/* Initials fallback — rendered over image, hidden when image loads */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text style={{ fontSize: 17, fontWeight: '700', color: 'rgba(255,255,255,0.30)' }}>
+            {initials}
+          </Text>
+        </View>
+      </View>
+
+      <Text
+        numberOfLines={1}
+        style={{
+          fontSize: 12,
+          fontWeight: '600',
+          color: '#FFFFFF',
+          letterSpacing: -0.2,
+          textAlign: 'center',
+        }}
+      >
+        {coach.firstName}
+      </Text>
+      <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2, textAlign: 'center' }}>
+        {coach.classCount} {coach.classCount === 1 ? 'class' : 'classes'}
+      </Text>
+    </View>
+  );
+}
+
+function CoachSpotlight({ classes }: { classes: ScheduledClassDto[] }) {
+  const coaches: CoachEntry[] = useMemo(() => {
+    const seen = new Set<string>();
+    const counts = new Map<string, number>();
+    for (const cls of classes) {
+      if (cls.instructor) {
+        const k = `${cls.instructor.firstName} ${cls.instructor.lastName}`;
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
+    }
+    const result: CoachEntry[] = [];
+    for (const cls of classes) {
+      if (!cls.instructor) continue;
+      const k = `${cls.instructor.firstName} ${cls.instructor.lastName}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        result.push({
+          key: k,
+          firstName: cls.instructor.firstName,
+          lastName: cls.instructor.lastName,
+          classCount: counts.get(k) ?? 1,
+        });
+        if (result.length >= 5) break;
+      }
+    }
+    return result;
+  }, [classes]);
+
+  if (coaches.length === 0) return null;
+
+  return (
+    <Animated.View entering={FadeInDown.delay(160).duration(480)} style={{ marginTop: 44 }}>
+      <Text
+        style={{
+          fontSize: 11,
+          fontWeight: '700',
+          letterSpacing: 1.0,
+          textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.32)',
+          marginBottom: 18,
+        }}
+      >
+        Coaches
+      </Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ marginHorizontal: -Space.screenH }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, gap: 20 }}
+      >
+        {coaches.map((coach) => (
+          <CoachCard key={coach.key} coach={coach} />
+        ))}
+      </ScrollView>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Next-session hero — full-bleed cinematic card with check-in CTA inside
 // ---------------------------------------------------------------------------
 
@@ -51,6 +265,7 @@ function NextSessionHero({
   cls,
   timeZone,
   primaryColor,
+  imageUri,
   onPress,
   onCheckIn,
 }: {
@@ -58,6 +273,7 @@ function NextSessionHero({
   cls: { name: string; durationMinutes: number; instructorName: string | null } | null;
   timeZone: string;
   primaryColor: string;
+  imageUri?: string;
   onPress: () => void;
   onCheckIn: () => void;
 }) {
@@ -68,7 +284,7 @@ function NextSessionHero({
   return (
     <Animated.View
       entering={FadeInDown.duration(560)}
-      style={[{ borderRadius: 22, overflow: 'hidden', height: 280 }, animStyle]}
+      style={[{ borderRadius: 22, overflow: 'hidden', height: 284 }, animStyle]}
     >
       <Pressable
         accessibilityRole="button"
@@ -77,8 +293,8 @@ function NextSessionHero({
         onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
         style={{ flex: 1 }}
       >
-        {/* Atmospheric background — will hold a real hero image in future */}
         <ImageSlot
+          uri={imageUri}
           vignette
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         />
@@ -95,7 +311,7 @@ function NextSessionHero({
           }}
         />
 
-        {/* "YOUR NEXT CLASS" label at top-left */}
+        {/* "YOUR NEXT CLASS" label */}
         <View style={{ position: 'absolute', top: 22, left: 22 }}>
           <Text
             style={{
@@ -110,9 +326,8 @@ function NextSessionHero({
           </Text>
         </View>
 
-        {/* Content at bottom */}
+        {/* Content pinned to bottom */}
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 22 }}>
-          {/* Class name */}
           <Text
             numberOfLines={2}
             style={{
@@ -127,31 +342,35 @@ function NextSessionHero({
             {cls?.name ?? 'Class'}
           </Text>
 
-          {/* Time · duration */}
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-            <Text style={{ fontSize: 15, color: 'rgba(255,255,255,0.72)', fontWeight: '500', letterSpacing: -0.1 }}>
+            <Text
+              style={{
+                fontSize: 15,
+                color: 'rgba(255,255,255,0.72)',
+                fontWeight: '500',
+                letterSpacing: -0.1,
+              }}
+            >
               {time}
             </Text>
             {cls ? (
               <>
-                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.30)', marginHorizontal: 7 }}>·</Text>
-                <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.50)' }}>
+                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.28)', marginHorizontal: 7 }}>·</Text>
+                <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.48)' }}>
                   {cls.durationMinutes} min
                 </Text>
               </>
             ) : null}
           </View>
 
-          {/* Instructor */}
           {cls?.instructorName ? (
-            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.40)', marginBottom: 18 }}>
+            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.38)', marginBottom: 18 }}>
               {cls.instructorName}
             </Text>
           ) : (
             <View style={{ height: 18 }} />
           )}
 
-          {/* Inline CTA */}
           <Pressable
             accessibilityRole="button"
             onPress={(e) => { e.stopPropagation?.(); onCheckIn(); }}
@@ -242,7 +461,7 @@ export default function HomeScreen() {
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
   const greeting = useMemo(() => buildGreeting(user?.firstName), [user?.firstName]);
 
-  // Next confirmed upcoming booking, soonest first
+  // Next confirmed booking, soonest first
   const nextBooking = useMemo(() => {
     const now = Date.now();
     return (
@@ -273,7 +492,12 @@ export default function HomeScreen() {
     };
   }, [nextBooking, classes]);
 
-  // Upcoming classes today, sorted by start time
+  const nextBookingImageUri = useMemo(
+    () => (nextBookingClass ? resolveClassImageUri(nextBookingClass.name) : undefined),
+    [nextBookingClass],
+  );
+
+  // Upcoming classes today
   const todaysUpcoming = useMemo(() => {
     const now = Date.now();
     return classes
@@ -301,7 +525,6 @@ export default function HomeScreen() {
 
   const showSkeleton = loading && classes.length === 0;
 
-  // The first today class that isn't the booked hero
   const todayFeatured = todaysUpcoming[0] ?? null;
   const todayRest = nextBooking ? todaysUpcoming : todaysUpcoming.slice(1);
 
@@ -322,7 +545,7 @@ export default function HomeScreen() {
         }
       >
         {/* ── Greeting ── */}
-        <Animated.View entering={FadeInDown.duration(500)} style={{ paddingTop: 28, paddingBottom: 28 }}>
+        <Animated.View entering={FadeInDown.duration(500)} style={{ paddingTop: 28, paddingBottom: 24 }}>
           <Text
             style={{
               fontSize: 40,
@@ -341,6 +564,9 @@ export default function HomeScreen() {
           ) : null}
         </Animated.View>
 
+        {/* ── Category strip — always visible (static editorial content) ── */}
+        <CategoryStrip />
+
         {error ? (
           <View style={{ marginBottom: 16 }}>
             <ErrorBanner message={error} onRetry={refresh} />
@@ -349,10 +575,10 @@ export default function HomeScreen() {
 
         {showSkeleton ? (
           <View style={{ gap: 10 }}>
-            <Skeleton height={280} radius={22} />
+            <Skeleton height={284} radius={22} />
             <Skeleton width="28%" height={10} radius={4} style={{ marginTop: 36 }} />
             <Skeleton height={240} radius={20} style={{ marginTop: 16 }} />
-            <Skeleton height={106} radius={16} style={{ marginTop: 8 }} />
+            <Skeleton height={92} radius={16} style={{ marginTop: 8 }} />
           </View>
         ) : (
           <>
@@ -363,6 +589,7 @@ export default function HomeScreen() {
                 cls={nextBookingClass}
                 timeZone={timeZone}
                 primaryColor={primaryColor}
+                imageUri={nextBookingImageUri}
                 onPress={() => router.push(`/(app)/class/${nextBooking.scheduledClassId}`)}
                 onCheckIn={() => router.push(`/(app)/check-in/${nextBooking.id}`)}
               />
@@ -371,7 +598,6 @@ export default function HomeScreen() {
             {/* ── Today's classes ── */}
             {todaysUpcoming.length > 0 ? (
               <View style={{ marginTop: nextBooking ? 44 : 0 }}>
-                {/* Section label */}
                 <Text
                   style={{
                     fontSize: 11,
@@ -385,14 +611,13 @@ export default function HomeScreen() {
                   Today
                 </Text>
 
-                {/* First class gets editorial FeaturedClassTile if no booking hero shown,
-                    otherwise all are standard ClassCards */}
                 {!nextBooking && todayFeatured ? (
                   <>
                     <FeaturedClassTile
                       item={todayFeatured}
                       timeZone={timeZone}
                       accentColor={todayFeatured.classTemplate.color ?? primaryColor}
+                      imageUri={resolveClassImageUri(todayFeatured.classTemplate.name)}
                       height={240}
                       label="Book now"
                       onPress={() => router.push(`/(app)/class/${todayFeatured.id}`)}
@@ -403,6 +628,7 @@ export default function HomeScreen() {
                         item={c}
                         timeZone={timeZone}
                         accentColor={c.classTemplate.color ?? primaryColor}
+                        imageUri={resolveClassImageUri(c.classTemplate.name)}
                         index={i + 1}
                         onPress={() => router.push(`/(app)/class/${c.id}`)}
                       />
@@ -415,6 +641,7 @@ export default function HomeScreen() {
                       item={c}
                       timeZone={timeZone}
                       accentColor={c.classTemplate.color ?? primaryColor}
+                      imageUri={resolveClassImageUri(c.classTemplate.name)}
                       index={i}
                       onPress={() => router.push(`/(app)/class/${c.id}`)}
                     />
@@ -429,6 +656,9 @@ export default function HomeScreen() {
                 />
               </View>
             ) : null}
+
+            {/* ── Coach spotlight ── */}
+            <CoachSpotlight classes={classes} />
 
             {/* ── Waitlist ── */}
             {waitlistPreview.length > 0 ? (

@@ -19,6 +19,7 @@ import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
 import { formatClassTime } from '@/lib/datetime';
+import { resolveClassImageUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
 
 // ---------------------------------------------------------------------------
@@ -230,9 +231,10 @@ export default function ClassDetailScreen() {
       >
         <Animated.View entering={FadeInDown.duration(400)}>
 
-          {/* ── Cinematic hero: ImageSlot with text overlay ── */}
+          {/* ── Cinematic hero: full-bleed class image with text overlay ── */}
           <View style={{ height: 300, position: 'relative' }}>
             <ImageSlot
+              uri={resolveClassImageUri(cls.classTemplate.name)}
               vignette
               style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
             />

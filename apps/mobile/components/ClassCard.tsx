@@ -6,6 +6,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
+import { ImageSlot } from '@/components/ImageSlot';
 import { Space } from '@/constants/Theme';
 import { formatClassTime } from '@/lib/datetime';
 import type { ScheduledClassDto } from '@/lib/types/studio';
@@ -16,9 +17,13 @@ type Props = {
   accentColor: string;
   onPress: () => void;
   index?: number;
+  /** Remote image URI — renders as right-side thumbnail when provided. */
+  imageUri?: string;
 };
 
-export function ClassCard({ item, timeZone, accentColor, onPress, index = 0 }: Props) {
+const THUMB_W = 84;
+
+export function ClassCard({ item, timeZone, accentColor, onPress, index = 0, imageUri }: Props) {
   const ins = item.instructor
     ? `${item.instructor.firstName} ${item.instructor.lastName}`.trim()
     : null;
@@ -39,47 +44,90 @@ export function ClassCard({ item, timeZone, accentColor, onPress, index = 0 }: P
         onPress={onPress}
         onPressIn={() => { scale.value = withSpring(0.972, { damping: 22, stiffness: 380 }); }}
         onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
-        style={{ flexDirection: 'row', backgroundColor: '#1C1C1C', borderRadius: 16, overflow: 'hidden' }}
+        style={{
+          flexDirection: 'row',
+          backgroundColor: '#1A1A1C',
+          borderRadius: 16,
+          overflow: 'hidden',
+          minHeight: 92,
+        }}
       >
-        {/* Accent strip */}
-        <View style={{ width: 4, backgroundColor: accentColor }} />
+        {/* Left accent strip */}
+        <View style={{ width: 3, backgroundColor: accentColor }} />
 
-        <View style={{ flex: 1, paddingHorizontal: 20, paddingVertical: 22 }}>
-          {/* Class name — the editorial headline */}
+        {/* Text content */}
+        <View style={{ flex: 1, paddingLeft: 18, paddingRight: 14, paddingVertical: 20 }}>
           <Text
             numberOfLines={1}
             style={{
-              fontSize: 26,
+              fontSize: 22,
               fontWeight: '800',
-              letterSpacing: -0.7,
+              letterSpacing: -0.6,
               color: '#FFFFFF',
-              lineHeight: 30,
-              marginBottom: 10,
+              lineHeight: 26,
+              marginBottom: 9,
             }}
           >
             {item.classTemplate.name}
           </Text>
 
-          {/* Time + duration — practical info below the name */}
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={{ fontSize: 14, fontWeight: '500', color: 'rgba(255,255,255,0.55)', letterSpacing: -0.1 }}>
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: '500',
+                color: 'rgba(255,255,255,0.50)',
+                letterSpacing: -0.1,
+              }}
+            >
               {time}
             </Text>
-            <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.28)', marginHorizontal: 6 }}>·</Text>
-            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.32)' }}>
+            <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.24)', marginHorizontal: 6 }}>
+              ·
+            </Text>
+            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.30)' }}>
               {duration} min
             </Text>
           </View>
 
-          {/* Instructor */}
           {ins ? (
             <Text
               numberOfLines={1}
-              style={{ marginTop: 6, fontSize: 13, color: 'rgba(255,255,255,0.38)' }}
+              style={{ marginTop: 5, fontSize: 12, color: 'rgba(255,255,255,0.32)' }}
             >
               {ins}
             </Text>
           ) : null}
+        </View>
+
+        {/* Right image thumbnail */}
+        <View style={{ width: THUMB_W, overflow: 'hidden', position: 'relative' }}>
+          <ImageSlot
+            uri={imageUri}
+            vignette={false}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          />
+          {/* Left-edge fade — blends thumbnail into card background */}
+          <View
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              bottom: 0,
+              width: 28,
+              backgroundColor: 'rgba(26,26,28,0.92)',
+            }}
+          />
+          <View
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 18,
+              bottom: 0,
+              width: 16,
+              backgroundColor: 'rgba(26,26,28,0.55)',
+            }}
+          />
         </View>
       </Pressable>
     </Animated.View>
