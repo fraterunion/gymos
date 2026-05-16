@@ -1,7 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useLayoutEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, Text, useColorScheme, View } from 'react-native';
+import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -20,11 +20,43 @@ import { isClassFullMessage } from '@/lib/classUtils';
 import { formatClassTime } from '@/lib/datetime';
 import { getColors, Space } from '@/constants/Theme';
 
+// Instructor avatar with initials
+function InstructorBlock({ firstName, lastName }: { firstName: string; lastName: string }) {
+  const C = getColors();
+  const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
+  const fullName = `${firstName} ${lastName}`.trim();
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 28 }}>
+      <View
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: C.surface3,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginRight: 14,
+        }}
+      >
+        <Text style={{ fontSize: 14, fontWeight: '700', color: C.text, letterSpacing: 0.5 }}>
+          {initials}
+        </Text>
+      </View>
+      <View>
+        <Text style={{ fontSize: 15, fontWeight: '600', color: C.text, letterSpacing: -0.1 }}>
+          {fullName}
+        </Text>
+        <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>Instructor</Text>
+      </View>
+    </View>
+  );
+}
+
 export default function ClassDetailScreen() {
   const navigation = useNavigation();
   const router = useRouter();
-  const scheme = useColorScheme();
-  const C = getColors(scheme);
+  const C = getColors();
 
   const raw = useLocalSearchParams<{ classId: string | string[] }>().classId;
   const classId = typeof raw === 'string' ? raw : raw?.[0] ?? '';
@@ -110,10 +142,6 @@ export default function ClassDetailScreen() {
     );
   }
 
-  const ins = cls.instructor
-    ? `${cls.instructor.firstName} ${cls.instructor.lastName}`.trim()
-    : null;
-
   const time = formatClassTime(cls.startsAt, timeZone);
   const duration = cls.classTemplate.durationMinutes;
 
@@ -150,123 +178,142 @@ export default function ClassDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }} edges={['bottom', 'left', 'right']}>
-      {/* Scrollable content */}
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: 24 }}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
         }
       >
         <Animated.View entering={FadeInDown.duration(380)}>
-          {/* Class name — hero */}
-          <Text
+          {/* ── Hero header — different surface for depth ── */}
+          <View
             style={{
-              fontSize: 30,
-              fontWeight: '700',
-              letterSpacing: -0.7,
-              color: C.text,
-              marginTop: 28,
-              lineHeight: 36,
+              backgroundColor: C.surface1,
+              paddingHorizontal: Space.screenH,
+              paddingTop: 32,
+              paddingBottom: 28,
             }}
           >
-            {cls.classTemplate.name}
-          </Text>
-
-          {/* Time + duration — second tier */}
-          <Text
-            style={{
-              fontSize: 16,
-              color: C.textSub,
-              marginTop: 10,
-              letterSpacing: -0.1,
-            }}
-          >
-            {time}{'  ·  '}{duration} min
-          </Text>
-
-          {/* Instructor — whispered */}
-          {ins ? (
-            <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
-              {ins}
-            </Text>
-          ) : null}
-
-          {/* Description if available */}
-          {cls.classTemplate.description ? (
+            {/* Class name — cinematic */}
             <Text
               style={{
-                fontSize: 15,
-                lineHeight: 23,
-                color: C.textSub,
-                marginTop: 24,
+                fontSize: 42,
+                fontWeight: '800',
+                letterSpacing: -1.5,
+                color: C.text,
+                lineHeight: 48,
               }}
             >
-              {cls.classTemplate.description}
+              {cls.classTemplate.name}
             </Text>
-          ) : null}
 
-          {/* Status messages — minimal, no "Status · SCHEDULED" labels */}
-          {!isScheduled ? (
-            <View style={{ marginTop: 36 }}>
-              <EmptyHint title="Not bookable" body="This session is not open for new bookings." />
+            {/* Time + duration row */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
+              <Text style={{ fontSize: 17, color: C.textSub, letterSpacing: -0.2 }}>
+                {time}
+              </Text>
+              <Text style={{ fontSize: 14, color: C.textMute, marginHorizontal: 8 }}>·</Text>
+              <Text style={{ fontSize: 16, color: C.textMute }}>
+                {duration} min
+              </Text>
             </View>
-          ) : hasStarted ? (
-            <View style={{ marginTop: 36 }}>
-              <EmptyHint title="Class has started" body="Booking and waitlist changes are closed." />
+
+            {/* Capacity */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+              <Text style={{ fontSize: 13, color: C.textMute }}>
+                Up to {cls.capacity} spots
+              </Text>
             </View>
-          ) : waitlistEntry?.status === 'PROMOTED' && !booking ? (
-            <View style={{ marginTop: 36 }}>
-              <EmptyHint
-                title="You've been promoted"
-                body="A seat may be held for you. Pull to refresh or check My bookings."
+
+            {/* Instructor block */}
+            {cls.instructor ? (
+              <InstructorBlock
+                firstName={cls.instructor.firstName}
+                lastName={cls.instructor.lastName}
               />
-            </View>
-          ) : null}
+            ) : null}
+          </View>
 
-          {offerWaitlist ? (
-            <Text
-              style={{
-                marginTop: 20,
-                textAlign: 'center',
-                fontSize: 14,
-                lineHeight: 21,
-                color: C.textMute,
-              }}
-            >
-              This class is full. Join the waitlist and we'll notify you if a spot opens.
-            </Text>
-          ) : null}
+          {/* ── Body ── */}
+          <View style={{ paddingHorizontal: Space.screenH, paddingTop: 24 }}>
+            {/* Description */}
+            {cls.classTemplate.description ? (
+              <Text
+                style={{
+                  fontSize: 16,
+                  lineHeight: 25,
+                  color: C.textSub,
+                  letterSpacing: -0.1,
+                }}
+              >
+                {cls.classTemplate.description}
+              </Text>
+            ) : null}
 
-          {inlineError ? (
-            <Text
-              style={{
-                marginTop: 20,
-                textAlign: 'center',
-                fontSize: 14,
-                color: C.negative,
-              }}
-            >
-              {inlineError}
-            </Text>
-          ) : null}
+            {/* Status messages */}
+            {!isScheduled ? (
+              <View style={{ marginTop: 32 }}>
+                <EmptyHint title="Not bookable" body="This session is not open for new bookings." />
+              </View>
+            ) : hasStarted ? (
+              <View style={{ marginTop: 32 }}>
+                <EmptyHint title="Class has started" body="Booking and waitlist changes are closed." />
+              </View>
+            ) : waitlistEntry?.status === 'PROMOTED' && !booking ? (
+              <View style={{ marginTop: 32 }}>
+                <EmptyHint
+                  title="You've been promoted"
+                  body="A seat may be held for you. Pull to refresh or check My bookings."
+                />
+              </View>
+            ) : null}
 
-          {subscriptionRequired ? (
-            <View style={{ marginTop: 24 }}>
-              <SubscriptionRequiredPanel accentColor={primaryColor} appDisplayName={appDisplayName} />
-            </View>
-          ) : null}
+            {offerWaitlist ? (
+              <Text
+                style={{
+                  marginTop: 20,
+                  textAlign: 'center',
+                  fontSize: 15,
+                  lineHeight: 22,
+                  color: C.textMute,
+                }}
+              >
+                This class is full. Join the waitlist and we'll notify you if a spot opens.
+              </Text>
+            ) : null}
+
+            {inlineError ? (
+              <Text
+                style={{
+                  marginTop: 20,
+                  textAlign: 'center',
+                  fontSize: 14,
+                  color: C.negative,
+                  lineHeight: 21,
+                }}
+              >
+                {inlineError}
+              </Text>
+            ) : null}
+
+            {subscriptionRequired ? (
+              <View style={{ marginTop: 24 }}>
+                <SubscriptionRequiredPanel accentColor={primaryColor} appDisplayName={appDisplayName} />
+              </View>
+            ) : null}
+          </View>
         </Animated.View>
       </ScrollView>
 
-      {/* ── Sticky CTA bar ── always visible, never scrolls away */}
+      {/* ── Sticky CTA bar ── */}
       {(primaryCTA || booking) ? (
         <View
           style={{
             paddingHorizontal: Space.screenH,
-            paddingBottom: 12,
-            paddingTop: 12,
+            paddingBottom: 16,
+            paddingTop: 14,
             borderTopWidth: 1,
             borderTopColor: C.separator,
             backgroundColor: C.bg,

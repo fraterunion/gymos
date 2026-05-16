@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
 import { useMemo } from 'react';
-import { Pressable, RefreshControl, ScrollView, Text, useColorScheme, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { ClassCard } from '@/components/ClassCard';
 import { EmptyHint, ErrorBanner, LoadRetryPanel, Skeleton, ScreenLoader } from '@/components/StudioScreenChrome';
+import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
@@ -18,7 +19,17 @@ import { getColors, Space } from '@/constants/Theme';
 import type { BookingWithClass } from '@/lib/types/studio';
 
 // ---------------------------------------------------------------------------
-// Hero booking card — the first thing a member should see
+// Greeting helper
+// ---------------------------------------------------------------------------
+
+function buildGreeting(firstName: string | null | undefined): string {
+  const hour = new Date().getHours();
+  const salutation = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  return firstName ? `${salutation},\n${firstName}.` : `${salutation}.`;
+}
+
+// ---------------------------------------------------------------------------
+// Next session hero card
 // ---------------------------------------------------------------------------
 
 function NextSessionCard({
@@ -36,81 +47,75 @@ function NextSessionCard({
   onPress: () => void;
   onCheckIn: () => void;
 }) {
-  const scheme = useColorScheme();
-  const C = getColors(scheme);
+  const C = getColors();
   const time = formatClassTime(booking.scheduledClass.startsAt, timeZone);
 
   return (
-    <Animated.View entering={FadeInDown.duration(480)} style={{ marginBottom: 8 }}>
+    <Animated.View entering={FadeInDown.duration(500)}>
       <Pressable
         accessibilityRole="button"
         onPress={onPress}
         style={{
           backgroundColor: C.surface2,
           borderRadius: 20,
-          paddingHorizontal: Space.cardH,
-          paddingVertical: 24,
+          overflow: 'hidden',
         }}
       >
-        {/* Label row */}
-        <Text
-          style={{
-            fontSize: 10,
-            fontWeight: '700',
-            letterSpacing: 1.2,
-            textTransform: 'uppercase',
-            color: C.textMute,
-            marginBottom: 14,
-          }}
-        >
-          Next session
-        </Text>
+        {/* Brand-color top strip */}
+        <View style={{ height: 3, backgroundColor: primaryColor }} />
 
-        {/* Class name — the hero element */}
-        <Text
-          numberOfLines={2}
-          style={{
-            fontSize: 28,
-            fontWeight: '700',
-            letterSpacing: -0.6,
-            color: C.text,
-            lineHeight: 33,
-            marginBottom: 10,
-          }}
-        >
-          {cls?.name ?? 'Class'}
-        </Text>
-
-        {/* Time + duration */}
-        <Text style={{ fontSize: 15, color: C.textSub, letterSpacing: -0.1, marginBottom: 4 }}>
-          {time}
-          {cls ? `  ·  ${cls.durationMinutes} min` : ''}
-        </Text>
-
-        {/* Instructor */}
-        {cls?.instructorName ? (
-          <Text style={{ fontSize: 13, color: C.textMute, marginBottom: 0 }}>
-            {cls.instructorName}
-          </Text>
-        ) : null}
-
-        {/* Separator */}
-        <View
-          style={{ height: 1, backgroundColor: C.separator, marginVertical: 18 }}
-        />
-
-        {/* Action */}
-        <Pressable
-          accessibilityRole="button"
-          onPress={(e) => { e.stopPropagation?.(); onCheckIn(); }}
-          hitSlop={8}
-        >
+        <View style={{ paddingHorizontal: Space.cardH, paddingVertical: 26 }}>
+          {/* Class name — cinematic */}
           <Text
-            style={{ fontSize: 14, fontWeight: '600', color: primaryColor, letterSpacing: -0.1 }}
+            numberOfLines={2}
+            style={{
+              fontSize: 38,
+              fontWeight: '800',
+              letterSpacing: -1.5,
+              color: C.text,
+              lineHeight: 43,
+              marginBottom: 14,
+            }}
           >
-            Check-in QR →
+            {cls?.name ?? 'Class'}
           </Text>
-        </Pressable>
+
+          {/* Time · duration */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <Text style={{ fontSize: 16, color: C.textSub, letterSpacing: -0.2 }}>
+              {time}
+            </Text>
+            {cls ? (
+              <>
+                <Text style={{ fontSize: 13, color: C.textMute, marginHorizontal: 7 }}>·</Text>
+                <Text style={{ fontSize: 15, color: C.textMute }}>
+                  {cls.durationMinutes} min
+                </Text>
+              </>
+            ) : null}
+          </View>
+
+          {/* Instructor */}
+          {cls?.instructorName ? (
+            <Text style={{ fontSize: 13, color: C.textMute }}>
+              {cls.instructorName}
+            </Text>
+          ) : null}
+
+          {/* Divider */}
+          <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 22 }} />
+
+          {/* CTA */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={(e) => { e.stopPropagation?.(); onCheckIn(); }}
+            hitSlop={8}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '700', color: primaryColor, letterSpacing: -0.2 }}>
+              Check-in QR →
+            </Text>
+          </Pressable>
+        </View>
       </Pressable>
     </Animated.View>
   );
@@ -122,16 +127,17 @@ function NextSessionCard({
 
 export default function HomeScreen() {
   const router = useRouter();
-  const scheme = useColorScheme();
-  const C = getColors(scheme);
+  const C = getColors();
   const { primaryColor } = useBranding();
+  const { user } = useAuth();
   const matched = useMemberStudio().matched;
   const { classes, myBookings, myWaitlist, loading, error, refresh } = useStudioActivity();
 
   const timeZone = matched?.studio.timezone ?? 'UTC';
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
+  const greeting = useMemo(() => buildGreeting(user?.firstName), [user?.firstName]);
 
-  // Next confirmed upcoming booking, sorted by start time
+  // Next confirmed upcoming booking
   const nextBooking = useMemo(() => {
     const now = Date.now();
     return (
@@ -149,7 +155,6 @@ export default function HomeScreen() {
     );
   }, [myBookings]);
 
-  // Data to display in the hero card (cross-ref with classes for full details)
   const nextBookingClass = useMemo(() => {
     if (!nextBooking) return null;
     const cls = classes.find((c) => c.id === nextBooking.scheduledClassId);
@@ -163,7 +168,7 @@ export default function HomeScreen() {
     };
   }, [nextBooking, classes]);
 
-  // Today's upcoming classes (excluding the one already booked as hero)
+  // Today's upcoming classes
   const todaysUpcoming = useMemo(() => {
     const now = Date.now();
     return classes
@@ -176,7 +181,7 @@ export default function HomeScreen() {
       .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
   }, [classes, timeZone, todayKey]);
 
-  // Active waitlist entries (limited to 3 to avoid clutter)
+  // Active waitlist entries (max 3)
   const waitlistPreview = useMemo(
     () =>
       myWaitlist
@@ -196,76 +201,69 @@ export default function HomeScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 48 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 56 }}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
         }
       >
-        {/* ── BUILD MARKER — remove after confirming new build renders ── */}
-        <View
-          style={{
-            backgroundColor: '#DC2626',
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            borderRadius: 10,
-            marginTop: 16,
-            marginBottom: 4,
-          }}
-        >
-          <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '700', textAlign: 'center', letterSpacing: 0.5 }}>
-            BUILD MARKER: PHASE19A-0e2ec91
+        {/* ── Greeting hero ── */}
+        <Animated.View entering={FadeInDown.duration(550)} style={{ paddingTop: 28, paddingBottom: 32 }}>
+          <Text
+            style={{
+              fontSize: 40,
+              fontWeight: '800',
+              letterSpacing: -1.5,
+              color: C.text,
+              lineHeight: 46,
+            }}
+          >
+            {greeting}
           </Text>
-          {process.env.EXPO_PUBLIC_BUILD_MARKER ? (
-            <Text style={{ color: '#FFFFFF', fontSize: 11, textAlign: 'center', marginTop: 2, opacity: 0.85 }}>
-              ENV: {process.env.EXPO_PUBLIC_BUILD_MARKER}
+          {matched?.studio.name ? (
+            <Text style={{ fontSize: 14, color: C.textMute, marginTop: 8 }}>
+              {matched.studio.name}
             </Text>
-          ) : (
-            <Text style={{ color: '#FFAAAA', fontSize: 11, textAlign: 'center', marginTop: 2 }}>
-              ENV MARKER MISSING
-            </Text>
-          )}
-        </View>
+          ) : null}
+        </Animated.View>
 
         {error ? (
-          <View style={{ paddingTop: 8 }}>
+          <View style={{ marginBottom: 16 }}>
             <ErrorBanner message={error} onRetry={refresh} />
           </View>
         ) : null}
 
         {showSkeleton ? (
-          <View style={{ paddingTop: 24, gap: 12 }}>
-            <Skeleton height={180} radius={20} />
-            <Skeleton width="35%" height={11} radius={4} style={{ marginTop: 28, marginBottom: 8 }} />
-            <Skeleton height={82} radius={16} />
-            <Skeleton height={82} radius={16} />
+          <View style={{ gap: 12 }}>
+            <Skeleton height={210} radius={20} />
+            <Skeleton width="30%" height={10} radius={4} style={{ marginTop: 28, marginBottom: 8 }} />
+            <Skeleton height={100} radius={16} />
+            <Skeleton height={100} radius={16} />
           </View>
         ) : (
           <>
-            {/* ── Hero: Next Booking ── */}
-            <View style={{ paddingTop: 20 }}>
-              {nextBooking ? (
-                <NextSessionCard
-                  booking={nextBooking}
-                  cls={nextBookingClass}
-                  timeZone={timeZone}
-                  primaryColor={primaryColor}
-                  onPress={() => router.push(`/(app)/class/${nextBooking.scheduledClassId}`)}
-                  onCheckIn={() => router.push(`/(app)/check-in/${nextBooking.id}`)}
-                />
-              ) : null}
-            </View>
+            {/* ── Next booking hero ── */}
+            {nextBooking ? (
+              <NextSessionCard
+                booking={nextBooking}
+                cls={nextBookingClass}
+                timeZone={timeZone}
+                primaryColor={primaryColor}
+                onPress={() => router.push(`/(app)/class/${nextBooking.scheduledClassId}`)}
+                onCheckIn={() => router.push(`/(app)/check-in/${nextBooking.id}`)}
+              />
+            ) : null}
 
             {/* ── Today's schedule ── */}
             {todaysUpcoming.length > 0 ? (
-              <View style={{ marginTop: nextBooking ? 28 : 8 }}>
+              <View style={{ marginTop: nextBooking ? 40 : 0 }}>
                 <Text
                   style={{
                     fontSize: 11,
-                    fontWeight: '600',
-                    letterSpacing: 0.8,
+                    fontWeight: '700',
+                    letterSpacing: 1.0,
                     textTransform: 'uppercase',
                     color: primaryColor,
-                    marginBottom: 14,
+                    marginBottom: 16,
                   }}
                 >
                   Today
@@ -282,7 +280,7 @@ export default function HomeScreen() {
                 ))}
               </View>
             ) : !nextBooking ? (
-              <View style={{ marginTop: 20 }}>
+              <View style={{ marginTop: 8 }}>
                 <EmptyHint
                   title="No classes today"
                   body="Browse the schedule for upcoming sessions."
@@ -290,17 +288,17 @@ export default function HomeScreen() {
               </View>
             ) : null}
 
-            {/* ── Waitlist ── (compact, only shown when present) */}
+            {/* ── Waitlist ── */}
             {waitlistPreview.length > 0 ? (
               <View style={{ marginTop: Space.sectionGap }}>
                 <Text
                   style={{
                     fontSize: 11,
-                    fontWeight: '600',
-                    letterSpacing: 0.8,
+                    fontWeight: '700',
+                    letterSpacing: 1.0,
                     textTransform: 'uppercase',
                     color: C.textMute,
-                    marginBottom: 14,
+                    marginBottom: 16,
                   }}
                 >
                   Waitlist
@@ -320,25 +318,25 @@ export default function HomeScreen() {
                           flexDirection: 'row',
                           alignItems: 'center',
                           backgroundColor: C.surface1,
-                          borderRadius: 12,
-                          paddingHorizontal: 16,
-                          paddingVertical: 14,
+                          borderRadius: 14,
+                          paddingHorizontal: 18,
+                          paddingVertical: 16,
                         }}
                       >
                         <View style={{ flex: 1 }}>
                           <Text
                             numberOfLines={1}
-                            style={{ fontSize: 15, fontWeight: '500', color: C.text }}
+                            style={{ fontSize: 16, fontWeight: '600', color: C.text, letterSpacing: -0.2 }}
                           >
                             {cls?.classTemplate.name ?? 'Class'}
                           </Text>
                           {w.queueRank != null ? (
-                            <Text style={{ fontSize: 12, color: C.textMute, marginTop: 3 }}>
+                            <Text style={{ fontSize: 12, color: C.textMute, marginTop: 4 }}>
                               #{w.queueRank} on waitlist
                             </Text>
                           ) : null}
                         </View>
-                        <Text style={{ fontSize: 13, color: C.textMute }}>›</Text>
+                        <Text style={{ fontSize: 16, color: C.textMute }}>›</Text>
                       </Pressable>
                     </Animated.View>
                   );

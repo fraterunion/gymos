@@ -419,8 +419,6 @@ export class EasBuildExecutorService {
     if (accountName) childEnv.EAS_ACCOUNT_NAME = accountName;
 
     // --no-wait: submit to Expo cloud and return the build URL without blocking for remote completion.
-    // --clear-cache: force Expo's remote Metro server to re-bundle from scratch (diagnostic for Phase 19A).
-    // TODO: remove --clear-cache after confirming Phase 19A renders in installed APK.
     const easArgs = [
       '-y',
       'eas-cli@latest',
@@ -431,7 +429,6 @@ export class EasBuildExecutorService {
       profileArg,
       '--non-interactive',
       '--no-wait',
-      '--clear-cache',
     ];
 
     const keepWorkspace =
@@ -466,8 +463,6 @@ export class EasBuildExecutorService {
         // Runtime constants — Metro inlines these as bundle-time replacements
         EXPO_PUBLIC_API_URL: expoPublicApiUrl,   // MUST be origin-only (sanitized above)
         EXPO_PUBLIC_STUDIO_SLUG: studioSlug,
-        // Forensic build marker — proves this eas.json patch ran with Phase 19A source
-        EXPO_PUBLIC_BUILD_MARKER: 'PHASE19A-0e2ec91',
         // Prevent Expo's remote build server from loading .env files that could override our values
         EXPO_NO_DOTENV: '1',
       },
@@ -626,37 +621,6 @@ export class EasBuildExecutorService {
     copyRecursive(mobileRoot, tempMobile, (f) =>
       this.logger.warn(JSON.stringify({ event: 'optional_file_skipped', file: path.relative(mobileRoot, f) })),
     );
-
-    // Forensic diagnostic: prove whether the copied source is fresh (contains Phase 19A marker)
-    // or stale (Railway container has old source that was never updated on redeploy).
-    const homeScreenInTemp = path.join(tempMobile, 'app', '(app)', '(tabs)', 'index.tsx');
-    if (fs.existsSync(homeScreenInTemp)) {
-      const homeContent = fs.readFileSync(homeScreenInTemp, 'utf8');
-      const hasPhase19Marker = homeContent.includes('PHASE19A');
-      this.logger.log(
-        JSON.stringify({
-          event: 'workspace_source_diagnostic',
-          jobId,
-          homeScreenPath: homeScreenInTemp,
-          hasPhase19Marker,
-          mobileRootUsed: mobileRoot,
-          note: hasPhase19Marker
-            ? 'Source is FRESH — Phase 19A changes are present in temp workspace'
-            : 'Source is STALE — Phase 19A changes NOT found; Railway container may have old source',
-        }),
-      );
-    } else {
-      this.logger.warn(
-        JSON.stringify({
-          event: 'workspace_source_diagnostic',
-          jobId,
-          homeScreenPath: homeScreenInTemp,
-          hasPhase19Marker: null,
-          note: 'Home screen file not found in temp workspace — copy may have failed or path is unexpected',
-          mobileRootUsed: mobileRoot,
-        }),
-      );
-    }
 
     // 3. All packages/* (tiny — just tsconfig presets and tailwind configs; needed for workspace:*)
     const workspaceEntries: string[] = ['apps/mobile'];

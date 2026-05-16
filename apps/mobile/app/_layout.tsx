@@ -19,11 +19,6 @@ import { SelectedStudioProvider } from '@/contexts/SelectedStudioContext';
 
 export { ErrorBoundary } from 'expo-router';
 
-// Build marker — proves which source snapshot the EAS build used.
-// Remove after confirming Phase 19A renders in installed APK.
-console.log('[BUILD] MARKER: PHASE19A-0e2ec91');
-console.log('[BUILD] EXPO_PUBLIC_BUILD_MARKER:', process.env.EXPO_PUBLIC_BUILD_MARKER ?? '(not set)');
-
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {

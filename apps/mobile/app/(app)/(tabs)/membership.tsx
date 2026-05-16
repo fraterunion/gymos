@@ -7,7 +7,6 @@ import {
   RefreshControl,
   ScrollView,
   Text,
-  useColorScheme,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -47,7 +46,7 @@ function creditsLabel(credits: number | null): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Active membership card (physical card aesthetic)
+// Active membership — physical luxury card
 // ---------------------------------------------------------------------------
 
 function MembershipCard({
@@ -65,89 +64,114 @@ function MembershipCard({
   onManage: () => void;
   portalBusy: boolean;
 }) {
-  const scheme = useColorScheme();
-  const C = getColors(scheme);
+  const C = getColors();
   const isActive = status === 'ACTIVE' || status === 'TRIALING';
+  const isCancelling = status === 'ACTIVE' && renewsAt.includes('Cancelling');
 
   return (
     <Animated.View entering={FadeInDown.duration(450)}>
+      {/* Card outer — layered for depth */}
       <View
         style={{
-          backgroundColor: C.surface2,
-          borderRadius: 20,
-          padding: 24,
+          backgroundColor: '#1C1C1C',
+          borderRadius: 24,
+          overflow: 'hidden',
           marginBottom: 8,
         }}
       >
-        {/* Top row: status dot */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
+        {/* Top accent bar */}
+        <View style={{ height: 4, backgroundColor: isActive ? primaryColor : C.surface3 }} />
+
+        <View style={{ padding: 28 }}>
+          {/* Status pill */}
           <View
             style={{
-              width: 7,
-              height: 7,
-              borderRadius: 4,
-              backgroundColor: isActive ? C.positive : C.textMute,
-              marginRight: 7,
-            }}
-          />
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: '600',
-              letterSpacing: 0.7,
-              textTransform: 'uppercase',
-              color: isActive ? C.positive : C.textMute,
+              alignSelf: 'flex-start',
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: isActive
+                ? 'rgba(52,211,153,0.12)'
+                : 'rgba(255,255,255,0.06)',
+              borderRadius: 100,
+              paddingVertical: 5,
+              paddingHorizontal: 10,
+              marginBottom: 24,
             }}
           >
-            {isActive ? 'Active' : status.toLowerCase()}
+            <View
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: isCancelling
+                  ? C.caution
+                  : isActive
+                  ? C.positive
+                  : C.textMute,
+                marginRight: 6,
+              }}
+            />
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+                color: isCancelling ? C.caution : isActive ? C.positive : C.textMute,
+              }}
+            >
+              {isCancelling ? 'Cancelling' : isActive ? 'Active' : status.toLowerCase()}
+            </Text>
+          </View>
+
+          {/* Plan name — the hero */}
+          <Text
+            style={{
+              fontSize: 34,
+              fontWeight: '800',
+              letterSpacing: -1.0,
+              color: C.text,
+              lineHeight: 38,
+              marginBottom: 12,
+            }}
+          >
+            {planName}
           </Text>
+
+          {/* Renewal info */}
+          <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 20 }}>
+            {renewsAt}
+          </Text>
+
+          {/* Divider */}
+          <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 24 }} />
+
+          {/* Manage billing */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={onManage}
+            disabled={portalBusy}
+            hitSlop={8}
+          >
+            <Text
+              style={{
+                fontSize: 15,
+                fontWeight: '700',
+                color: portalBusy ? C.textMute : primaryColor,
+                letterSpacing: -0.2,
+              }}
+            >
+              {portalBusy ? 'Opening…' : 'Manage billing →'}
+            </Text>
+          </Pressable>
         </View>
-
-        {/* Plan name — the headline */}
-        <Text
-          style={{
-            fontSize: 24,
-            fontWeight: '700',
-            letterSpacing: -0.4,
-            color: C.text,
-            marginBottom: 8,
-          }}
-        >
-          {planName}
-        </Text>
-
-        {/* Renewal */}
-        <Text style={{ fontSize: 13, color: C.textMute }}>
-          {renewsAt}
-        </Text>
-
-        {/* Separator */}
-        <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 20 }} />
-
-        {/* Manage billing */}
-        <Pressable
-          accessibilityRole="button"
-          onPress={onManage}
-          disabled={portalBusy}
-          hitSlop={8}
-        >
-          <Text
-            style={{
-              fontSize: 14,
-              fontWeight: '600',
-              color: portalBusy ? C.textMute : primaryColor,
-            }}
-          >
-            {portalBusy ? 'Opening…' : 'Manage billing →'}
-          </Text>
-        </Pressable>
       </View>
     </Animated.View>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Plan card
+// Plan card — price as the dominant element
 // ---------------------------------------------------------------------------
 
 function PlanCard({
@@ -165,9 +189,7 @@ function PlanCard({
   primaryColor: string;
   index: number;
 }) {
-  const scheme = useColorScheme();
-  const C = getColors(scheme);
-
+  const C = getColors();
   const priceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
   const intervalStr = billingIntervalLabel(plan.billingInterval);
   const credits = creditsLabel(plan.classCredits);
@@ -181,41 +203,43 @@ function PlanCard({
         style={{
           backgroundColor: C.surface2,
           borderRadius: 20,
-          padding: 24,
+          padding: 26,
         }}
       >
-        {/* Plan name */}
+        {/* Plan name — editorial uppercase label */}
         <Text
           style={{
-            fontSize: 17,
-            fontWeight: '600',
-            letterSpacing: -0.2,
-            color: C.text,
-            marginBottom: 4,
+            fontSize: 11,
+            fontWeight: '700',
+            letterSpacing: 1.0,
+            textTransform: 'uppercase',
+            color: C.textMute,
+            marginBottom: 8,
           }}
         >
           {plan.name}
         </Text>
 
-        {/* Price — the hero element */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16, marginTop: 8 }}>
+        {/* Price — the unmistakable hero */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 18 }}>
           <Text
             style={{
-              fontSize: 36,
-              fontWeight: '700',
-              letterSpacing: -1,
+              fontSize: 48,
+              fontWeight: '800',
+              letterSpacing: -2,
               color: C.text,
-              lineHeight: 42,
+              lineHeight: 52,
             }}
           >
             {priceStr}
           </Text>
           <Text
             style={{
-              fontSize: 14,
+              fontSize: 16,
               color: C.textMute,
-              marginBottom: 6,
+              marginBottom: 8,
               marginLeft: 4,
+              letterSpacing: -0.2,
             }}
           >
             {intervalStr}
@@ -227,9 +251,10 @@ function PlanCard({
           <Text
             style={{
               fontSize: 14,
-              lineHeight: 21,
+              lineHeight: 22,
               color: C.textSub,
               marginBottom: 12,
+              letterSpacing: -0.1,
             }}
           >
             {plan.description}
@@ -238,11 +263,12 @@ function PlanCard({
 
         {/* Credits */}
         {credits ? (
-          <Text style={{ fontSize: 13, color: C.textMute, marginBottom: 20 }}>
-            {credits}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 22 }}>
+            <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: C.textMute, marginRight: 8 }} />
+            <Text style={{ fontSize: 13, color: C.textMute }}>{credits}</Text>
+          </View>
         ) : (
-          <View style={{ marginBottom: 20 }} />
+          <View style={{ marginBottom: 22 }} />
         )}
 
         <BrandButton
@@ -258,12 +284,75 @@ function PlanCard({
 }
 
 // ---------------------------------------------------------------------------
+// No-membership prompt
+// ---------------------------------------------------------------------------
+
+function NoMembershipPrompt({
+  primaryColor,
+  onManage,
+  portalBusy,
+}: {
+  primaryColor: string;
+  onManage: () => void;
+  portalBusy: boolean;
+}) {
+  const C = getColors();
+  return (
+    <Animated.View entering={FadeInDown.duration(400)}>
+      <View
+        style={{
+          backgroundColor: C.surface1,
+          borderRadius: 20,
+          padding: 28,
+          marginBottom: 8,
+          alignItems: 'center',
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 22,
+            fontWeight: '800',
+            letterSpacing: -0.5,
+            color: C.text,
+            textAlign: 'center',
+            marginBottom: 10,
+          }}
+        >
+          No active membership
+        </Text>
+        <Text
+          style={{
+            fontSize: 15,
+            color: C.textSub,
+            lineHeight: 22,
+            textAlign: 'center',
+            maxWidth: 240,
+            marginBottom: 24,
+          }}
+        >
+          Choose a plan below to unlock class booking.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onManage}
+          disabled={portalBusy}
+          hitSlop={8}
+        >
+          <Text style={{ fontSize: 15, fontWeight: '700', color: portalBusy ? C.textMute : primaryColor }}>
+            {portalBusy ? 'Opening…' : 'Manage billing →'}
+          </Text>
+        </Pressable>
+      </View>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 
 export default function MembershipScreen() {
-  const scheme = useColorScheme();
-  const C = getColors(scheme);
+  const C = getColors();
   const { primaryColor, appDisplayName } = useBranding();
   const { matched } = useMemberStudio();
   const { refresh: refreshStudioActivity } = useStudioActivity();
@@ -377,7 +466,7 @@ export default function MembershipScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 48 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 56 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -386,14 +475,15 @@ export default function MembershipScreen() {
           />
         }
       >
-        {/* ── Page title ── */}
-        <View style={{ paddingTop: 28, marginBottom: 24 }}>
+        {/* ── Page header ── */}
+        <Animated.View entering={FadeInDown.duration(400)} style={{ paddingTop: 28, marginBottom: 28 }}>
           <Text
             style={{
-              fontSize: 30,
-              fontWeight: '700',
-              letterSpacing: -0.7,
+              fontSize: 38,
+              fontWeight: '800',
+              letterSpacing: -1.3,
               color: C.text,
+              lineHeight: 44,
             }}
           >
             Membership
@@ -401,13 +491,13 @@ export default function MembershipScreen() {
           <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
             {appDisplayName}
           </Text>
-        </View>
+        </Animated.View>
 
         {error ? (
           <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16 }}>{error}</Text>
         ) : null}
 
-        {/* ── Active subscription card ── */}
+        {/* ── Active card or no-membership prompt ── */}
         {sub ? (
           <MembershipCard
             planName={sub.plan.name}
@@ -418,51 +508,30 @@ export default function MembershipScreen() {
             portalBusy={portalBusy}
           />
         ) : (
-          // No subscription — show skeleton row or "choose a plan" prompt
-          <View style={{ marginBottom: Space.sectionGap }}>
-            <View
-              style={{
-                backgroundColor: C.surface1,
-                borderRadius: 16,
-                paddingHorizontal: Space.cardH,
-                paddingVertical: 20,
-              }}
-            >
-              <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>
-                No active membership. Choose a plan below to unlock booking.
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => void openPortal()}
-                disabled={portalBusy}
-                hitSlop={8}
-                style={{ marginTop: 14 }}
-              >
-                <Text style={{ fontSize: 14, fontWeight: '600', color: portalBusy ? C.textMute : primaryColor }}>
-                  {portalBusy ? 'Opening…' : 'Manage billing →'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
+          <NoMembershipPrompt
+            primaryColor={primaryColor}
+            onManage={() => void openPortal()}
+            portalBusy={portalBusy}
+          />
         )}
 
         {portalError ? (
-          <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16, textAlign: 'center' }}>
+          <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16, textAlign: 'center', marginTop: 8 }}>
             {portalError}
           </Text>
         ) : null}
 
-        {/* ── Plans ── */}
+        {/* ── Available plans ── */}
         {plans.length > 0 ? (
-          <View style={{ marginTop: sub ? Space.sectionGap : 0 }}>
+          <View style={{ marginTop: Space.sectionGap }}>
             <Text
               style={{
                 fontSize: 11,
-                fontWeight: '600',
-                letterSpacing: 0.8,
+                fontWeight: '700',
+                letterSpacing: 1.0,
                 textTransform: 'uppercase',
                 color: C.textMute,
-                marginBottom: 16,
+                marginBottom: 18,
               }}
             >
               Available plans
@@ -481,11 +550,11 @@ export default function MembershipScreen() {
           </View>
         ) : loading ? (
           <View style={{ gap: 10, marginTop: Space.sectionGap }}>
-            <Skeleton height={180} radius={20} />
-            <Skeleton height={180} radius={20} />
+            <Skeleton height={200} radius={20} />
+            <Skeleton height={200} radius={20} />
           </View>
         ) : (
-          <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 21, marginTop: Space.sectionGap }}>
+          <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 22, marginTop: Space.sectionGap }}>
             No published plans yet. Check back later or contact the studio.
           </Text>
         )}

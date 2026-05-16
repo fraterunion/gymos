@@ -19,7 +19,6 @@ type Props = {
 };
 
 export function ClassCard({ item, timeZone, accentColor, onPress, index = 0 }: Props) {
-
   const ins = item.instructor
     ? `${item.instructor.firstName} ${item.instructor.lastName}`.trim()
     : null;
@@ -28,7 +27,6 @@ export function ClassCard({ item, timeZone, accentColor, onPress, index = 0 }: P
 
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-
   const delay = Math.min(index * 55, 280);
 
   return (
@@ -43,34 +41,41 @@ export function ClassCard({ item, timeZone, accentColor, onPress, index = 0 }: P
         onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
         style={{ flexDirection: 'row', backgroundColor: '#1C1C1C', borderRadius: 16, overflow: 'hidden' }}
       >
-        {/* Accent strip — the only use of color on this card */}
+        {/* Accent strip */}
         <View style={{ width: 4, backgroundColor: accentColor }} />
 
-        <View style={{ flex: 1, paddingHorizontal: 20, paddingVertical: 20 }}>
-          {/* Time + duration */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-            <Text style={{ fontSize: 12, fontWeight: '500', color: 'rgba(255,255,255,0.50)', letterSpacing: 0.1 }}>
-              {time}
-            </Text>
-            <View style={{ flex: 1 }} />
-            <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.32)', letterSpacing: 0.3 }}>
-              {duration} min
-            </Text>
-          </View>
-
-          {/* Class name — the headline */}
+        <View style={{ flex: 1, paddingHorizontal: 20, paddingVertical: 22 }}>
+          {/* Class name — the editorial headline */}
           <Text
             numberOfLines={1}
-            style={{ fontSize: 20, fontWeight: '700', letterSpacing: -0.4, color: '#FFFFFF' }}
+            style={{
+              fontSize: 26,
+              fontWeight: '800',
+              letterSpacing: -0.7,
+              color: '#FFFFFF',
+              lineHeight: 30,
+              marginBottom: 10,
+            }}
           >
             {item.classTemplate.name}
           </Text>
 
-          {/* Instructor — whispered below */}
+          {/* Time + duration — practical info below the name */}
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ fontSize: 14, fontWeight: '500', color: 'rgba(255,255,255,0.55)', letterSpacing: -0.1 }}>
+              {time}
+            </Text>
+            <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.28)', marginHorizontal: 6 }}>·</Text>
+            <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.32)' }}>
+              {duration} min
+            </Text>
+          </View>
+
+          {/* Instructor */}
           {ins ? (
             <Text
               numberOfLines={1}
-              style={{ marginTop: 5, fontSize: 13, color: 'rgba(255,255,255,0.40)' }}
+              style={{ marginTop: 6, fontSize: 13, color: 'rgba(255,255,255,0.38)' }}
             >
               {ins}
             </Text>
