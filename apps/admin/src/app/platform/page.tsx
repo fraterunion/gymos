@@ -111,9 +111,14 @@ function BuildJobLinksCell({
         </p>
       ) : null}
       {job.errorMessage ? (
-        <p className="text-red-300/95 line-clamp-4" title={job.errorMessage}>
-          {job.errorMessage}
-        </p>
+        <details className="mt-1">
+          <summary className="cursor-pointer select-none text-[11px] font-medium text-red-400 hover:underline">
+            Show error details
+          </summary>
+          <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-red-500/20 bg-red-950/30 p-2 text-[10px] leading-relaxed text-red-300">
+            {job.errorMessage}
+          </pre>
+        </details>
       ) : null}
     </div>
   );

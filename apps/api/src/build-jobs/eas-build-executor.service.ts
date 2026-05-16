@@ -545,6 +545,24 @@ export class EasBuildExecutorService {
     }
 
     const durationMs = Date.now() - started;
+
+    // Always log raw output so Railway has the full EAS CLI context for diagnosis.
+    // Logged as separate events to avoid truncation when embedded in error messages.
+    structuredLog(this.logger, 'log', {
+      event: 'eas_build_stderr',
+      jobId: job.id,
+      exitCode: code,
+      durationMs,
+      stderr: stderr.trim() || null,
+    });
+    if (stdout.trim()) {
+      structuredLog(this.logger, 'log', {
+        event: 'eas_build_stdout',
+        jobId: job.id,
+        stdout: stdout.trim(),
+      });
+    }
+
     const combined = `${stdout}\n${stderr}`;
 
     if (code !== 0) {
@@ -1054,7 +1072,22 @@ export class EasBuildExecutorService {
     const existing = (build[profile] ?? {}) as Record<string, unknown>;
     const existingEnv = (existing['env'] ?? {}) as Record<string, string>;
 
-    build[profile] = { ...existing, env: { ...existingEnv, ...envVars } };
+    // Merge env and strip the remote EAS Environment reference.
+    // EAS CLI ≥18 auto-resolves "environment" by channel name, which can cause it to
+    // attempt loading remote EAS Dashboard vars even when we supply all vars inline.
+    // Removing the key ensures we rely only on the profile env block for white-label builds.
+    const hadEnvironment = 'environment' in existing;
+    const patchedProfile: Record<string, unknown> = { ...existing, env: { ...existingEnv, ...envVars } };
+    delete patchedProfile['environment'];
+    if (hadEnvironment) {
+      structuredLog(this.logger, 'log', {
+        event: 'eas_json_environment_stripped',
+        jobId,
+        profile,
+        removedEnvironment: existing['environment'],
+      });
+    }
+    build[profile] = patchedProfile;
     easJson['build'] = build;
 
     try {
@@ -1238,7 +1271,9 @@ export class EasBuildExecutorService {
     timeoutMs: number,
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      const MAX_BUF = 12_000;
+      // 32 KB rolling window — large enough to capture full EAS CLI output including
+      // the submission phase where "build command failed" context appears.
+      const MAX_BUF = 32_000;
       let stdoutBuf = '';
       let stderrBuf = '';
       const roll = (buf: string, chunk: string): string => {

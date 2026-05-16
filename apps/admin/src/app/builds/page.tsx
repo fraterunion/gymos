@@ -306,14 +306,20 @@ export default function BuildsPage() {
                           {ERROR_CATEGORY_LABELS[job.errorCategory]}
                         </p>
                       )}
-                      {job.status === "FAILED" && job.errorMessage && (
-                        <details className="mt-1.5">
+                      {job.status === "FAILED" && (
+                        <details className="mt-1.5" open>
                           <summary className="cursor-pointer select-none text-xs font-medium text-red-600 hover:underline dark:text-red-400">
-                            Show error details
+                            Error details
                           </summary>
-                          <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-red-200 bg-red-50 p-2 text-xs leading-relaxed text-red-700 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400">
-                            {job.errorMessage}
-                          </pre>
+                          {job.errorMessage ? (
+                            <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-red-200 bg-red-50 p-2 text-xs leading-relaxed text-red-700 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400">
+                              {job.errorMessage}
+                            </pre>
+                          ) : (
+                            <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                              No error message recorded.
+                            </p>
+                          )}
                         </details>
                       )}
                     </td>
