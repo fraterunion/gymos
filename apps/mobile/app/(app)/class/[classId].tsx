@@ -1,12 +1,11 @@
 import { useNavigation } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useLayoutEffect, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Image, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
-import { ImageSlot } from '@/components/ImageSlot';
 import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
 import { EmptyHint, LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
@@ -19,7 +18,6 @@ import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
 import { formatClassTime } from '@/lib/datetime';
-import { resolveClassImageUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
 
 // ---------------------------------------------------------------------------
@@ -231,12 +229,13 @@ export default function ClassDetailScreen() {
       >
         <Animated.View entering={FadeInDown.duration(400)}>
 
-          {/* ── Cinematic hero: full-bleed class image with text overlay ── */}
+          {/* ── Cinematic hero: diagnostic — red bg + raw Image ── */}
           <View style={{ height: 300, position: 'relative' }}>
-            <ImageSlot
-              uri={resolveClassImageUri(cls.classTemplate.name)}
-              vignette
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'red' }} />
+            <Image
+              source={{ uri: 'https://picsum.photos/800/600' }}
               style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+              resizeMode="cover"
             />
 
             {/* Accent strip at top */}

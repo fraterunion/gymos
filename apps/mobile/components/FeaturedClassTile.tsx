@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from 'react-native';
+import { Image, Pressable, Text, View } from 'react-native';
 import Animated, {
   FadeInDown,
   useAnimatedStyle,
@@ -6,7 +6,6 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
-import { ImageSlot } from '@/components/ImageSlot';
 import { formatClassTime } from '@/lib/datetime';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
@@ -33,7 +32,6 @@ export function FeaturedClassTile({
   height = 240,
   label,
   delay = 0,
-  imageUri,
 }: Props) {
   const ins = item.instructor
     ? `${item.instructor.firstName} ${item.instructor.lastName}`.trim()
@@ -56,11 +54,12 @@ export function FeaturedClassTile({
         onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
         style={{ flex: 1 }}
       >
-        {/* Cinematic background — real image fades in over atmospheric placeholder */}
-        <ImageSlot
-          uri={imageUri}
-          vignette
+        {/* Diagnostic: red bg proves container dimensions; raw Image proves loading */}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'red' }} />
+        <Image
+          source={{ uri: 'https://picsum.photos/800/600' }}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          resizeMode="cover"
         />
 
         {/* Brand accent strip at top */}

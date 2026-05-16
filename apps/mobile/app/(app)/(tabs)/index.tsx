@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useMemo } from 'react';
-import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Image, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
   FadeInDown,
@@ -265,7 +265,6 @@ function NextSessionHero({
   cls,
   timeZone,
   primaryColor,
-  imageUri,
   onPress,
   onCheckIn,
 }: {
@@ -293,10 +292,12 @@ function NextSessionHero({
         onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
         style={{ flex: 1 }}
       >
-        <ImageSlot
-          uri={imageUri}
-          vignette
+        {/* Diagnostic: red bg proves container; raw Image proves loading */}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'red' }} />
+        <Image
+          source={{ uri: 'https://picsum.photos/800/600' }}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          resizeMode="cover"
         />
 
         {/* Brand top strip */}
