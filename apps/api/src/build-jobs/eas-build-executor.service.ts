@@ -479,6 +479,9 @@ export class EasBuildExecutorService {
       profile: job.profile,
     });
 
+    // Verify eas-cli is reachable before submitting — auto-cleans corrupted npx cache on failure
+    await this.preflightEasCli(mobileDir, childEnv, job.id);
+
     const started = Date.now();
     let code: number;
     let stdout: string;
@@ -656,6 +659,7 @@ export class EasBuildExecutorService {
 
     // 5. Install dependencies
     await this.installDependencies(workspaceDir, jobId, installEnv);
+    this.validateWorkspaceInstall(workspaceDir, jobId);
 
     // 6. Git: ignore node_modules in the snapshot commit so it stays small
     fs.writeFileSync(path.join(workspaceDir, '.gitignore'), 'node_modules/\n');
@@ -892,6 +896,69 @@ export class EasBuildExecutorService {
         JSON.stringify({ event: 'workspace_cleanup_failed', dir, error: String(err) }),
       );
     }
+  }
+
+  private async cleanNpmCache(jobId: string): Promise<void> {
+    try {
+      await this.spawnProc('npm', ['cache', 'clean', '--force'], { cwd: os.tmpdir(), env: process.env }, 30_000);
+      this.logger.log(JSON.stringify({ event: 'npm_cache_cleaned', jobId }));
+    } catch (err) {
+      this.logger.warn(JSON.stringify({ event: 'npm_cache_clean_failed', jobId, error: String(err) }));
+    }
+  }
+
+  private async preflightEasCli(cwd: string, env: NodeJS.ProcessEnv, jobId: string): Promise<void> {
+    this.logger.log(JSON.stringify({ event: 'eas_cli_preflight_start', jobId }));
+
+    const runCheck = () =>
+      this.spawnProc('npx', ['-y', 'eas-cli@latest', '--version'], { cwd, env }, 90_000).catch(
+        (err: unknown) => ({ code: 1, stdout: '', stderr: String(err) }),
+      );
+
+    let r = await runCheck();
+
+    if (r.code !== 0) {
+      const reason = r.stderr.includes('[TIMED OUT') ? 'timeout' : `exit_code_${r.code}`;
+      this.logger.warn(
+        JSON.stringify({
+          event: 'eas_cli_preflight_failed_attempt_1',
+          jobId,
+          reason,
+          stderr: r.stderr.slice(-400).trim(),
+          note: 'Cleaning npm cache and retrying.',
+        }),
+      );
+
+      await this.cleanNpmCache(jobId);
+      r = await runCheck();
+
+      if (r.code !== 0) {
+        const reason2 = r.stderr.includes('[TIMED OUT') ? 'timeout after 90s' : `exit_code_${r.code}`;
+        throw new Error(
+          `eas-cli pre-flight check failed after npm cache clean (${reason2}):\n${r.stderr.slice(-400).trim()}`,
+        );
+      }
+    }
+
+    const versionLine =
+      `${r.stdout}\n${r.stderr}`.split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ?? 'unknown';
+    this.logger.log(JSON.stringify({ event: 'eas_cli_preflight_ok', jobId, version: versionLine }));
+  }
+
+  private validateWorkspaceInstall(workspaceDir: string, jobId: string): void {
+    const nodeModules = path.join(workspaceDir, 'node_modules');
+    if (!fs.existsSync(nodeModules)) {
+      throw new Error(
+        `[EAS_WORKER] workspace install validation failed: node_modules missing at ${nodeModules}`,
+      );
+    }
+    const expoRouterDir = path.join(nodeModules, 'expo-router');
+    if (!fs.existsSync(expoRouterDir)) {
+      throw new Error(
+        `[EAS_WORKER] workspace install validation failed: expo-router not found in ${nodeModules} — pnpm install may have failed silently`,
+      );
+    }
+    this.logger.log(JSON.stringify({ event: 'workspace_install_validated', jobId }));
   }
 
   // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { spawn } from 'node:child_process';
 import * as os from 'node:os';
@@ -44,6 +44,8 @@ function envWithoutSecrets(): NodeJS.ProcessEnv {
 
 @Injectable()
 export class BuildWorkerReadinessService {
+  private readonly logger = new Logger(BuildWorkerReadinessService.name);
+
   constructor(
     private readonly config: ConfigService,
     private readonly easExecutor: EasBuildExecutorService,
@@ -67,25 +69,60 @@ export class BuildWorkerReadinessService {
     const probeEnv = envWithoutSecrets();
 
     let npxAvailable = false;
-    try {
+    {
       const r = await this.spawnOnce('npx', ['--version'], {
         cwd: probeCwd,
         env: probeEnv,
         timeoutMs: diagnosticsTimeoutMs,
       });
       npxAvailable = r.code === 0 && r.stdout.trim().length > 0;
-    } catch {
-      npxAvailable = false;
     }
 
     let easCliReachable = false;
     let easCliVersion: string | undefined;
-    try {
-      const r = await this.spawnOnce('npx', ['-y', 'eas-cli@latest', '--version'], {
-        cwd: probeCwd,
-        env: probeEnv,
-        timeoutMs: diagnosticsTimeoutMs,
-      });
+    let easCliProbeFailReason: string | undefined;
+    {
+      const doProbe = () =>
+        this.spawnOnce('npx', ['-y', 'eas-cli@latest', '--version'], {
+          cwd: probeCwd,
+          env: probeEnv,
+          timeoutMs: diagnosticsTimeoutMs,
+        });
+
+      let r = await doProbe();
+
+      if (r.code !== 0) {
+        const reason = r.timedOut
+          ? `probe_timeout (${diagnosticsTimeoutMs}ms)`
+          : `exit_code_${r.code}`;
+        this.logger.warn(
+          JSON.stringify({
+            event: 'eas_cli_probe_failed_attempt_1',
+            reason,
+            stderr: r.stderr.slice(-500).trim(),
+            stdout: r.stdout.slice(-200).trim(),
+            note: 'Cleaning npm cache and retrying once.',
+          }),
+        );
+
+        await this.cleanNpmCache(probeCwd, probeEnv);
+        r = await doProbe();
+
+        if (r.code !== 0) {
+          easCliProbeFailReason = r.timedOut
+            ? `probe_timeout (${diagnosticsTimeoutMs}ms)`
+            : `exit_code_${r.code}`;
+          this.logger.error(
+            JSON.stringify({
+              event: 'eas_cli_probe_failed_attempt_2',
+              reason: easCliProbeFailReason,
+              stderr: r.stderr.slice(-500).trim(),
+              stdout: r.stdout.slice(-200).trim(),
+            }),
+          );
+        }
+      }
+
       easCliReachable = r.code === 0;
       if (easCliReachable) {
         const combined = `${r.stdout}\n${r.stderr}`.trim();
@@ -93,8 +130,6 @@ export class BuildWorkerReadinessService {
         const cleaned = first.replace(/^eas-cli\//i, '').slice(0, 64);
         if (cleaned) easCliVersion = cleaned;
       }
-    } catch {
-      easCliReachable = false;
     }
 
     const blockingReasons: string[] = [];
@@ -118,7 +153,10 @@ export class BuildWorkerReadinessService {
       blockingReasons.push('npx is not available or did not respond before the diagnostics timeout.');
     }
     if (!easCliReachable) {
-      blockingReasons.push('eas-cli could not be reached via npx (network, registry, or diagnostics timeout).');
+      const detail = easCliProbeFailReason ? ` (${easCliProbeFailReason})` : '';
+      blockingReasons.push(
+        `eas-cli could not be reached via npx after cache-clean + retry${detail}. Check network, npm registry, or increase BUILD_WORKER_DIAGNOSTICS_TIMEOUT_MS.`,
+      );
     }
 
     const canExecuteBuilds =
@@ -144,12 +182,21 @@ export class BuildWorkerReadinessService {
     };
   }
 
+  private async cleanNpmCache(cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+    const r = await this.spawnOnce('npm', ['cache', 'clean', '--force'], { cwd, env, timeoutMs: 30_000 });
+    if (r.code === 0) {
+      this.logger.log(JSON.stringify({ event: 'npm_cache_cleaned' }));
+    } else {
+      this.logger.warn(JSON.stringify({ event: 'npm_cache_clean_failed', stderr: r.stderr.slice(-200).trim() }));
+    }
+  }
+
   private spawnOnce(
     command: string,
     args: string[],
     opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number },
-  ): Promise<{ code: number; stdout: string; stderr: string }> {
-    return new Promise((resolve, reject) => {
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
+    return new Promise((resolve) => {
       const child = spawn(command, args, {
         cwd: opts.cwd,
         env: opts.env,
@@ -160,23 +207,19 @@ export class BuildWorkerReadinessService {
       let stderr = '';
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
-      child.stdout?.on('data', (c: string) => {
-        stdout += c;
-      });
-      child.stderr?.on('data', (c: string) => {
-        stderr += c;
-      });
+      child.stdout?.on('data', (c: string) => { stdout += c; });
+      child.stderr?.on('data', (c: string) => { stderr += c; });
       const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error('probe_timeout'));
+        try { child.kill('SIGTERM'); } catch { /* already exited */ }
+        resolve({ code: 1, stdout, stderr, timedOut: true });
       }, opts.timeoutMs);
       child.on('error', (err) => {
         clearTimeout(timer);
-        reject(err);
+        resolve({ code: 1, stdout, stderr: `${stderr}\n${err.message}`, timedOut: false });
       });
       child.on('close', (code) => {
         clearTimeout(timer);
-        resolve({ code: code ?? 1, stdout, stderr });
+        resolve({ code: code ?? 1, stdout, stderr, timedOut: false });
       });
     });
   }
