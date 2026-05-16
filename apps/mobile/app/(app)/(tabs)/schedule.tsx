@@ -4,71 +4,107 @@ import { RefreshControl, SectionList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ClassCard } from '@/components/ClassCard';
-import { EmptyHint, ErrorBanner, LoadRetryPanel, Skeleton, ScreenLoader } from '@/components/StudioScreenChrome';
+import { FeaturedClassTile } from '@/components/FeaturedClassTile';
+import { FLOATING_TAB_CLEARANCE } from '@/components/FloatingTabBar';
+import {
+  EmptyHint,
+  ErrorBanner,
+  LoadRetryPanel,
+  Skeleton,
+  ScreenLoader,
+} from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
-import { calendarDayKeyInZone, formatClassDateLabel, todayKeyInZone } from '@/lib/datetime';
+import {
+  calendarDayKeyInZone,
+  formatClassDateLabel,
+  todayKeyInZone,
+} from '@/lib/datetime';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 import { getColors, Space } from '@/constants/Theme';
 
-type Section = { title: string; isToday: boolean; data: ScheduledClassDto[] };
+type Section = {
+  key: string;
+  title: string;
+  isToday: boolean;
+  data: ScheduledClassDto[];
+};
 
-// Editorial date header — big weekday + muted date
-function SectionHeader({ title, isToday, accentColor }: { title: string; isToday: boolean; accentColor: string }) {
-  // "Today" stays as "Today"; other labels come as "Mon, May 12" style from formatClassDateLabel.
-  // Split into two lines when not "Today": weekday on top, date below.
-  let topLine = title;
-  let bottomLine: string | null = null;
+// ---------------------------------------------------------------------------
+// Editorial day header — large weekday anchors each section
+// ---------------------------------------------------------------------------
 
-  if (!isToday && title.includes(',')) {
-    const [day, rest] = title.split(',');
-    topLine = (day ?? '').trim().toUpperCase();
-    bottomLine = (rest ?? '').trim();
-  }
+function DayHeader({
+  title,
+  isToday,
+  accentColor,
+}: {
+  title: string;
+  isToday: boolean;
+  accentColor: string;
+}) {
+  const C = getColors();
 
-  return (
-    <View style={{ paddingTop: 36, paddingBottom: 14 }}>
-      {isToday ? (
+  if (isToday) {
+    return (
+      <View style={{ paddingTop: 36, paddingBottom: 18 }}>
         <Text
           style={{
-            fontSize: 22,
+            fontSize: 30,
             fontWeight: '800',
-            letterSpacing: -0.5,
+            letterSpacing: -0.8,
             color: accentColor,
+            lineHeight: 34,
           }}
         >
           Today
         </Text>
-      ) : (
-        <>
-          <Text
-            style={{
-              fontSize: 22,
-              fontWeight: '800',
-              letterSpacing: -0.5,
-              color: '#FFFFFF',
-            }}
-          >
-            {topLine}
-          </Text>
-          {bottomLine ? (
-            <Text
-              style={{
-                fontSize: 13,
-                color: 'rgba(255,255,255,0.35)',
-                marginTop: 2,
-                letterSpacing: 0.1,
-              }}
-            >
-              {bottomLine}
-            </Text>
-          ) : null}
-        </>
-      )}
+      </View>
+    );
+  }
+
+  // Split "Mon, May 12" → "MON" headline + "May 12" subtitle
+  let headline = title;
+  let subtitle: string | null = null;
+  if (title.includes(',')) {
+    const comma = title.indexOf(',');
+    headline = title.slice(0, comma).toUpperCase();
+    subtitle = title.slice(comma + 1).trim();
+  }
+
+  return (
+    <View style={{ paddingTop: 40, paddingBottom: 16 }}>
+      <Text
+        style={{
+          fontSize: 26,
+          fontWeight: '800',
+          letterSpacing: -0.6,
+          color: C.text,
+          lineHeight: 30,
+        }}
+      >
+        {headline}
+      </Text>
+      {subtitle ? (
+        <Text
+          style={{
+            fontSize: 13,
+            color: C.textMute,
+            marginTop: 3,
+            letterSpacing: 0.1,
+          }}
+        >
+          {subtitle}
+        </Text>
+      ) : null}
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
 
 export default function ScheduleScreen() {
   const router = useRouter();
@@ -94,8 +130,12 @@ export default function ScheduleScreen() {
     const keys = [...map.keys()].sort();
     return keys.map((k) => {
       const first = map.get(k)![0]!;
-      const title = k === todayKey ? 'Today' : formatClassDateLabel(first.startsAt, timeZone);
-      return { title, isToday: k === todayKey, data: map.get(k)! };
+      return {
+        key: k,
+        title: k === todayKey ? 'Today' : formatClassDateLabel(first.startsAt, timeZone),
+        isToday: k === todayKey,
+        data: map.get(k)!,
+      };
     });
   }, [classes, timeZone, todayKey]);
 
@@ -105,23 +145,23 @@ export default function ScheduleScreen() {
   const showSkeleton = loading && classes.length === 0;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
       {showSkeleton ? (
-        <View style={{ flex: 1, paddingHorizontal: Space.screenH, paddingTop: 28 }}>
-          <Skeleton width="45%" height={20} radius={6} style={{ marginBottom: 20 }} />
-          <Skeleton height={100} radius={16} style={{ marginBottom: Space.cardGap }} />
-          <Skeleton height={100} radius={16} style={{ marginBottom: Space.cardGap }} />
-          <Skeleton height={100} radius={16} style={{ marginBottom: Space.cardGap }} />
-          <Skeleton width="35%" height={20} radius={6} style={{ marginBottom: 20, marginTop: 32 }} />
-          <Skeleton height={100} radius={16} style={{ marginBottom: Space.cardGap }} />
-          <Skeleton height={100} radius={16} />
+        <View style={{ flex: 1, paddingHorizontal: Space.screenH, paddingTop: 36 }}>
+          <Skeleton width="30%" height={28} radius={6} style={{ marginBottom: 20 }} />
+          <Skeleton height={240} radius={20} style={{ marginBottom: Space.cardGap }} />
+          <Skeleton height={106} radius={16} style={{ marginBottom: Space.cardGap }} />
+          <Skeleton height={106} radius={16} style={{ marginBottom: Space.cardGap }} />
         </View>
       ) : (
         <SectionList
           sections={sections}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 56 }}
           stickySectionHeadersEnabled={false}
+          contentContainerStyle={{
+            paddingHorizontal: Space.screenH,
+            paddingBottom: FLOATING_TAB_CLEARANCE,
+          }}
           refreshControl={
             <RefreshControl
               refreshing={loading}
@@ -139,27 +179,46 @@ export default function ScheduleScreen() {
           ListEmptyComponent={
             <View style={{ marginTop: 80 }}>
               <EmptyHint
-                title="Your schedule is clear"
-                body="When the studio publishes classes, they'll appear here."
+                title="Schedule is clear"
+                body="When the studio publishes upcoming classes, they'll appear here."
               />
             </View>
           }
           renderSectionHeader={({ section }) => (
-            <SectionHeader
+            <DayHeader
               title={section.title}
               isToday={section.isToday}
               accentColor={primaryColor}
             />
           )}
-          renderItem={({ item, index }) => (
-            <ClassCard
-              item={item}
-              timeZone={timeZone}
-              accentColor={item.classTemplate.color ?? primaryColor}
-              index={index}
-              onPress={() => router.push(`/(app)/class/${item.id}`)}
-            />
-          )}
+          renderItem={({ item, index, section }) => {
+            // First class of each day gets the editorial FeaturedClassTile treatment.
+            // Subsequent classes in the same day use the compact ClassCard.
+            if (index === 0) {
+              return (
+                <FeaturedClassTile
+                  item={item}
+                  timeZone={timeZone}
+                  accentColor={item.classTemplate.color ?? primaryColor}
+                  height={section.isToday ? 240 : 210}
+                  label={section.isToday ? 'Today' : undefined}
+                  delay={0}
+                  onPress={() => router.push(`/(app)/class/${item.id}`)}
+                />
+              );
+            }
+            return (
+              <View style={{ marginTop: Space.cardGap }}>
+                <ClassCard
+                  item={item}
+                  timeZone={timeZone}
+                  accentColor={item.classTemplate.color ?? primaryColor}
+                  index={index}
+                  onPress={() => router.push(`/(app)/class/${item.id}`)}
+                />
+              </View>
+            );
+          }}
         />
       )}
     </SafeAreaView>

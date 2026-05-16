@@ -1,32 +1,94 @@
-import { Text, View } from 'react-native';
+import { ScrollView, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
+import { FLOATING_TAB_CLEARANCE } from '@/components/FloatingTabBar';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
+import { getColors, Space } from '@/constants/Theme';
 
 export default function ProfileScreen() {
   const { user, logout, busy } = useAuth();
-  const { primaryColor } = useBranding();
+  const { primaryColor, appDisplayName } = useBranding();
+  const C = getColors();
 
   return (
-    <SafeAreaView className="flex-1 bg-neutral-50 dark:bg-neutral-950" edges={['bottom']}>
-      <View className="flex-1 px-6 pt-4">
-        <Text className="text-2xl font-semibold text-neutral-900 dark:text-neutral-50">Profile</Text>
-        <View className="mt-8 rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
-          <Text className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          paddingHorizontal: Space.screenH,
+          paddingBottom: FLOATING_TAB_CLEARANCE,
+        }}
+      >
+        {/* Page header */}
+        <Animated.View entering={FadeInDown.duration(450)} style={{ paddingTop: 28, paddingBottom: 28 }}>
+          <Text
+            style={{
+              fontSize: 38,
+              fontWeight: '800',
+              letterSpacing: -1.3,
+              color: C.text,
+              lineHeight: 44,
+            }}
+          >
+            Profile
+          </Text>
+          {appDisplayName ? (
+            <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
+              {appDisplayName}
+            </Text>
+          ) : null}
+        </Animated.View>
+
+        {/* Account card */}
+        <Animated.View
+          entering={FadeInDown.delay(80).duration(420)}
+          style={{
+            backgroundColor: C.surface2,
+            borderRadius: 20,
+            padding: 24,
+            marginBottom: 16,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 10,
+              fontWeight: '700',
+              letterSpacing: 1.0,
+              textTransform: 'uppercase',
+              color: C.textMute,
+              marginBottom: 14,
+            }}
+          >
             Account
           </Text>
-          <Text className="mt-2 text-lg font-semibold text-neutral-900 dark:text-neutral-50">
+          <Text
+            style={{
+              fontSize: 22,
+              fontWeight: '700',
+              letterSpacing: -0.4,
+              color: C.text,
+              marginBottom: 4,
+            }}
+          >
             {user?.firstName} {user?.lastName}
           </Text>
-          <Text className="mt-1 text-base text-neutral-600 dark:text-neutral-400">{user?.email}</Text>
-        </View>
+          <Text style={{ fontSize: 14, color: C.textSub }}>{user?.email}</Text>
+        </Animated.View>
 
-        <View className="mt-10">
-          <BrandButton label="Log out" accentColor={primaryColor} loading={busy} onPress={() => void logout()} />
-        </View>
-      </View>
+        {/* Sign out */}
+        <Animated.View entering={FadeInDown.delay(160).duration(420)} style={{ marginTop: 8 }}>
+          <BrandButton
+            label="Sign out"
+            variant="ghost"
+            accentColor={primaryColor}
+            loading={busy}
+            onPress={() => void logout()}
+          />
+        </Animated.View>
+      </ScrollView>
     </SafeAreaView>
   );
 }

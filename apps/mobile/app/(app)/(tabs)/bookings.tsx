@@ -178,14 +178,28 @@ export default function MyBookingsScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 48 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 128 }}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
         }
       >
+        {/* Page header — replaces removed nav header */}
+        <View style={{ paddingTop: 28, paddingBottom: 20 }}>
+          <Text
+            style={{
+              fontSize: 38,
+              fontWeight: '800',
+              letterSpacing: -1.3,
+              color: C.text,
+              lineHeight: 44,
+            }}
+          >
+            My Bookings
+          </Text>
+        </View>
         {error ? (
           <View style={{ paddingTop: 8 }}>
             <ErrorBanner message={error} onRetry={refresh} />
@@ -201,7 +215,7 @@ export default function MyBookingsScreen() {
         ) : (
           <>
             {/* ── Upcoming bookings ── */}
-            <View style={{ paddingTop: 24 }}>
+            <View>
               {myBookings.length === 0 ? (
                 <EmptyHint
                   title="No upcoming reservations"

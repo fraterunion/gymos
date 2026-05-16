@@ -1,11 +1,12 @@
 import { useNavigation } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useLayoutEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
+import { ImageSlot } from '@/components/ImageSlot';
 import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
 import { EmptyHint, LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
@@ -20,38 +21,81 @@ import { isClassFullMessage } from '@/lib/classUtils';
 import { formatClassTime } from '@/lib/datetime';
 import { getColors, Space } from '@/constants/Theme';
 
-// Instructor avatar with initials
-function InstructorBlock({ firstName, lastName }: { firstName: string; lastName: string }) {
+// ---------------------------------------------------------------------------
+// Instructor portrait block
+// ---------------------------------------------------------------------------
+
+function InstructorBlock({
+  firstName,
+  lastName,
+  accentColor,
+}: {
+  firstName: string;
+  lastName: string;
+  accentColor: string;
+}) {
   const C = getColors();
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
-  const fullName = `${firstName} ${lastName}`.trim();
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 28 }}>
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 24,
+        paddingTop: 22,
+        borderTopWidth: 1,
+        borderTopColor: C.separator,
+      }}
+    >
+      {/* Avatar circle */}
       <View
         style={{
-          width: 44,
-          height: 44,
-          borderRadius: 22,
+          width: 48,
+          height: 48,
+          borderRadius: 24,
           backgroundColor: C.surface3,
           alignItems: 'center',
           justifyContent: 'center',
           marginRight: 14,
+          borderWidth: 1,
+          borderColor: `${accentColor}30`,
         }}
       >
-        <Text style={{ fontSize: 14, fontWeight: '700', color: C.text, letterSpacing: 0.5 }}>
+        <Text
+          style={{
+            fontSize: 15,
+            fontWeight: '700',
+            color: accentColor,
+            letterSpacing: 0.5,
+          }}
+        >
           {initials}
         </Text>
       </View>
+
       <View>
-        <Text style={{ fontSize: 15, fontWeight: '600', color: C.text, letterSpacing: -0.1 }}>
-          {fullName}
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: '700',
+            color: C.text,
+            letterSpacing: -0.2,
+          }}
+        >
+          {firstName} {lastName}
         </Text>
-        <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>Instructor</Text>
+        <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>
+          Instructor
+        </Text>
       </View>
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
 
 export default function ClassDetailScreen() {
   const navigation = useNavigation();
@@ -104,10 +148,7 @@ export default function ClassDetailScreen() {
       setSubscriptionRequired(false);
       await refresh();
     } catch (e) {
-      if (isActiveSubscriptionRequiredError(e)) {
-        setSubscriptionRequired(true);
-        return;
-      }
+      if (isActiveSubscriptionRequiredError(e)) { setSubscriptionRequired(true); return; }
       if (e instanceof ApiError && e.status === 409 && isClassFullMessage(e.message)) {
         setOfferWaitlist(true);
         return;
@@ -144,6 +185,7 @@ export default function ClassDetailScreen() {
 
   const time = formatClassTime(cls.startsAt, timeZone);
   const duration = cls.classTemplate.durationMinutes;
+  const accentColor = cls.classTemplate.color ?? primaryColor;
 
   // CTA logic
   let primaryCTA: { label: string; onPress: () => void } | null = null;
@@ -183,69 +225,115 @@ export default function ClassDetailScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 24 }}
         refreshControl={
-          <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
+          <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={accentColor} />
         }
       >
-        <Animated.View entering={FadeInDown.duration(380)}>
-          {/* ── Hero header — different surface for depth ── */}
-          <View
-            style={{
-              backgroundColor: C.surface1,
-              paddingHorizontal: Space.screenH,
-              paddingTop: 32,
-              paddingBottom: 28,
-            }}
-          >
-            {/* Class name — cinematic */}
-            <Text
+        <Animated.View entering={FadeInDown.duration(400)}>
+
+          {/* ── Cinematic hero: ImageSlot with text overlay ── */}
+          <View style={{ height: 300, position: 'relative' }}>
+            <ImageSlot
+              vignette
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            />
+
+            {/* Accent strip at top */}
+            <View
               style={{
-                fontSize: 42,
-                fontWeight: '800',
-                letterSpacing: -1.5,
-                color: C.text,
-                lineHeight: 48,
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 3,
+                backgroundColor: accentColor,
+              }}
+            />
+
+            {/* Text overlaid at bottom of hero */}
+            <View
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                padding: Space.screenH,
+                paddingBottom: 24,
               }}
             >
-              {cls.classTemplate.name}
-            </Text>
+              {/* Class name */}
+              <Text
+                style={{
+                  fontSize: 40,
+                  fontWeight: '800',
+                  letterSpacing: -1.4,
+                  color: '#FFFFFF',
+                  lineHeight: 45,
+                  marginBottom: 10,
+                }}
+              >
+                {cls.classTemplate.name}
+              </Text>
 
-            {/* Time + duration row */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
-              <Text style={{ fontSize: 17, color: C.textSub, letterSpacing: -0.2 }}>
-                {time}
-              </Text>
-              <Text style={{ fontSize: 14, color: C.textMute, marginHorizontal: 8 }}>·</Text>
-              <Text style={{ fontSize: 16, color: C.textMute }}>
-                {duration} min
-              </Text>
+              {/* Time · duration */}
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text
+                  style={{
+                    fontSize: 16,
+                    color: 'rgba(255,255,255,0.72)',
+                    fontWeight: '500',
+                    letterSpacing: -0.1,
+                  }}
+                >
+                  {time}
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: 'rgba(255,255,255,0.30)',
+                    marginHorizontal: 8,
+                  }}
+                >
+                  ·
+                </Text>
+                <Text style={{ fontSize: 15, color: 'rgba(255,255,255,0.52)' }}>
+                  {duration} min
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: 'rgba(255,255,255,0.25)',
+                    marginHorizontal: 8,
+                  }}
+                >
+                  ·
+                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.40)' }}>
+                  Up to {cls.capacity}
+                </Text>
+              </View>
             </View>
+          </View>
 
-            {/* Capacity */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-              <Text style={{ fontSize: 13, color: C.textMute }}>
-                Up to {cls.capacity} spots
-              </Text>
-            </View>
-
-            {/* Instructor block */}
+          {/* ── Body content ── */}
+          <View style={{ paddingHorizontal: Space.screenH, paddingTop: 24 }}>
+            {/* Instructor portrait block */}
             {cls.instructor ? (
               <InstructorBlock
                 firstName={cls.instructor.firstName}
                 lastName={cls.instructor.lastName}
+                accentColor={accentColor}
               />
             ) : null}
-          </View>
 
-          {/* ── Body ── */}
-          <View style={{ paddingHorizontal: Space.screenH, paddingTop: 24 }}>
             {/* Description */}
             {cls.classTemplate.description ? (
               <Text
                 style={{
                   fontSize: 16,
-                  lineHeight: 25,
+                  lineHeight: 26,
                   color: C.textSub,
                   letterSpacing: -0.1,
+                  marginTop: 24,
                 }}
               >
                 {cls.classTemplate.description}
@@ -276,7 +364,7 @@ export default function ClassDetailScreen() {
                   marginTop: 20,
                   textAlign: 'center',
                   fontSize: 15,
-                  lineHeight: 22,
+                  lineHeight: 23,
                   color: C.textMute,
                 }}
               >
@@ -300,7 +388,7 @@ export default function ClassDetailScreen() {
 
             {subscriptionRequired ? (
               <View style={{ marginTop: 24 }}>
-                <SubscriptionRequiredPanel accentColor={primaryColor} appDisplayName={appDisplayName} />
+                <SubscriptionRequiredPanel accentColor={accentColor} appDisplayName={appDisplayName} />
               </View>
             ) : null}
           </View>
@@ -312,7 +400,7 @@ export default function ClassDetailScreen() {
         <View
           style={{
             paddingHorizontal: Space.screenH,
-            paddingBottom: 16,
+            paddingBottom: 20,
             paddingTop: 14,
             borderTopWidth: 1,
             borderTopColor: C.separator,
@@ -321,17 +409,27 @@ export default function ClassDetailScreen() {
           }}
         >
           {booking ? (
-            <BrandButton
-              label="Check-in QR"
-              variant="ghost"
-              accentColor={primaryColor}
+            <Pressable
+              accessibilityRole="button"
               onPress={() => router.push(`/(app)/check-in/${booking.id}`)}
-            />
+              style={{ paddingVertical: 10, alignItems: 'center' }}
+            >
+              <Text
+                style={{
+                  fontSize: 15,
+                  fontWeight: '700',
+                  color: accentColor,
+                  letterSpacing: -0.2,
+                }}
+              >
+                Check-in QR →
+              </Text>
+            </Pressable>
           ) : null}
           {primaryCTA ? (
             <BrandButton
               label={primaryCTA.label}
-              accentColor={primaryColor}
+              accentColor={accentColor}
               loading={busy}
               onPress={primaryCTA.onPress}
             />
@@ -340,7 +438,7 @@ export default function ClassDetailScreen() {
             <BrandButton
               label={secondaryCTA.label}
               variant="ghost"
-              accentColor={primaryColor}
+              accentColor={accentColor}
               loading={busy}
               onPress={secondaryCTA.onPress}
             />
