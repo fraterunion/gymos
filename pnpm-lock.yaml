@@ -96,6 +96,9 @@ importers:
       class-validator:
         specifier: ^0.15.1
         version: 0.15.1
+      eas-cli:
+        specifier: ^16.32.0
+        version: 16.32.0(@types/node@24.12.3)(typescript@5.9.3)
       helmet:
         specifier: ^8.1.0
         version: 8.1.0
