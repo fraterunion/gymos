@@ -136,7 +136,9 @@ export type BuildWorkerReadinessDto = {
   mobileAppRootExists: boolean;
   easTokenConfigured: boolean;
   expoPublicApiUrlConfigured: boolean;
-  npxAvailable: boolean;
+  /** True when the locally installed eas-cli binary was found and executed successfully. */
+  easBinaryFound: boolean;
+  easBinaryPath: string | null;
   easCliReachable: boolean;
   easCliVersion?: string;
   canExecuteBuilds: boolean;

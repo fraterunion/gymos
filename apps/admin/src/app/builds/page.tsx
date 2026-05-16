@@ -299,12 +299,22 @@ export default function BuildsPage() {
                     </td>
 
                     {/* Status */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 max-w-xs">
                       <PhaseBadge job={job} />
                       {job.errorCategory && (
                         <p className="mt-0.5 text-xs text-zinc-400">
                           {ERROR_CATEGORY_LABELS[job.errorCategory]}
                         </p>
+                      )}
+                      {job.status === "FAILED" && job.errorMessage && (
+                        <details className="mt-1.5">
+                          <summary className="cursor-pointer select-none text-xs font-medium text-red-600 hover:underline dark:text-red-400">
+                            Show error details
+                          </summary>
+                          <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-red-200 bg-red-50 p-2 text-xs leading-relaxed text-red-700 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400">
+                            {job.errorMessage}
+                          </pre>
+                        </details>
                       )}
                     </td>
 
@@ -381,20 +391,20 @@ export default function BuildsPage() {
         </table>
       </div>
 
-      {/* Error details panel for the most recent failed job */}
-      {jobs.find((j) => j.status === "FAILED" && j.errorMessage) && (() => {
-        const failed = jobs.find((j) => j.status === "FAILED" && j.errorMessage)!;
-        return (
-          <details className="rounded-xl border border-red-200 bg-red-50 dark:border-red-800/50 dark:bg-red-900/20">
-            <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-red-700 dark:text-red-300">
-              Last failure details
-            </summary>
-            <pre className="overflow-x-auto px-4 pb-4 pt-2 text-xs text-red-700 dark:text-red-400 whitespace-pre-wrap break-words">
-              {failed.errorMessage}
-            </pre>
-          </details>
-        );
-      })()}
+      {/* Error details for all failed jobs — shown as individual expandable cards */}
+      {jobs.filter((j) => j.status === "FAILED" && j.errorMessage).map((failed) => (
+        <details
+          key={failed.id}
+          className="rounded-xl border border-red-200 bg-red-50 dark:border-red-800/50 dark:bg-red-900/20"
+        >
+          <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-red-700 dark:text-red-300">
+            {failed.appDisplayName} · {failed.platform} · {failed.profile} — failure details
+          </summary>
+          <pre className="overflow-x-auto px-4 pb-4 pt-2 text-xs leading-relaxed text-red-700 dark:text-red-400 whitespace-pre-wrap break-words">
+            {failed.errorMessage}
+          </pre>
+        </details>
+      ))}
 
       {/* Polling indicator */}
       {hasLiveJobs && (

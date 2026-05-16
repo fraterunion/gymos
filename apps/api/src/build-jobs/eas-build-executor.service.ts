@@ -952,8 +952,14 @@ export class EasBuildExecutorService {
     for (const c of candidates) {
       try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* try next */ }
     }
+    const checked = candidates.join(', ');
+    structuredLog(this.logger, 'error', {
+      event: 'eas_binary_missing',
+      checked,
+      hint: 'Add eas-cli to apps/api/package.json dependencies and run pnpm install.',
+    });
     throw new Error(
-      `local eas-cli binary missing; run pnpm install and ensure eas-cli is in dependencies. Checked: ${candidates.join(', ')}`,
+      `local eas-cli binary missing; run pnpm install and ensure eas-cli is in dependencies. Checked: ${checked}`,
     );
   }
 
@@ -970,6 +976,14 @@ export class EasBuildExecutorService {
     );
 
     if (r.code !== 0) {
+      structuredLog(this.logger, 'error', {
+        event: 'eas_cli_preflight_failed',
+        jobId,
+        binary: easBin,
+        exitCode: r.code,
+        stderr: r.stderr.slice(-600).trim(),
+        stdout: r.stdout.slice(-200).trim(),
+      });
       throw new Error(
         `eas-cli pre-flight check failed (exit ${r.code}):\n${r.stderr.slice(-400).trim()}\nBinary: ${easBin}`,
       );

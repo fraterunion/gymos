@@ -750,8 +750,12 @@ export default function PlatformConsolePage() {
                 detail={workerReadiness.mobileAppRoot ?? undefined}
               />
               <ReadinessRow label="eas.json present at root" ok={workerReadiness.mobileAppRootExists} />
-              <ReadinessRow label="npx available" ok={workerReadiness.npxAvailable} />
-              <ReadinessRow label="eas-cli reachable (npx -y eas-cli@latest --version)" ok={workerReadiness.easCliReachable} />
+              <ReadinessRow
+                label="eas-cli binary found"
+                ok={workerReadiness.easBinaryFound}
+                detail={workerReadiness.easBinaryPath ?? undefined}
+              />
+              <ReadinessRow label="eas-cli --version passed" ok={workerReadiness.easCliReachable} />
               <ReadinessRow label="EAS token configured" ok={workerReadiness.easTokenConfigured} />
               <ReadinessRow label="Expo API URL configured" ok={workerReadiness.expoPublicApiUrlConfigured} />
               <ReadinessRow label="BUILD_WORKER_ENABLED" ok={workerReadiness.workerEnabled} />

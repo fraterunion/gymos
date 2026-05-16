@@ -327,6 +327,8 @@ export class BuildJobsService {
         platform: job.platform,
         profile: job.profile,
         errorCategory,
+        // Include first 800 chars so Railway logs expose the actual failure cause.
+        errorMessage: errorMessage.slice(0, 800),
       }),
     );
   }
