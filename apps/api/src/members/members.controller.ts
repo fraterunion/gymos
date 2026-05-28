@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -15,6 +17,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
+import { CreateManualSubscriptionDto } from './dto/create-manual-subscription.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { StaffBookingDto } from './dto/staff-booking.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
@@ -172,6 +175,23 @@ export class MembersController {
     @Param('userId') userId: string,
   ) {
     return this.membersService.getMemberSubscriptions(studioId, userId);
+  }
+
+  @Post(':userId/subscriptions')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  createManualSubscription(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @Body() dto: CreateManualSubscriptionDto,
+  ) {
+    return this.membersService.createManualSubscription(
+      studioId,
+      userId,
+      dto.planId,
+      dto.stripeSubscriptionId,
+    );
   }
 
   @Patch(':userId/subscriptions/:subscriptionId/status')

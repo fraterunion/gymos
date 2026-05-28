@@ -12,6 +12,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+
 export class CreateMembershipPlanDto {
   @IsString()
   @MinLength(1)
@@ -47,4 +48,14 @@ export class CreateMembershipPlanDto {
   @Min(0)
   @Max(1_000_000)
   classCredits?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  stripeProductId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  stripePriceId?: string;
 }

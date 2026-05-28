@@ -7,6 +7,19 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
 import type { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
 
+export type MembershipPlanWithStats = MembershipPlan & {
+  activeSubscriberCount: number;
+  mrrCents: number;
+};
+
+function computeMrr(priceCents: number, interval: string, count: number): number {
+  if (count === 0) return 0;
+  if (interval === 'MONTHLY') return priceCents * count;
+  if (interval === 'YEARLY') return Math.round((priceCents / 12) * count);
+  if (interval === 'WEEKLY') return Math.round((priceCents * 52) / 12 * count);
+  return 0;
+}
+
 @Injectable()
 export class MembershipPlansService {
   constructor(private readonly prisma: PrismaService) {}
@@ -22,6 +35,41 @@ export class MembershipPlansService {
     });
   }
 
+  async listAllPlans(
+    studioId: string,
+    includeInactive = false,
+  ): Promise<MembershipPlanWithStats[]> {
+    const where: Prisma.MembershipPlanWhereInput = {
+      studioId,
+      deletedAt: null,
+      ...(includeInactive ? {} : { active: true }),
+    };
+
+    const plans = await this.prisma.membershipPlan.findMany({
+      where,
+      orderBy: [{ active: 'desc' }, { createdAt: 'asc' }],
+      include: {
+        _count: {
+          select: {
+            subscriptions: {
+              where: { status: { in: ['ACTIVE', 'TRIALING', 'PAUSED'] } },
+            },
+          },
+        },
+      },
+    });
+
+    return plans.map((p) => {
+      const { _count, ...plan } = p;
+      const count = _count.subscriptions;
+      return {
+        ...plan,
+        activeSubscriberCount: count,
+        mrrCents: computeMrr(plan.priceCents, plan.billingInterval, count),
+      };
+    });
+  }
+
   async createPlan(studioId: string, dto: CreateMembershipPlanDto): Promise<MembershipPlan> {
     await this.ensureStudioExists(studioId);
     return this.prisma.membershipPlan.create({
@@ -33,6 +81,8 @@ export class MembershipPlansService {
         currency: dto.currency ?? 'usd',
         billingInterval: dto.billingInterval,
         classCredits: dto.classCredits === undefined ? null : dto.classCredits,
+        stripeProductId: dto.stripeProductId ?? null,
+        stripePriceId: dto.stripePriceId ?? null,
         active: true,
       },
     });
@@ -57,6 +107,8 @@ export class MembershipPlansService {
       ...(dto.billingInterval !== undefined ? { billingInterval: dto.billingInterval } : {}),
       ...(dto.classCredits !== undefined ? { classCredits: dto.classCredits } : {}),
       ...(dto.active !== undefined ? { active: dto.active } : {}),
+      ...(dto.stripeProductId !== undefined ? { stripeProductId: dto.stripeProductId } : {}),
+      ...(dto.stripePriceId !== undefined ? { stripePriceId: dto.stripePriceId } : {}),
     };
     if (Object.keys(data).length === 0) {
       return plan;

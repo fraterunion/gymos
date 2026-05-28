@@ -492,6 +492,45 @@ export class MembersService {
 
   // ── Subscription management ────────────────────────────────────────────────
 
+  async createManualSubscription(
+    studioId: string,
+    userId: string,
+    planId: string,
+    stripeSubscriptionId?: string,
+  ) {
+    await this.assertMembership(studioId, userId);
+
+    const plan = await this.prisma.membershipPlan.findFirst({
+      where: { id: planId, studioId, deletedAt: null, active: true },
+    });
+    if (!plan) throw new NotFoundException('Membership plan not found');
+
+    const now = new Date();
+    const periodEnd = new Date(now);
+    if (plan.billingInterval === 'MONTHLY') {
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    } else if (plan.billingInterval === 'YEARLY') {
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    } else if (plan.billingInterval === 'WEEKLY') {
+      periodEnd.setDate(periodEnd.getDate() + 7);
+    }
+
+    return this.prisma.subscription.create({
+      data: {
+        studioId,
+        userId,
+        membershipPlanId: planId,
+        status: SubscriptionStatus.ACTIVE,
+        stripeSubscriptionId: stripeSubscriptionId ?? null,
+        currentPeriodStart: now,
+        currentPeriodEnd: periodEnd,
+      },
+      include: {
+        membershipPlan: { select: { id: true, name: true, billingInterval: true, priceCents: true, currency: true } },
+      },
+    });
+  }
+
   async updateMemberSubscription(
     studioId: string,
     userId: string,

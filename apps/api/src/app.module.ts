@@ -14,6 +14,7 @@ import { ClassTemplatesModule } from './class-templates/class-templates.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { MembersModule } from './members/members.module';
 import { MembershipPlansModule } from './membership-plans/membership-plans.module';
+import { MembershipsModule } from './memberships/memberships.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ScheduleModule } from './schedule/schedule.module';
 import { StaffModule } from './staff/staff.module';
@@ -54,6 +55,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     BuildJobsModule,
     StudiosModule,
     MembershipPlansModule,
+    MembershipsModule,
     MembersModule,
     StaffModule,
     ClassTemplatesModule,
