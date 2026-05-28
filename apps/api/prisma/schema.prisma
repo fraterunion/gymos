@@ -101,6 +101,34 @@ enum BuildJobErrorCategory {
   UNKNOWN
 }
 
+enum StaffType {
+  COACH
+  FRONT_DESK
+  MANAGER
+  OPERATIONS
+  OTHER
+}
+
+enum IntensityLevel {
+  LOW
+  MEDIUM
+  HIGH
+  EXTREME
+}
+
+enum ClassCategory {
+  STRENGTH
+  HIIT
+  YOGA
+  PILATES
+  BOXING
+  RUNNING
+  RECOVERY
+  MOBILITY
+  CYCLING
+  OTHER
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -157,6 +185,7 @@ model Studio {
   qrTokens       QRToken[]
   payments       Payment[]
   buildJobs      BuildJob[]
+  staffProfiles  StudioStaffProfile[]
 
   @@map("studios")
 }
@@ -185,6 +214,7 @@ model User {
   instructedClasses   ScheduledClass[]   @relation("ScheduledClassInstructor")
   defaultClassTemplates ClassTemplate[] @relation("ClassTemplateDefaultInstructor")
   buildJobsRequested    BuildJob[]
+  staffProfiles         StudioStaffProfile[]
 
   @@map("users")
 }
@@ -260,23 +290,40 @@ model Subscription {
 }
 
 model ClassTemplate {
-  id                   String    @id @default(cuid())
-  studioId             String    @map("studio_id")
+  id                   String          @id @default(cuid())
+  studioId             String          @map("studio_id")
   name                 String
-  durationMinutes      Int       @map("duration_minutes")
+  durationMinutes      Int             @map("duration_minutes")
   description          String?
-  defaultCapacity      Int       @default(10) @map("default_capacity")
+  defaultCapacity      Int             @default(10) @map("default_capacity")
   color                String?
-  defaultInstructorId  String?   @map("default_instructor_id")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
-  deletedAt            DateTime? @map("deleted_at")
+  defaultInstructorId  String?         @map("default_instructor_id")
+
+  /// Phase 21 — rich metadata
+  intensityLevel         IntensityLevel? @map("intensity_level")
+  category               ClassCategory?
+  equipment              String[]
+  heroImageUrl           String?         @map("hero_image_url")
+  thumbnailImageUrl      String?         @map("thumbnail_image_url")
+  tags                   String[]
+  isFeatured             Boolean         @default(false) @map("is_featured")
+  difficultyLabel        String?         @map("difficulty_label")
+  caloriesEstimateMin    Int?            @map("calories_estimate_min")
+  caloriesEstimateMax    Int?            @map("calories_estimate_max")
+  cancellationWindowHours Int?           @map("cancellation_window_hours")
+  waitlistCapacity       Int?            @map("waitlist_capacity")
+
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+  deletedAt            DateTime?       @map("deleted_at")
 
   studio             Studio            @relation(fields: [studioId], references: [id], onDelete: Restrict)
   defaultInstructor  User?             @relation("ClassTemplateDefaultInstructor", fields: [defaultInstructorId], references: [id], onDelete: SetNull)
   classes            ScheduledClass[]
 
   @@index([studioId])
+  @@index([studioId, category])
+  @@index([studioId, isFeatured])
   @@index([defaultInstructorId])
   @@map("class_templates")
 }
@@ -499,4 +546,27 @@ model ExpoWebhookDelivery {
   @@index([expoBuildId])
   @@index([createdAt])
   @@map("expo_webhook_deliveries")
+}
+
+/// Phase 20 — studio-scoped staff profile (coach/front-desk/manager metadata).
+model StudioStaffProfile {
+  id          String    @id @default(cuid())
+  studioId    String    @map("studio_id")
+  userId      String    @map("user_id")
+  staffType   StaffType @default(OTHER) @map("staff_type")
+  phone       String?
+  bio         String?
+  specialties String[]
+  photoUrl    String?   @map("photo_url")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([studioId, userId])
+  @@index([studioId])
+  @@index([studioId, isActive])
+  @@map("studio_staff_profiles")
 }

@@ -28,7 +28,7 @@ export class ClassTemplatesService {
     return this.prisma.classTemplate.findMany({
       where: { studioId, deletedAt: null },
       include: templateListInclude,
-      orderBy: { name: 'asc' },
+      orderBy: [{ isFeatured: 'desc' }, { name: 'asc' }],
     });
   }
 
@@ -45,6 +45,18 @@ export class ClassTemplatesService {
         defaultCapacity: dto.defaultCapacity ?? 10,
         color: dto.color ?? null,
         defaultInstructorId: dto.instructorId ?? null,
+        intensityLevel: dto.intensityLevel ?? null,
+        category: dto.category ?? null,
+        equipment: dto.equipment ?? [],
+        heroImageUrl: dto.heroImageUrl ?? null,
+        thumbnailImageUrl: dto.thumbnailImageUrl ?? null,
+        tags: dto.tags ?? [],
+        isFeatured: dto.isFeatured ?? false,
+        difficultyLabel: dto.difficultyLabel ?? null,
+        caloriesEstimateMin: dto.caloriesEstimateMin ?? null,
+        caloriesEstimateMax: dto.caloriesEstimateMax ?? null,
+        cancellationWindowHours: dto.cancellationWindowHours ?? null,
+        waitlistCapacity: dto.waitlistCapacity ?? null,
       },
     });
   }
@@ -69,9 +81,19 @@ export class ClassTemplatesService {
       ...(dto.durationMinutes !== undefined ? { durationMinutes: dto.durationMinutes } : {}),
       ...(dto.defaultCapacity !== undefined ? { defaultCapacity: dto.defaultCapacity } : {}),
       ...(dto.color !== undefined ? { color: dto.color } : {}),
-      ...(dto.instructorId !== undefined
-        ? { defaultInstructorId: dto.instructorId }
-        : {}),
+      ...(dto.instructorId !== undefined ? { defaultInstructorId: dto.instructorId } : {}),
+      ...(dto.intensityLevel !== undefined ? { intensityLevel: dto.intensityLevel } : {}),
+      ...(dto.category !== undefined ? { category: dto.category } : {}),
+      ...(dto.equipment !== undefined ? { equipment: dto.equipment } : {}),
+      ...(dto.heroImageUrl !== undefined ? { heroImageUrl: dto.heroImageUrl } : {}),
+      ...(dto.thumbnailImageUrl !== undefined ? { thumbnailImageUrl: dto.thumbnailImageUrl } : {}),
+      ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
+      ...(dto.isFeatured !== undefined ? { isFeatured: dto.isFeatured } : {}),
+      ...(dto.difficultyLabel !== undefined ? { difficultyLabel: dto.difficultyLabel } : {}),
+      ...(dto.caloriesEstimateMin !== undefined ? { caloriesEstimateMin: dto.caloriesEstimateMin } : {}),
+      ...(dto.caloriesEstimateMax !== undefined ? { caloriesEstimateMax: dto.caloriesEstimateMax } : {}),
+      ...(dto.cancellationWindowHours !== undefined ? { cancellationWindowHours: dto.cancellationWindowHours } : {}),
+      ...(dto.waitlistCapacity !== undefined ? { waitlistCapacity: dto.waitlistCapacity } : {}),
     };
     if (Object.keys(data).length === 0) {
       return existing;

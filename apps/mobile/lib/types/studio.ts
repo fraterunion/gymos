@@ -15,6 +15,25 @@ export type ClassTemplateSummary = {
   description: string | null;
   defaultCapacity: number;
   color: string | null;
+  intensityLevel: string | null;
+  category: string | null;
+  equipment: string[];
+  heroImageUrl: string | null;
+  thumbnailImageUrl: string | null;
+  tags: string[];
+  isFeatured: boolean;
+  difficultyLabel: string | null;
+  caloriesEstimateMin: number | null;
+  caloriesEstimateMax: number | null;
+  cancellationWindowHours: number | null;
+  waitlistCapacity: number | null;
+};
+
+export type InstructorStaffProfile = {
+  staffType: string;
+  bio: string | null;
+  photoUrl: string | null;
+  specialties: string[];
 };
 
 export type InstructorSummary = {
@@ -23,6 +42,7 @@ export type InstructorSummary = {
   firstName: string;
   lastName: string;
   phone: string | null;
+  staffProfiles: InstructorStaffProfile[];
 };
 
 export type ScheduledClassDto = {

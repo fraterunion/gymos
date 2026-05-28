@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useMemo } from 'react';
-import { Image, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
   FadeInDown,
@@ -139,10 +139,10 @@ function CategoryStrip() {
 // Coach spotlight — instructors teaching upcoming classes
 // ---------------------------------------------------------------------------
 
-type CoachEntry = { key: string; firstName: string; lastName: string; classCount: number };
+type CoachEntry = { key: string; firstName: string; lastName: string; classCount: number; photoUrl?: string | null };
 
 function CoachCard({ coach }: { coach: CoachEntry }) {
-  const portraitUri = resolveCoachPortraitUri(coach.firstName, coach.lastName);
+  const portraitUri = coach.photoUrl ?? resolveCoachPortraitUri(coach.firstName, coach.lastName);
   const initials = `${coach.firstName[0] ?? ''}${coach.lastName[0] ?? ''}`.toUpperCase();
 
   return (
@@ -219,6 +219,7 @@ function CoachSpotlight({ classes }: { classes: ScheduledClassDto[] }) {
           firstName: cls.instructor.firstName,
           lastName: cls.instructor.lastName,
           classCount: counts.get(k) ?? 1,
+          photoUrl: cls.instructor.staffProfiles[0]?.photoUrl ?? null,
         });
         if (result.length >= 5) break;
       }
@@ -269,10 +270,9 @@ function NextSessionHero({
   onCheckIn,
 }: {
   booking: BookingWithClass;
-  cls: { name: string; durationMinutes: number; instructorName: string | null } | null;
+  cls: { name: string; durationMinutes: number; instructorName: string | null; heroImageUri?: string | null } | null;
   timeZone: string;
   primaryColor: string;
-  imageUri?: string;
   onPress: () => void;
   onCheckIn: () => void;
 }) {
@@ -292,12 +292,10 @@ function NextSessionHero({
         onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
         style={{ flex: 1 }}
       >
-        {/* Diagnostic: red bg proves container; raw Image proves loading */}
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'red' }} />
-        <Image
-          source={{ uri: 'https://picsum.photos/800/600' }}
+        <ImageSlot
+          uri={cls?.heroImageUri ?? undefined}
+          vignette
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-          resizeMode="cover"
         />
 
         {/* Brand top strip */}
@@ -490,13 +488,9 @@ export default function HomeScreen() {
       instructorName: cls.instructor
         ? `${cls.instructor.firstName} ${cls.instructor.lastName}`.trim()
         : null,
+      heroImageUri: cls.classTemplate.heroImageUrl ?? resolveClassImageUri(cls.classTemplate.name),
     };
   }, [nextBooking, classes]);
-
-  const nextBookingImageUri = useMemo(
-    () => (nextBookingClass ? resolveClassImageUri(nextBookingClass.name) : undefined),
-    [nextBookingClass],
-  );
 
   // Upcoming classes today
   const todaysUpcoming = useMemo(() => {
@@ -590,7 +584,6 @@ export default function HomeScreen() {
                 cls={nextBookingClass}
                 timeZone={timeZone}
                 primaryColor={primaryColor}
-                imageUri={nextBookingImageUri}
                 onPress={() => router.push(`/(app)/class/${nextBooking.scheduledClassId}`)}
                 onCheckIn={() => router.push(`/(app)/check-in/${nextBooking.id}`)}
               />
@@ -618,7 +611,7 @@ export default function HomeScreen() {
                       item={todayFeatured}
                       timeZone={timeZone}
                       accentColor={todayFeatured.classTemplate.color ?? primaryColor}
-                      imageUri={resolveClassImageUri(todayFeatured.classTemplate.name)}
+                      imageUri={todayFeatured.classTemplate.heroImageUrl ?? resolveClassImageUri(todayFeatured.classTemplate.name)}
                       height={240}
                       label="Book now"
                       onPress={() => router.push(`/(app)/class/${todayFeatured.id}`)}
@@ -629,7 +622,7 @@ export default function HomeScreen() {
                         item={c}
                         timeZone={timeZone}
                         accentColor={c.classTemplate.color ?? primaryColor}
-                        imageUri={resolveClassImageUri(c.classTemplate.name)}
+                        imageUri={c.classTemplate.thumbnailImageUrl ?? resolveClassImageUri(c.classTemplate.name)}
                         index={i + 1}
                         onPress={() => router.push(`/(app)/class/${c.id}`)}
                       />
@@ -642,7 +635,7 @@ export default function HomeScreen() {
                       item={c}
                       timeZone={timeZone}
                       accentColor={c.classTemplate.color ?? primaryColor}
-                      imageUri={resolveClassImageUri(c.classTemplate.name)}
+                      imageUri={c.classTemplate.thumbnailImageUrl ?? resolveClassImageUri(c.classTemplate.name)}
                       index={i}
                       onPress={() => router.push(`/(app)/class/${c.id}`)}
                     />

@@ -13,27 +13,51 @@ import type {
   UpdateScheduledClassDto,
 } from './dto/scheduled-class.dto';
 
-const scheduleInclude = {
-  classTemplate: {
-    select: {
-      id: true,
-      name: true,
-      durationMinutes: true,
-      description: true,
-      defaultCapacity: true,
-      color: true,
+function scheduleInclude(studioId: string) {
+  return {
+    classTemplate: {
+      select: {
+        id: true,
+        name: true,
+        durationMinutes: true,
+        description: true,
+        defaultCapacity: true,
+        color: true,
+        intensityLevel: true,
+        category: true,
+        equipment: true,
+        heroImageUrl: true,
+        thumbnailImageUrl: true,
+        tags: true,
+        isFeatured: true,
+        difficultyLabel: true,
+        caloriesEstimateMin: true,
+        caloriesEstimateMax: true,
+        cancellationWindowHours: true,
+        waitlistCapacity: true,
+      },
     },
-  },
-  instructor: {
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      phone: true,
+    instructor: {
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        staffProfiles: {
+          where: { studioId },
+          select: {
+            staffType: true,
+            bio: true,
+            photoUrl: true,
+            specialties: true,
+          },
+          take: 1,
+        },
+      },
     },
-  },
-} satisfies Prisma.ScheduledClassInclude;
+  } satisfies Prisma.ScheduledClassInclude;
+}
 
 @Injectable()
 export class ScheduleService {
@@ -55,7 +79,7 @@ export class ScheduleService {
         endsAt: { gt: from },
         classTemplate: { deletedAt: null },
       },
-      include: scheduleInclude,
+      include: scheduleInclude(studioId),
       orderBy: { startsAt: 'asc' },
     });
   }

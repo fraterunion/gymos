@@ -13,7 +13,7 @@ import {
   type ScheduledClassDto,
 } from "@/lib/api/schedule";
 import { fetchClassTemplates, type ClassTemplateDto } from "@/lib/api/classTemplates";
-import { fetchStudioMembers, type MemberDto } from "@/lib/api/members";
+import { fetchStaffInstructors, type StaffInstructorDto } from "@/lib/api/staff";
 import { calendarDayKeyInZone, todayKeyInZone } from "@/lib/datetime";
 
 // ── date helpers ──────────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ function ScheduleModal({
 }: {
   modal: Exclude<ScheduleModalState, { type: "closed" }>;
   templates: ClassTemplateDto[];
-  members: MemberDto[];
+  members: StaffInstructorDto[];
   studioId: string;
   onClose: () => void;
   onDone: () => void;
@@ -144,6 +144,8 @@ function ScheduleModal({
   const [cancelReason, setCancelReason] = useState("");
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedTemplate = safeTemplates.find((t) => t.id === form.templateId) ?? null;
 
   const handleTemplateChange = (templateId: string) => {
     const tpl = safeTemplates.find((t) => t.id === templateId);
@@ -301,22 +303,65 @@ function ScheduleModal({
         ) : (
           <form onSubmit={(e) => void handleSubmit(e)} className="mt-5 space-y-4">
             {modal.type === "create" ? (
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                  Class type
-                </label>
-                <select
-                  required
-                  value={form.templateId}
-                  onChange={(e) => handleTemplateChange(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-                >
-                  {safeTemplates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} · {t.durationMinutes} min
-                    </option>
-                  ))}
-                </select>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    Class type
+                  </label>
+                  <select
+                    required
+                    value={form.templateId}
+                    onChange={(e) => handleTemplateChange(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  >
+                    {safeTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · {t.durationMinutes} min
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {selectedTemplate && (selectedTemplate.description || selectedTemplate.category || selectedTemplate.intensityLevel || selectedTemplate.thumbnailImageUrl) ? (
+                  <div className="flex gap-3 rounded-xl border border-zinc-100 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-800/50">
+                    {selectedTemplate.thumbnailImageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={selectedTemplate.thumbnailImageUrl}
+                        alt=""
+                        className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                      />
+                    ) : null}
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap gap-1">
+                        {selectedTemplate.category ? (
+                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                            {selectedTemplate.category}
+                          </span>
+                        ) : null}
+                        {selectedTemplate.intensityLevel ? (
+                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                            {selectedTemplate.intensityLevel}
+                          </span>
+                        ) : null}
+                        {selectedTemplate.difficultyLabel ? (
+                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                            {selectedTemplate.difficultyLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                      {selectedTemplate.description ? (
+                        <p className="mt-1 line-clamp-2 text-xs text-zinc-500 dark:text-zinc-400">
+                          {selectedTemplate.description}
+                        </p>
+                      ) : null}
+                      {(selectedTemplate.caloriesEstimateMin !== null || selectedTemplate.caloriesEstimateMax !== null) ? (
+                        <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                          {selectedTemplate.caloriesEstimateMin ?? "?"}–{selectedTemplate.caloriesEstimateMax ?? "?"} kcal
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div>
@@ -378,8 +423,8 @@ function ScheduleModal({
                 >
                   <option value="">— None —</option>
                   {safeMembers.map((m) => (
-                    <option key={m.user.id} value={m.user.id}>
-                      {m.user.firstName} {m.user.lastName}
+                    <option key={m.userId} value={m.userId}>
+                      {m.firstName} {m.lastName}
                     </option>
                   ))}
                 </select>
@@ -479,7 +524,7 @@ export default function SchedulePage() {
   const [weekStart, setWeekStart] = useState<Date>(() => getMondayOf(new Date()));
   const [classes, setClasses] = useState<ScheduledClassDto[]>([]);
   const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
-  const [members, setMembers] = useState<MemberDto[]>([]);
+  const [members, setMembers] = useState<StaffInstructorDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ScheduleModalState>({ type: "closed" });
@@ -498,7 +543,7 @@ export default function SchedulePage() {
       const [cls, tpl, mem] = await Promise.all([
         fetchStudioSchedule(selectedStudioId, weekStart.toISOString(), weekEnd.toISOString()),
         fetchClassTemplates(selectedStudioId),
-        fetchStudioMembers(selectedStudioId),
+        fetchStaffInstructors(selectedStudioId),
       ]);
       setClasses(cls);
       setTemplates(tpl);

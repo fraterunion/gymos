@@ -1,11 +1,12 @@
 import { useNavigation } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useLayoutEffect, useMemo, useState } from 'react';
-import { Image, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
+import { ImageSlot } from '@/components/ImageSlot';
 import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
 import { EmptyHint, LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
@@ -18,6 +19,7 @@ import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
 import { formatClassTime } from '@/lib/datetime';
+import { resolveClassImageUri, resolveCoachPortraitUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
 
 // ---------------------------------------------------------------------------
@@ -27,20 +29,25 @@ import { getColors, Space } from '@/constants/Theme';
 function InstructorBlock({
   firstName,
   lastName,
+  photoUrl,
+  bio,
   accentColor,
 }: {
   firstName: string;
   lastName: string;
+  photoUrl?: string | null;
+  bio?: string | null;
   accentColor: string;
 }) {
   const C = getColors();
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
+  const portraitUri = photoUrl ?? resolveCoachPortraitUri(firstName, lastName);
 
   return (
     <View
       style={{
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         marginTop: 24,
         paddingTop: 22,
         borderTopWidth: 1,
@@ -50,43 +57,43 @@ function InstructorBlock({
       {/* Avatar circle */}
       <View
         style={{
-          width: 48,
-          height: 48,
-          borderRadius: 24,
+          width: 56,
+          height: 56,
+          borderRadius: 28,
+          overflow: 'hidden',
           backgroundColor: C.surface3,
-          alignItems: 'center',
-          justifyContent: 'center',
           marginRight: 14,
           borderWidth: 1,
           borderColor: `${accentColor}30`,
+          flexShrink: 0,
         }}
       >
-        <Text
+        <ImageSlot uri={portraitUri} vignette={false} style={{ flex: 1 }} />
+        {/* Initials fallback behind image */}
+        <View
           style={{
-            fontSize: 15,
-            fontWeight: '700',
-            color: accentColor,
-            letterSpacing: 0.5,
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
-          {initials}
-        </Text>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: accentColor, letterSpacing: 0.5 }}>
+            {initials}
+          </Text>
+        </View>
       </View>
 
-      <View>
-        <Text
-          style={{
-            fontSize: 16,
-            fontWeight: '700',
-            color: C.text,
-            letterSpacing: -0.2,
-          }}
-        >
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 }}>
           {firstName} {lastName}
         </Text>
-        <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>
-          Instructor
-        </Text>
+        <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>Instructor</Text>
+        {bio ? (
+          <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, marginTop: 8 }}>
+            {bio}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -185,6 +192,8 @@ export default function ClassDetailScreen() {
   const time = formatClassTime(cls.startsAt, timeZone);
   const duration = cls.classTemplate.durationMinutes;
   const accentColor = cls.classTemplate.color ?? primaryColor;
+  const heroImageUri = cls.classTemplate.heroImageUrl ?? resolveClassImageUri(cls.classTemplate.name);
+  const instructorProfile = cls.instructor?.staffProfiles[0] ?? null;
 
   // CTA logic
   let primaryCTA: { label: string; onPress: () => void } | null = null;
@@ -229,13 +238,12 @@ export default function ClassDetailScreen() {
       >
         <Animated.View entering={FadeInDown.duration(400)}>
 
-          {/* ── Cinematic hero: diagnostic — red bg + raw Image ── */}
+          {/* ── Cinematic hero ── */}
           <View style={{ height: 300, position: 'relative' }}>
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'red' }} />
-            <Image
-              source={{ uri: 'https://picsum.photos/800/600' }}
+            <ImageSlot
+              uri={heroImageUri}
+              vignette
               style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-              resizeMode="cover"
             />
 
             {/* Accent strip at top */}
@@ -287,27 +295,11 @@ export default function ClassDetailScreen() {
                 >
                   {time}
                 </Text>
-                <Text
-                  style={{
-                    fontSize: 13,
-                    color: 'rgba(255,255,255,0.30)',
-                    marginHorizontal: 8,
-                  }}
-                >
-                  ·
-                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.30)', marginHorizontal: 8 }}>·</Text>
                 <Text style={{ fontSize: 15, color: 'rgba(255,255,255,0.52)' }}>
                   {duration} min
                 </Text>
-                <Text
-                  style={{
-                    fontSize: 13,
-                    color: 'rgba(255,255,255,0.25)',
-                    marginHorizontal: 8,
-                  }}
-                >
-                  ·
-                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)', marginHorizontal: 8 }}>·</Text>
                 <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.40)' }}>
                   Up to {cls.capacity}
                 </Text>
@@ -322,6 +314,8 @@ export default function ClassDetailScreen() {
               <InstructorBlock
                 firstName={cls.instructor.firstName}
                 lastName={cls.instructor.lastName}
+                photoUrl={instructorProfile?.photoUrl}
+                bio={instructorProfile?.bio}
                 accentColor={accentColor}
               />
             ) : null}
