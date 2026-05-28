@@ -167,7 +167,12 @@ export type MemberPaymentsResponse = {
 // ── Fetchers ─────────────────────────────────────────────────────────────────
 
 export async function fetchStudioMembers(studioId: string): Promise<MemberDto[]> {
-  return apiRequest<MemberDto[]>(`/studios/${studioId}/members`, { method: "GET" });
+  // The /members endpoint returns a paginated { data, total, page, limit } object, not a plain array.
+  const res = await apiRequest<{ data: MemberDto[]; total: number; page: number; limit: number }>(
+    `/studios/${studioId}/members`,
+    { method: "GET" },
+  );
+  return res.data;
 }
 
 export async function fetchMembers(
