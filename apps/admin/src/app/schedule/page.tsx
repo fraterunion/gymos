@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
@@ -110,8 +110,8 @@ function ScheduleModal({
   onDone: () => void;
 }) {
   // Defensive: API response shape may differ from expected type at runtime
-  const safeTemplates = Array.isArray(templates) ? templates : [];
-  const safeMembers = Array.isArray(members) ? members : [];
+  const safeTemplates = useMemo(() => Array.isArray(templates) ? templates : [], [templates]);
+  const safeMembers = useMemo(() => Array.isArray(members) ? members : [], [members]);
   const hasTemplates = safeTemplates.length > 0;
 
   const buildCreateDefaults = (): ScheduleFormState => {
@@ -140,6 +140,26 @@ function ScheduleModal({
     modal.type === "edit" ? buildEditDefaults(modal.cls) : buildCreateDefaults(),
   );
   const [saving, setSaving] = useState(false);
+
+  // If the modal opened before templates loaded, templateId will be "".
+  // Sync it to the first template once templates arrive.
+  const didInitTemplate = useRef(form.templateId !== "");
+  useEffect(() => {
+    if (modal.type !== "create" || didInitTemplate.current) return;
+    if (safeTemplates.length === 0) return;
+    didInitTemplate.current = true;
+    const first = safeTemplates[0];
+    const t = setTimeout(() => {
+      setForm((prev) => ({
+        ...prev,
+        templateId: first.id,
+        endTime: makeDefaultEnd(prev.startTime, first.durationMinutes),
+        capacity: String(first.defaultCapacity),
+        instructorId: first.defaultInstructorId ?? prev.instructorId,
+      }));
+    }, 0);
+    return () => clearTimeout(t);
+  }, [safeTemplates, modal.type]);
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -192,7 +212,16 @@ function ScheduleModal({
       }
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not save class");
+      if (err instanceof ApiError) {
+        // class-validator returns arrays of field messages; collapse to user-friendly text
+        const raw = err.message;
+        const friendly = raw.includes("templateId")
+          ? "Please select a class type before scheduling."
+          : raw;
+        setError(friendly);
+      } else {
+        setError("Could not save class. Please try again.");
+      }
     } finally {
       setSaving(false);
     }
@@ -314,6 +343,11 @@ function ScheduleModal({
                     onChange={(e) => handleTemplateChange(e.target.value)}
                     className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
                   >
+                    {!form.templateId && (
+                      <option value="" disabled>
+                        Loading class types…
+                      </option>
+                    )}
                     {safeTemplates.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name} · {t.durationMinutes} min
@@ -458,10 +492,16 @@ function ScheduleModal({
                 {!isCancelled ? (
                   <button
                     type="submit"
-                    disabled={saving}
+                    disabled={saving || (modal.type === "create" && !form.templateId)}
                     className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
                   >
-                    {saving ? "Saving…" : modal.type === "edit" ? "Save changes" : "Schedule"}
+                    {saving
+                      ? "Saving…"
+                      : modal.type === "create" && !form.templateId
+                      ? "Select a class type"
+                      : modal.type === "edit"
+                      ? "Save changes"
+                      : "Schedule"}
                   </button>
                 ) : null}
               </div>
