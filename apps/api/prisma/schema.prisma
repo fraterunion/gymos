@@ -184,8 +184,9 @@ model Studio {
   attendances    Attendance[]
   qrTokens       QRToken[]
   payments       Payment[]
-  buildJobs      BuildJob[]
-  staffProfiles  StudioStaffProfile[]
+  buildJobs         BuildJob[]
+  staffProfiles     StudioStaffProfile[]
+  memberCrmProfiles StudioMemberProfile[]
 
   @@map("studios")
 }
@@ -215,6 +216,7 @@ model User {
   defaultClassTemplates ClassTemplate[] @relation("ClassTemplateDefaultInstructor")
   buildJobsRequested    BuildJob[]
   staffProfiles         StudioStaffProfile[]
+  memberCrmProfiles     StudioMemberProfile[]
 
   @@map("users")
 }
@@ -577,4 +579,27 @@ model StudioStaffProfile {
   @@index([studioId])
   @@index([studioId, isActive])
   @@map("studio_staff_profiles")
+}
+
+model StudioMemberProfile {
+  id                       String    @id @default(cuid())
+  studioId                 String    @map("studio_id")
+  userId                   String    @map("user_id")
+  birthdate                DateTime? @map("birthdate")
+  emergencyContactName     String?   @map("emergency_contact_name")
+  emergencyContactPhone    String?   @map("emergency_contact_phone")
+  emergencyContactRelation String?   @map("emergency_contact_relation")
+  notes                    String?
+  tags                     String[]
+  goals                    String?
+  injuries                 String?
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([studioId, userId])
+  @@index([studioId])
+  @@map("studio_member_profiles")
 }

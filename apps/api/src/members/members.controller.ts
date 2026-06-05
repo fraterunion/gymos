@@ -23,6 +23,7 @@ import { SetCancelAtPeriodEndDto } from './dto/set-cancel-at-period-end.dto';
 import { StaffBookingDto } from './dto/staff-booking.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
+import { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
 import { MembersService } from './members.service';
 
 function parsePage(raw: string | undefined): number {
@@ -217,6 +218,29 @@ export class MembersController {
     @Body() dto: SetCancelAtPeriodEndDto,
   ) {
     return this.membersService.setCancelAtPeriodEnd(studioId, userId, subscriptionId, dto.cancel);
+  }
+
+  // ── CRM profile ───────────────────────────────────────────────────────────
+
+  @Get(':userId/profile')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  getCrmProfile(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.membersService.getMemberCrmProfile(studioId, userId);
+  }
+
+  @Patch(':userId/profile')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  upsertCrmProfile(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @Body() dto: UpsertMemberCrmProfileDto,
+  ) {
+    return this.membersService.upsertMemberCrmProfile(studioId, userId, dto);
   }
 
   // ── Role ───────────────────────────────────────────────────────────────────

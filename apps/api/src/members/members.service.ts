@@ -20,6 +20,7 @@ import { WaitlistService } from '../waitlist/waitlist.service';
 import type { ListMembersQueryDto } from './dto/list-members-query.dto';
 import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
+import type { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
 
 const publicUserSelect = {
   id: true,
@@ -206,7 +207,7 @@ export class MembersService {
       throw new NotFoundException('Member not found');
     }
 
-    const [attendanceTotal, activeSubscription] = await Promise.all([
+    const [attendanceTotal, activeSubscription, bookingGroups] = await Promise.all([
       this.prisma.attendance.count({
         where: { studioId, userId },
       }),
@@ -230,7 +231,16 @@ export class MembersService {
           },
         },
       }),
+      this.prisma.booking.groupBy({
+        by: ['status'],
+        where: { studioId, userId },
+        _count: { _all: true },
+      }),
     ]);
+
+    const totalBookings = bookingGroups.reduce((s, g) => s + g._count._all, 0);
+    const noShowCount = bookingGroups.find((g) => g.status === BookingStatus.NO_SHOW)?._count._all ?? 0;
+    const cancelledCount = bookingGroups.find((g) => g.status === BookingStatus.CANCELLED)?._count._all ?? 0;
 
     return {
       user: membership.user,
@@ -242,6 +252,12 @@ export class MembersService {
       },
       attendances: {
         totalInStudio: attendanceTotal,
+      },
+      bookingStats: {
+        totalBookings,
+        attendedCount: attendanceTotal,
+        noShowCount,
+        cancelledCount,
       },
       activeSubscription: activeSubscription
         ? {
@@ -615,6 +631,38 @@ export class MembersService {
       include: {
         user: { select: publicUserSelect },
       },
+    });
+  }
+
+  // ── CRM profile ───────────────────────────────────────────────────────────
+
+  async getMemberCrmProfile(studioId: string, userId: string) {
+    await this.assertMembership(studioId, userId);
+    return this.prisma.studioMemberProfile.findUnique({
+      where: { studioId_userId: { studioId, userId } },
+    });
+  }
+
+  async upsertMemberCrmProfile(
+    studioId: string,
+    userId: string,
+    dto: UpsertMemberCrmProfileDto,
+  ) {
+    await this.assertMembership(studioId, userId);
+    const data = {
+      ...(dto.birthdate !== undefined ? { birthdate: dto.birthdate ? new Date(dto.birthdate) : null } : {}),
+      ...(dto.emergencyContactName !== undefined ? { emergencyContactName: dto.emergencyContactName } : {}),
+      ...(dto.emergencyContactPhone !== undefined ? { emergencyContactPhone: dto.emergencyContactPhone } : {}),
+      ...(dto.emergencyContactRelation !== undefined ? { emergencyContactRelation: dto.emergencyContactRelation } : {}),
+      ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+      ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
+      ...(dto.goals !== undefined ? { goals: dto.goals } : {}),
+      ...(dto.injuries !== undefined ? { injuries: dto.injuries } : {}),
+    };
+    return this.prisma.studioMemberProfile.upsert({
+      where: { studioId_userId: { studioId, userId } },
+      create: { studioId, userId, ...data },
+      update: data,
     });
   }
 

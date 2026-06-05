@@ -93,6 +93,12 @@ export type MemberProfile = {
   role: MemberRole;
   membership: { id: string; createdAt: string; updatedAt: string };
   attendances: { totalInStudio: number };
+  bookingStats: {
+    totalBookings: number;
+    attendedCount: number;
+    noShowCount: number;
+    cancelledCount: number;
+  };
   activeSubscription: {
     id: string;
     status: SubStatus;
@@ -101,6 +107,33 @@ export type MemberProfile = {
     cancelAtPeriodEnd: boolean;
     plan: MemberPlan;
   } | null;
+};
+
+export type MemberCrmProfile = {
+  id: string;
+  studioId: string;
+  userId: string;
+  birthdate: string | null;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
+  emergencyContactRelation: string | null;
+  notes: string | null;
+  tags: string[];
+  goals: string | null;
+  injuries: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpsertCrmProfileInput = {
+  birthdate?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
+  emergencyContactRelation?: string | null;
+  notes?: string | null;
+  tags?: string[];
+  goals?: string | null;
+  injuries?: string | null;
 };
 
 export type MemberBooking = {
@@ -154,6 +187,7 @@ export type MemberPayment = {
   status: PaymentStatus;
   stripePaymentIntentId: string | null;
   stripeInvoiceId: string | null;
+  paidAt: string | null;
   createdAt: string;
 };
 
@@ -288,5 +322,26 @@ export async function updateSubscriptionStatus(
   return apiRequest<MemberSubscription>(
     `/studios/${studioId}/members/${userId}/subscriptions/${subscriptionId}/status`,
     { method: "PATCH", body: JSON.stringify({ status }) },
+  );
+}
+
+export async function fetchMemberCrmProfile(
+  studioId: string,
+  userId: string,
+): Promise<MemberCrmProfile | null> {
+  return apiRequest<MemberCrmProfile | null>(
+    `/studios/${studioId}/members/${userId}/profile`,
+    { method: "GET" },
+  );
+}
+
+export async function updateMemberCrmProfile(
+  studioId: string,
+  userId: string,
+  input: UpsertCrmProfileInput,
+): Promise<MemberCrmProfile> {
+  return apiRequest<MemberCrmProfile>(
+    `/studios/${studioId}/members/${userId}/profile`,
+    { method: "PATCH", body: JSON.stringify(input) },
   );
 }
