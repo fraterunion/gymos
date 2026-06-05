@@ -10,6 +10,7 @@ import {
   fetchMembershipPlans,
   fetchMembershipsOverview,
   fetchSubscriptions,
+  setCancelAtPeriodEnd,
   updateMembershipPlan,
   updateSubscriptionStatus,
   type BillingInterval,
@@ -470,11 +471,15 @@ function PlanModal({
 function SubRow({
   sub,
   onAction,
+  onCancelAtPeriodEnd,
 }: {
   sub: SubscriptionListItem;
   onAction: (sub: SubscriptionListItem, status: SubscriptionStatus) => void;
+  onCancelAtPeriodEnd: (sub: SubscriptionListItem, cancel: boolean) => void;
 }) {
   const status = sub.status as SubscriptionStatus;
+  const isStripeLinked = !!sub.stripeSubscriptionId;
+
   return (
     <tr className="border-b border-zinc-100 text-sm dark:border-zinc-800">
       <td className="px-4 py-3 font-medium text-zinc-900 dark:text-white">
@@ -489,40 +494,71 @@ function SubRow({
         </p>
       </td>
       <td className="px-4 py-3">
-        <span
-          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_COLORS[status]}`}
-        >
-          {STATUS_LABELS[status]}
-        </span>
+        <div className="flex flex-col gap-1">
+          <span
+            className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_COLORS[status]}`}
+          >
+            {STATUS_LABELS[status]}
+          </span>
+          {isStripeLinked ? (
+            <span className="inline-flex w-fit items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+              Stripe
+            </span>
+          ) : (
+            <span className="inline-flex w-fit items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              Manual
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
         {fmtDate(sub.currentPeriodEnd)}
         {sub.cancelAtPeriodEnd && (
-          <span className="ml-1 text-xs text-amber-500">Cancels</span>
+          <p className="mt-0.5 text-xs font-medium text-amber-500">
+            Cancels at period end
+          </p>
         )}
       </td>
       <td className="px-4 py-3 text-xs text-zinc-400">
         {fmtDate(sub.createdAt)}
       </td>
       <td className="px-4 py-3">
-        <div className="flex gap-1.5">
-          {status === "ACTIVE" && (
-            <>
-              <button
-                onClick={() => onAction(sub, "PAUSED")}
-                className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
-              >
-                Pause
-              </button>
-              <button
-                onClick={() => onAction(sub, "CANCELED")}
-                className="rounded px-2 py-1 text-xs bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400"
-              >
-                Cancel
-              </button>
-            </>
+        <div className="flex flex-wrap gap-1.5">
+          {status === "ACTIVE" && !sub.cancelAtPeriodEnd && (
+            <button
+              onClick={() => onCancelAtPeriodEnd(sub, true)}
+              className="rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300"
+            >
+              Cancel at period end
+            </button>
           )}
-          {status === "PAUSED" && (
+          {status === "ACTIVE" && sub.cancelAtPeriodEnd && (
+            <button
+              onClick={() => onCancelAtPeriodEnd(sub, false)}
+              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
+            >
+              Keep active
+            </button>
+          )}
+          {status === "ACTIVE" && (
+            <button
+              onClick={() => onAction(sub, "PAUSED")}
+              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
+            >
+              Pause
+            </button>
+          )}
+          {status === "ACTIVE" && (
+            <button
+              onClick={() => onAction(sub, "CANCELED")}
+              className="rounded px-2 py-1 text-xs bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400"
+            >
+              Cancel now
+            </button>
+          )}
+          {(status === "PAUSED" || status === "PAST_DUE") && (
             <button
               onClick={() => onAction(sub, "ACTIVE")}
               className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300"
@@ -535,15 +571,7 @@ function SubRow({
               onClick={() => onAction(sub, "ACTIVE")}
               className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300"
             >
-              Reactivate
-            </button>
-          )}
-          {status === "PAST_DUE" && (
-            <button
-              onClick={() => onAction(sub, "ACTIVE")}
-              className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300"
-            >
-              Mark active
+              Reactivate manually
             </button>
           )}
         </div>
@@ -640,6 +668,16 @@ export default function MembershipsPage() {
       );
       void loadSubs(subsPage);
       void loadOverview();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Action failed.");
+    }
+  }
+
+  async function handleCancelAtPeriodEnd(sub: SubscriptionListItem, cancel: boolean) {
+    if (!selectedStudioId) return;
+    try {
+      await setCancelAtPeriodEnd(selectedStudioId, sub.user.id, sub.id, cancel);
+      void loadSubs(subsPage);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Action failed.");
     }
@@ -807,7 +845,12 @@ export default function MembershipsPage() {
                     </tr>
                   )
                 : subs.map((sub) => (
-                    <SubRow key={sub.id} sub={sub} onAction={(s, st) => void handleSubAction(s, st)} />
+                    <SubRow
+                      key={sub.id}
+                      sub={sub}
+                      onAction={(s, st) => void handleSubAction(s, st)}
+                      onCancelAtPeriodEnd={(s, c) => void handleCancelAtPeriodEnd(s, c)}
+                    />
                   ))}
             </tbody>
           </table>

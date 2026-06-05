@@ -181,3 +181,17 @@ export function updateSubscriptionStatus(
     { method: "PATCH", body: JSON.stringify({ status }) },
   );
 }
+
+// ── Cancel at period end ──────────────────────────────────────────────────────
+
+export function setCancelAtPeriodEnd(
+  studioId: string,
+  userId: string,
+  subscriptionId: string,
+  cancel: boolean,
+): Promise<SubscriptionListItem> {
+  return apiRequest<SubscriptionListItem>(
+    `/studios/${studioId}/members/${userId}/subscriptions/${subscriptionId}/cancel-at-period-end`,
+    { method: "PATCH", body: JSON.stringify({ cancel }) },
+  );
+}

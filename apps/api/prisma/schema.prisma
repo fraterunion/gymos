@@ -258,6 +258,7 @@ model MembershipPlan {
 
   studio        Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
   subscriptions Subscription[]
+  payments      Payment[]
 
   @@index([studioId])
   @@index([studioId, active])
@@ -280,6 +281,7 @@ model Subscription {
   studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
   user           User           @relation("SubscriptionMember", fields: [userId], references: [id], onDelete: Restrict)
   membershipPlan MembershipPlan @relation(fields: [membershipPlanId], references: [id], onDelete: Restrict)
+  payments       Payment[]
 
   @@index([studioId])
   @@index([studioId, userId])
@@ -466,21 +468,27 @@ model Payment {
   id                     String        @id @default(cuid())
   studioId               String        @map("studio_id")
   userId                 String        @map("user_id")
+  subscriptionId         String?       @map("subscription_id")
+  membershipPlanId       String?       @map("membership_plan_id")
   amountCents            Int           @map("amount_cents")
   currency               String        @default("usd")
   status                 PaymentStatus
   stripePaymentIntentId  String?       @unique @map("stripe_payment_intent_id")
   stripeInvoiceId        String?       @unique @map("stripe_invoice_id")
+  paidAt                 DateTime?     @map("paid_at")
   createdAt              DateTime      @default(now()) @map("created_at")
   updatedAt              DateTime      @updatedAt @map("updated_at")
 
-  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  studio         Studio          @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subscription   Subscription?   @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  membershipPlan MembershipPlan? @relation(fields: [membershipPlanId], references: [id], onDelete: SetNull)
 
   @@index([studioId])
   @@index([studioId, userId])
   @@index([studioId, status])
   @@index([userId])
+  @@index([subscriptionId])
   @@map("payments")
 }
 

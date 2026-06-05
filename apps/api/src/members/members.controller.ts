@@ -19,6 +19,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import { CreateManualSubscriptionDto } from './dto/create-manual-subscription.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
+import { SetCancelAtPeriodEndDto } from './dto/set-cancel-at-period-end.dto';
 import { StaffBookingDto } from './dto/staff-booking.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
@@ -204,6 +205,18 @@ export class MembersController {
     @Body() dto: UpdateSubscriptionStatusDto,
   ) {
     return this.membersService.updateMemberSubscription(studioId, userId, subscriptionId, dto);
+  }
+
+  @Patch(':userId/subscriptions/:subscriptionId/cancel-at-period-end')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  setCancelAtPeriodEnd(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @Param('subscriptionId') subscriptionId: string,
+    @Body() dto: SetCancelAtPeriodEndDto,
+  ) {
+    return this.membersService.setCancelAtPeriodEnd(studioId, userId, subscriptionId, dto.cancel);
   }
 
   // ── Role ───────────────────────────────────────────────────────────────────

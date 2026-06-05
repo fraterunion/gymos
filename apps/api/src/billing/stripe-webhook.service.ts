@@ -115,20 +115,37 @@ export class StripeWebhookService {
     sessionOrRootMetadata: { userId?: string; studioId?: string; planId?: string },
   ): Promise<void> {
     const md = { ...readTriplet(sub.metadata), ...sessionOrRootMetadata };
+
+    // Resolve userId: from metadata → Stripe customer lookup
     let userId = md.userId ?? null;
-    if (!userId && typeof sub.customer === 'string') {
+    const customerId =
+      typeof sub.customer === 'string'
+        ? sub.customer
+        : sub.customer?.id ?? null;
+    if (!userId && customerId) {
       const user = await this.prisma.user.findFirst({
-        where: { stripeCustomerId: sub.customer, deletedAt: null },
-      });
-      userId = user?.id ?? null;
-    } else if (!userId && sub.customer && typeof sub.customer !== 'string') {
-      const user = await this.prisma.user.findFirst({
-        where: { stripeCustomerId: sub.customer.id, deletedAt: null },
+        where: { stripeCustomerId: customerId, deletedAt: null },
       });
       userId = user?.id ?? null;
     }
-    const studioId = md.studioId ?? null;
-    const planId = md.planId ?? null;
+
+    // Resolve studioId + planId from metadata, fallback to stripePriceId lookup
+    let studioId = md.studioId ?? null;
+    let planId = md.planId ?? null;
+
+    if ((!planId || !studioId) && sub.items?.data.length) {
+      const stripePriceId = sub.items.data[0]?.price?.id ?? null;
+      if (stripePriceId) {
+        const byPrice = await this.prisma.membershipPlan.findFirst({
+          where: { stripePriceId, deletedAt: null },
+        });
+        if (byPrice) {
+          planId = planId ?? byPrice.id;
+          studioId = studioId ?? byPrice.studioId;
+        }
+      }
+    }
+
     if (!userId || !studioId || !planId) {
       this.logger.warn(`Subscription ${sub.id} missing metadata; skipping DB upsert`);
       return;
@@ -143,11 +160,12 @@ export class StripeWebhookService {
     }
 
     const status = mapStripeSubscriptionStatus(sub.status);
-
     const currentPeriodStart = sub.current_period_start
       ? new Date(sub.current_period_start * 1000)
       : null;
-    const currentPeriodEnd = sub.current_period_end ? new Date(sub.current_period_end * 1000) : null;
+    const currentPeriodEnd = sub.current_period_end
+      ? new Date(sub.current_period_end * 1000)
+      : null;
 
     await this.prisma.subscription.upsert({
       where: { stripeSubscriptionId: sub.id },
@@ -171,38 +189,64 @@ export class StripeWebhookService {
     });
   }
 
-  private async onInvoicePaid(invoice: WebhookInvoicePayload): Promise<void> {
-    if (invoice.status !== 'paid') {
-      return;
-    }
+  /**
+   * Resolves userId, studioId, DB subscriptionId, and membershipPlanId from an invoice.
+   * Prefers DB lookup (avoids extra Stripe API call); falls back to retrieveSubscription metadata.
+   */
+  private async resolveInvoiceContext(invoice: WebhookInvoicePayload): Promise<{
+    userId: string;
+    studioId: string;
+    dbSubscriptionId: string | null;
+    membershipPlanId: string | null;
+  } | null> {
     const customerId =
       typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id ?? null;
-    if (!customerId) {
-      return;
-    }
+    if (!customerId) return null;
+
     const user = await this.prisma.user.findFirst({
       where: { stripeCustomerId: customerId, deletedAt: null },
     });
-    if (!user) {
-      return;
-    }
+    if (!user) return null;
 
-    const subscriptionId =
+    const stripeSubId =
       typeof invoice.subscription === 'string'
         ? invoice.subscription
         : invoice.subscription && typeof invoice.subscription !== 'string'
           ? invoice.subscription.id
           : null;
 
-    let studioId: string | undefined;
-    if (subscriptionId) {
+    // Try DB first to avoid an extra Stripe API call
+    if (stripeSubId) {
+      const dbSub = await this.prisma.subscription.findUnique({
+        where: { stripeSubscriptionId: stripeSubId },
+      });
+      if (dbSub) {
+        return {
+          userId: user.id,
+          studioId: dbSub.studioId,
+          dbSubscriptionId: dbSub.id,
+          membershipPlanId: dbSub.membershipPlanId,
+        };
+      }
+      // Fallback: retrieve from Stripe to get metadata
       const stripeSub = (await this.stripe.retrieveSubscription(
-        subscriptionId,
+        stripeSubId,
       )) as unknown as WebhookSubscriptionPayload;
-      studioId = readTriplet(stripeSub.metadata).studioId;
+      const studioId = readTriplet(stripeSub.metadata).studioId;
+      if (!studioId) return null;
+      return { userId: user.id, studioId, dbSubscriptionId: null, membershipPlanId: null };
     }
-    if (!studioId) {
-      this.logger.warn(`invoice.paid ${invoice.id} could not resolve studioId; skipping payment row`);
+
+    return null;
+  }
+
+  private async onInvoicePaid(invoice: WebhookInvoicePayload): Promise<void> {
+    if (invoice.status !== 'paid') {
+      return;
+    }
+    const ctx = await this.resolveInvoiceContext(invoice);
+    if (!ctx) {
+      this.logger.warn(`invoice.paid ${invoice.id} could not resolve context; skipping payment row`);
       return;
     }
 
@@ -213,56 +257,40 @@ export class StripeWebhookService {
         : invoice.payment_intent && typeof invoice.payment_intent !== 'string'
           ? invoice.payment_intent.id
           : null;
+    const paidAt = invoice.status_transitions?.paid_at
+      ? new Date(invoice.status_transitions.paid_at * 1000)
+      : new Date();
 
     await this.prisma.payment.upsert({
       where: { stripeInvoiceId: invoice.id },
       create: {
-        studioId,
-        userId: user.id,
+        studioId: ctx.studioId,
+        userId: ctx.userId,
+        subscriptionId: ctx.dbSubscriptionId,
+        membershipPlanId: ctx.membershipPlanId,
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         status: PaymentStatus.SUCCEEDED,
         stripeInvoiceId: invoice.id,
         stripePaymentIntentId: piId,
+        paidAt,
       },
       update: {
         status: PaymentStatus.SUCCEEDED,
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         stripePaymentIntentId: piId ?? undefined,
+        subscriptionId: ctx.dbSubscriptionId ?? undefined,
+        membershipPlanId: ctx.membershipPlanId ?? undefined,
+        paidAt,
       },
     });
   }
 
   private async onInvoicePaymentFailed(invoice: WebhookInvoicePayload): Promise<void> {
-    const customerId =
-      typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id ?? null;
-    if (!customerId) {
-      return;
-    }
-    const user = await this.prisma.user.findFirst({
-      where: { stripeCustomerId: customerId, deletedAt: null },
-    });
-    if (!user) {
-      return;
-    }
-
-    const subscriptionId =
-      typeof invoice.subscription === 'string'
-        ? invoice.subscription
-        : invoice.subscription && typeof invoice.subscription !== 'string'
-          ? invoice.subscription.id
-          : null;
-
-    let studioId: string | undefined;
-    if (subscriptionId) {
-      const stripeSub = (await this.stripe.retrieveSubscription(
-        subscriptionId,
-      )) as unknown as WebhookSubscriptionPayload;
-      studioId = readTriplet(stripeSub.metadata).studioId;
-    }
-    if (!studioId) {
-      this.logger.warn(`invoice.payment_failed ${invoice.id} could not resolve studioId; skipping payment row`);
+    const ctx = await this.resolveInvoiceContext(invoice);
+    if (!ctx) {
+      this.logger.warn(`invoice.payment_failed ${invoice.id} could not resolve context; skipping payment row`);
       return;
     }
 
@@ -277,8 +305,10 @@ export class StripeWebhookService {
     await this.prisma.payment.upsert({
       where: { stripeInvoiceId: invoice.id },
       create: {
-        studioId,
-        userId: user.id,
+        studioId: ctx.studioId,
+        userId: ctx.userId,
+        subscriptionId: ctx.dbSubscriptionId,
+        membershipPlanId: ctx.membershipPlanId,
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         status: PaymentStatus.FAILED,
@@ -290,12 +320,14 @@ export class StripeWebhookService {
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         stripePaymentIntentId: piId ?? undefined,
+        subscriptionId: ctx.dbSubscriptionId ?? undefined,
+        membershipPlanId: ctx.membershipPlanId ?? undefined,
       },
     });
 
-    if (subscriptionId) {
-      await this.prisma.subscription.updateMany({
-        where: { stripeSubscriptionId: subscriptionId },
+    if (ctx.dbSubscriptionId) {
+      await this.prisma.subscription.update({
+        where: { id: ctx.dbSubscriptionId },
         data: { status: SubscriptionStatus.PAST_DUE },
       });
     }

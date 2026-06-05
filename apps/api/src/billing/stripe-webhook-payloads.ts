@@ -18,6 +18,9 @@ export type WebhookSubscriptionPayload = {
   current_period_start: number;
   current_period_end: number;
   cancel_at_period_end: boolean;
+  items: {
+    data: Array<{ price: { id: string } | null }>;
+  } | null;
 };
 
 export type WebhookInvoicePayload = {
@@ -30,4 +33,8 @@ export type WebhookInvoicePayload = {
   amount_paid: number | null;
   amount_due: number | null;
   total: number | null;
+  status_transitions: { paid_at: number | null } | null;
+  lines: {
+    data: Array<{ price: { id: string } | null }>;
+  } | null;
 };

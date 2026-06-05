@@ -93,4 +93,11 @@ export class StripeService {
       recurring: { interval: params.interval },
     });
   }
+
+  async updateSubscription(
+    subscriptionId: string,
+    params: Stripe.SubscriptionUpdateParams,
+  ): Promise<Stripe.Subscription> {
+    return this.getClient().subscriptions.update(subscriptionId, params);
+  }
 }

@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { StripeService } from '../stripe/stripe.service';
 import {
   BookingStatus,
   CancelSource,
@@ -34,6 +35,7 @@ export class MembersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly waitlistService: WaitlistService,
+    private readonly stripeService: StripeService,
   ) {}
 
   // ── Simple list (legacy — kept for compatibility) ──────────────────────────
@@ -548,6 +550,41 @@ export class MembersService {
         membershipPlan: { select: { id: true, name: true } },
       },
     });
+  }
+
+  async setCancelAtPeriodEnd(
+    studioId: string,
+    userId: string,
+    subscriptionId: string,
+    cancel: boolean,
+  ) {
+    const sub = await this.prisma.subscription.findFirst({
+      where: { id: subscriptionId, studioId, userId },
+    });
+    if (!sub) throw new NotFoundException('Subscription not found');
+
+    const updated = await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { cancelAtPeriodEnd: cancel },
+      include: {
+        membershipPlan: { select: { id: true, name: true } },
+      },
+    });
+
+    // Sync to Stripe if subscription is Stripe-managed
+    if (sub.stripeSubscriptionId) {
+      try {
+        await this.stripeService.updateSubscription(sub.stripeSubscriptionId, {
+          cancel_at_period_end: cancel,
+        });
+      } catch (err) {
+        // Log but don't fail — webhook will reconcile the state
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new BadRequestException(`DB updated but Stripe sync failed: ${msg}`);
+      }
+    }
+
+    return updated;
   }
 
   // ── Role ───────────────────────────────────────────────────────────────────
