@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -42,6 +44,35 @@ export class AuthService {
       throw new ConflictException('Email already registered');
     }
     const passwordHash = await bcrypt.hash(dto.password, this.getBcryptRounds());
+
+    if (dto.studioSlug) {
+      const studio = await this.prisma.studio.findFirst({
+        where: { slug: dto.studioSlug, deletedAt: null },
+        select: { id: true },
+      });
+      if (!studio) {
+        throw new BadRequestException('Studio not found');
+      }
+
+      const user = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            email: dto.email,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            passwordHash,
+          },
+        });
+        await tx.studioMembership.upsert({
+          where: { userId_studioId: { userId: created.id, studioId: studio.id } },
+          create: { userId: created.id, studioId: studio.id, role: Role.MEMBER },
+          update: { role: Role.MEMBER, deletedAt: null },
+        });
+        return created;
+      });
+      return this.issueAuthBundle(user.id, user.email);
+    }
+
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,

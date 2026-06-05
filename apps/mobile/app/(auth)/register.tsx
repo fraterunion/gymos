@@ -14,6 +14,7 @@ import { BrandButton } from '@/components/BrandButton';
 import { Field } from '@/components/Field';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
+import { getStudioSlug } from '@/lib/env';
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -52,11 +53,13 @@ export default function RegisterScreen() {
       return;
     }
     try {
+      const studioSlug = getStudioSlug();
       await register({
         email: email.trim(),
         password,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
+        ...(studioSlug ? { studioSlug } : {}),
       });
       router.replace('/(app)/(tabs)');
     } catch {

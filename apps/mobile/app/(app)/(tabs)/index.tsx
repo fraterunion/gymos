@@ -1,5 +1,5 @@
-import { useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
@@ -9,6 +9,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
+import { BrandButton } from '@/components/BrandButton';
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
 import { ImageSlot } from '@/components/ImageSlot';
@@ -36,6 +37,7 @@ import {
   type CategoryModule,
 } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
+import { fetchMyMemberProfile } from '@/lib/api/membershipApi';
 import type { BookingWithClass, ScheduledClassDto } from '@/lib/types/studio';
 
 // ---------------------------------------------------------------------------
@@ -46,6 +48,54 @@ function buildGreeting(firstName: string | null | undefined): string {
   const h = new Date().getHours();
   const s = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   return firstName ? `${s},\n${firstName}.` : `${s}.`;
+}
+
+// ---------------------------------------------------------------------------
+// Membership activation — shown when user has studio access but no subscription
+// ---------------------------------------------------------------------------
+
+function MembershipActivationCard({
+  primaryColor,
+  onViewPlans,
+}: {
+  primaryColor: string;
+  onViewPlans: () => void;
+}) {
+  const C = getColors();
+  return (
+    <Animated.View entering={FadeInDown.delay(60).duration(450)} style={{ marginBottom: 24 }}>
+      <View
+        style={{
+          backgroundColor: C.surface1,
+          borderRadius: 20,
+          padding: 28,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 22,
+            fontWeight: '800',
+            letterSpacing: -0.5,
+            color: C.text,
+            marginBottom: 10,
+          }}
+        >
+          Choose your membership
+        </Text>
+        <Text
+          style={{
+            fontSize: 15,
+            color: C.textSub,
+            lineHeight: 22,
+            marginBottom: 24,
+          }}
+        >
+          Purchase a membership to unlock class bookings and reserve your first session.
+        </Text>
+        <BrandButton label="View plans" accentColor={primaryColor} onPress={onViewPlans} />
+      </View>
+    </Animated.View>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +505,26 @@ export default function HomeScreen() {
   const { user } = useAuth();
   const matched = useMemberStudio().matched;
   const { classes, myBookings, myWaitlist, loading, error, refresh } = useStudioActivity();
+  const studioId = matched?.studio.id;
+
+  /** null = unknown; false = no active subscription; true = subscribed */
+  const [hasActiveSubscription, setHasActiveSubscription] = useState<boolean | null>(null);
+
+  const loadMembershipStatus = useCallback(async () => {
+    if (!studioId) return;
+    try {
+      const profile = await fetchMyMemberProfile(studioId);
+      setHasActiveSubscription(profile.activeSubscription !== null);
+    } catch {
+      // Keep home usable if membership status cannot be loaded
+    }
+  }, [studioId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadMembershipStatus();
+    }, [loadMembershipStatus]),
+  );
 
   const timeZone = matched?.studio.timezone ?? 'UTC';
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
@@ -534,7 +604,10 @@ export default function HomeScreen() {
         refreshControl={
           <RefreshControl
             refreshing={loading}
-            onRefresh={() => void refresh()}
+            onRefresh={() => {
+              void refresh();
+              void loadMembershipStatus();
+            }}
             tintColor={primaryColor}
           />
         }
@@ -558,6 +631,13 @@ export default function HomeScreen() {
             </Text>
           ) : null}
         </Animated.View>
+
+        {hasActiveSubscription === false ? (
+          <MembershipActivationCard
+            primaryColor={primaryColor}
+            onViewPlans={() => router.push('/(app)/(tabs)/membership')}
+          />
+        ) : null}
 
         {/* ── Category strip — always visible (static editorial content) ── */}
         <CategoryStrip />

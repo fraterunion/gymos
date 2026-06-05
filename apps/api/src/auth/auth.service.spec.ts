@@ -1,4 +1,4 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -12,7 +12,9 @@ function sha256(plain: string): string {
 
 describe('AuthService', () => {
   let service: AuthService;
-  let prisma: jest.Mocked<Pick<PrismaService, '$transaction' | 'user' | 'refreshToken'>>;
+  let prisma: jest.Mocked<
+    Pick<PrismaService, '$transaction' | 'user' | 'refreshToken' | 'studio' | 'studioMembership'>
+  >;
 
   const jwtSignAsync = jest.fn().mockResolvedValue('access.jwt.token');
   const configGet = jest.fn((key: string, def?: string) => {
@@ -36,8 +38,16 @@ describe('AuthService', () => {
         update: jest.fn(),
         updateMany: jest.fn(),
       } as unknown as PrismaService['refreshToken'],
+      studio: {
+        findFirst: jest.fn(),
+      } as unknown as PrismaService['studio'],
+      studioMembership: {
+        upsert: jest.fn(),
+      } as unknown as PrismaService['studioMembership'],
       $transaction: jest.fn(),
-    } as unknown as jest.Mocked<Pick<PrismaService, '$transaction' | 'user' | 'refreshToken'>>;
+    } as unknown as jest.Mocked<
+      Pick<PrismaService, '$transaction' | 'user' | 'refreshToken' | 'studio' | 'studioMembership'>
+    >;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,6 +72,20 @@ describe('AuthService', () => {
           password: 'password12',
         }),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('throws BadRequestException when studioSlug does not match a studio', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.studio.findFirst as jest.Mock).mockResolvedValue(null);
+      await expect(
+        service.register({
+          email: 'a@b.com',
+          firstName: 'A',
+          lastName: 'B',
+          password: 'password12',
+          studioSlug: 'missing',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

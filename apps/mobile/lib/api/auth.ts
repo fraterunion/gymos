@@ -14,6 +14,7 @@ export type RegisterBody = {
   password: string;
   firstName: string;
   lastName: string;
+  studioSlug?: string;
 };
 
 export async function registerRequest(body: RegisterBody): Promise<AuthBundle> {
