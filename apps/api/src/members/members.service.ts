@@ -11,6 +11,7 @@ import {
   CancelSource,
   CheckInMethod,
   ClassStatus,
+  PaymentStatus,
   Prisma,
   SubscriptionStatus,
 } from '@prisma/client';
@@ -108,13 +109,22 @@ export class MembersService {
 
     const userIds = memberships.map((m) => m.userId);
 
-    const [bookingCounts, lastAttendances, subscriptions] = await Promise.all([
+    const [bookingCounts, noShowCounts, lastAttendances, subscriptions] = await Promise.all([
       this.prisma.booking.groupBy({
         by: ['userId'],
         where: {
           studioId,
           userId: { in: userIds },
           status: { not: BookingStatus.CANCELLED },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.booking.groupBy({
+        by: ['userId'],
+        where: {
+          studioId,
+          userId: { in: userIds },
+          status: BookingStatus.NO_SHOW,
         },
         _count: { _all: true },
       }),
@@ -133,6 +143,7 @@ export class MembersService {
     ]);
 
     const bookingCountMap = new Map(bookingCounts.map((r) => [r.userId, r._count._all]));
+    const noShowCountMap = new Map(noShowCounts.map((r) => [r.userId, r._count._all]));
     const lastAttendanceMap = new Map(lastAttendances.map((r) => [r.userId, r._max.checkedInAt]));
 
     const subMap = new Map<string, (typeof subscriptions)[0]>();
@@ -148,6 +159,7 @@ export class MembersService {
         joinedAt: m.createdAt,
         user: m.user,
         totalBookings: bookingCountMap.get(m.userId) ?? 0,
+        noShowCount: noShowCountMap.get(m.userId) ?? 0,
         lastAttendanceAt: lastAttendanceMap.get(m.userId) ?? null,
         subscription: sub
           ? {
@@ -166,6 +178,10 @@ export class MembersService {
       enriched = enriched.filter(
         (m) => m.subscription?.status === query.subStatus,
       );
+    }
+
+    if (query.hasNoShows) {
+      enriched = enriched.filter((m) => m.noShowCount > 0);
     }
 
     if (sortBy === 'totalBookings') {
@@ -631,6 +647,199 @@ export class MembersService {
       include: {
         user: { select: publicUserSelect },
       },
+    });
+  }
+
+  // ── Timeline ──────────────────────────────────────────────────────────────
+
+  async getMemberTimeline(studioId: string, userId: string) {
+    await this.assertMembership(studioId, userId);
+
+    const [membership, bookings, attendances, subscriptions, payments, crmProfile] =
+      await Promise.all([
+        this.prisma.studioMembership.findFirst({
+          where: { studioId, userId, deletedAt: null },
+        }),
+        this.prisma.booking.findMany({
+          where: { studioId, userId },
+          include: {
+            scheduledClass: {
+              include: {
+                classTemplate: { select: { id: true, name: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 200,
+        }),
+        this.prisma.attendance.findMany({
+          where: { studioId, userId },
+          include: {
+            scheduledClass: {
+              include: {
+                classTemplate: { select: { id: true, name: true } },
+              },
+            },
+          },
+          orderBy: { checkedInAt: 'desc' },
+          take: 200,
+        }),
+        this.prisma.subscription.findMany({
+          where: { studioId, userId },
+          include: { membershipPlan: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.payment.findMany({
+          where: { studioId, userId },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+        }),
+        this.prisma.studioMemberProfile.findUnique({
+          where: { studioId_userId: { studioId, userId } },
+        }),
+      ]);
+
+    type TimelineEvent = {
+      type: string;
+      title: string;
+      description?: string | null;
+      occurredAt: Date;
+    };
+
+    const events: TimelineEvent[] = [];
+
+    if (membership) {
+      events.push({ type: 'MEMBER_CREATED', title: 'Joined the studio', occurredAt: membership.createdAt });
+    }
+
+    for (const b of bookings) {
+      const className = b.scheduledClass.classTemplate.name;
+      if (b.status === BookingStatus.NO_SHOW) {
+        events.push({ type: 'BOOKING_NO_SHOW', title: 'No-show', description: className, occurredAt: b.updatedAt });
+      } else if (b.status === BookingStatus.CANCELLED) {
+        events.push({ type: 'BOOKING_CANCELLED', title: 'Booking cancelled', description: className, occurredAt: b.cancelledAt ?? b.updatedAt });
+      } else {
+        events.push({ type: 'BOOKING_CREATED', title: 'Booked a class', description: className, occurredAt: b.createdAt });
+      }
+    }
+
+    for (const a of attendances) {
+      events.push({ type: 'CHECKED_IN', title: 'Checked in', description: a.scheduledClass.classTemplate.name, occurredAt: a.checkedInAt });
+    }
+
+    for (const s of subscriptions) {
+      events.push({ type: 'MEMBERSHIP_ASSIGNED', title: 'Membership assigned', description: s.membershipPlan.name, occurredAt: s.createdAt });
+    }
+
+    for (const p of payments) {
+      if (p.status === PaymentStatus.SUCCEEDED) {
+        const amount = `${p.currency.toUpperCase()} ${(p.amountCents / 100).toFixed(2)}`;
+        events.push({ type: 'PAYMENT_SUCCEEDED', title: 'Payment succeeded', description: amount, occurredAt: p.paidAt ?? p.createdAt });
+      } else if (p.status === PaymentStatus.FAILED) {
+        events.push({ type: 'PAYMENT_FAILED', title: 'Payment failed', occurredAt: p.createdAt });
+      }
+    }
+
+    if (crmProfile && crmProfile.updatedAt.getTime() - crmProfile.createdAt.getTime() > 60_000) {
+      events.push({ type: 'CRM_UPDATED', title: 'Coach notes updated', occurredAt: crmProfile.updatedAt });
+    }
+
+    events.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
+    return events.slice(0, 200);
+  }
+
+  // ── Attendance log (bookings + check-in status) ────────────────────────────
+
+  async getMemberAttendanceLog(studioId: string, userId: string, page: number, limit: number) {
+    await this.assertMembership(studioId, userId);
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.BookingWhereInput = { studioId, userId };
+
+    const [bookings, total] = await Promise.all([
+      this.prisma.booking.findMany({
+        where,
+        include: {
+          scheduledClass: {
+            include: {
+              classTemplate: { select: { id: true, name: true, color: true } },
+              instructor: { select: { id: true, firstName: true, lastName: true } },
+            },
+          },
+        },
+        orderBy: { scheduledClass: { startsAt: 'desc' } },
+        skip,
+        take: limit,
+      }),
+      this.prisma.booking.count({ where }),
+    ]);
+
+    if (bookings.length === 0) return { data: [], total, page, limit };
+
+    const scheduledClassIds = bookings.map((b) => b.scheduledClassId);
+    const attendances = await this.prisma.attendance.findMany({
+      where: { studioId, userId, scheduledClassId: { in: scheduledClassIds } },
+      select: { scheduledClassId: true, checkedInAt: true, method: true },
+    });
+    const attendedMap = new Map(attendances.map((a) => [a.scheduledClassId, a]));
+
+    const now = new Date();
+    const data = bookings.map((b) => {
+      const att = attendedMap.get(b.scheduledClassId);
+      const isPast = new Date(b.scheduledClass.startsAt) <= now;
+      const attendanceStatus =
+        b.status === BookingStatus.NO_SHOW ? 'NO_SHOW'
+        : b.status === BookingStatus.CANCELLED ? 'CANCELLED'
+        : att ? 'ATTENDED'
+        : isPast ? 'MISSED'
+        : 'UPCOMING';
+      return {
+        id: b.id,
+        status: b.status,
+        attendanceStatus,
+        createdAt: b.createdAt,
+        cancelledAt: b.cancelledAt,
+        canMarkNoShow: isPast && b.status === BookingStatus.CONFIRMED && !att,
+        checkedInAt: att?.checkedInAt ?? null,
+        checkInMethod: att?.method ?? null,
+        scheduledClass: b.scheduledClass,
+      };
+    });
+
+    return { data, total, page, limit };
+  }
+
+  // ── No-show marking ────────────────────────────────────────────────────────
+
+  async staffMarkNoShow(studioId: string, userId: string, bookingId: string) {
+    const booking = await this.prisma.booking.findFirst({
+      where: { id: bookingId, studioId, userId },
+      include: {
+        scheduledClass: { select: { startsAt: true } },
+      },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+    if (booking.status === BookingStatus.NO_SHOW) {
+      throw new ConflictException('Booking is already marked as no-show');
+    }
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new ConflictException('Cannot mark a cancelled booking as no-show');
+    }
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new ConflictException('Only confirmed bookings can be marked as no-show');
+    }
+    if (new Date(booking.scheduledClass.startsAt) > new Date()) {
+      throw new ConflictException('Class has not started yet');
+    }
+    const hasAttendance = await this.prisma.attendance.findFirst({
+      where: { studioId, userId, scheduledClassId: booking.scheduledClassId },
+    });
+    if (hasAttendance) {
+      throw new ConflictException('Member has already checked in for this class');
+    }
+    return this.prisma.booking.update({
+      where: { id: bookingId },
+      data: { status: BookingStatus.NO_SHOW },
     });
   }
 

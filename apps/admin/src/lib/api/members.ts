@@ -43,6 +43,7 @@ export type MemberListItem = {
     createdAt: string;
   };
   totalBookings: number;
+  noShowCount: number;
   lastAttendanceAt: string | null;
   subscription: MemberSubscriptionSummary | null;
 };
@@ -57,10 +58,54 @@ export type MemberListResponse = {
 export type MemberListQuery = {
   search?: string;
   subStatus?: SubStatus;
+  hasNoShows?: boolean;
   sortBy?: "joinDate" | "lastAttendance" | "totalBookings" | "name";
   sortDir?: "asc" | "desc";
   page?: number;
   limit?: number;
+};
+
+export type TimelineEventType =
+  | "MEMBER_CREATED"
+  | "BOOKING_CREATED"
+  | "BOOKING_CANCELLED"
+  | "BOOKING_NO_SHOW"
+  | "CHECKED_IN"
+  | "MEMBERSHIP_ASSIGNED"
+  | "PAYMENT_SUCCEEDED"
+  | "PAYMENT_FAILED"
+  | "CRM_UPDATED";
+
+export type TimelineEvent = {
+  type: TimelineEventType;
+  title: string;
+  description?: string | null;
+  occurredAt: string;
+};
+
+export type AttendanceLogEntry = {
+  id: string;
+  status: BookingStatus;
+  attendanceStatus: "ATTENDED" | "CANCELLED" | "NO_SHOW" | "MISSED" | "UPCOMING";
+  createdAt: string;
+  cancelledAt: string | null;
+  canMarkNoShow: boolean;
+  checkedInAt: string | null;
+  checkInMethod: "QR" | "MANUAL" | "KIOSK" | null;
+  scheduledClass: {
+    id: string;
+    startsAt: string;
+    endsAt: string;
+    classTemplate: { id: string; name: string; color: string | null };
+    instructor: { id: string; firstName: string; lastName: string } | null;
+  };
+};
+
+export type AttendanceLogResponse = {
+  data: AttendanceLogEntry[];
+  total: number;
+  page: number;
+  limit: number;
 };
 
 export type MemberPlan = {
@@ -216,6 +261,7 @@ export async function fetchMembers(
   const params = new URLSearchParams();
   if (query.search) params.set("search", query.search);
   if (query.subStatus) params.set("subStatus", query.subStatus);
+  if (query.hasNoShows) params.set("hasNoShows", "true");
   if (query.sortBy) params.set("sortBy", query.sortBy);
   if (query.sortDir) params.set("sortDir", query.sortDir);
   if (query.page) params.set("page", String(query.page));
@@ -322,6 +368,39 @@ export async function updateSubscriptionStatus(
   return apiRequest<MemberSubscription>(
     `/studios/${studioId}/members/${userId}/subscriptions/${subscriptionId}/status`,
     { method: "PATCH", body: JSON.stringify({ status }) },
+  );
+}
+
+export async function fetchMemberTimeline(
+  studioId: string,
+  userId: string,
+): Promise<TimelineEvent[]> {
+  return apiRequest<TimelineEvent[]>(
+    `/studios/${studioId}/members/${userId}/timeline`,
+    { method: "GET" },
+  );
+}
+
+export async function fetchMemberAttendanceLog(
+  studioId: string,
+  userId: string,
+  page = 1,
+  limit = 25,
+): Promise<AttendanceLogResponse> {
+  return apiRequest<AttendanceLogResponse>(
+    `/studios/${studioId}/members/${userId}/attendance-log?page=${page}&limit=${limit}`,
+    { method: "GET" },
+  );
+}
+
+export async function staffMarkNoShow(
+  studioId: string,
+  userId: string,
+  bookingId: string,
+): Promise<{ id: string; status: string }> {
+  return apiRequest<{ id: string; status: string }>(
+    `/studios/${studioId}/members/${userId}/bookings/${bookingId}/no-show`,
+    { method: "POST" },
   );
 }
 

@@ -6,23 +6,26 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import {
-  fetchMemberAttendance,
+  fetchMemberAttendanceLog,
   fetchMemberBookings,
   fetchMemberCrmProfile,
   fetchMemberPayments,
   fetchMemberProfile,
   fetchMemberSubscriptions,
+  fetchMemberTimeline,
   staffCancelBooking,
   staffForceCheckIn,
+  staffMarkNoShow,
   updateMemberCrmProfile,
   updateSubscriptionStatus,
-  type MemberAttendance,
+  type AttendanceLogEntry,
   type MemberBooking,
   type MemberCrmProfile,
   type MemberPayment,
   type MemberProfile,
   type MemberSubscription,
   type SubStatus,
+  type TimelineEvent,
   type UpsertCrmProfileInput,
 } from "@/lib/api/members";
 import { ApiError } from "@/lib/api/errors";
@@ -228,7 +231,7 @@ function Pagination({
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "membership" | "bookings" | "attendance" | "billing" | "notes";
+type Tab = "overview" | "membership" | "bookings" | "attendance" | "billing" | "notes" | "timeline";
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "membership", label: "Membership" },
@@ -236,6 +239,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "attendance", label: "Attendance" },
   { id: "billing", label: "Billing" },
   { id: "notes", label: "Notes & CRM" },
+  { id: "timeline", label: "Timeline" },
 ];
 
 // ── Bookings tab ──────────────────────────────────────────────────────────────
@@ -357,19 +361,30 @@ function BookingsTab({ studioId, userId }: { studioId: string; userId: string })
 
 // ── Attendance tab ────────────────────────────────────────────────────────────
 
+// ── Attendance log tab ────────────────────────────────────────────────────────
+
+const ATTENDANCE_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  ATTENDED: { label: "Attended", color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
+  CANCELLED: { label: "Cancelled", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400" },
+  NO_SHOW: { label: "No Show", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" },
+  MISSED: { label: "Missed", color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
+  UPCOMING: { label: "Upcoming", color: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" },
+};
+
 function AttendanceTab({ studioId, userId }: { studioId: string; userId: string }) {
-  const [records, setRecords] = useState<MemberAttendance[]>([]);
+  const [records, setRecords] = useState<AttendanceLogEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const limit = 20;
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const limit = 25;
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchMemberAttendance(studioId, userId, page, limit);
+      const res = await fetchMemberAttendanceLog(studioId, userId, page, limit);
       setRecords(res.data);
       setTotal(res.total);
     } catch (e) {
@@ -381,7 +396,19 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
 
   useEffect(() => { const t = setTimeout(() => void load(), 0); return () => clearTimeout(t); }, [load]);
 
-  if (loading) return <TableSkeleton cols={3} />;
+  async function handleMarkNoShow(entry: AttendanceLogEntry) {
+    setActionLoading(entry.id);
+    try {
+      await staffMarkNoShow(studioId, userId, entry.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to mark no-show");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  if (loading) return <TableSkeleton cols={5} />;
 
   return (
     <div className="space-y-3">
@@ -390,31 +417,164 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
         <table className="min-w-full divide-y divide-zinc-100 dark:divide-zinc-800">
           <thead className="bg-zinc-50 dark:bg-zinc-950/60">
             <tr>
-              {["Class", "Checked in", "Method"].map((h) => (
+              {["Date", "Class", "Coach", "Status", ""].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
             {records.length === 0 ? (
-              <tr><td colSpan={3} className="px-4 py-10 text-center text-sm text-zinc-500">No check-ins yet.</td></tr>
-            ) : records.map((r) => (
-              <tr key={r.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    {r.scheduledClass.classTemplate.color && (
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.scheduledClass.classTemplate.color }} />
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-zinc-500">No booking history yet.</td></tr>
+            ) : records.map((r) => {
+              const cfg = ATTENDANCE_STATUS_CONFIG[r.attendanceStatus] ?? { label: r.attendanceStatus, color: "" };
+              return (
+                <tr key={r.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+                  <td className="px-4 py-3 text-sm text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                    {fmtDateTime(r.scheduledClass.startsAt)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      {r.scheduledClass.classTemplate.color && (
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.scheduledClass.classTemplate.color }} />
+                      )}
+                      <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{r.scheduledClass.classTemplate.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                    {r.scheduledClass.instructor
+                      ? `${r.scheduledClass.instructor.firstName} ${r.scheduledClass.instructor.lastName}`
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cfg.color}`}>
+                      {cfg.label}
+                    </span>
+                    {r.checkedInAt && (
+                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                        {r.checkInMethod?.toLowerCase()} · {fmtDateTime(r.checkedInAt)}
+                      </p>
                     )}
-                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{r.scheduledClass.classTemplate.name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-sm text-zinc-600 dark:text-zinc-400">{fmtDateTime(r.checkedInAt)}</td>
-                <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400 capitalize">{r.method.toLowerCase()}</td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {r.canMarkNoShow && (
+                      <button
+                        onClick={() => void handleMarkNoShow(r)}
+                        disabled={actionLoading === r.id}
+                        className="rounded-lg border border-amber-200 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                      >
+                        {actionLoading === r.id ? "…" : "Mark No Show"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <Pagination page={page} total={total} limit={limit} onPage={setPage} />
+      </div>
+    </div>
+  );
+}
+
+// ── Timeline tab ──────────────────────────────────────────────────────────────
+
+const TIMELINE_CONFIG: Record<string, { dot: string; label?: string }> = {
+  MEMBER_CREATED:     { dot: "bg-purple-500" },
+  BOOKING_CREATED:    { dot: "bg-blue-400" },
+  BOOKING_CANCELLED:  { dot: "bg-red-400" },
+  BOOKING_NO_SHOW:    { dot: "bg-amber-400" },
+  CHECKED_IN:         { dot: "bg-emerald-500" },
+  MEMBERSHIP_ASSIGNED: { dot: "bg-indigo-500" },
+  PAYMENT_SUCCEEDED:  { dot: "bg-emerald-500" },
+  PAYMENT_FAILED:     { dot: "bg-red-500" },
+  CRM_UPDATED:        { dot: "bg-zinc-400" },
+};
+
+function TimelineTab({ studioId, userId }: { studioId: string; userId: string }) {
+  const [events, setEvents] = useState<TimelineEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchMemberTimeline(studioId, userId);
+      setEvents(data);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load timeline");
+    } finally {
+      setLoading(false);
+    }
+  }, [studioId, userId]);
+
+  useEffect(() => { const t = setTimeout(() => void load(), 0); return () => clearTimeout(t); }, [load]);
+
+  if (loading) {
+    return (
+      <div className="space-y-4 pl-6">
+        {[...Array(6)].map((_, i) => (
+          <div key={i} className="flex gap-3">
+            <div className="h-3 w-3 mt-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 animate-pulse shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-1/3 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+              <div className="h-3 w-1/2 rounded bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (error) return <ErrorBanner message={error} />;
+
+  if (events.length === 0) {
+    return (
+      <div className="rounded-xl border border-zinc-200 bg-white px-6 py-12 text-center dark:border-zinc-800 dark:bg-zinc-900">
+        <p className="text-sm text-zinc-500">No activity yet.</p>
+      </div>
+    );
+  }
+
+  // Group events by calendar date
+  const groups = new Map<string, TimelineEvent[]>();
+  for (const ev of events) {
+    const key = new Date(ev.occurredAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(ev);
+  }
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="space-y-8">
+        {[...groups.entries()].map(([dateKey, dayEvents]) => (
+          <div key={dateKey}>
+            <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              {dateKey}
+            </p>
+            <div className="relative border-l border-zinc-200 pl-6 dark:border-zinc-700 space-y-5">
+              {dayEvents.map((ev, i) => {
+                const cfg = TIMELINE_CONFIG[ev.type] ?? { dot: "bg-zinc-400" };
+                const time = new Date(ev.occurredAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                return (
+                  <div key={i} className="relative">
+                    <span className={`absolute -left-[1.6rem] top-[5px] h-3 w-3 rounded-full border-2 border-white dark:border-zinc-900 ${cfg.dot}`} />
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{ev.title}</p>
+                        {ev.description && (
+                          <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">{ev.description}</p>
+                        )}
+                      </div>
+                      <p className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">{time}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1067,6 +1227,7 @@ export default function MemberProfilePage() {
             {activeTab === "membership" && <MembershipTab studioId={selectedStudioId} userId={userId} />}
             {activeTab === "bookings" && <BookingsTab studioId={selectedStudioId} userId={userId} />}
             {activeTab === "attendance" && <AttendanceTab studioId={selectedStudioId} userId={userId} />}
+            {activeTab === "timeline" && <TimelineTab studioId={selectedStudioId} userId={userId} />}
             {activeTab === "billing" && <BillingTab studioId={selectedStudioId} userId={userId} />}
             {activeTab === "notes" && <NotesTab studioId={selectedStudioId} userId={userId} />}
           </div>

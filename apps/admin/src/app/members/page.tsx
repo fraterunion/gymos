@@ -117,6 +117,7 @@ export default function MembersPage() {
 
   const [search, setSearch] = useState("");
   const [subStatus, setSubStatus] = useState<SubStatus | "">("");
+  const [hasNoShows, setHasNoShows] = useState(false);
   const [sortBy, setSortBy] = useState<SortKey>("joinDate");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -141,6 +142,7 @@ export default function MembersPage() {
       const res = await fetchMembers(selectedStudioId, {
         search: debouncedSearch || undefined,
         subStatus: (subStatus as SubStatus) || undefined,
+        hasNoShows: hasNoShows || undefined,
         sortBy,
         sortDir,
         page,
@@ -153,7 +155,7 @@ export default function MembersPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedStudioId, debouncedSearch, subStatus, sortBy, sortDir, page, limit]);
+  }, [selectedStudioId, debouncedSearch, subStatus, hasNoShows, sortBy, sortDir, page, limit]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
@@ -163,7 +165,7 @@ export default function MembersPage() {
   useEffect(() => {
     const t = setTimeout(() => setPage(1), 0);
     return () => clearTimeout(t);
-  }, [debouncedSearch, subStatus, sortBy, sortDir]);
+  }, [debouncedSearch, subStatus, hasNoShows, sortBy, sortDir]);
 
   function handleSort(field: SortKey) {
     if (field === sortBy) {
@@ -203,19 +205,28 @@ export default function MembersPage() {
         />
         <select
           value={subStatus}
-          onChange={(e) => setSubStatus(e.target.value as SubStatus | "")}
+          onChange={(e) => { setSubStatus(e.target.value as SubStatus | ""); setHasNoShows(false); }}
           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
         >
           <option value="">All plans</option>
           {(Object.keys(SUB_STATUS_LABELS) as SubStatus[]).map((s) => (
-            <option key={s} value={s}>
-              {SUB_STATUS_LABELS[s]}
-            </option>
+            <option key={s} value={s}>{SUB_STATUS_LABELS[s]}</option>
           ))}
         </select>
-        {(search || subStatus) && (
+        {/* Quick filter chips */}
+        <button
+          onClick={() => { setHasNoShows((v) => !v); setSubStatus(""); }}
+          className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+            hasNoShows
+              ? "border-amber-400 bg-amber-50 text-amber-800 dark:border-amber-600 dark:bg-amber-900/30 dark:text-amber-300"
+              : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          }`}
+        >
+          No Shows
+        </button>
+        {(search || subStatus || hasNoShows) && (
           <button
-            onClick={() => { setSearch(""); setSubStatus(""); }}
+            onClick={() => { setSearch(""); setSubStatus(""); setHasNoShows(false); }}
             className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
           >
             Clear filters
@@ -293,9 +304,14 @@ export default function MembersPage() {
                         <span className="text-xs text-zinc-400">No plan</span>
                       )}
                     </td>
-                    {/* Bookings */}
+                    {/* Bookings + no-show badge */}
                     <td className="px-4 py-3 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-                      {m.totalBookings.toLocaleString()}
+                      <span>{m.totalBookings.toLocaleString()}</span>
+                      {m.noShowCount > 0 && (
+                        <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                          {m.noShowCount} NS
+                        </span>
+                      )}
                     </td>
                     {/* Last visit */}
                     <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">

@@ -129,6 +129,18 @@ export class MembersController {
     return this.membersService.staffForceCheckIn(studioId, bookingId, actorUserId);
   }
 
+  @Post(':userId/bookings/:bookingId/no-show')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @HttpCode(HttpStatus.OK)
+  staffMarkNoShow(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @Param('bookingId') bookingId: string,
+  ) {
+    return this.membersService.staffMarkNoShow(studioId, userId, bookingId);
+  }
+
   // ── Attendance ─────────────────────────────────────────────────────────────
 
   @Get(':userId/attendance')
@@ -141,6 +153,23 @@ export class MembersController {
     @Query('limit') limit?: string,
   ) {
     return this.membersService.getMemberAttendance(
+      studioId,
+      userId,
+      parsePage(page),
+      parseLimit(limit, 20),
+    );
+  }
+
+  @Get(':userId/attendance-log')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  getMemberAttendanceLog(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.membersService.getMemberAttendanceLog(
       studioId,
       userId,
       parsePage(page),
@@ -218,6 +247,18 @@ export class MembersController {
     @Body() dto: SetCancelAtPeriodEndDto,
   ) {
     return this.membersService.setCancelAtPeriodEnd(studioId, userId, subscriptionId, dto.cancel);
+  }
+
+  // ── Timeline ──────────────────────────────────────────────────────────────
+
+  @Get(':userId/timeline')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  getMemberTimeline(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.membersService.getMemberTimeline(studioId, userId);
   }
 
   // ── CRM profile ───────────────────────────────────────────────────────────
