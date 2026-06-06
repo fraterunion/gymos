@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
-import { FLOATING_TAB_CLEARANCE } from '@/components/FloatingTabBar';
+import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { resolveClassImageUri } from '@/lib/imagery';
 import {
   EmptyHint,
@@ -161,7 +161,7 @@ export default function ScheduleScreen() {
           stickySectionHeadersEnabled={false}
           contentContainerStyle={{
             paddingHorizontal: Space.screenH,
-            paddingBottom: FLOATING_TAB_CLEARANCE,
+            paddingBottom: TAB_BAR_CLEARANCE,
           }}
           refreshControl={
             <RefreshControl

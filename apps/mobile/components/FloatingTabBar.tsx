@@ -1,172 +1,106 @@
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import type { ComponentProps } from 'react';
-import { useEffect } from 'react';
-import { Pressable, View } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import { Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useBranding } from '@/contexts/BrandingContext';
+/** Content height of the tab bar (icons + labels), excluding safe-area inset. */
+export const TAB_BAR_HEIGHT = 56;
 
 /**
- * Bottom padding that all scrollable tab screens must add to prevent content
- * from being obscured by the floating bar. Accounts for bar height (68px) +
- * bottom offset (16px) + max safe-area inset (36px) + breathing room.
+ * Bottom padding that scrollable tab screens should add so content is not
+ * hidden behind the fixed tab bar. Includes typical safe-area inset + breathing room.
  */
-export const FLOATING_TAB_CLEARANCE = 128;
+export const TAB_BAR_CLEARANCE = TAB_BAR_HEIGHT + 52;
 
-const BAR_HEIGHT = 68;
+/** @deprecated Use TAB_BAR_CLEARANCE */
+export const FLOATING_TAB_CLEARANCE = TAB_BAR_CLEARANCE;
 
 type IconName = ComponentProps<typeof FontAwesome>['name'];
 
 const ROUTE_ICONS: Record<string, IconName> = {
-  index:      'home',
-  schedule:   'calendar',
-  bookings:   'bookmark',
+  index: 'home',
+  schedule: 'calendar',
+  bookings: 'bookmark',
   membership: 'star',
-  profile:    'user',
+  profile: 'user',
 };
 
-// ---------------------------------------------------------------------------
-// Single tab item with spring press + animated accent indicator
-// ---------------------------------------------------------------------------
+const ROUTE_LABELS: Record<string, string> = {
+  index: 'Home',
+  schedule: 'Classes',
+  bookings: 'Bookings',
+  membership: 'Membership',
+  profile: 'Profile',
+};
+
+const ACTIVE_COLOR = '#FFFFFF';
+const INACTIVE_COLOR = '#6B6B70';
 
 function TabItem({
   routeName,
   isFocused,
-  accentColor,
   onPress,
   onLongPress,
 }: {
   routeName: string;
   isFocused: boolean;
-  accentColor: string;
   onPress: () => void;
   onLongPress: () => void;
 }) {
-  const scale = useSharedValue(1);
-  const dotScale = useSharedValue(isFocused ? 1 : 0);
-  const iconOpacity = useSharedValue(isFocused ? 1 : 0.32);
-
-  // Animate dot and icon opacity when focus changes
-  useEffect(() => {
-    dotScale.value = withSpring(isFocused ? 1 : 0, { damping: 18, stiffness: 320 });
-    iconOpacity.value = withTiming(isFocused ? 1 : 0.32, { duration: 180 });
-  }, [isFocused, dotScale, iconOpacity]);
-
-  const scaleStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-  const dotStyle = useAnimatedStyle(() => ({ transform: [{ scale: dotScale.value }] }));
-  const iconStyle = useAnimatedStyle(() => ({ opacity: iconOpacity.value }));
-
+  const color = isFocused ? ACTIVE_COLOR : INACTIVE_COLOR;
   const icon: IconName = ROUTE_ICONS[routeName] ?? 'circle';
+  const label = ROUTE_LABELS[routeName] ?? routeName;
 
   return (
     <Pressable
       accessibilityRole="tab"
       accessibilityState={{ selected: isFocused }}
+      accessibilityLabel={label}
       onPress={onPress}
       onLongPress={onLongPress}
-      onPressIn={() => { scale.value = withSpring(0.82, { damping: 16, stiffness: 450 }); }}
-      onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
-      style={{ flex: 1, alignItems: 'center', justifyContent: 'center', height: BAR_HEIGHT }}
+      style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}
     >
-      <Animated.View style={[{ alignItems: 'center', gap: 5 }, scaleStyle]}>
-        <Animated.View style={iconStyle}>
-          <FontAwesome
-            name={icon}
-            size={22}
-            color={isFocused ? accentColor : '#FFFFFF'}
-          />
-        </Animated.View>
-
-        {/* Accent dot — springs in/out on tab switch */}
-        <Animated.View
-          style={[
-            {
-              width: 4,
-              height: 4,
-              borderRadius: 2,
-              backgroundColor: accentColor,
-            },
-            dotStyle,
-          ]}
-        />
-      </Animated.View>
+      <FontAwesome name={icon} size={26} color={color} />
+      <Text
+        style={{
+          marginTop: 5,
+          fontSize: 10,
+          fontWeight: isFocused ? '600' : '500',
+          letterSpacing: 0.1,
+          color,
+        }}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Floating bar
-// ---------------------------------------------------------------------------
-
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function FloatingTabBar({ state, descriptors: _descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
-  const { primaryColor } = useBranding();
 
   return (
-    // Outer wrapper is touch-transparent so gestures pass through the gap
-    // between the pill bar and the screen edges.
     <View
-      pointerEvents="box-none"
       style={{
         position: 'absolute',
-        bottom: insets.bottom + 16,
-        left: 24,
-        right: 24,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: '#0A0A0A',
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255,255,255,0.08)',
+        paddingBottom: insets.bottom,
       }}
     >
-      {/* The actual pill — glass morphism via layered translucency */}
       <View
         style={{
           flexDirection: 'row',
-          backgroundColor: 'rgba(12,12,16,0.82)',
-          borderRadius: 28,
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.10)',
-          height: BAR_HEIGHT,
+          height: TAB_BAR_HEIGHT,
           alignItems: 'center',
-          paddingHorizontal: 4,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 12 },
-          shadowOpacity: 0.65,
-          shadowRadius: 32,
-          elevation: 26,
         }}
       >
-        {/* Top edge highlight — simulates glass catching overhead light */}
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 1,
-            backgroundColor: 'rgba(255,255,255,0.14)',
-            borderTopLeftRadius: 28,
-            borderTopRightRadius: 28,
-          }}
-        />
-        {/* Subtle inner bottom shadow — depth below tabs */}
-        <View
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 18,
-            backgroundColor: 'rgba(0,0,0,0.10)',
-            borderBottomLeftRadius: 28,
-            borderBottomRightRadius: 28,
-          }}
-        />
-
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
 
@@ -191,7 +125,6 @@ export function FloatingTabBar({ state, descriptors: _descriptors, navigation }:
               key={route.key}
               routeName={route.name}
               isFocused={isFocused}
-              accentColor={primaryColor}
               onPress={onPress}
               onLongPress={onLongPress}
             />

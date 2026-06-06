@@ -13,7 +13,7 @@ import { BrandButton } from '@/components/BrandButton';
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
 import { ImageSlot } from '@/components/ImageSlot';
-import { FLOATING_TAB_CLEARANCE } from '@/components/FloatingTabBar';
+import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import {
   EmptyHint,
   ErrorBanner,
@@ -599,7 +599,7 @@ export default function HomeScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{
           paddingHorizontal: Space.screenH,
-          paddingBottom: FLOATING_TAB_CLEARANCE,
+          paddingBottom: TAB_BAR_CLEARANCE,
         }}
         refreshControl={
           <RefreshControl

@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
-import { FLOATING_TAB_CLEARANCE } from '@/components/FloatingTabBar';
+import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { MembershipStatusPill } from '@/components/MembershipStatusPill';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
@@ -52,7 +52,7 @@ export default function ProfileScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{
           paddingHorizontal: Space.screenH,
-          paddingBottom: FLOATING_TAB_CLEARANCE,
+          paddingBottom: TAB_BAR_CLEARANCE,
         }}
       >
         {/* Page header */}

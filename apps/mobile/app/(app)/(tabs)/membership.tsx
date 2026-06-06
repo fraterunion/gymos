@@ -38,6 +38,7 @@ import {
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import { statusConfig } from '@/lib/membershipStatus';
 import { todayKeyInZone } from '@/lib/datetime';
+import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { getColors, Space } from '@/constants/Theme';
 
 function billingIntervalLabel(interval: BillingInterval): string {
@@ -618,7 +619,7 @@ export default function MembershipScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 56 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: TAB_BAR_CLEARANCE }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
