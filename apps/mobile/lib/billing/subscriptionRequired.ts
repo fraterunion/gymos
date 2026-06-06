@@ -5,5 +5,7 @@ export function isActiveSubscriptionRequiredError(e: unknown): boolean {
   if (!(e instanceof ApiError) || e.status !== 403) {
     return false;
   }
-  return /active subscription required/i.test(e.message);
+  // Booking returns "Active membership required to book this class."
+  // Waitlist returns "Active subscription required to join the waitlist"
+  return /active membership required to book|active subscription required/i.test(e.message);
 }

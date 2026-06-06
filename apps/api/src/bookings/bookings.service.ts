@@ -253,7 +253,7 @@ export class BookingsService {
       },
     });
     if (!sub) {
-      throw new ForbiddenException('Active subscription required to book');
+      throw new ForbiddenException('Active membership required to book this class.');
     }
   }
 }
