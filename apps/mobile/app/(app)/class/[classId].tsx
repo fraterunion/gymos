@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -13,6 +13,7 @@ import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { cancelBooking, createClassBooking } from '@/lib/api/bookingsApi';
+import { fetchMyMemberProfile } from '@/lib/api/membershipApi';
 import { ApiError } from '@/lib/api/errors';
 import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionRequired';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
@@ -119,8 +120,21 @@ export default function ClassDetailScreen() {
   const [offerWaitlist, setOfferWaitlist] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [subscriptionRequired, setSubscriptionRequired] = useState(false);
+  // null = loading/unknown → fall through to "Book class" (backend 403 is the safety net)
+  // false = no active subscription → show "View Memberships" proactively
+  // true  = active subscription → show "Book class"
+  const [hasActiveSub, setHasActiveSub] = useState<boolean | null>(null);
 
   const studioId = matched?.studio.id;
+
+  useEffect(() => {
+    if (!studioId) return;
+    fetchMyMemberProfile(studioId)
+      .then((p) => setHasActiveSub(p.activeSubscription !== null))
+      .catch(() => {
+        // Fail open — if status cannot be loaded, backend 403 remains the guard
+      });
+  }, [studioId]);
   const timeZone = matched?.studio.timezone ?? 'UTC';
 
   const cls = useMemo(() => getClass(classId), [getClass, classId]);
@@ -210,7 +224,14 @@ export default function ClassDetailScreen() {
       onPress: () => void run(async () => { await cancelWaitlistEntry(studioId, waitlistEntry.id); }),
     };
   } else if (canAct) {
-    if (offerWaitlist) {
+    if (hasActiveSub === false) {
+      // Confirmed no active subscription — skip the booking API call entirely.
+      // Backend 403 guard remains as a fallback for race conditions or stale state.
+      primaryCTA = {
+        label: 'View Memberships',
+        onPress: () => router.push('/(app)/(tabs)/membership'),
+      };
+    } else if (offerWaitlist) {
       primaryCTA = {
         label: 'Join waitlist',
         onPress: () => void run(async () => { await joinClassWaitlist(studioId, classId); }),
@@ -220,6 +241,8 @@ export default function ClassDetailScreen() {
         onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
       };
     } else {
+      // hasActiveSub === true (subscribed) or null (still loading) — show Book class.
+      // If null and user taps before the check resolves, backend 403 catches it.
       primaryCTA = {
         label: 'Book class',
         onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
