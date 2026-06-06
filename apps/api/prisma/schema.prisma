@@ -129,6 +129,13 @@ enum ClassCategory {
   OTHER
 }
 
+enum DayPassStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  REFUNDED
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -187,6 +194,7 @@ model Studio {
   buildJobs         BuildJob[]
   staffProfiles     StudioStaffProfile[]
   memberCrmProfiles StudioMemberProfile[]
+  dayPasses         DayPass[]
 
   @@map("studios")
 }
@@ -217,6 +225,7 @@ model User {
   buildJobsRequested    BuildJob[]
   staffProfiles         StudioStaffProfile[]
   memberCrmProfiles     StudioMemberProfile[]
+  dayPasses             DayPass[]
 
   @@map("users")
 }
@@ -602,4 +611,32 @@ model StudioMemberProfile {
   @@unique([studioId, userId])
   @@index([studioId])
   @@map("studio_member_profiles")
+}
+
+/// Phase 25 — one-time day access pass (non-subscription).
+/// validForDate stores the UTC midnight of the CDMX calendar date the pass covers.
+/// e.g. June 10 CDMX (UTC-6) is stored as 2026-06-10T06:00:00Z.
+/// Never use raw UTC date here — always convert using the studio timezone first.
+model DayPass {
+  id                      String        @id @default(cuid())
+  studioId                String        @map("studio_id")
+  userId                  String        @map("user_id")
+  validForDate            DateTime      @map("valid_for_date")
+  priceCents              Int           @map("price_cents")
+  currency                String        @default("mxn")
+  status                  DayPassStatus @default(PENDING)
+  stripeCheckoutSessionId String?       @unique @map("stripe_checkout_session_id")
+  stripePaymentIntentId   String?       @unique @map("stripe_payment_intent_id")
+  createdAt               DateTime      @default(now()) @map("created_at")
+  updatedAt               DateTime      @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  /// One pass per user per studio per calendar day — prevents duplicate purchases.
+  @@unique([studioId, userId, validForDate])
+  @@index([studioId, userId])
+  @@index([studioId, validForDate])
+  @@index([status])
+  @@map("day_passes")
 }
