@@ -10,6 +10,7 @@ import { BookingsModule } from './bookings/bookings.module';
 import { BrandingModule } from './branding/branding.module';
 import { BuildJobsModule } from './build-jobs/build-jobs.module';
 import { CheckInsModule } from './check-ins/check-ins.module';
+import { DayPassesModule } from './day-passes/day-passes.module';
 import { ClassTemplatesModule } from './class-templates/class-templates.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { MembersModule } from './members/members.module';
@@ -64,6 +65,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     WaitlistModule,
     BookingsModule,
     CheckInsModule,
+    DayPassesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
