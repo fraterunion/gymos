@@ -29,7 +29,8 @@
     "test:cov": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.unit.ts --coverage"
   },
   "prisma": {
-    "seed": "ts-node --project tsconfig.seed.json prisma/seed.ts"
+    "seed": "ts-node --project tsconfig.seed.json prisma/seed.ts",
+    "seed:ares": "ts-node --project tsconfig.seed.json prisma/seed-ares-production.ts"
   },
   "dependencies": {
     "eas-cli": "^18.12.1",
