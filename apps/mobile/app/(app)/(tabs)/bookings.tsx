@@ -3,95 +3,61 @@ import { Pressable, RefreshControl, ScrollView, Text, useColorScheme, View } fro
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+import { ClassCard } from '@/components/ClassCard';
+import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { EmptyHint, ErrorBanner, LoadRetryPanel, Skeleton, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
-import { formatClassTime } from '@/lib/datetime';
+import { bookingStatusPill } from '@/lib/bookingStatus';
+import { resolveClassImageUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
-import type { BookingWithClass, MyWaitlistEntry } from '@/lib/types/studio';
+import type { BookingWithClass, MyWaitlistEntry, ScheduledClassDto } from '@/lib/types/studio';
 
-// ---------------------------------------------------------------------------
-// Booking card
-// ---------------------------------------------------------------------------
+function bookingDurationMinutes(booking: BookingWithClass): number {
+  const start = new Date(booking.scheduledClass.startsAt).getTime();
+  const end = new Date(booking.scheduledClass.endsAt).getTime();
+  return Math.max(1, Math.round((end - start) / 60_000));
+}
 
-function BookingCard({
-  booking,
-  className,
-  timeZone,
-  primaryColor,
-  onPress,
-  onCheckIn,
-  index,
-}: {
-  booking: BookingWithClass;
-  className: string;
-  timeZone: string;
-  primaryColor: string;
-  onPress: () => void;
-  onCheckIn: () => void;
-  index: number;
-}) {
-  const scheme = useColorScheme();
-  const C = getColors(scheme);
-  const time = formatClassTime(booking.scheduledClass.startsAt, timeZone);
+function resolveBookingClassItem(
+  booking: BookingWithClass,
+  cls: ScheduledClassDto | undefined,
+  fallbackName: string,
+): ScheduledClassDto {
+  if (cls) return cls;
 
-  return (
-    <Animated.View
-      entering={FadeInDown.delay(index * 55).duration(400)}
-      style={{ marginBottom: Space.cardGap }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        onPress={onPress}
-        style={{ backgroundColor: C.surface2, borderRadius: 16, overflow: 'hidden' }}
-      >
-        <View style={{ paddingHorizontal: Space.cardH, paddingTop: Space.cardV, paddingBottom: 14 }}>
-          {/* Status + date row */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-            <View
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: C.positive,
-                marginRight: 6,
-              }}
-            />
-            <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.5, color: C.positive }}>
-              Confirmed
-            </Text>
-            <View style={{ flex: 1 }} />
-            <Text style={{ fontSize: 12, color: C.textMute }}>{time}</Text>
-          </View>
-
-          {/* Class name */}
-          <Text
-            numberOfLines={1}
-            style={{ fontSize: 18, fontWeight: '600', letterSpacing: -0.2, color: C.text }}
-          >
-            {className}
-          </Text>
-        </View>
-
-        {/* Check-in action */}
-        <View
-          style={{ borderTopWidth: 1, borderTopColor: C.separator, paddingHorizontal: Space.cardH, paddingVertical: 12 }}
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open check-in QR code"
-            onPress={(e) => { e.stopPropagation?.(); onCheckIn(); }}
-            hitSlop={8}
-          >
-            <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor }}>
-              Check-in QR →
-            </Text>
-          </Pressable>
-        </View>
-      </Pressable>
-    </Animated.View>
-  );
+  return {
+    id: booking.scheduledClassId,
+    studioId: booking.scheduledClass.studioId,
+    startsAt: booking.scheduledClass.startsAt,
+    endsAt: booking.scheduledClass.endsAt,
+    capacity: booking.scheduledClass.capacity,
+    status: booking.scheduledClass.status,
+    instructorId: booking.scheduledClass.instructorId,
+    classTemplateId: booking.scheduledClass.classTemplateId,
+    classTemplate: {
+      id: booking.scheduledClass.classTemplateId,
+      name: fallbackName,
+      durationMinutes: bookingDurationMinutes(booking),
+      description: null,
+      defaultCapacity: booking.scheduledClass.capacity,
+      color: null,
+      intensityLevel: null,
+      category: null,
+      equipment: [],
+      heroImageUrl: null,
+      thumbnailImageUrl: null,
+      tags: [],
+      isFeatured: false,
+      difficultyLabel: null,
+      caloriesEstimateMin: null,
+      caloriesEstimateMax: null,
+      cancellationWindowHours: null,
+      waitlistCapacity: null,
+    },
+    instructor: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +128,7 @@ export default function MyBookingsScreen() {
   const C = getColors(scheme);
   const { primaryColor } = useBranding();
   const matched = useMemberStudio().matched;
-  const { classes, myBookings, myWaitlist, loading, error, refresh } = useStudioActivity();
+  const { classes, myBookings, myWaitlist, loading, error, refresh, getClass } = useStudioActivity();
 
   const timeZone = matched?.studio.timezone ?? 'UTC';
 
@@ -181,12 +147,11 @@ export default function MyBookingsScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 128 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: TAB_BAR_CLEARANCE }}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={primaryColor} />
         }
       >
-        {/* Page header — replaces removed nav header */}
         <View style={{ paddingTop: 28, paddingBottom: 20 }}>
           <Text
             style={{
@@ -209,12 +174,11 @@ export default function MyBookingsScreen() {
         {showSkeleton ? (
           <View style={{ paddingTop: 24, gap: 10 }}>
             <Skeleton width="30%" height={11} radius={4} style={{ marginBottom: 4 }} />
-            <Skeleton height={96} radius={16} />
-            <Skeleton height={96} radius={16} />
+            <Skeleton height={120} radius={16} />
+            <Skeleton height={120} radius={16} />
           </View>
         ) : (
           <>
-            {/* ── Upcoming bookings ── */}
             <View>
               {myBookings.length === 0 ? (
                 <EmptyHint
@@ -235,23 +199,47 @@ export default function MyBookingsScreen() {
                   >
                     Upcoming
                   </Text>
-                  {myBookings.map((b, i) => (
-                    <BookingCard
-                      key={b.id}
-                      booking={b}
-                      className={resolveClassName(b.scheduledClassId)}
-                      timeZone={timeZone}
-                      primaryColor={primaryColor}
-                      index={i}
-                      onPress={() => router.push(`/(app)/class/${b.scheduledClassId}`)}
-                      onCheckIn={() => router.push(`/(app)/check-in/${b.id}`)}
-                    />
-                  ))}
+                  {myBookings.map((b, i) => {
+                    const cls = getClass(b.scheduledClassId);
+                    const className = resolveClassName(b.scheduledClassId);
+                    const item = resolveBookingClassItem(b, cls, className);
+                    const imageUri =
+                      cls?.classTemplate.heroImageUrl ??
+                      cls?.classTemplate.thumbnailImageUrl ??
+                      resolveClassImageUri(className);
+                    const showCheckIn = b.status === 'CONFIRMED';
+
+                    return (
+                      <ClassCard
+                        key={b.id}
+                        item={item}
+                        timeZone={timeZone}
+                        accentColor={primaryColor}
+                        imageUri={imageUri}
+                        index={i}
+                        statusPill={bookingStatusPill(b.status)}
+                        onPress={() => router.push(`/(app)/class/${b.scheduledClassId}`)}
+                        footer={
+                          showCheckIn ? (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel="Open check-in QR code"
+                              onPress={() => router.push(`/(app)/check-in/${b.id}`)}
+                              hitSlop={8}
+                            >
+                              <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor }}>
+                                Check-in QR →
+                              </Text>
+                            </Pressable>
+                          ) : undefined
+                        }
+                      />
+                    );
+                  })}
                 </>
               )}
             </View>
 
-            {/* ── Waitlist ── */}
             {myWaitlist.length > 0 ? (
               <View style={{ marginTop: Space.sectionGap }}>
                 <Text
