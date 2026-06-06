@@ -1,18 +1,34 @@
 /**
- * GymOS pilot/demo seed — ARES Fitness & Pilates Toluca.
+ * GymOS pilot seed — ARES Fitness & Pilates Toluca.
  * Idempotent for re-runs: clears prior demo studios/users (see DEMO_SLUGS / demo email domains).
  *
  * Shared demo password: see docs/DEMO_ENVIRONMENT.md (not a production secret).
+ *
+ * KNOWN LIMITATIONS (document only, do not hack):
+ *   Day Pass ($200 MXN) and Inscripción ($700 MXN) are one-time fees.
+ *   The MembershipPlan model only supports MONTHLY / YEARLY / WEEKLY billing intervals.
+ *   These must be handled outside the subscription flow (Stripe Payment Links, manual invoices,
+ *   or a future one-time purchase model). They are NOT seeded here.
+ *
+ *   Hyrox membership excludes regular classes — this access restriction is not enforced
+ *   at the booking layer today. The description communicates it; enforcement requires a
+ *   membership-plan-to-class-template mapping feature (future phase).
+ *
+ *   Open Gym (11 am–10 pm) is an unstructured facility access benefit, not a bookable class.
+ *   It is included in plan descriptions only; no ScheduledClass is created for it.
  */
 import {
   BillingInterval,
   BookingStatus,
   CancelSource,
   CheckInMethod,
+  ClassCategory,
   ClassStatus,
+  IntensityLevel,
   PaymentStatus,
   PrismaClient,
   Role,
+  StaffType,
   SubscriptionStatus,
   WaitlistStatus,
 } from '@prisma/client';
@@ -29,7 +45,6 @@ function hashDemoPassword(): string {
   return bcrypt.hashSync(DEMO_PASSWORD, 12);
 }
 
-/** Wall-clock relative dates (seed host timezone). Good enough for schedules & QA. */
 function addDays(base: Date, days: number): Date {
   const d = new Date(base);
   d.setDate(d.getDate() + days);
@@ -40,6 +55,23 @@ function atLocalTime(base: Date, hour: number, minute: number): Date {
   const d = new Date(base);
   d.setHours(hour, minute, 0, 0);
   return d;
+}
+
+/** Mon–Thu: 7 slots. Fri: 5 slots. Sat: 2 slots. Sun: closed. */
+function scheduleHoursForDay(dayOfWeek: number): number[] {
+  switch (dayOfWeek) {
+    case 1: // Monday
+    case 2: // Tuesday
+    case 3: // Wednesday
+    case 4: // Thursday
+      return [6, 7, 8, 9, 18, 19, 20];
+    case 5: // Friday
+      return [6, 7, 8, 9, 18];
+    case 6: // Saturday
+      return [8, 9];
+    default: // Sunday — no regular classes
+      return [];
+  }
 }
 
 async function clearDemoData(): Promise<void> {
@@ -78,6 +110,7 @@ async function clearDemoData(): Promise<void> {
     await prisma.classTemplate.deleteMany({ where: { studioId: { in: studioIds } } });
     await prisma.subscription.deleteMany({ where: { studioId: { in: studioIds } } });
     await prisma.payment.deleteMany({ where: { studioId: { in: studioIds } } });
+    await prisma.studioStaffProfile.deleteMany({ where: { studioId: { in: studioIds } } });
     await prisma.studioMembership.deleteMany({ where: { studioId: { in: studioIds } } });
     await prisma.membershipPlan.deleteMany({ where: { studioId: { in: studioIds } } });
     await prisma.studio.deleteMany({ where: { id: { in: studioIds } } });
@@ -98,31 +131,33 @@ async function main(): Promise<void> {
   const passwordHash = hashDemoPassword();
   const now = new Date();
 
-  // --- ARES Fitness ---
+  // ─── ARES Fitness ──────────────────────────────────────────────────────────
+
   const ares = await prisma.studio.create({
     data: {
       name: 'ARES Fitness',
       slug: 'ares-fitness',
-      timezone: 'America/New_York',
+      timezone: 'America/Mexico_City',
       appName: 'ARES Fitness',
       brandPrimaryColor: '#0f172a',
       brandSecondaryColor: '#c9a227',
       brandLogoUrl: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400',
-      supportEmail: 'hello@ares.demo',
-      supportPhone: '+1 (555) 010-2001',
-      privacyUrl: 'https://example.com/ares/privacy',
-      termsUrl: 'https://example.com/ares/terms',
-      iosBundleId: 'com.aresfitness.member',
-      androidPackageName: 'com.aresfitness.member',
+      supportEmail: 'hello@aresfitness.mx',
+      supportPhone: '+52 55 0000 0000',
+      privacyUrl: 'https://aresfitness.mx/privacidad',
+      termsUrl: 'https://aresfitness.mx/terminos',
+      iosBundleId: 'com.fraterunion.aresfitness',
+      androidPackageName: 'com.fraterunion.aresfitness',
     },
   });
 
+  // Admin + staff
   const aresAdmin = await prisma.user.create({
     data: {
       email: 'admin@ares.demo',
-      firstName: 'Jordan',
-      lastName: 'Reyes',
-      phone: '+1 (555) 010-2010',
+      firstName: 'Administrador',
+      lastName: 'ARES',
+      phone: '+52 55 0000 0001',
       passwordHash,
       stripeCustomerId: 'cus_demo_ares_admin',
     },
@@ -130,133 +165,266 @@ async function main(): Promise<void> {
   const aresStaff = await prisma.user.create({
     data: {
       email: 'staff@ares.demo',
-      firstName: 'Sam',
-      lastName: 'Okonkwo',
-      phone: '+1 (555) 010-2011',
+      firstName: 'Recepción',
+      lastName: 'ARES',
+      phone: '+52 55 0000 0002',
       passwordHash,
       stripeCustomerId: 'cus_demo_ares_staff',
     },
   });
-  const aresInstructor = await prisma.user.create({
-    data: {
-      email: 'instructor@ares.demo',
-      firstName: 'Riley',
-      lastName: 'Chen',
-      phone: '+1 (555) 010-2012',
-      passwordHash,
-      stripeCustomerId: 'cus_demo_ares_instructor',
-    },
-  });
-  const aresM1 = await prisma.user.create({
-    data: {
-      email: 'member1@ares.demo',
-      firstName: 'Casey',
-      lastName: 'Brooks',
-      passwordHash,
-      stripeCustomerId: 'cus_demo_ares_m1',
-    },
-  });
-  const aresM2 = await prisma.user.create({
-    data: {
-      email: 'member2@ares.demo',
-      firstName: 'Taylor',
-      lastName: 'Nguyen',
-      passwordHash,
-      stripeCustomerId: 'cus_demo_ares_m2',
-    },
-  });
-  const aresM3 = await prisma.user.create({
-    data: {
-      email: 'member3@ares.demo',
-      firstName: 'Jamie',
-      lastName: 'Patel',
-      passwordHash,
-      stripeCustomerId: 'cus_demo_ares_m3',
-    },
-  });
-  const aresM4 = await prisma.user.create({
-    data: {
-      email: 'member4@ares.demo',
-      firstName: 'Alex',
-      lastName: 'Martinez',
-      passwordHash,
-      stripeCustomerId: 'cus_demo_ares_m4',
-    },
-  });
-  const aresM5 = await prisma.user.create({
-    data: {
-      email: 'member5@ares.demo',
-      firstName: 'Quinn',
-      lastName: 'Lopez',
-      passwordHash,
-      stripeCustomerId: 'cus_demo_ares_m5',
-    },
-  });
-  const aresM6 = await prisma.user.create({
-    data: {
-      email: 'member6@ares.demo',
-      firstName: 'Rae',
-      lastName: 'Kim',
-      passwordHash,
-      stripeCustomerId: 'cus_demo_ares_m6',
-    },
-  });
 
-  const rolesAres: { userId: string; role: Role }[] = [
+  // Coaches
+  const coachDefs = [
+    { email: 'yayo@ares.demo',   firstName: 'Yayo',   lastName: 'Rodríguez', bio: 'Especialista en fuerza y calistenia. Certif. NSCA-CSCS.', specialties: ['Upper Push', 'Street Bars', 'Full Body'] },
+    { email: 'coco@ares.demo',   firstName: 'Coco',   lastName: 'Herrera',   bio: 'Coach de funcional y Hyrox. Competidora nivel amateur.', specialties: ['Hyrox', 'Calirox', 'Full Body'] },
+    { email: 'karen@ares.demo',  firstName: 'Karen',  lastName: 'López',     bio: 'Entrenadora de fuerza con enfoque en piernas y cadena posterior.', specialties: ['Power Legs', 'Full Body', 'Upper Pull'] },
+    { email: 'fer@ares.demo',    firstName: 'Fer',    lastName: 'Gutiérrez', bio: 'Apasionado del Street Workout y movimiento natural.', specialties: ['Street Bars', 'Upper Push', 'Calirox'] },
+    { email: 'estefy@ares.demo', firstName: 'Estefy', lastName: 'Morales',   bio: 'Especialista en upper body y programación de fuerza.', specialties: ['Upper Push', 'Upper Pull', 'Power Legs'] },
+    { email: 'mau@ares.demo',    firstName: 'Mau',    lastName: 'Jiménez',   bio: 'Coach de HIIT y rendimiento deportivo. Marathonista.', specialties: ['Hyrox', 'Calirox', 'Full Body'] },
+  ] as const;
+
+  const coachPhotoUrls = [
+    'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400',
+    'https://images.unsplash.com/photo-1548690312-e3b507d8c110?w=400',
+    'https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=400',
+    'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=400',
+    'https://images.unsplash.com/photo-1579758629938-03607ccdbaba?w=400',
+    'https://images.unsplash.com/photo-1594381898411-846e7d193883?w=400',
+  ];
+
+  const coaches: { id: string }[] = [];
+  for (let i = 0; i < coachDefs.length; i++) {
+    const def = coachDefs[i];
+    const user = await prisma.user.create({
+      data: {
+        email: def.email,
+        firstName: def.firstName,
+        lastName: def.lastName,
+        passwordHash,
+        stripeCustomerId: `cus_demo_ares_coach_${i + 1}`,
+      },
+    });
+    coaches.push({ id: user.id });
+    await prisma.studioMembership.create({
+      data: { studioId: ares.id, userId: user.id, role: Role.INSTRUCTOR },
+    });
+    await prisma.studioStaffProfile.create({
+      data: {
+        studioId: ares.id,
+        userId: user.id,
+        staffType: StaffType.COACH,
+        bio: def.bio,
+        specialties: [...def.specialties],
+        photoUrl: coachPhotoUrls[i],
+        isActive: true,
+      },
+    });
+  }
+
+  // Demo members (subscriptions + bookings for QA)
+  const aresM1 = await prisma.user.create({ data: { email: 'member1@ares.demo', firstName: 'Ana', lastName: 'Sánchez', passwordHash, stripeCustomerId: 'cus_demo_ares_m1' } });
+  const aresM2 = await prisma.user.create({ data: { email: 'member2@ares.demo', firstName: 'Luis', lastName: 'Torres', passwordHash, stripeCustomerId: 'cus_demo_ares_m2' } });
+  const aresM3 = await prisma.user.create({ data: { email: 'member3@ares.demo', firstName: 'Sofía', lastName: 'Ramírez', passwordHash, stripeCustomerId: 'cus_demo_ares_m3' } });
+
+  const memberRoles = [
     { userId: aresAdmin.id, role: Role.ADMIN },
     { userId: aresStaff.id, role: Role.STAFF },
-    { userId: aresInstructor.id, role: Role.INSTRUCTOR },
     { userId: aresM1.id, role: Role.MEMBER },
     { userId: aresM2.id, role: Role.MEMBER },
     { userId: aresM3.id, role: Role.MEMBER },
-    { userId: aresM4.id, role: Role.MEMBER },
-    { userId: aresM5.id, role: Role.MEMBER },
-    { userId: aresM6.id, role: Role.MEMBER },
   ];
   await prisma.studioMembership.createMany({
-    data: rolesAres.map((r) => ({ studioId: ares.id, userId: r.userId, role: r.role })),
+    data: memberRoles.map((r) => ({ studioId: ares.id, userId: r.userId, role: r.role })),
   });
 
-  const aresUnlimited = await prisma.membershipPlan.create({
+  // ─── Membership plans (MXN) ─────────────────────────────────────────────
+  // NOTE: Day Pass ($200 MXN) and Inscripción ($700 MXN) are one-time fees not
+  // supported by the recurring MembershipPlan model. Handle via Stripe Payment Links.
+
+  const planFullAccess = await prisma.membershipPlan.create({
     data: {
       studioId: ares.id,
-      name: 'Unlimited Strength',
+      name: 'Full Access',
       description:
-        'Unlimited group classes, open gym access, and one guest pass per month. Perfect for athletes who live on the floor.',
-      priceCents: 18900,
-      currency: 'usd',
+        'Clases ilimitadas + Open Gym (11am–10pm) + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
+      priceCents: 195000, // $1,950 MXN
+      currency: 'mxn',
       billingInterval: BillingInterval.MONTHLY,
       classCredits: null,
       active: true,
-      stripeProductId: 'prod_demo_ares_unlimited',
-      stripePriceId: 'price_demo_ares_unlimited_monthly',
-    },
-  });
-  const aresFlex8 = await prisma.membershipPlan.create({
-    data: {
-      studioId: ares.id,
-      name: 'Flex 8',
-      description: 'Eight class credits per month — roll unused credits for 30 days when you renew.',
-      priceCents: 12900,
-      currency: 'usd',
-      billingInterval: BillingInterval.MONTHLY,
-      classCredits: 8,
-      active: true,
-      stripeProductId: 'prod_demo_ares_flex8',
-      stripePriceId: 'price_demo_ares_flex8_monthly',
+      stripeProductId: null,
+      stripePriceId: null,
     },
   });
 
+  const planBasicAccess = await prisma.membershipPlan.create({
+    data: {
+      studioId: ares.id,
+      name: 'Basic Access',
+      description:
+        '12 clases al mes + Open Gym (11am–10pm) + 3 guest passes. Créditos no acumulables.',
+      priceCents: 130000, // $1,300 MXN
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      classCredits: 12,
+      active: true,
+      stripeProductId: null,
+      stripePriceId: null,
+    },
+  });
+
+  await prisma.membershipPlan.create({
+    data: {
+      studioId: ares.id,
+      name: 'Hyrox',
+      description:
+        '3 sesiones Hyrox por semana + plan de carrera semanal + running club + Open Gym + tina de hielo. No incluye clases regulares.',
+      priceCents: 200000, // $2,000 MXN
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      classCredits: 12, // ~3 sessions/week
+      active: true,
+      stripeProductId: null,
+      stripePriceId: null,
+    },
+  });
+
+  await prisma.membershipPlan.create({
+    data: {
+      studioId: ares.id,
+      name: 'Elite',
+      description:
+        'Full Access + Hyrox + Open Gym + tina de hielo + eventos + programa de running + guest passes ilimitados.',
+      priceCents: 295000, // $2,950 MXN
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      classCredits: null,
+      active: true,
+      stripeProductId: null,
+      stripePriceId: null,
+    },
+  });
+
+  // ─── Class templates ─────────────────────────────────────────────────────
+
+  const templateDefs = [
+    {
+      name: 'Upper Push',
+      description: 'Pecho, hombro y tríceps — press, dips y variantes de empuje. Escala de peso para todos los niveles.',
+      duration: 60, color: '#c9a227', category: ClassCategory.STRENGTH, intensity: IntensityLevel.HIGH,
+      heroImageUrl: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=800',
+    },
+    {
+      name: 'Upper Pull',
+      description: 'Espalda, bíceps y tracción — jalones, remos y dominadas. Mejora tu pull strength en cada sesión.',
+      duration: 60, color: '#0f172a', category: ClassCategory.STRENGTH, intensity: IntensityLevel.HIGH,
+      heroImageUrl: 'https://images.unsplash.com/photo-1530822847156-5df684ec5933?w=800',
+    },
+    {
+      name: 'Full Body',
+      description: 'Trabajo completo de tren superior e inferior en circuito. Alta densidad, descanso guiado.',
+      duration: 60, color: '#ef4444', category: ClassCategory.STRENGTH, intensity: IntensityLevel.HIGH,
+      heroImageUrl: 'https://images.unsplash.com/photo-1534258936925-c58bed479fcb?w=800',
+    },
+    {
+      name: 'Power Legs',
+      description: 'Sentadillas, peso muerto, Bulgarian split y variantes. Fuerza de pierna y glúteo con técnica.',
+      duration: 60, color: '#8b5cf6', category: ClassCategory.STRENGTH, intensity: IntensityLevel.HIGH,
+      heroImageUrl: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=800',
+    },
+    {
+      name: 'Calirox',
+      description: 'Calistenia explosiva + intervalos de alta intensidad. Sin equipo, máximo esfuerzo.',
+      duration: 45, color: '#f97316', category: ClassCategory.HIIT, intensity: IntensityLevel.EXTREME,
+      heroImageUrl: 'https://images.unsplash.com/photo-1598971861713-54ad16a7e72e?w=800',
+    },
+    {
+      name: 'Hyrox',
+      description: 'Entrenamiento específico para competencia Hyrox: ski erg, sled, burpees broadjump y más. Pace + fuerza.',
+      duration: 60, color: '#06b6d4', category: ClassCategory.HIIT, intensity: IntensityLevel.EXTREME,
+      heroImageUrl: 'https://images.unsplash.com/photo-1549576490-b0b4831ef60a?w=800',
+    },
+    {
+      name: 'Street Bars',
+      description: 'Street workout en barra fija y paralelas — muscle-ups, front lever progressions y dominadas weighted.',
+      duration: 60, color: '#10b981', category: ClassCategory.STRENGTH, intensity: IntensityLevel.HIGH,
+      heroImageUrl: 'https://images.unsplash.com/photo-1598971861713-54ad16a7e72e?w=800',
+    },
+  ] as const;
+
+  const templates: { id: string }[] = [];
+  for (let i = 0; i < templateDefs.length; i++) {
+    const def = templateDefs[i];
+    const defaultInstructor = coaches[i % coaches.length];
+    const tpl = await prisma.classTemplate.create({
+      data: {
+        studioId: ares.id,
+        name: def.name,
+        description: def.description,
+        durationMinutes: def.duration,
+        defaultCapacity: 25,
+        color: def.color,
+        category: def.category,
+        intensityLevel: def.intensity,
+        heroImageUrl: def.heroImageUrl,
+        isFeatured: i < 3, // first 3 are featured
+        defaultInstructorId: defaultInstructor.id,
+      },
+    });
+    templates.push({ id: tpl.id });
+  }
+
+  // ─── 14-day schedule (Mon–Thu: 7 slots, Fri: 5, Sat: 2, Sun: closed) ────
+
+  let slotIndex = 0;
+  const scheduledAres: { id: string; startsAt: Date; templateId: string; isFirst: boolean }[] = [];
+
+  for (let d = 0; d < 14; d++) {
+    const base = addDays(now, d);
+    const dayOfWeek = base.getDay();
+    const hours = scheduleHoursForDay(dayOfWeek);
+    if (hours.length === 0) continue;
+
+    for (const hour of hours) {
+      const template = templates[slotIndex % templates.length];
+      const coach = coaches[slotIndex % coaches.length];
+      const def = templateDefs[slotIndex % templateDefs.length];
+      const startsAt = atLocalTime(base, hour, 0);
+      const endsAt = new Date(startsAt.getTime() + def.duration * 60 * 1000);
+      const sc = await prisma.scheduledClass.create({
+        data: {
+          studioId: ares.id,
+          classTemplateId: template.id,
+          instructorId: coach.id,
+          startsAt,
+          endsAt,
+          capacity: 25,
+          status: ClassStatus.SCHEDULED,
+        },
+      });
+      scheduledAres.push({
+        id: sc.id,
+        startsAt,
+        templateId: template.id,
+        isFirst: slotIndex === 0,
+      });
+      slotIndex++;
+    }
+  }
+
+  // ─── Demo subscriptions ──────────────────────────────────────────────────
+
   const periodStart = addDays(now, -5);
   const periodEnd = addDays(now, 25);
+
   await prisma.subscription.createMany({
     data: [
       {
         studioId: ares.id,
         userId: aresM1.id,
-        membershipPlanId: aresUnlimited.id,
+        membershipPlanId: planFullAccess.id,
         status: SubscriptionStatus.ACTIVE,
-        stripeSubscriptionId: 'sub_demo_ares_m1_unlimited',
+        stripeSubscriptionId: 'sub_demo_ares_m1_full',
         currentPeriodStart: periodStart,
         currentPeriodEnd: periodEnd,
         cancelAtPeriodEnd: false,
@@ -264,9 +432,9 @@ async function main(): Promise<void> {
       {
         studioId: ares.id,
         userId: aresM2.id,
-        membershipPlanId: aresFlex8.id,
+        membershipPlanId: planBasicAccess.id,
         status: SubscriptionStatus.ACTIVE,
-        stripeSubscriptionId: 'sub_demo_ares_m2_flex8',
+        stripeSubscriptionId: 'sub_demo_ares_m2_basic',
         currentPeriodStart: periodStart,
         currentPeriodEnd: periodEnd,
         cancelAtPeriodEnd: false,
@@ -274,9 +442,9 @@ async function main(): Promise<void> {
       {
         studioId: ares.id,
         userId: aresM3.id,
-        membershipPlanId: aresFlex8.id,
+        membershipPlanId: planBasicAccess.id,
         status: SubscriptionStatus.PAST_DUE,
-        stripeSubscriptionId: 'sub_demo_ares_m3_pastdue',
+        stripeSubscriptionId: 'sub_demo_ares_m3_basic_pastdue',
         currentPeriodStart: addDays(now, -40),
         currentPeriodEnd: addDays(now, -3),
         cancelAtPeriodEnd: true,
@@ -288,268 +456,77 @@ async function main(): Promise<void> {
     data: {
       studioId: ares.id,
       userId: aresM1.id,
-      amountCents: 18900,
-      currency: 'usd',
+      amountCents: 195000,
+      currency: 'mxn',
       status: PaymentStatus.SUCCEEDED,
-      stripePaymentIntentId: 'pi_demo_ares_m1_invoice_001',
+      stripePaymentIntentId: 'pi_demo_ares_m1_001',
       stripeInvoiceId: 'in_demo_ares_m1_001',
     },
   });
 
-  const tplPower = await prisma.classTemplate.create({
-    data: {
-      studioId: ares.id,
-      name: 'Power Hour',
-      durationMinutes: 60,
-      description:
-        'Heavy compound lifts in rotating stations — squat, hinge, push, pull. Coaches scale load for every level.',
-      defaultCapacity: 14,
-      color: '#c9a227',
-      defaultInstructorId: aresInstructor.id,
-    },
-  });
-  const tplMetcon = await prisma.classTemplate.create({
-    data: {
-      studioId: ares.id,
-      name: 'MetCon Small Group',
-      durationMinutes: 45,
-      description: 'High-intensity intervals with kettlebells, rowers, and sleds. Heart rate optional; effort mandatory.',
-      defaultCapacity: 10,
-      color: '#ef4444',
-      defaultInstructorId: aresInstructor.id,
-    },
-  });
-  const tplYogaMobility = await prisma.classTemplate.create({
-    data: {
-      studioId: ares.id,
-      name: 'Mobility & Breath',
-      durationMinutes: 50,
-      description: 'Slow flow focused on thoracic spine, hips, and breath work — ideal after heavy training days.',
-      defaultCapacity: 20,
-      color: '#38bdf8',
-      defaultInstructorId: aresInstructor.id,
-    },
-  });
+  // ─── Demo bookings (QA scenario: near-capacity class, waitlist) ──────────
 
-  const aresClasses: {
-    templateId: string;
-    day: number;
-    hour: number;
-    cap: number;
-    durationMin: number;
-    status: ClassStatus;
-  }[] = [];
-  for (let d = 0; d <= 7; d++) {
-    aresClasses.push(
-      {
-        templateId: tplPower.id,
-        day: d,
-        hour: 6,
-        cap: 14,
-        durationMin: 60,
-        status: ClassStatus.SCHEDULED,
-      },
-      {
-        templateId: tplMetcon.id,
-        day: d,
-        hour: 12,
-        cap: 10,
-        durationMin: 45,
-        status: ClassStatus.SCHEDULED,
-      },
-      {
-        templateId: tplYogaMobility.id,
-        day: d,
-        hour: 18,
-        cap: 20,
-        durationMin: 50,
-        status: ClassStatus.SCHEDULED,
-      },
-    );
-  }
-
-  const scheduledAres: { id: string; startsAt: Date; templateId: string }[] = [];
-  for (const row of aresClasses) {
-    const base = addDays(now, row.day);
-    const startsAt = atLocalTime(base, row.hour, 0);
-    const endsAt = new Date(startsAt.getTime() + row.durationMin * 60 * 1000);
-    const sc = await prisma.scheduledClass.create({
-      data: {
-        studioId: ares.id,
-        classTemplateId: row.templateId,
-        instructorId: aresInstructor.id,
-        startsAt,
-        endsAt,
-        capacity: row.cap,
-        status: row.status,
-      },
-    });
-    scheduledAres.push({ id: sc.id, startsAt, templateId: row.templateId });
-  }
-
-  const futureMetcon = scheduledAres.find(
-    (c) => c.startsAt > now && c.templateId === tplMetcon.id,
-  );
-  const metconId = futureMetcon?.id ?? scheduledAres.find((c) => c.templateId === tplMetcon.id)!.id;
-
-  await prisma.scheduledClass.update({
-    where: { id: metconId },
-    data: { capacity: 3 },
-  });
-
-  await prisma.booking.createMany({
-    data: [
-      {
-        studioId: ares.id,
-        scheduledClassId: metconId,
-        userId: aresM1.id,
-        status: BookingStatus.CONFIRMED,
-      },
-      {
-        studioId: ares.id,
-        scheduledClassId: metconId,
-        userId: aresM2.id,
-        status: BookingStatus.CONFIRMED,
-      },
-      {
-        studioId: ares.id,
-        scheduledClassId: metconId,
-        userId: aresM3.id,
-        status: BookingStatus.CONFIRMED,
-      },
-    ],
-  });
-
-  await prisma.waitlistEntry.createMany({
-    data: [
-      {
-        studioId: ares.id,
-        scheduledClassId: metconId,
-        userId: aresM4.id,
-        status: WaitlistStatus.WAITING,
-        position: 1,
-      },
-      {
-        studioId: ares.id,
-        scheduledClassId: metconId,
-        userId: aresM5.id,
-        status: WaitlistStatus.WAITING,
-        position: 2,
-      },
-    ],
-  });
-
-  const powerSoon =
-    scheduledAres.find((c) => c.templateId === tplPower.id && c.startsAt > now) ??
-    scheduledAres.find((c) => c.templateId === tplPower.id);
-  const powerId = powerSoon!.id;
-
-  await prisma.scheduledClass.update({
-    where: { id: powerId },
-    data: { capacity: 4 },
-  });
-
-  await prisma.booking.createMany({
-    data: [
-      {
-        studioId: ares.id,
-        scheduledClassId: powerId,
-        userId: aresM1.id,
-        status: BookingStatus.CONFIRMED,
-      },
-      {
-        studioId: ares.id,
-        scheduledClassId: powerId,
-        userId: aresM2.id,
-        status: BookingStatus.CANCELLED,
-        cancelSource: CancelSource.MEMBER,
-        cancelledAt: addDays(now, -1),
-      },
-      {
-        studioId: ares.id,
-        scheduledClassId: powerId,
-        userId: aresM4.id,
-        status: BookingStatus.CONFIRMED,
-      },
-      {
-        studioId: ares.id,
-        scheduledClassId: powerId,
-        userId: aresM5.id,
-        status: BookingStatus.CONFIRMED,
-      },
-    ],
-  });
-
-  await prisma.waitlistEntry.create({
-    data: {
-      studioId: ares.id,
-      scheduledClassId: powerId,
-      userId: aresM6.id,
-      status: WaitlistStatus.PROMOTED,
-      position: 1,
-    },
-  });
-
-  await prisma.booking.create({
-    data: {
-      studioId: ares.id,
-      scheduledClassId: powerId,
-      userId: aresM6.id,
-      status: BookingStatus.CONFIRMED,
-    },
-  });
-
-  const pastPower =
-    scheduledAres
-      .filter((c) => c.startsAt < now && c.templateId === tplPower.id)
-      .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime())[0] ??
-    scheduledAres
-      .filter((c) => c.startsAt < now)
-      .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime())[0];
-  if (pastPower) {
+  const nearFutureClass = scheduledAres.find((c) => c.startsAt > now);
+  if (nearFutureClass) {
+    // Reduce capacity to create a full-class demo scenario
     await prisma.scheduledClass.update({
-      where: { id: pastPower.id },
-      data: { status: ClassStatus.COMPLETED },
+      where: { id: nearFutureClass.id },
+      data: { capacity: 3 },
     });
     await prisma.booking.createMany({
       data: [
-        {
-          studioId: ares.id,
-          scheduledClassId: pastPower.id,
-          userId: aresM1.id,
-          status: BookingStatus.COMPLETED,
-        },
-        {
-          studioId: ares.id,
-          scheduledClassId: pastPower.id,
-          userId: aresM2.id,
-          status: BookingStatus.COMPLETED,
-        },
+        { studioId: ares.id, scheduledClassId: nearFutureClass.id, userId: aresM1.id, status: BookingStatus.CONFIRMED },
+        { studioId: ares.id, scheduledClassId: nearFutureClass.id, userId: aresM2.id, status: BookingStatus.CONFIRMED },
+        { studioId: ares.id, scheduledClassId: nearFutureClass.id, userId: aresM3.id, status: BookingStatus.CONFIRMED },
+      ],
+    });
+    await prisma.waitlistEntry.create({
+      data: {
+        studioId: ares.id,
+        scheduledClassId: nearFutureClass.id,
+        userId: coaches[0].id,
+        status: WaitlistStatus.WAITING,
+        position: 1,
+      },
+    });
+  }
+
+  // Demo past attendance
+  const pastClass = scheduledAres
+    .filter((c) => c.startsAt < now)
+    .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime())[0];
+  if (pastClass) {
+    await prisma.scheduledClass.update({ where: { id: pastClass.id }, data: { status: ClassStatus.COMPLETED } });
+    await prisma.booking.createMany({
+      data: [
+        { studioId: ares.id, scheduledClassId: pastClass.id, userId: aresM1.id, status: BookingStatus.COMPLETED },
+        { studioId: ares.id, scheduledClassId: pastClass.id, userId: aresM2.id, status: BookingStatus.COMPLETED },
       ],
     });
     await prisma.attendance.createMany({
       data: [
         {
           studioId: ares.id,
-          scheduledClassId: pastPower.id,
+          scheduledClassId: pastClass.id,
           userId: aresM1.id,
           method: CheckInMethod.QR,
-          checkedInAt: pastPower.startsAt,
+          checkedInAt: pastClass.startsAt,
           checkedInByUserId: null,
         },
         {
           studioId: ares.id,
-          scheduledClassId: pastPower.id,
+          scheduledClassId: pastClass.id,
           userId: aresM2.id,
           method: CheckInMethod.MANUAL,
-          checkedInAt: new Date(pastPower.startsAt.getTime() + 5 * 60 * 1000),
+          checkedInAt: new Date(pastClass.startsAt.getTime() + 3 * 60 * 1000),
           checkedInByUserId: aresStaff.id,
         },
       ],
     });
   }
 
-  // --- Pilates Toluca ---
+  // ─── Pilates Toluca ───────────────────────────────────────────────────────
+
   const pilates = await prisma.studio.create({
     data: {
       name: 'Pilates Toluca',
@@ -656,6 +633,9 @@ async function main(): Promise<void> {
     },
   });
 
+  const ptPeriodStart = addDays(now, -5);
+  const ptPeriodEnd = addDays(now, 25);
+
   await prisma.subscription.create({
     data: {
       studioId: pilates.id,
@@ -663,8 +643,8 @@ async function main(): Promise<void> {
       membershipPlanId: ptReformer.id,
       status: SubscriptionStatus.ACTIVE,
       stripeSubscriptionId: 'sub_demo_pt_m1_reformer',
-      currentPeriodStart: periodStart,
-      currentPeriodEnd: periodEnd,
+      currentPeriodStart: ptPeriodStart,
+      currentPeriodEnd: ptPeriodEnd,
       cancelAtPeriodEnd: false,
     },
   });
@@ -752,8 +732,12 @@ async function main(): Promise<void> {
 
   console.log(
     JSON.stringify({
-      event: 'demo_seed_complete',
+      event: 'seed_complete',
       studios: [ares.slug, pilates.slug],
+      ares_coaches: coachDefs.map((c) => c.firstName),
+      ares_plans: ['Full Access', 'Basic Access', 'Hyrox', 'Elite'],
+      ares_templates: templateDefs.map((t) => t.name),
+      unsupported_one_time_fees: ['Day Pass ($200 MXN)', 'Inscripción ($700 MXN)'],
       demoPasswordDoc: 'docs/DEMO_ENVIRONMENT.md',
     }),
   );
