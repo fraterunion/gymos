@@ -8,11 +8,16 @@ import {
   BookingStatus,
   CancelSource,
   ClassStatus,
+  DayPassStatus,
   Prisma,
   Role,
   SubscriptionStatus,
 } from '@prisma/client';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
+import {
+  getStudioLocalDateKey,
+  studioLocalDateKeyToUtcAnchor,
+} from '../common/date/studio-local-date';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   type BookingCancellationResult,
@@ -46,13 +51,17 @@ export class BookingsService {
       async (tx) => {
         await acquireBookingClassAdvisoryLock(tx, scheduledClassId);
 
-        const [membership, scheduledClass] = await Promise.all([
+        const [membership, scheduledClass, studio] = await Promise.all([
           tx.studioMembership.findFirst({
             where: { studioId, userId: actorUserId, deletedAt: null },
             include: { user: { select: { deletedAt: true } } },
           }),
           tx.scheduledClass.findFirst({
             where: { id: scheduledClassId, studioId },
+          }),
+          tx.studio.findUnique({
+            where: { id: studioId },
+            select: { timezone: true },
           }),
         ]);
 
@@ -62,6 +71,11 @@ export class BookingsService {
         if (!scheduledClass) {
           throw new NotFoundException('Class not found');
         }
+        // studio is verified by StudioMemberGuard before the transaction starts,
+        // but TypeScript requires the explicit null check after findUnique.
+        if (!studio) {
+          throw new NotFoundException('Studio not found');
+        }
         if (scheduledClass.status !== ClassStatus.SCHEDULED) {
           throw new ConflictException('This class is not open for booking');
         }
@@ -70,11 +84,13 @@ export class BookingsService {
           throw new ConflictException('Cannot book a class that has already started');
         }
 
-        await this.assertSubscriptionForMemberIfNeeded(
+        await this.assertBookingAccessForMember(
           tx,
           studioId,
           actorUserId,
           membership.role,
+          scheduledClass.startsAt,
+          studio.timezone,
         );
 
         const confirmedCount = await tx.booking.count({
@@ -236,15 +252,19 @@ export class BookingsService {
     });
   }
 
-  private async assertSubscriptionForMemberIfNeeded(
+  private async assertBookingAccessForMember(
     tx: Prisma.TransactionClient,
     studioId: string,
     userId: string,
     membershipRole: Role,
+    classStartsAt: Date,
+    studioTimezone: string,
   ): Promise<void> {
     if (bypassSubscriptionRoles.has(membershipRole)) {
       return;
     }
+
+    // Gate 1: active or trialing subscription
     const sub = await tx.subscription.findFirst({
       where: {
         userId,
@@ -252,8 +272,24 @@ export class BookingsService {
         status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
       },
     });
-    if (!sub) {
-      throw new ForbiddenException('Active membership required to book this class.');
-    }
+    if (sub) return;
+
+    // Gate 2: active Day Pass for the class's studio-local calendar date.
+    // validForDate is the UTC anchor for local midnight on that date — computed
+    // from studio.timezone so it works for any studio, not just Mexico City.
+    const dateKey = getStudioLocalDateKey(classStartsAt, studioTimezone);
+    const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, studioTimezone);
+
+    const pass = await tx.dayPass.findFirst({
+      where: {
+        studioId,
+        userId,
+        status: DayPassStatus.ACTIVE,
+        validForDate,
+      },
+    });
+    if (pass) return;
+
+    throw new ForbiddenException('Active membership or Day Pass required to book this class.');
   }
 }
