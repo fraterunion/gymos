@@ -46,12 +46,40 @@ function creditsLabel(credits: number | null): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Status badge config — maps SubscriptionStatus → label + colors
+// ---------------------------------------------------------------------------
+
+type StatusCfg = { label: string; dotColor: string; bg: string; textColor: string };
+
+function statusConfig(status: string, cancelAtPeriodEnd: boolean): StatusCfg {
+  const C = getColors();
+  if (status === 'ACTIVE' && cancelAtPeriodEnd) {
+    return { label: 'Ending soon', dotColor: C.caution, bg: 'rgba(251,191,36,0.12)', textColor: C.caution };
+  }
+  switch (status) {
+    case 'ACTIVE':
+      return { label: 'Active',    dotColor: C.positive, bg: 'rgba(52,211,153,0.12)',  textColor: C.positive };
+    case 'TRIALING':
+      return { label: 'Trial',     dotColor: '#60A5FA',  bg: 'rgba(96,165,250,0.12)',  textColor: '#60A5FA'  };
+    case 'PAST_DUE':
+      return { label: 'Past due',  dotColor: C.caution,  bg: 'rgba(251,191,36,0.12)',  textColor: C.caution  };
+    case 'CANCELED':
+      return { label: 'Canceled',  dotColor: C.negative, bg: 'rgba(248,113,113,0.12)', textColor: C.negative };
+    case 'PAUSED':
+      return { label: 'Paused',    dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
+    default:
+      return { label: status,      dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Active membership — physical luxury card
 // ---------------------------------------------------------------------------
 
 function MembershipCard({
   planName,
   status,
+  cancelAtPeriodEnd,
   renewsAt,
   primaryColor,
   onManage,
@@ -59,14 +87,15 @@ function MembershipCard({
 }: {
   planName: string;
   status: string;
+  cancelAtPeriodEnd: boolean;
   renewsAt: string;
   primaryColor: string;
   onManage: () => void;
   portalBusy: boolean;
 }) {
   const C = getColors();
-  const isActive = status === 'ACTIVE' || status === 'TRIALING';
-  const isCancelling = status === 'ACTIVE' && renewsAt.includes('Cancelling');
+  const cfg = statusConfig(status, cancelAtPeriodEnd);
+  const accentBarColor = (status === 'ACTIVE' || status === 'TRIALING') ? primaryColor : C.surface3;
 
   return (
     <Animated.View entering={FadeInDown.duration(450)}>
@@ -80,7 +109,7 @@ function MembershipCard({
         }}
       >
         {/* Top accent bar */}
-        <View style={{ height: 4, backgroundColor: isActive ? primaryColor : C.surface3 }} />
+        <View style={{ height: 4, backgroundColor: accentBarColor }} />
 
         <View style={{ padding: 28 }}>
           {/* Status pill */}
@@ -89,9 +118,7 @@ function MembershipCard({
               alignSelf: 'flex-start',
               flexDirection: 'row',
               alignItems: 'center',
-              backgroundColor: isActive
-                ? 'rgba(52,211,153,0.12)'
-                : 'rgba(255,255,255,0.06)',
+              backgroundColor: cfg.bg,
               borderRadius: 100,
               paddingVertical: 5,
               paddingHorizontal: 10,
@@ -103,11 +130,7 @@ function MembershipCard({
                 width: 6,
                 height: 6,
                 borderRadius: 3,
-                backgroundColor: isCancelling
-                  ? C.caution
-                  : isActive
-                  ? C.positive
-                  : C.textMute,
+                backgroundColor: cfg.dotColor,
                 marginRight: 6,
               }}
             />
@@ -117,10 +140,10 @@ function MembershipCard({
                 fontWeight: '700',
                 letterSpacing: 0.6,
                 textTransform: 'uppercase',
-                color: isCancelling ? C.caution : isActive ? C.positive : C.textMute,
+                color: cfg.textColor,
               }}
             >
-              {isCancelling ? 'Cancelling' : isActive ? 'Active' : status.toLowerCase()}
+              {cfg.label}
             </Text>
           </View>
 
@@ -502,6 +525,7 @@ export default function MembershipScreen() {
           <MembershipCard
             planName={sub.plan.name}
             status={sub.status}
+            cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
             renewsAt={renewsLabel}
             primaryColor={primaryColor}
             onManage={() => void openPortal()}
