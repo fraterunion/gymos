@@ -1,3 +1,5 @@
+import { initStripe, useStripe } from '@stripe/stripe-react-native';
+import { createURL } from 'expo-linking';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -27,8 +29,15 @@ import {
   type MembershipPlanDto,
   type MyMemberProfileDto,
 } from '@/lib/api/membershipApi';
+import {
+  createDayPassPaymentSheet,
+  fetchMyDayPasses,
+  type DayPassDto,
+  type DayPassStatus,
+} from '@/lib/api/dayPassesApi';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import { statusConfig } from '@/lib/membershipStatus';
+import { todayKeyInZone } from '@/lib/datetime';
 import { getColors, Space } from '@/constants/Theme';
 
 function billingIntervalLabel(interval: BillingInterval): string {
@@ -345,6 +354,92 @@ function NoMembershipPrompt({
 }
 
 // ---------------------------------------------------------------------------
+// Day Pass status config
+// ---------------------------------------------------------------------------
+
+function dayPassStatusConfig(status: DayPassStatus): {
+  label: string;
+  dotColor: string;
+  bg: string;
+  textColor: string;
+} {
+  const C = getColors();
+  switch (status) {
+    case 'ACTIVE':
+      return { label: 'Active', dotColor: C.positive, bg: 'rgba(52,211,153,0.12)', textColor: C.positive };
+    case 'PENDING':
+      return { label: 'Pending', dotColor: C.caution, bg: 'rgba(251,191,36,0.12)', textColor: C.caution };
+    case 'EXPIRED':
+      return { label: 'Expired', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
+    case 'REFUNDED':
+      return { label: 'Refunded', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Day Pass row — date on left, status pill on right
+// ---------------------------------------------------------------------------
+
+function DayPassRow({ dayPass, timeZone }: { dayPass: DayPassDto; timeZone: string }) {
+  const C = getColors();
+  const cfg = dayPassStatusConfig(dayPass.status);
+  const dateLabel = new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(new Date(dayPass.validForDate));
+
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: C.separator,
+      }}
+    >
+      <Text style={{ fontSize: 15, color: C.text, fontWeight: '500', letterSpacing: -0.2 }}>
+        {dateLabel}
+      </Text>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: cfg.bg,
+          borderRadius: 100,
+          paddingVertical: 4,
+          paddingHorizontal: 10,
+        }}
+      >
+        <View
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 3,
+            backgroundColor: cfg.dotColor,
+            marginRight: 6,
+          }}
+        />
+        <Text
+          style={{
+            fontSize: 10,
+            fontWeight: '700',
+            letterSpacing: 0.6,
+            textTransform: 'uppercase',
+            color: cfg.textColor,
+          }}
+        >
+          {cfg.label}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 
@@ -353,22 +448,35 @@ export default function MembershipScreen() {
   const { primaryColor, appDisplayName } = useBranding();
   const { matched } = useMemberStudio();
   const { refresh: refreshStudioActivity } = useStudioActivity();
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
 
   const studioId = matched?.studio.id;
   const timeZone = matched?.studio.timezone ?? 'UTC';
 
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
+  const [dayPasses, setDayPasses] = useState<DayPassDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkoutPlanId, setCheckoutPlanId] = useState<string | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [dayPassBusy, setDayPassBusy] = useState(false);
+  const [dayPassError, setDayPassError] = useState<string | null>(null);
+  const [dayPassSuccess, setDayPassSuccess] = useState(false);
   const expectReturnFromBrowser = useRef(false);
   const hasLoadedOnce = useRef(false);
+  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { hasLoadedOnce.current = false; }, [studioId]);
+
+  // Clear the success timer on unmount to avoid setState on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (successTimer.current) clearTimeout(successTimer.current);
+    };
+  }, []);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh') => {
@@ -377,12 +485,14 @@ export default function MembershipScreen() {
       if (mode === 'initial') setLoading(true);
       else setRefreshing(true);
       try {
-        const [p, prof] = await Promise.all([
+        const [p, prof, dp] = await Promise.all([
           fetchMembershipPlans(studioId),
           fetchMyMemberProfile(studioId),
+          fetchMyDayPasses(studioId),
         ]);
         setPlans(p);
         setProfile(prof);
+        setDayPasses(dp);
       } catch (e) {
         setError(userFacingApiMessage(e, 'Could not load membership info. Pull to refresh.'));
       } finally {
@@ -442,6 +552,51 @@ export default function MembershipScreen() {
       setPortalError(userFacingApiMessage(e, 'Billing could not be opened. Please try again.'));
     } finally {
       setPortalBusy(false);
+    }
+  }
+
+  async function buyDayPass() {
+    if (!studioId) return;
+    setDayPassBusy(true);
+    setDayPassError(null);
+    setDayPassSuccess(false);
+    try {
+      const validForDate = todayKeyInZone(timeZone);
+      const data = await createDayPassPaymentSheet(studioId, validForDate);
+
+      // Set the Stripe key returned from the server before initializing the sheet.
+      await initStripe({ publishableKey: data.publishableKey });
+
+      const { error: initError } = await initPaymentSheet({
+        merchantDisplayName: appDisplayName,
+        paymentIntentClientSecret: data.paymentIntentClientSecret,
+        customerId: data.customerId,
+        customerEphemeralKeySecret: data.ephemeralKeySecret,
+        allowsDelayedPaymentMethods: false,
+        returnURL: createURL('billing/return'),
+      });
+      if (initError) {
+        setDayPassError(initError.message);
+        return;
+      }
+
+      const { error: presentError } = await presentPaymentSheet();
+      if (presentError) {
+        // Canceled is silent — the user dismissed the sheet intentionally.
+        if ((presentError.code as string) === 'Canceled') return;
+        setDayPassError(presentError.message);
+        return;
+      }
+
+      // Payment completed. Show brief success feedback and reload day passes.
+      setDayPassSuccess(true);
+      if (successTimer.current) clearTimeout(successTimer.current);
+      successTimer.current = setTimeout(() => setDayPassSuccess(false), 4000);
+      void load('refresh');
+    } catch (e) {
+      setDayPassError(userFacingApiMessage(e, 'Could not start day pass purchase. Please try again.'));
+    } finally {
+      setDayPassBusy(false);
     }
   }
 
@@ -556,6 +711,94 @@ export default function MembershipScreen() {
             No published plans yet. Check back later or contact the studio.
           </Text>
         )}
+
+        {/* ── Day Pass ── */}
+        <View style={{ marginTop: Space.sectionGap }}>
+          <Text
+            style={{
+              fontSize: 11,
+              fontWeight: '700',
+              letterSpacing: 1.0,
+              textTransform: 'uppercase',
+              color: C.textMute,
+              marginBottom: 18,
+            }}
+          >
+            Day Pass
+          </Text>
+
+          <Animated.View entering={FadeInDown.duration(420)}>
+            <View
+              style={{
+                backgroundColor: C.surface2,
+                borderRadius: 20,
+                padding: 26,
+                marginBottom: Space.cardGap,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: '700',
+                  letterSpacing: 1.0,
+                  textTransform: 'uppercase',
+                  color: C.textMute,
+                  marginBottom: 8,
+                }}
+              >
+                One-Day Access
+              </Text>
+              <Text
+                style={{
+                  fontSize: 15,
+                  lineHeight: 22,
+                  color: C.textSub,
+                  marginBottom: 22,
+                  letterSpacing: -0.1,
+                }}
+              >
+                Train for one day without a membership.
+              </Text>
+
+              {dayPassSuccess ? (
+                <Text
+                  style={{
+                    fontSize: 14,
+                    color: C.positive,
+                    fontWeight: '600',
+                    marginBottom: 12,
+                    letterSpacing: -0.1,
+                  }}
+                >
+                  Day Pass purchased!
+                </Text>
+              ) : null}
+
+              {dayPassError ? (
+                <Text style={{ fontSize: 13, color: C.negative, marginBottom: 12, lineHeight: 19 }}>
+                  {dayPassError}
+                </Text>
+              ) : null}
+
+              <BrandButton
+                label={`Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`}
+                accentColor={primaryColor}
+                loading={dayPassBusy}
+                disabled={dayPassBusy}
+                onPress={() => void buyDayPass()}
+              />
+            </View>
+          </Animated.View>
+
+          {/* Active / pending day passes */}
+          {dayPasses.length > 0 ? (
+            <Animated.View entering={FadeInDown.duration(380)}>
+              {dayPasses.map((dp) => (
+                <DayPassRow key={dp.id} dayPass={dp} timeZone={timeZone} />
+              ))}
+            </Animated.View>
+          ) : null}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

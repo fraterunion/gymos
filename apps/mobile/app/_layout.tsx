@@ -2,6 +2,7 @@ import '../global.css';
 
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { StripeProvider } from '@stripe/stripe-react-native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router/stack';
 import * as SplashScreen from 'expo-splash-screen';
@@ -42,13 +43,15 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <BrandingProvider>
-        <AuthProvider>
-          <SelectedStudioProvider>
-            <RootLayoutNav />
-          </SelectedStudioProvider>
-        </AuthProvider>
-      </BrandingProvider>
+      <StripeProvider publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ''}>
+        <BrandingProvider>
+          <AuthProvider>
+            <SelectedStudioProvider>
+              <RootLayoutNav />
+            </SelectedStudioProvider>
+          </AuthProvider>
+        </BrandingProvider>
+      </StripeProvider>
     </SafeAreaProvider>
   );
 }
