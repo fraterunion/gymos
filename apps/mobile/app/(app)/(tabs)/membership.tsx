@@ -1,4 +1,4 @@
-import { initStripe, useStripe } from '@stripe/stripe-react-native';
+import { initStripe, useStripe } from '@/lib/stripe';
 import { createURL } from 'expo-linking';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
