@@ -38,3 +38,14 @@ export type WebhookInvoicePayload = {
     data: Array<{ price: { id: string } | null }>;
   } | null;
 };
+
+export type WebhookPaymentIntentPayload = {
+  id: string;
+  status: string;
+  /** Unix timestamp (seconds) when the PaymentIntent was created. */
+  created: number;
+  amount: number | null;
+  currency: string | null;
+  customer: string | { id: string } | null;
+  metadata: Record<string, string> | null;
+};

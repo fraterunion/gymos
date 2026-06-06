@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PaymentStatus, Prisma, SubscriptionStatus } from '@prisma/client';
+import { DayPassStatus, PaymentStatus, Prisma, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { markStripeWebhookEventProcessed, tryClaimStripeWebhookEvent } from './stripe-webhook-idempotency';
 import {
   type WebhookCheckoutSessionPayload,
   type WebhookInvoicePayload,
+  type WebhookPaymentIntentPayload,
   type WebhookSubscriptionPayload,
 } from './stripe-webhook-payloads';
 import { mapStripeSubscriptionStatus } from './stripe-subscription-status';
@@ -78,6 +79,9 @@ export class StripeWebhookService {
         break;
       case 'invoice.payment_failed':
         await this.onInvoicePaymentFailed(event.data.object as WebhookInvoicePayload);
+        break;
+      case 'payment_intent.succeeded':
+        await this.onPaymentIntentSucceeded(event.data.object as WebhookPaymentIntentPayload);
         break;
       default:
         break;
@@ -331,5 +335,95 @@ export class StripeWebhookService {
         data: { status: SubscriptionStatus.PAST_DUE },
       });
     }
+  }
+
+  private async onPaymentIntentSucceeded(paymentIntent: WebhookPaymentIntentPayload): Promise<void> {
+    const md = paymentIntent.metadata;
+    if (!md || md['type'] !== 'day_pass') {
+      return;
+    }
+
+    const dayPassId = md['dayPassId'] ?? null;
+    const studioId = md['studioId'] ?? null;
+    const userId = md['userId'] ?? null;
+
+    if (!dayPassId || !studioId || !userId) {
+      this.logger.warn(
+        `payment_intent.succeeded ${paymentIntent.id}: day_pass metadata incomplete; skipping`,
+      );
+      return;
+    }
+
+    const dayPass = await this.prisma.dayPass.findUnique({
+      where: { id: dayPassId },
+      select: {
+        id: true,
+        studioId: true,
+        userId: true,
+        status: true,
+        priceCents: true,
+        currency: true,
+        stripePaymentIntentId: true,
+      },
+    });
+
+    if (!dayPass) {
+      this.logger.warn(
+        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} not found; skipping`,
+      );
+      return;
+    }
+
+    if (dayPass.studioId !== studioId || dayPass.userId !== userId) {
+      this.logger.warn(
+        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} studioId/userId mismatch; ignoring`,
+      );
+      return;
+    }
+
+    if (dayPass.stripePaymentIntentId !== null && dayPass.stripePaymentIntentId !== paymentIntent.id) {
+      this.logger.warn(
+        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} already linked to different PaymentIntent ${dayPass.stripePaymentIntentId}; ignoring`,
+      );
+      return;
+    }
+
+    if (dayPass.status === DayPassStatus.REFUNDED || dayPass.status === DayPassStatus.EXPIRED) {
+      this.logger.warn(
+        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} has terminal status ${dayPass.status}; skipping`,
+      );
+      return;
+    }
+
+    // Activate only if not already ACTIVE; the Payment upsert always runs so a partial
+    // failure on a prior delivery (DayPass activated but Payment not written) is repaired.
+    if (dayPass.status !== DayPassStatus.ACTIVE) {
+      await this.prisma.dayPass.update({
+        where: { id: dayPassId },
+        data: {
+          status: DayPassStatus.ACTIVE,
+          stripePaymentIntentId: paymentIntent.id,
+        },
+      });
+    }
+
+    const paidAt = paymentIntent.created ? new Date(paymentIntent.created * 1000) : new Date();
+
+    await this.prisma.payment.upsert({
+      where: { stripePaymentIntentId: paymentIntent.id },
+      create: {
+        studioId: dayPass.studioId,
+        userId: dayPass.userId,
+        amountCents: dayPass.priceCents,
+        currency: dayPass.currency.toLowerCase(),
+        status: PaymentStatus.SUCCEEDED,
+        stripePaymentIntentId: paymentIntent.id,
+        paidAt,
+      },
+      update: {
+        status: PaymentStatus.SUCCEEDED,
+        paidAt,
+      },
+    });
   }
 }
