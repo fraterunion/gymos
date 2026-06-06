@@ -100,4 +100,15 @@ export class StripeService {
   ): Promise<Stripe.Subscription> {
     return this.getClient().subscriptions.update(subscriptionId, params);
   }
+
+  async createPaymentIntent(params: Stripe.PaymentIntentCreateParams): Promise<Stripe.PaymentIntent> {
+    return this.getClient().paymentIntents.create(params);
+  }
+
+  async createEphemeralKey(customerId: string, stripeApiVersion: string): Promise<Stripe.EphemeralKey> {
+    return this.getClient().ephemeralKeys.create(
+      { customer: customerId },
+      { apiVersion: stripeApiVersion },
+    );
+  }
 }

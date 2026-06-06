@@ -143,6 +143,7 @@ const STRIPE_DEFAULTS: ReadonlyArray<[string, string]> = [
     // Stripe publishes this sample test secret for SDK examples (test mode only).
     'sk_test_REPLACE_ME',
   ],
+  ['STRIPE_PUBLISHABLE_KEY', 'pk_test_REPLACE_ME'],
   ['STRIPE_WEBHOOK_SECRET', 'whsec_test_gymos_default_value_for_signature_tests_00001'],
   ['STRIPE_SUCCESS_URL', 'http://localhost:3000/billing/success'],
   ['STRIPE_CANCEL_URL', 'http://localhost:3000/billing/cancel'],
