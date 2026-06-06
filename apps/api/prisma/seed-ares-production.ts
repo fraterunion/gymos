@@ -38,16 +38,35 @@ function log(op: string, entity: string, detail: string): void {
   console.log(`${prefix} ${op.padEnd(7)} ${entity.padEnd(22)} ${detail}`);
 }
 
-function addDays(base: Date, days: number): Date {
-  const d = new Date(base);
-  d.setDate(d.getDate() + days);
-  return d;
+const ARES_TZ = 'America/Mexico_City';
+
+/**
+ * Returns the CDMX calendar date (year/month/day) and day-of-week (0=Sun)
+ * for any UTC instant, using the America/Mexico_City timezone.
+ * Independent of the host machine's local timezone.
+ */
+function cdmxDateParts(utcInstant: Date): { year: number; month: number; day: number; dow: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ARES_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(utcInstant);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const year = Number(get('year'));
+  const month = Number(get('month'));
+  const day = Number(get('day'));
+  // getUTCDay() on a UTC-midnight instant is host-timezone-agnostic.
+  return { year, month, day, dow: new Date(Date.UTC(year, month - 1, day)).getUTCDay() };
 }
 
-function atLocalTime(base: Date, hour: number, minute: number): Date {
-  const d = new Date(base);
-  d.setHours(hour, minute, 0, 0);
-  return d;
+/**
+ * Converts an America/Mexico_City wall-clock time to a UTC Date.
+ * Mexico City abolished DST in 2023 and is permanently CST = UTC-6.
+ * UTC = CDMX local + 6 h. Date.UTC handles hour overflow (e.g. 18+6=24 → next day).
+ */
+function cdmxToUtc(year: number, month: number, day: number, hour: number, minute: number): Date {
+  return new Date(Date.UTC(year, month - 1, day, hour + 6, minute));
 }
 
 /** Mon–Thu: 7 slots. Fri: 5 slots. Sat: 2 slots. Sun: closed. */
@@ -459,13 +478,19 @@ async function main(): Promise<void> {
   let classesSkipped = 0;
   let slotIndex = 0;
 
+  // Anchor on today's CDMX calendar date — host-timezone-agnostic.
+  const { year: y0, month: m0, day: d0 } = cdmxDateParts(now);
+  // CDMX midnight = UTC 06:00 (UTC-6, fixed since 2023 DST abolition).
+  const cdmxMidnightDay0 = new Date(Date.UTC(y0, m0 - 1, d0, 6, 0));
+
   for (let d = 0; d < 14; d++) {
-    const base = addDays(now, d);
-    const dayOfWeek = base.getDay();
-    const hours = scheduleHoursForDay(dayOfWeek);
+    // Adding d × 24 h is safe: no DST transitions in Mexico City since 2023.
+    const cdmxMidnight = new Date(cdmxMidnightDay0.getTime() + d * 24 * 60 * 60 * 1000);
+    const { year, month, day, dow } = cdmxDateParts(cdmxMidnight);
+    const hours = scheduleHoursForDay(dow);
 
     for (const hour of hours) {
-      const startsAt = atLocalTime(base, hour, 0);
+      const startsAt = cdmxToUtc(year, month, day, hour, 0);
 
       // Never create classes in the past or at this exact moment
       if (startsAt <= now) {

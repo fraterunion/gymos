@@ -26,11 +26,13 @@
     "clean": "rm -rf dist .turbo tsconfig.build.tsbuildinfo",
     "test": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.unit.ts",
     "test:e2e": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.e2e.ts --runInBand",
-    "test:cov": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.unit.ts --coverage"
+    "test:cov": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.unit.ts --coverage",
+    "seed:ares": "ts-node --project tsconfig.seed.json prisma/seed-ares-production.ts",
+    "diagnose:ares-demo": "ts-node --project tsconfig.seed.json prisma/diagnose-ares-demo.ts",
+    "cleanup:ares-demo": "ts-node --project tsconfig.seed.json prisma/cleanup-ares-demo.ts"
   },
   "prisma": {
-    "seed": "ts-node --project tsconfig.seed.json prisma/seed.ts",
-    "seed:ares": "ts-node --project tsconfig.seed.json prisma/seed-ares-production.ts"
+    "seed": "ts-node --project tsconfig.seed.json prisma/seed.ts"
   },
   "dependencies": {
     "eas-cli": "^18.12.1",
