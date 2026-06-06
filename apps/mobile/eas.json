@@ -45,7 +45,8 @@
         "ANDROID_PACKAGE": "com.fraterunion.aresfitness",
         "APP_ICON_PATH": "./assets/images/icon.png",
         "APP_SPLASH_PATH": "./assets/images/splash-icon.png",
-        "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png"
+        "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png",
+        "EXPO_NO_DOTENV": "1"
       }
     },
     "production-ares": {
@@ -62,7 +63,8 @@
         "ANDROID_PACKAGE": "com.fraterunion.aresfitness",
         "APP_ICON_PATH": "./assets/images/icon.png",
         "APP_SPLASH_PATH": "./assets/images/splash-icon.png",
-        "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png"
+        "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png",
+        "EXPO_NO_DOTENV": "1"
       }
     },
     "preview-pilates-toluca": {

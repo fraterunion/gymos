@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { Stack } from 'expo-router/stack';
 
 import { BrandButton } from '@/components/BrandButton';
 import { MembershipRequiredScreen } from '@/components/MembershipRequiredScreen';

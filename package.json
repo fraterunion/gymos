@@ -18,5 +18,11 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "pnpm": {
+    "overrides": {
+      "@react-navigation/bottom-tabs": "7.4.0",
+      "@react-navigation/native": "7.1.8"
+    }
   }
 }
