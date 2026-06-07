@@ -13,15 +13,29 @@ import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { cancelBooking, createClassBooking } from '@/lib/api/bookingsApi';
+import { fetchMyDayPasses, type DayPassDto } from '@/lib/api/dayPassesApi';
 import { fetchMyMemberProfile } from '@/lib/api/membershipApi';
 import { ApiError } from '@/lib/api/errors';
 import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionRequired';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
-import { formatClassTime } from '@/lib/datetime';
+import { calendarDayKeyInZone, formatClassTime } from '@/lib/datetime';
 import { resolveClassImageUri, resolveCoachPortraitUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
+
+function hasActiveDayPassForClassDate(
+  dayPasses: DayPassDto[],
+  classStartsAt: string,
+  timeZone: string,
+): boolean {
+  const classDateKey = calendarDayKeyInZone(classStartsAt, timeZone);
+  return dayPasses.some(
+    (dp) =>
+      dp.status === 'ACTIVE' &&
+      calendarDayKeyInZone(dp.validForDate, timeZone) === classDateKey,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Instructor portrait block
@@ -120,24 +134,54 @@ export default function ClassDetailScreen() {
   const [offerWaitlist, setOfferWaitlist] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [subscriptionRequired, setSubscriptionRequired] = useState(false);
-  // null = loading/unknown → fall through to "Book class" (backend 403 is the safety net)
-  // false = no active subscription → show "View Memberships" proactively
-  // true  = active subscription → show "Book class"
-  const [hasActiveSub, setHasActiveSub] = useState<boolean | null>(null);
+  // null = access check in progress → disabled "Checking access..." CTA
+  // false = no subscription or day pass for this date → "View Memberships"
+  // true  = active subscription or matching day pass → "Book Class"
+  const [hasAccess, setHasAccess] = useState<boolean | null>(null);
 
   const studioId = matched?.studio.id;
-
-  useEffect(() => {
-    if (!studioId) return;
-    fetchMyMemberProfile(studioId)
-      .then((p) => setHasActiveSub(p.activeSubscription !== null))
-      .catch(() => {
-        // Fail open — if status cannot be loaded, backend 403 remains the guard
-      });
-  }, [studioId]);
   const timeZone = matched?.studio.timezone ?? 'UTC';
 
   const cls = useMemo(() => getClass(classId), [getClass, classId]);
+
+  useEffect(() => {
+    if (!studioId || !cls) return;
+
+    let cancelled = false;
+    setHasAccess(null);
+
+    void (async () => {
+      const [profileResult, dayPassResult] = await Promise.allSettled([
+        fetchMyMemberProfile(studioId),
+        fetchMyDayPasses(studioId),
+      ]);
+      if (cancelled) return;
+
+      let hasSubscription = false;
+      if (profileResult.status === 'fulfilled') {
+        hasSubscription = profileResult.value.activeSubscription !== null;
+      } else if (__DEV__) {
+        console.warn('[ClassDetail] fetchMyMemberProfile failed:', profileResult.reason);
+      }
+
+      let matchingDayPass = false;
+      if (dayPassResult.status === 'fulfilled') {
+        matchingDayPass = hasActiveDayPassForClassDate(
+          dayPassResult.value,
+          cls.startsAt,
+          timeZone,
+        );
+      } else if (__DEV__) {
+        console.warn('[ClassDetail] fetchMyDayPasses failed:', dayPassResult.reason);
+      }
+
+      setHasAccess(hasSubscription || matchingDayPass);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [studioId, cls, timeZone]);
 
   const booking = useMemo(
     () => myBookings.find((b) => b.scheduledClassId === classId && b.status === 'CONFIRMED'),
@@ -210,7 +254,7 @@ export default function ClassDetailScreen() {
   const instructorProfile = cls.instructor?.staffProfiles[0] ?? null;
 
   // CTA logic
-  let primaryCTA: { label: string; onPress: () => void } | null = null;
+  let primaryCTA: { label: string; onPress: () => void; disabled?: boolean } | null = null;
   let secondaryCTA: { label: string; onPress: () => void } | null = null;
 
   if (booking) {
@@ -224,14 +268,7 @@ export default function ClassDetailScreen() {
       onPress: () => void run(async () => { await cancelWaitlistEntry(studioId, waitlistEntry.id); }),
     };
   } else if (canAct) {
-    if (hasActiveSub === false) {
-      // Confirmed no active subscription — skip the booking API call entirely.
-      // Backend 403 guard remains as a fallback for race conditions or stale state.
-      primaryCTA = {
-        label: 'View Memberships',
-        onPress: () => router.push('/(app)/(tabs)/membership'),
-      };
-    } else if (offerWaitlist) {
+    if (offerWaitlist) {
       primaryCTA = {
         label: 'Join waitlist',
         onPress: () => void run(async () => { await joinClassWaitlist(studioId, classId); }),
@@ -240,11 +277,20 @@ export default function ClassDetailScreen() {
         label: 'Try booking again',
         onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
       };
-    } else {
-      // hasActiveSub === true (subscribed) or null (still loading) — show Book class.
-      // If null and user taps before the check resolves, backend 403 catches it.
+    } else if (hasAccess === null) {
       primaryCTA = {
-        label: 'Book class',
+        label: 'Checking access...',
+        onPress: () => {},
+        disabled: true,
+      };
+    } else if (hasAccess === false) {
+      primaryCTA = {
+        label: 'View Memberships',
+        onPress: () => router.push('/(app)/(tabs)/membership'),
+      };
+    } else {
+      primaryCTA = {
+        label: 'Book Class',
         onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
       };
     }
@@ -449,6 +495,7 @@ export default function ClassDetailScreen() {
               label={primaryCTA.label}
               accentColor={accentColor}
               loading={busy}
+              disabled={primaryCTA.disabled}
               onPress={primaryCTA.onPress}
             />
           ) : null}
