@@ -15,6 +15,7 @@ import SpaceMono from '../assets/fonts/SpaceMono-Regular.ttf';
 import { BrandingBootGate } from '@/components/BrandingBootGate';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
+import { PublicStudioProvider } from '@/contexts/PublicStudioContext';
 import { SelectedStudioProvider } from '@/contexts/SelectedStudioContext';
 
 export { ErrorBoundary } from 'expo-router';
@@ -45,11 +46,13 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StripeProvider publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ''}>
         <BrandingProvider>
-          <AuthProvider>
-            <SelectedStudioProvider>
-              <RootLayoutNav />
-            </SelectedStudioProvider>
-          </AuthProvider>
+          <PublicStudioProvider>
+            <AuthProvider>
+              <SelectedStudioProvider>
+                <RootLayoutNav />
+              </SelectedStudioProvider>
+            </AuthProvider>
+          </PublicStudioProvider>
         </BrandingProvider>
       </StripeProvider>
     </SafeAreaProvider>
