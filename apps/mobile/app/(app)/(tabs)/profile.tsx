@@ -18,6 +18,130 @@ function SectionDivider() {
   return <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 24 }} />;
 }
 
+const GUEST_FEATURES = [
+  'Membership status',
+  'Booking history',
+  'QR check-ins',
+  'Account settings',
+] as const;
+
+// ---------------------------------------------------------------------------
+// Guest wall — no authenticated API calls
+// ---------------------------------------------------------------------------
+
+function GuestProfileWall({ primaryColor }: { primaryColor: string }) {
+  const router = useRouter();
+  const C = getColors();
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          paddingHorizontal: Space.screenH,
+          paddingBottom: TAB_BAR_CLEARANCE,
+        }}
+      >
+        <Animated.View entering={FadeInDown.duration(500)} style={{ paddingTop: 28, paddingBottom: 24 }}>
+          <Text
+            style={{
+              fontSize: 38,
+              fontWeight: '800',
+              letterSpacing: -1.3,
+              color: C.text,
+              lineHeight: 44,
+            }}
+          >
+            Your Account
+          </Text>
+          <Text
+            style={{
+              fontSize: 15,
+              color: C.textSub,
+              lineHeight: 23,
+              marginTop: 14,
+              letterSpacing: -0.1,
+            }}
+          >
+            Create an account to manage your membership, bookings, check-ins, and training
+            history.
+          </Text>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(80).duration(460)}>
+          <View
+            style={{
+              backgroundColor: C.surface1,
+              borderRadius: 20,
+              padding: 26,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 1.0,
+                textTransform: 'uppercase',
+                color: C.textMute,
+                marginBottom: 18,
+              }}
+            >
+              What you unlock
+            </Text>
+            {GUEST_FEATURES.map((feature, index) => (
+              <View
+                key={feature}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginBottom: index < GUEST_FEATURES.length - 1 ? 14 : 0,
+                }}
+              >
+                <View
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: primaryColor,
+                    marginRight: 12,
+                  }}
+                />
+                <Text
+                  style={{
+                    fontSize: 15,
+                    color: C.text,
+                    fontWeight: '500',
+                    letterSpacing: -0.2,
+                  }}
+                >
+                  {feature}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </Animated.View>
+
+        <Animated.View
+          entering={FadeInDown.delay(140).duration(440)}
+          style={{ marginTop: 28, gap: 12 }}
+        >
+          <BrandButton
+            label="Log In"
+            accentColor={primaryColor}
+            onPress={() => router.push('/(auth)/login')}
+          />
+          <BrandButton
+            label="Create Account"
+            variant="ghost"
+            accentColor={primaryColor}
+            onPress={() => router.push('/(auth)/register')}
+          />
+        </Animated.View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, logout, busy } = useAuth();
@@ -29,20 +153,25 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
 
   const loadProfile = useCallback(async () => {
-    if (!studioId) return;
+    if (!studioId || !user) return;
     try {
       const p = await fetchMyMemberProfile(studioId);
       setProfile(p);
     } catch {
       // Keep profile usable if membership status cannot be loaded
     }
-  }, [studioId]);
+  }, [studioId, user]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!user) return;
       void loadProfile();
-    }, [loadProfile]),
+    }, [user, loadProfile]),
   );
+
+  if (!user) {
+    return <GuestProfileWall primaryColor={primaryColor} />;
+  }
 
   const sub = profile?.activeSubscription;
 
