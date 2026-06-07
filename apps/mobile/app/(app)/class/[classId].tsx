@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -9,10 +9,13 @@ import { BrandButton } from '@/components/BrandButton';
 import { ImageSlot } from '@/components/ImageSlot';
 import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
 import { EmptyHint, LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
+import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
+import { usePublicStudio } from '@/contexts/PublicStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { cancelBooking, createClassBooking } from '@/lib/api/bookingsApi';
+import { fetchPublicSchedule } from '@/lib/api/publicScheduleApi';
 import { fetchMyDayPasses, type DayPassDto } from '@/lib/api/dayPassesApi';
 import { fetchMyMemberProfile } from '@/lib/api/membershipApi';
 import { ApiError } from '@/lib/api/errors';
@@ -20,9 +23,16 @@ import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionReq
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
 import { isClassFullMessage } from '@/lib/classUtils';
-import { calendarDayKeyInZone, formatClassTime } from '@/lib/datetime';
+import {
+  buildScheduleQueryRange,
+  calendarDayKeyInZone,
+  formatClassDateLabel,
+  formatClassTime,
+} from '@/lib/datetime';
+import { getStudioSlug } from '@/lib/env';
 import { resolveClassImageUri, resolveCoachPortraitUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
+import type { ScheduledClassDto } from '@/lib/types/studio';
 
 function hasActiveDayPassForClassDate(
   dayPasses: DayPassDto[],
@@ -127,8 +137,22 @@ export default function ClassDetailScreen() {
   const classId = typeof raw === 'string' ? raw : raw?.[0] ?? '';
 
   const { primaryColor, appDisplayName } = useBranding();
+  const { user } = useAuth();
+  const isGuest = user === null;
   const matched = useMemberStudio().matched;
-  const { myBookings, myWaitlist, loading, error, refresh, getClass } = useStudioActivity();
+  const { timezone: publicTimezone } = usePublicStudio();
+  const {
+    myBookings,
+    myWaitlist,
+    loading: activityLoading,
+    error: activityError,
+    refresh: refreshActivity,
+    getClass,
+  } = useStudioActivity();
+
+  const [guestClasses, setGuestClasses] = useState<ScheduledClassDto[]>([]);
+  const [guestLoading, setGuestLoading] = useState(false);
+  const [guestError, setGuestError] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [offerWaitlist, setOfferWaitlist] = useState(false);
@@ -140,12 +164,46 @@ export default function ClassDetailScreen() {
   const [hasAccess, setHasAccess] = useState<boolean | null>(null);
 
   const studioId = matched?.studio.id;
-  const timeZone = matched?.studio.timezone ?? 'UTC';
+  const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
 
-  const cls = useMemo(() => getClass(classId), [getClass, classId]);
+  const authCls = useMemo(() => getClass(classId), [getClass, classId]);
+  const guestCls = useMemo(
+    () => guestClasses.find((c) => c.id === classId),
+    [guestClasses, classId],
+  );
+  const cls = isGuest ? guestCls : authCls;
+
+  const loading = isGuest ? guestLoading : activityLoading;
+  const error = isGuest ? guestError : activityError;
+
+  const loadGuestSchedule = useCallback(async () => {
+    const slug = getStudioSlug();
+    if (!slug) {
+      setGuestError('App is missing studio configuration.');
+      setGuestLoading(false);
+      return;
+    }
+    setGuestLoading(true);
+    setGuestError(null);
+    const { from, to } = buildScheduleQueryRange();
+    try {
+      const data = await fetchPublicSchedule(slug, from, to);
+      setGuestClasses(data);
+    } catch (e) {
+      setGuestError(userFacingApiMessage(e, 'We could not load this class. Pull to try again.'));
+    } finally {
+      setGuestLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isGuest) void loadGuestSchedule();
+    }, [isGuest, loadGuestSchedule]),
+  );
 
   useEffect(() => {
-    if (!studioId || !cls) return;
+    if (isGuest || !studioId || !cls) return;
 
     let cancelled = false;
     setHasAccess(null);
@@ -181,16 +239,19 @@ export default function ClassDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [studioId, cls, timeZone]);
+  }, [isGuest, studioId, cls, timeZone]);
 
   const booking = useMemo(
-    () => myBookings.find((b) => b.scheduledClassId === classId && b.status === 'CONFIRMED'),
-    [myBookings, classId],
+    () =>
+      isGuest
+        ? undefined
+        : myBookings.find((b) => b.scheduledClassId === classId && b.status === 'CONFIRMED'),
+    [isGuest, myBookings, classId],
   );
 
   const waitlistEntry = useMemo(
-    () => myWaitlist.find((w) => w.scheduledClassId === classId),
-    [myWaitlist, classId],
+    () => (isGuest ? undefined : myWaitlist.find((w) => w.scheduledClassId === classId)),
+    [isGuest, myWaitlist, classId],
   );
 
   useLayoutEffect(() => {
@@ -210,7 +271,7 @@ export default function ClassDetailScreen() {
       await action();
       setOfferWaitlist(false);
       setSubscriptionRequired(false);
-      await refresh();
+      await refreshActivity();
     } catch (e) {
       if (isActiveSubscriptionRequiredError(e)) { setSubscriptionRequired(true); return; }
       if (e instanceof ApiError && e.status === 409 && isClassFullMessage(e.message)) {
@@ -223,7 +284,7 @@ export default function ClassDetailScreen() {
     }
   }
 
-  if (!studioId || !matched) return <ScreenLoader />;
+  if (!isGuest && (!studioId || !matched)) return <ScreenLoader />;
   if (!classId) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom']}>
@@ -231,6 +292,8 @@ export default function ClassDetailScreen() {
       </SafeAreaView>
     );
   }
+  const refresh = isGuest ? loadGuestSchedule : refreshActivity;
+
   if (error && !cls && !loading) return <LoadRetryPanel message={error} onRetry={refresh} />;
   if (!cls && loading) return <ScreenLoader />;
   if (!cls) {
@@ -252,6 +315,7 @@ export default function ClassDetailScreen() {
   const accentColor = cls.classTemplate.color ?? primaryColor;
   const heroImageUri = cls.classTemplate.heroImageUrl ?? resolveClassImageUri(cls.classTemplate.name);
   const instructorProfile = cls.instructor?.staffProfiles[0] ?? null;
+  const memberStudioId = studioId ?? '';
 
   // CTA logic
   let primaryCTA: { label: string; onPress: () => void; disabled?: boolean } | null = null;
@@ -260,22 +324,27 @@ export default function ClassDetailScreen() {
   if (booking) {
     primaryCTA = {
       label: 'Cancel booking',
-      onPress: () => void run(async () => { await cancelBooking(studioId, booking.id); }),
+      onPress: () => void run(async () => { await cancelBooking(memberStudioId, booking.id); }),
     };
   } else if (waitlistEntry?.status === 'WAITING') {
     primaryCTA = {
       label: 'Leave waitlist',
-      onPress: () => void run(async () => { await cancelWaitlistEntry(studioId, waitlistEntry.id); }),
+      onPress: () => void run(async () => { await cancelWaitlistEntry(memberStudioId, waitlistEntry.id); }),
     };
   } else if (canAct) {
-    if (offerWaitlist) {
+    if (isGuest) {
+      primaryCTA = {
+        label: 'Log in to Book',
+        onPress: () => router.push('/(auth)/login'),
+      };
+    } else if (offerWaitlist) {
       primaryCTA = {
         label: 'Join waitlist',
-        onPress: () => void run(async () => { await joinClassWaitlist(studioId, classId); }),
+        onPress: () => void run(async () => { await joinClassWaitlist(memberStudioId, classId); }),
       };
       secondaryCTA = {
         label: 'Try booking again',
-        onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
+        onPress: () => void run(async () => { await createClassBooking(memberStudioId, classId); }),
       };
     } else if (hasAccess === null) {
       primaryCTA = {
@@ -291,7 +360,7 @@ export default function ClassDetailScreen() {
     } else {
       primaryCTA = {
         label: 'Book Class',
-        onPress: () => void run(async () => { await createClassBooking(studioId, classId); }),
+        onPress: () => void run(async () => { await createClassBooking(memberStudioId, classId); }),
       };
     }
   }
@@ -352,8 +421,23 @@ export default function ClassDetailScreen() {
                 {cls.classTemplate.name}
               </Text>
 
-              {/* Time · duration */}
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {/* Date · time · duration */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+                {isGuest ? (
+                  <>
+                    <Text
+                      style={{
+                        fontSize: 15,
+                        color: 'rgba(255,255,255,0.62)',
+                        fontWeight: '500',
+                        letterSpacing: -0.1,
+                      }}
+                    >
+                      {formatClassDateLabel(cls.startsAt, timeZone)}
+                    </Text>
+                    <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.30)', marginHorizontal: 8 }}>·</Text>
+                  </>
+                ) : null}
                 <Text
                   style={{
                     fontSize: 16,
