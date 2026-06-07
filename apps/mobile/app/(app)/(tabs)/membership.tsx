@@ -465,6 +465,7 @@ export default function MembershipScreen() {
   const [portalError, setPortalError] = useState<string | null>(null);
   const [dayPassBusy, setDayPassBusy] = useState(false);
   const [dayPassError, setDayPassError] = useState<string | null>(null);
+  const [dayPassLoadError, setDayPassLoadError] = useState<string | null>(null);
   const [dayPassSuccess, setDayPassSuccess] = useState(false);
   const expectReturnFromBrowser = useRef(false);
   const hasLoadedOnce = useRef(false);
@@ -479,21 +480,37 @@ export default function MembershipScreen() {
     };
   }, []);
 
+  const loadDayPasses = useCallback(async () => {
+    if (!studioId) return;
+    try {
+      const dp = await fetchMyDayPasses(studioId);
+      setDayPasses(dp);
+      setDayPassLoadError(null);
+    } catch (e) {
+      setDayPasses([]);
+      setDayPassLoadError('Day passes are temporarily unavailable.');
+      if (__DEV__) {
+        console.warn('[Membership] fetchMyDayPasses failed:', e);
+      }
+    }
+  }, [studioId]);
+
   const load = useCallback(
     async (mode: 'initial' | 'refresh') => {
       if (!studioId) return;
       setError(null);
       if (mode === 'initial') setLoading(true);
       else setRefreshing(true);
+
+      void loadDayPasses();
+
       try {
-        const [p, prof, dp] = await Promise.all([
+        const [p, prof] = await Promise.all([
           fetchMembershipPlans(studioId),
           fetchMyMemberProfile(studioId),
-          fetchMyDayPasses(studioId),
         ]);
         setPlans(p);
         setProfile(prof);
-        setDayPasses(dp);
       } catch (e) {
         setError(userFacingApiMessage(e, 'Could not load membership info. Pull to refresh.'));
       } finally {
@@ -501,7 +518,7 @@ export default function MembershipScreen() {
         setRefreshing(false);
       }
     },
-    [studioId],
+    [studioId, loadDayPasses],
   );
 
   useFocusEffect(
@@ -790,6 +807,12 @@ export default function MembershipScreen() {
               />
             </View>
           </Animated.View>
+
+          {dayPassLoadError ? (
+            <Text style={{ fontSize: 12, color: C.textMute, lineHeight: 18, marginBottom: 12 }}>
+              {dayPassLoadError}
+            </Text>
+          ) : null}
 
           {/* Active / pending day passes */}
           {dayPasses.length > 0 ? (
