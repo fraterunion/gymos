@@ -35,6 +35,10 @@ export function StudioActivityProvider({
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!studioId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     const range = buildScheduleQueryRange();

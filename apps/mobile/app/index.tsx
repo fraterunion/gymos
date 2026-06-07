@@ -8,16 +8,12 @@ import { useBranding } from '@/contexts/BrandingContext';
 export default function BootScreen() {
   const router = useRouter();
   const { status } = useBranding();
-  const { user, hydrated } = useAuth();
+  const { hydrated } = useAuth();
 
   useEffect(() => {
     if (status !== 'ready' || !hydrated) return;
-    if (user) {
-      router.replace('/(app)/(tabs)');
-    } else {
-      router.replace('/(auth)/login');
-    }
-  }, [status, hydrated, user, router]);
+    router.replace('/(app)/(tabs)');
+  }, [status, hydrated, router]);
 
   return (
     <View className="flex-1 items-center justify-center bg-neutral-50 dark:bg-neutral-950">

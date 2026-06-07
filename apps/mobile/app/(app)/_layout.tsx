@@ -1,6 +1,4 @@
-import { useEffect } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
 import { Stack } from 'expo-router/stack';
 
 import { BrandButton } from '@/components/BrandButton';
@@ -12,17 +10,11 @@ import { MemberStudioProvider, useMemberStudio } from '@/contexts/MemberStudioCo
 import { StudioActivityProvider } from '@/contexts/StudioActivityContext';
 
 export default function AppGroupLayout() {
-  const router = useRouter();
-  const { user, hydrated } = useAuth();
+  const { hydrated } = useAuth();
 
-  useEffect(() => {
-    if (!hydrated) return;
-    if (!user) {
-      router.replace('/(auth)/login');
-    }
-  }, [hydrated, user, router]);
-
-  if (!hydrated || !user) {
+  // Wait for auth hydration so MemberStudioContext starts with the correct user state.
+  // Guests (user === null after hydration) enter the app shell in discovery mode.
+  if (!hydrated) {
     return (
       <View className="flex-1 items-center justify-center bg-neutral-50 dark:bg-neutral-950">
         <ActivityIndicator />
@@ -39,6 +31,7 @@ export default function AppGroupLayout() {
 
 function MemberShell() {
   const headerBg = '#0A0A0A';
+  const { user } = useAuth();
   const { primaryColor } = useBranding();
   const ms = useMemberStudio();
 
@@ -57,12 +50,16 @@ function MemberShell() {
     );
   }
 
-  if (!ms.matched) {
+  // Authenticated users who are not a member of this studio see the membership prompt.
+  // Guests (user === null) skip this and enter discovery mode.
+  if (user && !ms.matched) {
     return <MembershipRequiredScreen onRetry={() => void ms.refetch()} />;
   }
 
+  // Always mount StudioActivityProvider to keep the tree stable through login/logout.
+  // Guests receive studioId = '' which causes the context to skip all authenticated fetches.
   return (
-    <StudioActivityProvider studioId={ms.matched.studio.id}>
+    <StudioActivityProvider studioId={ms.matched?.studio.id ?? ''}>
       <Stack
         screenOptions={{
           headerShown: false,
