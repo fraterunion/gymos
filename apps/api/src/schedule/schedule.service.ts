@@ -84,6 +84,28 @@ export class ScheduleService {
     });
   }
 
+  async listPublicSchedule(studioId: string, query: ScheduleQueryDto) {
+    const from = new Date(query.from);
+    const to = new Date(query.to);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('Invalid from or to date');
+    }
+    if (from >= to) {
+      throw new BadRequestException('from must be before to');
+    }
+    return this.prisma.scheduledClass.findMany({
+      where: {
+        studioId,
+        status: ClassStatus.SCHEDULED,
+        startsAt: { lt: to },
+        endsAt: { gt: from },
+        classTemplate: { deletedAt: null },
+      },
+      include: scheduleInclude(studioId),
+      orderBy: { startsAt: 'asc' },
+    });
+  }
+
   async createScheduledClass(
     studioId: string,
     dto: CreateScheduledClassDto,

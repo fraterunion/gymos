@@ -17,6 +17,7 @@ import { MembersModule } from './members/members.module';
 import { MembershipPlansModule } from './membership-plans/membership-plans.module';
 import { MembershipsModule } from './memberships/memberships.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PublicDiscoveryModule } from './public-discovery/public-discovery.module';
 import { ScheduleModule } from './schedule/schedule.module';
 import { StaffModule } from './staff/staff.module';
 import { StudioSettingsModule } from './studio-settings/studio-settings.module';
@@ -53,6 +54,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     AnalyticsModule,
     BillingModule,
     BrandingModule,
+    PublicDiscoveryModule,
     BuildJobsModule,
     StudiosModule,
     MembershipPlansModule,

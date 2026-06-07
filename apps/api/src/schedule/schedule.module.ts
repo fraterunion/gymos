@@ -8,5 +8,6 @@ import { ScheduleService } from './schedule.service';
   imports: [PrismaModule, AuthModule],
   controllers: [ScheduleController],
   providers: [ScheduleService],
+  exports: [ScheduleService],
 })
 export class ScheduleModule {}
