@@ -310,10 +310,12 @@ function PlanCard({
 function GuestMembershipPrompt({
   studioName,
   primaryColor,
+  onRegister,
   onLogin,
 }: {
   studioName: string;
   primaryColor: string;
+  onRegister: () => void;
   onLogin: () => void;
 }) {
   const C = getColors();
@@ -358,9 +360,14 @@ function GuestMembershipPrompt({
             marginBottom: 24,
           }}
         >
-          Log in to subscribe, purchase a Day Pass, and book classes.
+          Create an account to subscribe, purchase a Day Pass, and book classes.
         </Text>
-        <BrandButton label="Log in to Join" accentColor={primaryColor} onPress={onLogin} />
+        <BrandButton label="Join Now" accentColor={primaryColor} onPress={onRegister} />
+        <Pressable accessibilityRole="button" onPress={onLogin} hitSlop={8} style={{ marginTop: 16 }}>
+          <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor, textAlign: 'center' }}>
+            Already have an account? Log in
+          </Text>
+        </Pressable>
       </View>
     </Animated.View>
   );
@@ -534,6 +541,7 @@ export default function MembershipScreen() {
   const studioId = matched?.studio.id;
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
   const goToLogin = () => router.push('/(auth)/login');
+  const goToRegister = () => router.push('/(auth)/register');
 
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
@@ -652,7 +660,7 @@ export default function MembershipScreen() {
   }, [isGuest, studioId, load, refreshStudioActivity]);
 
   async function openCheckout(planId: string) {
-    if (isGuest) { goToLogin(); return; }
+    if (isGuest) { goToRegister(); return; }
     if (!studioId) return;
     setCheckoutPlanId(planId);
     try {
@@ -684,7 +692,7 @@ export default function MembershipScreen() {
   }
 
   async function buyDayPass() {
-    if (isGuest) { goToLogin(); return; }
+    if (isGuest) { goToRegister(); return; }
     if (!studioId) return;
     setDayPassBusy(true);
     setDayPassError(null);
@@ -790,6 +798,7 @@ export default function MembershipScreen() {
           <GuestMembershipPrompt
             studioName={publicStudio?.name ?? ''}
             primaryColor={primaryColor}
+            onRegister={goToRegister}
             onLogin={goToLogin}
           />
         ) : sub ? (
@@ -839,8 +848,8 @@ export default function MembershipScreen() {
                 index={i}
                 isLoading={!isGuest && checkoutPlanId === plan.id}
                 isDisabled={!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id}
-                subscribeLabel={isGuest ? 'Log in to Join' : 'Subscribe'}
-                onSubscribe={() => void (isGuest ? goToLogin() : openCheckout(plan.id))}
+                subscribeLabel={isGuest ? 'Join Now' : 'Subscribe'}
+                onSubscribe={() => void (isGuest ? goToRegister() : openCheckout(plan.id))}
               />
             ))}
           </View>
@@ -924,16 +933,24 @@ export default function MembershipScreen() {
               ) : null}
 
               <BrandButton
-                label={
-                  isGuest
-                    ? `Log in to Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`
-                    : `Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`
-                }
+                label={`Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`}
                 accentColor={primaryColor}
                 loading={!isGuest && dayPassBusy}
                 disabled={!isGuest && dayPassBusy}
-                onPress={() => void (isGuest ? goToLogin() : buyDayPass())}
+                onPress={() => void (isGuest ? goToRegister() : buyDayPass())}
               />
+              {isGuest ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={goToLogin}
+                  hitSlop={8}
+                  style={{ marginTop: 14, alignItems: 'center' }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor }}>
+                    Already have an account? Log in
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           </Animated.View>
 

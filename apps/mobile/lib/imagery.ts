@@ -42,6 +42,31 @@ const KEYWORD_MAP: Array<[FitnessCategory, readonly string[]]> = [
   ['strength',    ['strength', 'weight', 'lift', 'deadlift', 'squat', 'press', 'barbell', 'dumbbell', 'powerl']],
 ];
 
+type ClassImageTemplate = {
+  name: string;
+  heroImageUrl?: string | null;
+  thumbnailImageUrl?: string | null;
+};
+
+/** Resolves class imagery using studio URLs when present, else keyword-based fallback. */
+export function resolveScheduledClassImageUri(
+  template: ClassImageTemplate,
+  variant: 'hero' | 'thumbnail' = 'hero',
+): string {
+  if (variant === 'thumbnail') {
+    return (
+      template.thumbnailImageUrl ??
+      template.heroImageUrl ??
+      resolveClassImageUri(template.name)
+    );
+  }
+  return (
+    template.heroImageUrl ??
+    template.thumbnailImageUrl ??
+    resolveClassImageUri(template.name)
+  );
+}
+
 /** Returns a consistent curated image URI based on the class name. */
 export function resolveClassImageUri(className: string): string {
   const lower = className.toLowerCase();

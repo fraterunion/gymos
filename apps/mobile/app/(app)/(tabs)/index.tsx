@@ -34,6 +34,7 @@ import {
 } from '@/lib/datetime';
 import {
   resolveClassImageUri,
+  resolveScheduledClassImageUri,
   resolveCoachPortraitUri,
   CATEGORY_MODULES,
   type CategoryModule,
@@ -614,7 +615,7 @@ function GuestLanding({
                   item={item}
                   timeZone={timeZone}
                   accentColor={item.classTemplate.color ?? primaryColor}
-                  imageUri={resolveClassImageUri(item.classTemplate.name)}
+                  imageUri={resolveScheduledClassImageUri(item.classTemplate, 'thumbnail')}
                   index={index}
                   onPress={() => router.push(`/(app)/class/${item.id}`)}
                 />

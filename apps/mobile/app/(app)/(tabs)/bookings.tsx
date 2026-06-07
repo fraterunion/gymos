@@ -170,15 +170,15 @@ function GuestBookingsWall({ primaryColor }: { primaryColor: string }) {
           style={{ marginTop: 28, gap: 12 }}
         >
           <BrandButton
-            label="Log In"
-            accentColor={primaryColor}
-            onPress={() => router.push('/(auth)/login')}
-          />
-          <BrandButton
             label="Create Account"
-            variant="ghost"
             accentColor={primaryColor}
             onPress={() => router.push('/(auth)/register')}
+          />
+          <BrandButton
+            label="Log In"
+            variant="ghost"
+            accentColor={primaryColor}
+            onPress={() => router.push('/(auth)/login')}
           />
         </Animated.View>
       </ScrollView>

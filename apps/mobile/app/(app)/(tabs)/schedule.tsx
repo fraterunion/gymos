@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
-import { resolveClassImageUri } from '@/lib/imagery';
+import { resolveScheduledClassImageUri } from '@/lib/imagery';
 import {
   EmptyHint,
   ErrorBanner,
@@ -201,7 +201,7 @@ export default function ScheduleScreen() {
                   item={item}
                   timeZone={timeZone}
                   accentColor={item.classTemplate.color ?? primaryColor}
-                  imageUri={resolveClassImageUri(item.classTemplate.name)}
+                  imageUri={resolveScheduledClassImageUri(item.classTemplate, 'hero')}
                   height={section.isToday ? 240 : 210}
                   label={section.isToday ? 'Today' : undefined}
                   delay={0}
@@ -215,7 +215,7 @@ export default function ScheduleScreen() {
                   item={item}
                   timeZone={timeZone}
                   accentColor={item.classTemplate.color ?? primaryColor}
-                  imageUri={resolveClassImageUri(item.classTemplate.name)}
+                  imageUri={resolveScheduledClassImageUri(item.classTemplate, 'thumbnail')}
                   index={index}
                   onPress={() => router.push(`/(app)/class/${item.id}`)}
                 />

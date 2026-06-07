@@ -334,7 +334,11 @@ export default function ClassDetailScreen() {
   } else if (canAct) {
     if (isGuest) {
       primaryCTA = {
-        label: 'Log in to Book',
+        label: 'Create Account to Book',
+        onPress: () => router.push('/(auth)/register'),
+      };
+      secondaryCTA = {
+        label: 'Log In',
         onPress: () => router.push('/(auth)/login'),
       };
     } else if (offerWaitlist) {
