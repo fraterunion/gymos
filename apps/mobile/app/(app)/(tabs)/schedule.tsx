@@ -16,7 +16,7 @@ import {
 } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
-import { useStudioActivity } from '@/contexts/StudioActivityContext';
+import { usePublicSchedule } from '@/contexts/PublicScheduleContext';
 import {
   calendarDayKeyInZone,
   formatClassDateLabel,
@@ -112,7 +112,7 @@ export default function ScheduleScreen() {
   const C = getColors();
   const { primaryColor } = useBranding();
   const matched = useMemberStudio().matched;
-  const { classes, loading, error, refresh } = useStudioActivity();
+  const { classes, loading, error, refresh } = usePublicSchedule();
 
   const timeZone = matched?.studio.timezone ?? 'UTC';
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
