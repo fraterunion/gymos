@@ -1,6 +1,6 @@
 import { initStripe, useStripe } from '@/lib/stripe';
 import { createURL } from 'expo-linking';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppState,
@@ -16,9 +16,15 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
 import { LoadRetryPanel, ScreenLoader, Skeleton } from '@/components/StudioScreenChrome';
+import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
+import { usePublicStudio } from '@/contexts/PublicStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
+import {
+  fetchPublicMembershipPlans,
+  type PublicMembershipPlanDto,
+} from '@/lib/api/publicDiscoveryApi';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import {
   createBillingPortalSession,
@@ -38,8 +44,13 @@ import {
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import { statusConfig } from '@/lib/membershipStatus';
 import { todayKeyInZone } from '@/lib/datetime';
+import { getStudioSlug } from '@/lib/env';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { getColors, Space } from '@/constants/Theme';
+
+function toMembershipPlanDto(plan: PublicMembershipPlanDto): MembershipPlanDto {
+  return { ...plan, studioId: '' };
+}
 
 function billingIntervalLabel(interval: BillingInterval): string {
   switch (interval) {
@@ -188,6 +199,7 @@ function PlanCard({
   isDisabled,
   primaryColor,
   index,
+  subscribeLabel = 'Subscribe',
 }: {
   plan: MembershipPlanDto;
   onSubscribe: () => void;
@@ -195,6 +207,7 @@ function PlanCard({
   isDisabled: boolean;
   primaryColor: string;
   index: number;
+  subscribeLabel?: string;
 }) {
   const C = getColors();
   const priceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
@@ -279,12 +292,75 @@ function PlanCard({
         )}
 
         <BrandButton
-          label="Subscribe"
+          label={subscribeLabel}
           accentColor={primaryColor}
           loading={isLoading}
           disabled={isDisabled}
           onPress={onSubscribe}
         />
+      </View>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Guest value proposition
+// ---------------------------------------------------------------------------
+
+function GuestMembershipPrompt({
+  studioName,
+  primaryColor,
+  onLogin,
+}: {
+  studioName: string;
+  primaryColor: string;
+  onLogin: () => void;
+}) {
+  const C = getColors();
+  return (
+    <Animated.View entering={FadeInDown.duration(400)}>
+      <View
+        style={{
+          backgroundColor: C.surface1,
+          borderRadius: 20,
+          padding: 28,
+          marginBottom: 8,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 22,
+            fontWeight: '800',
+            letterSpacing: -0.5,
+            color: C.text,
+            marginBottom: 10,
+          }}
+        >
+          Train with us.
+        </Text>
+        <Text
+          style={{
+            fontSize: 15,
+            color: C.textSub,
+            lineHeight: 22,
+            marginBottom: 20,
+          }}
+        >
+          {studioName
+            ? `Browse plans at ${studioName}, pick up a Day Pass, or join with a membership.`
+            : 'Browse plans, pick up a Day Pass, or join with a membership.'}
+        </Text>
+        <Text
+          style={{
+            fontSize: 14,
+            color: C.textMute,
+            lineHeight: 21,
+            marginBottom: 24,
+          }}
+        >
+          Log in to subscribe, purchase a Day Pass, and book classes.
+        </Text>
+        <BrandButton label="Log in to Join" accentColor={primaryColor} onPress={onLogin} />
       </View>
     </Animated.View>
   );
@@ -445,14 +521,19 @@ function DayPassRow({ dayPass, timeZone }: { dayPass: DayPassDto; timeZone: stri
 // ---------------------------------------------------------------------------
 
 export default function MembershipScreen() {
+  const router = useRouter();
   const C = getColors();
   const { primaryColor, appDisplayName } = useBranding();
+  const { user } = useAuth();
+  const isGuest = user === null;
   const { matched } = useMemberStudio();
+  const { studio: publicStudio, timezone: publicTimezone } = usePublicStudio();
   const { refresh: refreshStudioActivity } = useStudioActivity();
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
 
   const studioId = matched?.studio.id;
-  const timeZone = matched?.studio.timezone ?? 'UTC';
+  const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
+  const goToLogin = () => router.push('/(auth)/login');
 
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
@@ -471,7 +552,7 @@ export default function MembershipScreen() {
   const hasLoadedOnce = useRef(false);
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { hasLoadedOnce.current = false; }, [studioId]);
+  useEffect(() => { hasLoadedOnce.current = false; }, [studioId, isGuest]);
 
   // Clear the success timer on unmount to avoid setState on an unmounted component.
   useEffect(() => {
@@ -494,6 +575,30 @@ export default function MembershipScreen() {
       }
     }
   }, [studioId]);
+
+  const loadGuest = useCallback(async (mode: 'initial' | 'refresh') => {
+    const slug = getStudioSlug();
+    if (!slug) {
+      setError('App is missing studio configuration.');
+      setLoading(false);
+      return;
+    }
+    setError(null);
+    if (mode === 'initial') setLoading(true);
+    else setRefreshing(true);
+    try {
+      const p = await fetchPublicMembershipPlans(slug);
+      setPlans(p.map(toMembershipPlanDto));
+      setProfile(null);
+      setDayPasses([]);
+      setDayPassLoadError(null);
+    } catch (e) {
+      setError(userFacingApiMessage(e, 'Could not load membership plans. Pull to refresh.'));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh') => {
@@ -523,26 +628,31 @@ export default function MembershipScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!studioId) { setLoading(false); return; }
       const mode = hasLoadedOnce.current ? 'refresh' : 'initial';
       hasLoadedOnce.current = true;
+      if (isGuest) {
+        void loadGuest(mode);
+        return;
+      }
+      if (!studioId) { setLoading(false); return; }
       void load(mode);
       void refreshStudioActivity();
-    }, [studioId, load, refreshStudioActivity]),
+    }, [isGuest, studioId, loadGuest, load, refreshStudioActivity]),
   );
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active' || !studioId) return;
+      if (state !== 'active' || isGuest || !studioId) return;
       if (!expectReturnFromBrowser.current) return;
       expectReturnFromBrowser.current = false;
       void load('refresh');
       void refreshStudioActivity();
     });
     return () => sub.remove();
-  }, [studioId, load, refreshStudioActivity]);
+  }, [isGuest, studioId, load, refreshStudioActivity]);
 
   async function openCheckout(planId: string) {
+    if (isGuest) { goToLogin(); return; }
     if (!studioId) return;
     setCheckoutPlanId(planId);
     try {
@@ -574,6 +684,7 @@ export default function MembershipScreen() {
   }
 
   async function buyDayPass() {
+    if (isGuest) { goToLogin(); return; }
     if (!studioId) return;
     setDayPassBusy(true);
     setDayPassError(null);
@@ -618,11 +729,18 @@ export default function MembershipScreen() {
     }
   }
 
-  if (!studioId || !matched) return <ScreenLoader />;
-  if (error && !profile && !plans.length && !loading) {
-    return <LoadRetryPanel message={error} onRetry={() => void load('initial')} />;
+  const refresh = isGuest ? () => loadGuest('refresh') : () => { void load('refresh'); void refreshStudioActivity(); };
+
+  if (!isGuest && (!studioId || !matched)) return <ScreenLoader />;
+  if (error && !plans.length && !loading && (isGuest || !profile)) {
+    return (
+      <LoadRetryPanel
+        message={error}
+        onRetry={() => void (isGuest ? loadGuest('initial') : load('initial'))}
+      />
+    );
   }
-  if (loading && !profile && !plans.length) return <ScreenLoader />;
+  if (loading && !plans.length && (isGuest || !profile)) return <ScreenLoader />;
 
   const sub = profile?.activeSubscription;
 
@@ -640,7 +758,7 @@ export default function MembershipScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => { void load('refresh'); void refreshStudioActivity(); }}
+            onRefresh={() => void refresh()}
             tintColor={primaryColor}
           />
         }
@@ -667,8 +785,14 @@ export default function MembershipScreen() {
           <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16 }}>{error}</Text>
         ) : null}
 
-        {/* ── Active card or no-membership prompt ── */}
-        {sub ? (
+        {/* ── Active card, member prompt, or guest value prop ── */}
+        {isGuest ? (
+          <GuestMembershipPrompt
+            studioName={publicStudio?.name ?? ''}
+            primaryColor={primaryColor}
+            onLogin={goToLogin}
+          />
+        ) : sub ? (
           <MembershipCard
             planName={sub.plan.name}
             status={sub.status}
@@ -686,7 +810,7 @@ export default function MembershipScreen() {
           />
         )}
 
-        {portalError ? (
+        {!isGuest && portalError ? (
           <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16, textAlign: 'center', marginTop: 8 }}>
             {portalError}
           </Text>
@@ -713,9 +837,10 @@ export default function MembershipScreen() {
                 plan={plan}
                 primaryColor={primaryColor}
                 index={i}
-                isLoading={checkoutPlanId === plan.id}
-                isDisabled={checkoutPlanId !== null && checkoutPlanId !== plan.id}
-                onSubscribe={() => void openCheckout(plan.id)}
+                isLoading={!isGuest && checkoutPlanId === plan.id}
+                isDisabled={!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id}
+                subscribeLabel={isGuest ? 'Log in to Join' : 'Subscribe'}
+                onSubscribe={() => void (isGuest ? goToLogin() : openCheckout(plan.id))}
               />
             ))}
           </View>
@@ -778,7 +903,7 @@ export default function MembershipScreen() {
                 Train for one day without a membership.
               </Text>
 
-              {dayPassSuccess ? (
+              {!isGuest && dayPassSuccess ? (
                 <Text
                   style={{
                     fontSize: 14,
@@ -792,30 +917,34 @@ export default function MembershipScreen() {
                 </Text>
               ) : null}
 
-              {dayPassError ? (
+              {!isGuest && dayPassError ? (
                 <Text style={{ fontSize: 13, color: C.negative, marginBottom: 12, lineHeight: 19 }}>
                   {dayPassError}
                 </Text>
               ) : null}
 
               <BrandButton
-                label={`Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`}
+                label={
+                  isGuest
+                    ? `Log in to Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`
+                    : `Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`
+                }
                 accentColor={primaryColor}
-                loading={dayPassBusy}
-                disabled={dayPassBusy}
-                onPress={() => void buyDayPass()}
+                loading={!isGuest && dayPassBusy}
+                disabled={!isGuest && dayPassBusy}
+                onPress={() => void (isGuest ? goToLogin() : buyDayPass())}
               />
             </View>
           </Animated.View>
 
-          {dayPassLoadError ? (
+          {!isGuest && dayPassLoadError ? (
             <Text style={{ fontSize: 12, color: C.textMute, lineHeight: 18, marginBottom: 12 }}>
               {dayPassLoadError}
             </Text>
           ) : null}
 
           {/* Active / pending day passes */}
-          {dayPasses.length > 0 ? (
+          {!isGuest && dayPasses.length > 0 ? (
             <Animated.View entering={FadeInDown.duration(380)}>
               {dayPasses.map((dp) => (
                 <DayPassRow key={dp.id} dayPass={dp} timeZone={timeZone} />
