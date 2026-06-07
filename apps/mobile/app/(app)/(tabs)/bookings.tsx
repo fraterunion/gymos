@@ -3,9 +3,11 @@ import { Pressable, RefreshControl, ScrollView, Text, useColorScheme, View } fro
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+import { BrandButton } from '@/components/BrandButton';
 import { ClassCard } from '@/components/ClassCard';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { EmptyHint, ErrorBanner, LoadRetryPanel, Skeleton, ScreenLoader } from '@/components/StudioScreenChrome';
+import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
@@ -58,6 +60,130 @@ function resolveBookingClassItem(
     },
     instructor: null,
   };
+}
+
+const GUEST_FEATURES = [
+  'Upcoming bookings',
+  'Waitlists',
+  'QR check-ins',
+  'Attendance history',
+] as const;
+
+// ---------------------------------------------------------------------------
+// Guest wall — no authenticated API calls
+// ---------------------------------------------------------------------------
+
+function GuestBookingsWall({ primaryColor }: { primaryColor: string }) {
+  const router = useRouter();
+  const C = getColors();
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          paddingHorizontal: Space.screenH,
+          paddingBottom: TAB_BAR_CLEARANCE,
+        }}
+      >
+        <Animated.View entering={FadeInDown.duration(500)} style={{ paddingTop: 28, paddingBottom: 24 }}>
+          <Text
+            style={{
+              fontSize: 38,
+              fontWeight: '800',
+              letterSpacing: -1.3,
+              color: C.text,
+              lineHeight: 44,
+            }}
+          >
+            Your Training Journey
+          </Text>
+          <Text
+            style={{
+              fontSize: 15,
+              color: C.textSub,
+              lineHeight: 23,
+              marginTop: 14,
+              letterSpacing: -0.1,
+            }}
+          >
+            Track upcoming classes, waitlists, attendance history, and check-ins after creating
+            your account.
+          </Text>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(80).duration(460)}>
+          <View
+            style={{
+              backgroundColor: C.surface1,
+              borderRadius: 20,
+              padding: 26,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 1.0,
+                textTransform: 'uppercase',
+                color: C.textMute,
+                marginBottom: 18,
+              }}
+            >
+              What you unlock
+            </Text>
+            {GUEST_FEATURES.map((feature, index) => (
+              <View
+                key={feature}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginBottom: index < GUEST_FEATURES.length - 1 ? 14 : 0,
+                }}
+              >
+                <View
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: primaryColor,
+                    marginRight: 12,
+                  }}
+                />
+                <Text
+                  style={{
+                    fontSize: 15,
+                    color: C.text,
+                    fontWeight: '500',
+                    letterSpacing: -0.2,
+                  }}
+                >
+                  {feature}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </Animated.View>
+
+        <Animated.View
+          entering={FadeInDown.delay(140).duration(440)}
+          style={{ marginTop: 28, gap: 12 }}
+        >
+          <BrandButton
+            label="Log In"
+            accentColor={primaryColor}
+            onPress={() => router.push('/(auth)/login')}
+          />
+          <BrandButton
+            label="Create Account"
+            variant="ghost"
+            accentColor={primaryColor}
+            onPress={() => router.push('/(auth)/register')}
+          />
+        </Animated.View>
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +253,14 @@ export default function MyBookingsScreen() {
   const scheme = useColorScheme();
   const C = getColors(scheme);
   const { primaryColor } = useBranding();
+  const { user } = useAuth();
+  const isGuest = user === null;
   const matched = useMemberStudio().matched;
   const { classes, myBookings, myWaitlist, loading, error, refresh, getClass } = useStudioActivity();
+
+  if (isGuest) {
+    return <GuestBookingsWall primaryColor={primaryColor} />;
+  }
 
   const timeZone = matched?.studio.timezone ?? 'UTC';
 
