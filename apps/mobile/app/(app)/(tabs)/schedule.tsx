@@ -15,8 +15,8 @@ import {
   ScreenLoader,
 } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
-import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { usePublicSchedule } from '@/contexts/PublicScheduleContext';
+import { usePublicStudio } from '@/contexts/PublicStudioContext';
 import {
   calendarDayKeyInZone,
   formatClassDateLabel,
@@ -111,10 +111,10 @@ export default function ScheduleScreen() {
   const router = useRouter();
   const C = getColors();
   const { primaryColor } = useBranding();
-  const matched = useMemberStudio().matched;
-  const { classes, loading, error, refresh } = usePublicSchedule();
+  const { timezone, loading: studioLoading } = usePublicStudio();
+  const { classes, loading: scheduleLoading, error, refresh } = usePublicSchedule();
 
-  const timeZone = matched?.studio.timezone ?? 'UTC';
+  const timeZone = timezone;
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
 
   const sections: Section[] = useMemo(() => {
@@ -140,10 +140,10 @@ export default function ScheduleScreen() {
     });
   }, [classes, timeZone, todayKey]);
 
-  if (!matched) return <ScreenLoader />;
+  if (studioLoading) return <ScreenLoader />;
   if (error && classes.length === 0) return <LoadRetryPanel message={error} onRetry={refresh} />;
 
-  const showSkeleton = loading && classes.length === 0;
+  const showSkeleton = scheduleLoading && classes.length === 0;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
@@ -165,7 +165,7 @@ export default function ScheduleScreen() {
           }}
           refreshControl={
             <RefreshControl
-              refreshing={loading}
+              refreshing={scheduleLoading}
               onRefresh={() => void refresh()}
               tintColor={primaryColor}
             />
