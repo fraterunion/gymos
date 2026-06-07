@@ -24,6 +24,8 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
+import { usePublicSchedule } from '@/contexts/PublicScheduleContext';
+import { usePublicStudio } from '@/contexts/PublicStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import {
   calendarDayKeyInZone,
@@ -495,16 +497,152 @@ function WaitlistRow({
 }
 
 // ---------------------------------------------------------------------------
+// Guest landing — shown when user is not logged in
+// ---------------------------------------------------------------------------
+
+function GuestLanding({
+  appDisplayName,
+  studioName,
+  timeZone,
+  primaryColor,
+  classes,
+}: {
+  appDisplayName: string;
+  studioName: string;
+  timeZone: string;
+  primaryColor: string;
+  classes: ScheduledClassDto[];
+}) {
+  const router = useRouter();
+  const C = getColors();
+
+  const upcoming = useMemo(() => {
+    const now = Date.now();
+    return classes
+      .filter((c) => c.status === 'SCHEDULED' && new Date(c.startsAt).getTime() > now)
+      .slice(0, 3);
+  }, [classes]);
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          paddingHorizontal: Space.screenH,
+          paddingBottom: TAB_BAR_CLEARANCE,
+        }}
+      >
+        {/* Hero */}
+        <Animated.View entering={FadeInDown.duration(500)} style={{ paddingTop: 28, paddingBottom: 24 }}>
+          <Text
+            style={{
+              fontSize: 40,
+              fontWeight: '800',
+              letterSpacing: -1.5,
+              color: C.text,
+              lineHeight: 46,
+            }}
+          >
+            {appDisplayName}
+          </Text>
+          {studioName ? (
+            <Text style={{ fontSize: 14, color: C.textMute, marginTop: 8 }}>
+              {studioName}
+            </Text>
+          ) : null}
+        </Animated.View>
+
+        {/* Category strip */}
+        <CategoryStrip />
+
+        {/* Value proposition + CTAs */}
+        <Animated.View entering={FadeInDown.delay(80).duration(460)} style={{ marginBottom: Space.sectionGap }}>
+          <Text
+            style={{
+              fontSize: 22,
+              fontWeight: '800',
+              letterSpacing: -0.5,
+              color: C.text,
+              marginBottom: 12,
+            }}
+          >
+            Train with us.
+          </Text>
+          <Text
+            style={{
+              fontSize: 15,
+              color: C.textSub,
+              lineHeight: 22,
+              marginBottom: 28,
+            }}
+          >
+            Browse the schedule, pick up a Day Pass, or join with a membership.
+          </Text>
+          <View style={{ gap: 12 }}>
+            <BrandButton
+              label="View Schedule"
+              accentColor={primaryColor}
+              onPress={() => router.push('/(app)/(tabs)/schedule')}
+            />
+            <BrandButton
+              label="View Memberships"
+              variant="ghost"
+              accentColor={primaryColor}
+              onPress={() => router.push('/(app)/(tabs)/membership')}
+            />
+          </View>
+        </Animated.View>
+
+        {/* Upcoming classes preview */}
+        {upcoming.length > 0 ? (
+          <Animated.View entering={FadeInDown.delay(140).duration(440)}>
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 1.0,
+                textTransform: 'uppercase',
+                color: C.textMute,
+                marginBottom: 16,
+              }}
+            >
+              Upcoming classes
+            </Text>
+            {upcoming.map((item, index) => (
+              <View key={item.id} style={index > 0 ? { marginTop: Space.cardGap } : undefined}>
+                <ClassCard
+                  item={item}
+                  timeZone={timeZone}
+                  accentColor={item.classTemplate.color ?? primaryColor}
+                  imageUri={resolveClassImageUri(item.classTemplate.name)}
+                  index={index}
+                  onPress={() => router.push(`/(app)/class/${item.id}`)}
+                />
+              </View>
+            ))}
+          </Animated.View>
+        ) : null}
+
+        {/* Coach spotlight */}
+        <CoachSpotlight classes={classes} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 
 export default function HomeScreen() {
   const router = useRouter();
   const C = getColors();
-  const { primaryColor } = useBranding();
+  const { primaryColor, appDisplayName } = useBranding();
   const { user } = useAuth();
   const matched = useMemberStudio().matched;
   const { classes, myBookings, myWaitlist, loading, error, refresh } = useStudioActivity();
+  const { classes: publicClasses } = usePublicSchedule();
+  const { studio: publicStudio, timezone: publicTimezone } = usePublicStudio();
   const studioId = matched?.studio.id;
 
   /** null = unknown; false = no active subscription; true = subscribed */
@@ -526,7 +664,7 @@ export default function HomeScreen() {
     }, [loadMembershipStatus]),
   );
 
-  const timeZone = matched?.studio.timezone ?? 'UTC';
+  const timeZone = matched?.studio.timezone ?? publicTimezone;
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
   const greeting = useMemo(() => buildGreeting(user?.firstName), [user?.firstName]);
 
@@ -582,6 +720,18 @@ export default function HomeScreen() {
         .slice(0, 3),
     [myWaitlist],
   );
+
+  if (!user) {
+    return (
+      <GuestLanding
+        appDisplayName={appDisplayName}
+        studioName={matched?.studio.name ?? publicStudio?.name ?? ''}
+        timeZone={timeZone}
+        primaryColor={primaryColor}
+        classes={publicClasses}
+      />
+    );
+  }
 
   if (!matched) return <ScreenLoader />;
   if (error && classes.length === 0 && myBookings.length === 0) {
