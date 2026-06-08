@@ -243,6 +243,7 @@ export class MembersService {
               priceCents: true,
               currency: true,
               classCredits: true,
+              allowedCategories: true,
             },
           },
         },
@@ -378,6 +379,7 @@ export class MembersService {
             priceCents: true,
             currency: true,
             classCredits: true,
+            allowedCategories: true,
           },
         },
       },
@@ -560,7 +562,7 @@ export class MembersService {
         currentPeriodEnd: periodEnd,
       },
       include: {
-        membershipPlan: { select: { id: true, name: true, billingInterval: true, priceCents: true, currency: true } },
+        membershipPlan: { select: { id: true, name: true, billingInterval: true, priceCents: true, currency: true, allowedCategories: true } },
       },
     });
   }

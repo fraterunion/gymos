@@ -83,6 +83,7 @@ export class MembershipPlansService {
         classCredits: dto.classCredits === undefined ? null : dto.classCredits,
         stripeProductId: dto.stripeProductId ?? null,
         stripePriceId: dto.stripePriceId ?? null,
+        allowedCategories: dto.allowedCategories ?? [],
         active: true,
       },
     });
@@ -109,6 +110,7 @@ export class MembershipPlansService {
       ...(dto.active !== undefined ? { active: dto.active } : {}),
       ...(dto.stripeProductId !== undefined ? { stripeProductId: dto.stripeProductId } : {}),
       ...(dto.stripePriceId !== undefined ? { stripePriceId: dto.stripePriceId } : {}),
+      ...(dto.allowedCategories !== undefined ? { allowedCategories: dto.allowedCategories } : {}),
     };
     if (Object.keys(data).length === 0) {
       return plan;

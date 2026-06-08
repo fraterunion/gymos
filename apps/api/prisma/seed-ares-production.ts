@@ -153,6 +153,7 @@ const PLAN_DEFS = [
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
     classCredits: null as number | null,
+    allowedCategories: [] as ClassCategory[],
   },
   {
     name: 'Basic Access',
@@ -162,6 +163,7 @@ const PLAN_DEFS = [
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
     classCredits: 12 as number | null,
+    allowedCategories: [] as ClassCategory[],
   },
   {
     name: 'Hyrox',
@@ -171,6 +173,7 @@ const PLAN_DEFS = [
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
     classCredits: 12 as number | null,
+    allowedCategories: [ClassCategory.HYROX] as ClassCategory[],
   },
   {
     name: 'Elite',
@@ -180,6 +183,7 @@ const PLAN_DEFS = [
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
     classCredits: null as number | null,
+    allowedCategories: [] as ClassCategory[],
   },
 ];
 
@@ -234,7 +238,7 @@ const TEMPLATE_DEFS = [
     description: 'Entrenamiento específico para competencia Hyrox: ski erg, sled, burpees broadjump y más. Pace + fuerza.',
     duration: 60,
     color: '#06b6d4',
-    category: ClassCategory.HIIT,
+    category: ClassCategory.HYROX,
     intensity: IntensityLevel.EXTREME,
     heroImageUrl: 'https://images.unsplash.com/photo-1549576490-b0b4831ef60a?w=800',
   },
@@ -383,6 +387,7 @@ async function main(): Promise<void> {
             priceCents: def.priceCents,
             currency: def.currency,
             classCredits: def.classCredits,
+            allowedCategories: def.allowedCategories,
             active: true,
             ...(needsStripeClear ? { stripeProductId: null, stripePriceId: null } : {}),
           },
@@ -400,6 +405,7 @@ async function main(): Promise<void> {
             currency: def.currency,
             billingInterval: def.billingInterval,
             classCredits: def.classCredits,
+            allowedCategories: def.allowedCategories,
             active: true,
             stripeProductId: null,
             stripePriceId: null,

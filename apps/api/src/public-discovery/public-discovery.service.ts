@@ -18,6 +18,7 @@ const publicPlanSelect = {
   currency: true,
   billingInterval: true,
   classCredits: true,
+  allowedCategories: true,
   active: true,
   createdAt: true,
   updatedAt: true,

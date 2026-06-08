@@ -1,6 +1,7 @@
-import { BillingInterval } from '@prisma/client';
+import { BillingInterval, ClassCategory } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsArray,
   IsEnum,
   IsInt,
   IsOptional,
@@ -58,4 +59,9 @@ export class CreateMembershipPlanDto {
   @IsString()
   @MaxLength(255)
   stripePriceId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(ClassCategory, { each: true })
+  allowedCategories?: ClassCategory[];
 }
