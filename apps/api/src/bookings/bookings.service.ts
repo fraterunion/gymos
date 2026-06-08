@@ -91,6 +91,7 @@ export class BookingsService {
           membership.role,
           scheduledClass.startsAt,
           studio.timezone,
+          scheduledClass.classTemplateId,
         );
 
         const confirmedCount = await tx.booking.count({
@@ -259,24 +260,62 @@ export class BookingsService {
     membershipRole: Role,
     classStartsAt: Date,
     studioTimezone: string,
+    classTemplateId: string,
   ): Promise<void> {
     if (bypassSubscriptionRoles.has(membershipRole)) {
       return;
     }
 
-    // Gate 1: active or trialing subscription
+    // Gate 1: active or trialing subscription.
+    // Fetch allowedCategories in the same query — no extra round-trip for
+    // all-access plans (allowedCategories === []), one extra classTemplate
+    // lookup only when the plan is category-restricted.
     const sub = await tx.subscription.findFirst({
       where: {
         userId,
         studioId,
         status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
       },
+      select: {
+        membershipPlan: {
+          select: { allowedCategories: true },
+        },
+      },
     });
-    if (sub) return;
+
+    // Track whether Gate 1 was denied due to a category restriction.
+    // If true and Gate 2 also fails, we surface a specific error rather than
+    // the generic "no membership" message. This allows a Day Pass to override
+    // a restricted plan for its valid date.
+    let subscriptionRestricted = false;
+
+    if (sub) {
+      const { allowedCategories } = sub.membershipPlan;
+
+      if (allowedCategories.length === 0) {
+        return; // all-access plan — no further check needed
+      }
+
+      // Category-restricted plan: verify the class template's category is allowed.
+      // A null category on the template is treated as not matching any restriction.
+      const template = await tx.classTemplate.findUnique({
+        where: { id: classTemplateId },
+        select: { category: true },
+      });
+
+      if (template?.category && allowedCategories.includes(template.category)) {
+        return;
+      }
+
+      // Subscription exists but does not cover this class type.
+      // Do NOT throw yet — an active Day Pass overrides for its valid date.
+      subscriptionRestricted = true;
+    }
 
     // Gate 2: active Day Pass for the class's studio-local calendar date.
     // validForDate is the UTC anchor for local midnight on that date — computed
     // from studio.timezone so it works for any studio, not just Mexico City.
+    // Day Pass access is never category-restricted.
     const dateKey = getStudioLocalDateKey(classStartsAt, studioTimezone);
     const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, studioTimezone);
 
@@ -290,6 +329,10 @@ export class BookingsService {
     });
     if (pass) return;
 
-    throw new ForbiddenException('Active membership or Day Pass required to book this class.');
+    throw new ForbiddenException(
+      subscriptionRestricted
+        ? 'Your membership does not include this class type.'
+        : 'Active membership or Day Pass required to book this class.',
+    );
   }
 }
