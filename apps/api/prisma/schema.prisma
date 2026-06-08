@@ -126,6 +126,7 @@ enum ClassCategory {
   RECOVERY
   MOBILITY
   CYCLING
+  HYROX
   OTHER
 }
 
@@ -263,6 +264,10 @@ model MembershipPlan {
   stripeProductId  String?        @map("stripe_product_id")
   /// Direct Stripe Billing (Phase 4A): recurring price for this plan.
   stripePriceId    String?        @map("stripe_price_id")
+  /// Phase 26 — class entitlements. Empty = all-access. Non-empty = member may
+  /// only book classes whose classTemplate.category is in this list.
+  /// Day Pass access is never restricted by this field.
+  allowedCategories ClassCategory[] @default([]) @map("allowed_categories")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   deletedAt        DateTime?       @map("deleted_at")
