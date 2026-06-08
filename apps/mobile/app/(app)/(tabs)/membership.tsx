@@ -51,6 +51,8 @@ import { getColors, Space } from '@/constants/Theme';
 
 type AuthModalKind = 'membership' | 'day-pass';
 
+const MEMBERSHIP_RETURN_TO = '/(app)/(tabs)/membership' as const;
+
 const AUTH_MODAL_COPY: Record<AuthModalKind, { title: string; description: string }> = {
   membership: {
     title: 'Create your account to join',
@@ -555,8 +557,22 @@ export default function MembershipScreen() {
 
   const studioId = matched?.studio.id;
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
-  const goToLogin = () => router.push('/(auth)/login');
-  const goToRegister = () => router.push('/(auth)/register');
+  const goToAuthLogin = (intent: AuthModalKind) =>
+    router.push({
+      pathname: '/(auth)/login',
+      params: {
+        returnTo: MEMBERSHIP_RETURN_TO,
+        intent,
+      },
+    });
+  const goToAuthRegister = (intent: AuthModalKind) =>
+    router.push({
+      pathname: '/(auth)/register',
+      params: {
+        returnTo: MEMBERSHIP_RETURN_TO,
+        intent,
+      },
+    });
   const openAuthModal = (kind: AuthModalKind) => {
     setAuthModalKind(kind);
     setAuthModalVisible(true);
@@ -820,7 +836,7 @@ export default function MembershipScreen() {
             studioName={publicStudio?.name ?? ''}
             primaryColor={primaryColor}
             onRegister={() => openAuthModal('membership')}
-            onLogin={goToLogin}
+            onLogin={() => goToAuthLogin('membership')}
           />
         ) : sub ? (
           <MembershipCard
@@ -963,7 +979,7 @@ export default function MembershipScreen() {
               {isGuest ? (
                 <Pressable
                   accessibilityRole="button"
-                  onPress={goToLogin}
+                  onPress={() => goToAuthLogin('day-pass')}
                   hitSlop={8}
                   style={{ marginTop: 14, alignItems: 'center' }}
                 >
@@ -998,11 +1014,11 @@ export default function MembershipScreen() {
         description={AUTH_MODAL_COPY[authModalKind].description}
         onPrimary={() => {
           setAuthModalVisible(false);
-          goToRegister();
+          goToAuthRegister(authModalKind);
         }}
         onSecondary={() => {
           setAuthModalVisible(false);
-          goToLogin();
+          goToAuthLogin(authModalKind);
         }}
         onClose={() => setAuthModalVisible(false)}
       />
