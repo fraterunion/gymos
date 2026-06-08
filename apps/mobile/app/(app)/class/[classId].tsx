@@ -341,7 +341,14 @@ export default function ClassDetailScreen() {
       };
       secondaryCTA = {
         label: 'Log In',
-        onPress: () => router.push('/(auth)/login'),
+        onPress: () =>
+          router.push({
+            pathname: '/(auth)/login',
+            params: {
+              returnTo: `/(app)/class/${classId}`,
+              intent: 'book',
+            },
+          }),
       };
     } else if (offerWaitlist) {
       primaryCTA = {
@@ -607,11 +614,23 @@ export default function ClassDetailScreen() {
         description="Create an account to reserve this class, manage your bookings, and check in from your phone."
         onPrimary={() => {
           setAuthModalVisible(false);
-          router.push('/(auth)/register');
+          router.push({
+            pathname: '/(auth)/register',
+            params: {
+              returnTo: `/(app)/class/${classId}`,
+              intent: 'book',
+            },
+          });
         }}
         onSecondary={() => {
           setAuthModalVisible(false);
-          router.push('/(auth)/login');
+          router.push({
+            pathname: '/(auth)/login',
+            params: {
+              returnTo: `/(app)/class/${classId}`,
+              intent: 'book',
+            },
+          });
         }}
         onClose={() => setAuthModalVisible(false)}
       />
