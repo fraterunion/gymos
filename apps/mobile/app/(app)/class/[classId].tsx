@@ -5,6 +5,7 @@ import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+import { AuthRequiredModal } from '@/components/AuthRequiredModal';
 import { BrandButton } from '@/components/BrandButton';
 import { ImageSlot } from '@/components/ImageSlot';
 import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
@@ -162,6 +163,7 @@ export default function ClassDetailScreen() {
   // false = no subscription or day pass for this date → "View Memberships"
   // true  = active subscription or matching day pass → "Book Class"
   const [hasAccess, setHasAccess] = useState<boolean | null>(null);
+  const [authModalVisible, setAuthModalVisible] = useState(false);
 
   const studioId = matched?.studio.id;
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
@@ -335,7 +337,7 @@ export default function ClassDetailScreen() {
     if (isGuest) {
       primaryCTA = {
         label: 'Create Account to Book',
-        onPress: () => router.push('/(auth)/register'),
+        onPress: () => setAuthModalVisible(true),
       };
       secondaryCTA = {
         label: 'Log In',
@@ -598,6 +600,21 @@ export default function ClassDetailScreen() {
           ) : null}
         </View>
       ) : null}
+
+      <AuthRequiredModal
+        visible={authModalVisible}
+        title="Create your account to book"
+        description="Create an account to reserve this class, manage your bookings, and check in from your phone."
+        onPrimary={() => {
+          setAuthModalVisible(false);
+          router.push('/(auth)/register');
+        }}
+        onSecondary={() => {
+          setAuthModalVisible(false);
+          router.push('/(auth)/login');
+        }}
+        onClose={() => setAuthModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }
