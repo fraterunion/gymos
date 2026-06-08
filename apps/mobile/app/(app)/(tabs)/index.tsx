@@ -33,7 +33,6 @@ import {
   todayKeyInZone,
 } from '@/lib/datetime';
 import {
-  resolveClassImageUri,
   resolveScheduledClassImageUri,
   resolveCoachPortraitUri,
   CATEGORY_MODULES,
@@ -697,7 +696,7 @@ export default function HomeScreen() {
       instructorName: cls.instructor
         ? `${cls.instructor.firstName} ${cls.instructor.lastName}`.trim()
         : null,
-      heroImageUri: cls.classTemplate.heroImageUrl ?? resolveClassImageUri(cls.classTemplate.name),
+      heroImageUri: resolveScheduledClassImageUri(cls.classTemplate, 'hero'),
     };
   }, [nextBooking, classes]);
 
@@ -842,7 +841,7 @@ export default function HomeScreen() {
                       item={todayFeatured}
                       timeZone={timeZone}
                       accentColor={todayFeatured.classTemplate.color ?? primaryColor}
-                      imageUri={todayFeatured.classTemplate.heroImageUrl ?? resolveClassImageUri(todayFeatured.classTemplate.name)}
+                      imageUri={resolveScheduledClassImageUri(todayFeatured.classTemplate, 'hero')}
                       height={240}
                       label="Book now"
                       onPress={() => router.push(`/(app)/class/${todayFeatured.id}`)}
@@ -853,7 +852,7 @@ export default function HomeScreen() {
                         item={c}
                         timeZone={timeZone}
                         accentColor={c.classTemplate.color ?? primaryColor}
-                        imageUri={c.classTemplate.thumbnailImageUrl ?? resolveClassImageUri(c.classTemplate.name)}
+                        imageUri={resolveScheduledClassImageUri(c.classTemplate, 'thumbnail')}
                         index={i + 1}
                         onPress={() => router.push(`/(app)/class/${c.id}`)}
                       />
@@ -866,7 +865,7 @@ export default function HomeScreen() {
                       item={c}
                       timeZone={timeZone}
                       accentColor={c.classTemplate.color ?? primaryColor}
-                      imageUri={c.classTemplate.thumbnailImageUrl ?? resolveClassImageUri(c.classTemplate.name)}
+                      imageUri={resolveScheduledClassImageUri(c.classTemplate, 'thumbnail')}
                       index={i}
                       onPress={() => router.push(`/(app)/class/${c.id}`)}
                     />

@@ -30,7 +30,7 @@ import {
   formatClassTime,
 } from '@/lib/datetime';
 import { getStudioSlug } from '@/lib/env';
-import { resolveClassImageUri, resolveCoachPortraitUri } from '@/lib/imagery';
+import { resolveCoachPortraitUri, resolveScheduledClassImageUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
@@ -313,7 +313,7 @@ export default function ClassDetailScreen() {
   const time = formatClassTime(cls.startsAt, timeZone);
   const duration = cls.classTemplate.durationMinutes;
   const accentColor = cls.classTemplate.color ?? primaryColor;
-  const heroImageUri = cls.classTemplate.heroImageUrl ?? resolveClassImageUri(cls.classTemplate.name);
+  const heroImageUri = resolveScheduledClassImageUri(cls.classTemplate, 'hero');
   const instructorProfile = cls.instructor?.staffProfiles[0] ?? null;
   const memberStudioId = studioId ?? '';
 

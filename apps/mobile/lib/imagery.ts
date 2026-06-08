@@ -1,31 +1,28 @@
 /**
  * Curated fitness imagery catalog.
  *
- * WHY picsum.photos instead of Unsplash CDN:
- * images.unsplash.com/photo-{id} blocks direct hotlinking from mobile apps
- * (returns 403 without a valid Referer or client_id). picsum.photos is
- * purpose-built as a free placeholder service — no auth, no rate-limiting,
- * HTTPS, follows redirects that React Native Image handles transparently.
+ * Uses stable picsum.photos /id/ URLs (fixed photo IDs) so React Native Image
+ * does not depend on /seed/ redirect chains that can fail on some native builds.
  *
  * Swap for studio-branded CDN assets in production.
  */
 
-/** Returns a seeded picsum.photos URL — always resolves to the same photo. */
-const P = (seed: string, w = 800, h = 600): string =>
-  `https://picsum.photos/seed/${seed}/${w}/${h}`;
+/** Stable picsum photo ID per fitness category. */
+const P = (id: number, w = 800, h = 600): string =>
+  `https://picsum.photos/id/${id}/${w}/${h}`;
 
 export const FitnessImages = {
-  strength:    P('gymos-strength'),
-  running:     P('gymos-running'),
-  yoga:        P('gymos-yoga'),
-  hiit:        P('gymos-hiit'),
-  cycling:     P('gymos-cycling'),
-  boxing:      P('gymos-boxing'),
-  pilates:     P('gymos-pilates'),
-  recovery:    P('gymos-recovery'),
-  mobility:    P('gymos-mobility'),
-  performance: P('gymos-performance'),
-  gym:         P('gymos-gym'),
+  strength:    P(880),
+  running:     P(855),
+  yoga:        P(1081),
+  hiit:        P(993),
+  cycling:     P(417),
+  boxing:      P(933),
+  pilates:     P(584),
+  recovery:    P(847),
+  mobility:    P(809),
+  performance: P(379),
+  gym:         P(885),
 } as const;
 
 export type FitnessCategory = keyof typeof FitnessImages;
@@ -42,49 +39,58 @@ const KEYWORD_MAP: Array<[FitnessCategory, readonly string[]]> = [
   ['strength',    ['strength', 'weight', 'lift', 'deadlift', 'squat', 'press', 'barbell', 'dumbbell', 'powerl']],
 ];
 
-type ClassImageTemplate = {
+export type ClassImageTemplate = {
   name: string;
+  category?: string | null;
   heroImageUrl?: string | null;
   thumbnailImageUrl?: string | null;
 };
 
-/** Resolves class imagery using studio URLs when present, else keyword-based fallback. */
+function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function resolveCuratedFallback(name: string, category?: string | null): string {
+  const hints = [category, name].filter(Boolean) as string[];
+  for (const hint of hints) {
+    const lower = hint.toLowerCase();
+    for (const [cat, kws] of KEYWORD_MAP) {
+      if (kws.some((kw) => lower.includes(kw))) {
+        return FitnessImages[cat];
+      }
+    }
+  }
+  return FitnessImages.performance;
+}
+
+/** Resolves class imagery: studio URLs first, then keyword/category curated fallback. */
 export function resolveScheduledClassImageUri(
   template: ClassImageTemplate,
   variant: 'hero' | 'thumbnail' = 'hero',
 ): string {
-  if (variant === 'thumbnail') {
-    return (
-      template.thumbnailImageUrl ??
-      template.heroImageUrl ??
-      resolveClassImageUri(template.name)
-    );
-  }
-  return (
-    template.heroImageUrl ??
-    template.thumbnailImageUrl ??
-    resolveClassImageUri(template.name)
-  );
+  const studioUri =
+    variant === 'thumbnail'
+      ? firstNonEmpty(template.thumbnailImageUrl, template.heroImageUrl)
+      : firstNonEmpty(template.heroImageUrl, template.thumbnailImageUrl);
+
+  return studioUri ?? resolveCuratedFallback(template.name, template.category);
 }
 
 /** Returns a consistent curated image URI based on the class name. */
 export function resolveClassImageUri(className: string): string {
-  const lower = className.toLowerCase();
-  for (const [cat, kws] of KEYWORD_MAP) {
-    if (kws.some((kw) => lower.includes(kw))) {
-      return FitnessImages[cat];
-    }
-  }
-  // Default: 'performance' — always returns a valid picsum URL
-  return FitnessImages.performance;
+  return resolveCuratedFallback(className);
 }
 
 const COACH_PORTRAITS = [
-  P('gymos-coach-a', 400, 400),
-  P('gymos-coach-b', 400, 400),
-  P('gymos-coach-c', 400, 400),
-  P('gymos-coach-d', 400, 400),
-  P('gymos-coach-e', 400, 400),
+  P(1011, 400, 400),
+  P(1027, 400, 400),
+  P(1062, 400, 400),
+  P(1074, 400, 400),
+  P(1084, 400, 400),
 ];
 
 /** Stable portrait URI derived from the coach's name (deterministic hash). */

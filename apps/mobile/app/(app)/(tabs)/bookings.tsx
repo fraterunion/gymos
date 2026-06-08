@@ -12,7 +12,7 @@ import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { bookingStatusPill } from '@/lib/bookingStatus';
-import { resolveClassImageUri } from '@/lib/imagery';
+import { resolveScheduledClassImageUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
 import type { BookingWithClass, MyWaitlistEntry, ScheduledClassDto } from '@/lib/types/studio';
 
@@ -335,10 +335,15 @@ export default function MyBookingsScreen() {
                     const cls = getClass(b.scheduledClassId);
                     const className = resolveClassName(b.scheduledClassId);
                     const item = resolveBookingClassItem(b, cls, className);
-                    const imageUri =
-                      cls?.classTemplate.heroImageUrl ??
-                      cls?.classTemplate.thumbnailImageUrl ??
-                      resolveClassImageUri(className);
+                    const imageUri = resolveScheduledClassImageUri(
+                      cls?.classTemplate ?? {
+                        name: className,
+                        category: null,
+                        heroImageUrl: null,
+                        thumbnailImageUrl: null,
+                      },
+                      'thumbnail',
+                    );
                     const showCheckIn = b.status === 'CONFIRMED';
 
                     return (

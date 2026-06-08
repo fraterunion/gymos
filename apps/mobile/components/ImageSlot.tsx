@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Image, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Image, StyleSheet, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import { FitnessImages } from '@/lib/imagery';
@@ -13,29 +13,38 @@ type Props = {
 const FALLBACK_URI = FitnessImages.performance;
 
 export function ImageSlot({ uri, style, vignette = false }: Props) {
-  const [failed, setFailed] = useState(false);
-  const sourceUri = uri && !failed ? uri : FALLBACK_URI;
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFailedUri(null);
+  }, [uri]);
+
+  const primaryUri = uri?.trim() || null;
+  const useFallback = !primaryUri || failedUri === primaryUri;
+  const sourceUri = useFallback ? FALLBACK_URI : primaryUri;
 
   return (
-    <View style={[{ backgroundColor: '#141416', overflow: 'hidden' }, style]}>
+    <View style={[{ backgroundColor: '#161618', overflow: 'hidden' }, style]}>
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1A1A1C' }]} />
       <Image
+        key={sourceUri}
         source={{ uri: sourceUri }}
-        style={{ width: '100%', height: '100%' }}
+        style={StyleSheet.absoluteFill}
         resizeMode="cover"
-        onError={() => setFailed(true)}
+        onError={() => {
+          if (__DEV__) {
+            console.warn('[ImageSlot] failed to load:', sourceUri);
+          }
+          if (!useFallback) {
+            setFailedUri(primaryUri);
+          }
+        }}
       />
       {vignette ? (
         <>
           <View
             pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(0,0,0,0.16)',
-            }}
+            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.12)' }]}
           />
           <View
             pointerEvents="none"
@@ -44,8 +53,8 @@ export function ImageSlot({ uri, style, vignette = false }: Props) {
               left: 0,
               right: 0,
               bottom: 0,
-              height: '55%',
-              backgroundColor: 'rgba(0,0,0,0.50)',
+              height: '50%',
+              backgroundColor: 'rgba(0,0,0,0.42)',
             }}
           />
         </>
