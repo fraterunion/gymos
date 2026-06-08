@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Link, useFocusEffect, useRouter } from 'expo-router';
+import { Link, useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
@@ -15,8 +15,24 @@ import { Field } from '@/components/Field';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 
+function searchParam(value: string | string[] | undefined): string | undefined {
+  return typeof value === 'string' ? value : value?.[0];
+}
+
 export default function LoginScreen() {
   const router = useRouter();
+  const searchParams = useLocalSearchParams<{
+    returnTo?: string | string[];
+    intent?: string | string[];
+  }>();
+  const returnTo = searchParam(searchParams.returnTo);
+  const intent = searchParam(searchParams.intent);
+  const destination = returnTo || '/(app)/(tabs)';
+  const authLinkParams = {
+    ...(returnTo ? { returnTo } : {}),
+    ...(intent ? { intent } : {}),
+  };
+
   const { user, hydrated, login, busy, error, clearError } = useAuth();
   const { primaryColor, appDisplayName, logoUrl } = useBranding();
   const [email, setEmail] = useState('');
@@ -25,9 +41,9 @@ export default function LoginScreen() {
 
   useEffect(() => {
     if (hydrated && user) {
-      router.replace('/(app)/(tabs)');
+      router.replace(destination as Href);
     }
-  }, [hydrated, user, router]);
+  }, [hydrated, user, router, destination]);
 
   useFocusEffect(
     useCallback(() => {
@@ -43,7 +59,6 @@ export default function LoginScreen() {
     }
     try {
       await login(email.trim(), password);
-      router.replace('/(app)/(tabs)');
     } catch {
       // surfaced via context error or local
     }
@@ -98,7 +113,7 @@ export default function LoginScreen() {
 
           <View className="mt-10 flex-row justify-center gap-1">
             <Text className="text-neutral-600 dark:text-neutral-400">New here?</Text>
-            <Link href="/(auth)/register" asChild>
+            <Link href={{ pathname: '/(auth)/register', params: authLinkParams }} asChild>
               <Pressable>
                 <Text className="font-semibold" style={{ color: primaryColor }}>
                   Create an account
