@@ -23,6 +23,15 @@ export function ImageSlot({ uri, style, vignette = false }: Props) {
   const useFallback = !primaryUri || failedUri === primaryUri;
   const sourceUri = useFallback ? FALLBACK_URI : primaryUri;
 
+  if (__DEV__) {
+    console.log('[ImageSlot] render', {
+      primary: primaryUri,
+      fallback: FALLBACK_URI,
+      final: sourceUri,
+      usingFallback: useFallback,
+    });
+  }
+
   return (
     <View style={[{ backgroundColor: '#161618', overflow: 'hidden' }, style]}>
       <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1A1A1C' }]} />
@@ -31,10 +40,14 @@ export function ImageSlot({ uri, style, vignette = false }: Props) {
         source={{ uri: sourceUri }}
         style={StyleSheet.absoluteFill}
         resizeMode="cover"
-        onError={() => {
+        onLoad={() => {
           if (__DEV__) {
-            console.warn('[ImageSlot] failed to load:', sourceUri);
+            console.log('[ImageSlot] loaded ✓', sourceUri);
           }
+        }}
+        onError={(e) => {
+          // Always log — visible via adb logcat even in production EAS builds.
+          console.warn('[ImageSlot] error', sourceUri, (e.nativeEvent as { error?: string } | undefined)?.error);
           if (!useFallback) {
             setFailedUri(primaryUri);
           }

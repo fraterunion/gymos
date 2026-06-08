@@ -1,28 +1,36 @@
 /**
  * Curated fitness imagery catalog.
  *
- * Uses stable picsum.photos /id/ URLs (fixed photo IDs) so React Native Image
- * does not depend on /seed/ redirect chains that can fail on some native builds.
+ * Uses pre-resolved fastly.picsum.photos URLs (direct CDN, no redirects).
+ * picsum.photos/id/* always 302-redirects to fastly.picsum.photos with an
+ * HMAC-signed URL. React Native Image on Android (New Architecture) silently
+ * drops cross-domain redirects, so we bypass the redirect by hardcoding the
+ * final CDN URL. HMACs are deterministic for a given ID+dimensions pair.
+ *
+ * To refresh: curl -s -o /dev/null -w "%{url_effective}" -L \
+ *   https://picsum.photos/id/{id}/{w}/{h}
  *
  * Swap for studio-branded CDN assets in production.
  */
 
-/** Stable picsum photo ID per fitness category. */
-const P = (id: number, w = 800, h = 600): string =>
-  `https://picsum.photos/id/${id}/${w}/${h}`;
+const CDN = 'https://fastly.picsum.photos/id';
+
+/** Direct fastly CDN URL — no redirect, no HMAC recomputation needed. */
+const F = (id: number, w: number, h: number, hmac: string): string =>
+  `${CDN}/${id}/${w}/${h}.jpg?hmac=${hmac}`;
 
 export const FitnessImages = {
-  strength:    P(880),
-  running:     P(855),
-  yoga:        P(1081),
-  hiit:        P(993),
-  cycling:     P(417),
-  boxing:      P(933),
-  pilates:     P(584),
-  recovery:    P(847),
-  mobility:    P(809),
-  performance: P(379),
-  gym:         P(885),
+  strength:    F(880,  800, 600, '4g78d_UnyXS09C1mCJ5m9wp8G17yJfpzlqowe3mdRFo'),
+  running:     F(855,  800, 600, 'PJoSQj9I-RCHZWlkSyqGtW38F5T2D1j5rT342kMVKKU'),
+  yoga:        F(1081, 800, 600, '8MtGJVhsjYr081FjGNTOU2hhC5c2ZiXoorORtBF08gg'),
+  hiit:        F(993,  800, 600, 'DbyAziehuYRkTR3Ppb1OF6vae6ZPh9e4ynCD6LjK0MA'),
+  cycling:     F(417,  800, 600, 'Y9zo32hG0jyP9g6sP_w-H9H9NhnNuTeZC2ya-ARSAGY'),
+  boxing:      F(933,  800, 600, 'D2Y3HOMjRmTndzjwpL376I1Y8k_GqchYRt3MhePWRZQ'),
+  pilates:     F(584,  800, 600, 'a3J2cSrpIrYOJYrPB6m_drWlOrh0_0B10VIHEP0qFoY'),
+  recovery:    F(847,  800, 600, '5Jhvo2nRIgMluA_uCSC2vJGjAdJaf3kirlUQxNQdhVs'),
+  mobility:    F(809,  800, 600, '0MqoK1DX3h3yfEBkDG_L0mpFec5wst2cv2uTZM-vgr4'),
+  performance: F(379,  800, 600, 'VoILu1u3-hY8l-Xug_j7iSLJLEXa3C5pM6-jG-pcDKs'),
+  gym:         F(885,  800, 600, 'd2anDUYwtWdsa59OHlVJtw46eDnVBuNrgo2do6ADt3Q'),
 } as const;
 
 export type FitnessCategory = keyof typeof FitnessImages;
@@ -86,11 +94,11 @@ export function resolveClassImageUri(className: string): string {
 }
 
 const COACH_PORTRAITS = [
-  P(1011, 400, 400),
-  P(1027, 400, 400),
-  P(1062, 400, 400),
-  P(1074, 400, 400),
-  P(1084, 400, 400),
+  F(1011, 400, 400, 'jvBe5mf7uDeDmAW3ktW1MawUOEOejOAaMOCgicg1pbc'),
+  F(1027, 400, 400, 't1Jz1JWO1HyWviLQFwnFRbPbLSCYmWoXz11b7Fdpllw'),
+  F(1062, 400, 400, 'zaTGri35k94fGnPFBesQ7tRVfjy6BUCtXDFQdWQ3r-k'),
+  F(1074, 400, 400, 'eH9O4qH8NQGitzB3QaCq9jrbDZr7KQkaW_w17w0uoGM'),
+  F(1084, 400, 400, 'p5dgjkZUR2QflKbKUunO841b9USJ4XJCx2weTSBxZIw'),
 ];
 
 /** Stable portrait URI derived from the coach's name (deterministic hash). */
