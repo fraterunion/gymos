@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+import { AuthRequiredModal } from '@/components/AuthRequiredModal';
 import { BrandButton } from '@/components/BrandButton';
 import { LoadRetryPanel, ScreenLoader, Skeleton } from '@/components/StudioScreenChrome';
 import { useAuth } from '@/contexts/AuthContext';
@@ -47,6 +48,20 @@ import { todayKeyInZone } from '@/lib/datetime';
 import { getStudioSlug } from '@/lib/env';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { getColors, Space } from '@/constants/Theme';
+
+type AuthModalKind = 'membership' | 'day-pass';
+
+const AUTH_MODAL_COPY: Record<AuthModalKind, { title: string; description: string }> = {
+  membership: {
+    title: 'Create your account to join',
+    description:
+      'Create an account to choose a membership, manage your billing, and book classes.',
+  },
+  'day-pass': {
+    title: 'Create your account to get a Day Pass',
+    description: 'Create an account to purchase a Day Pass and reserve classes from your phone.',
+  },
+};
 
 function toMembershipPlanDto(plan: PublicMembershipPlanDto): MembershipPlanDto {
   return { ...plan, studioId: '' };
@@ -542,6 +557,10 @@ export default function MembershipScreen() {
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
   const goToLogin = () => router.push('/(auth)/login');
   const goToRegister = () => router.push('/(auth)/register');
+  const openAuthModal = (kind: AuthModalKind) => {
+    setAuthModalKind(kind);
+    setAuthModalVisible(true);
+  };
 
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
@@ -556,6 +575,8 @@ export default function MembershipScreen() {
   const [dayPassError, setDayPassError] = useState<string | null>(null);
   const [dayPassLoadError, setDayPassLoadError] = useState<string | null>(null);
   const [dayPassSuccess, setDayPassSuccess] = useState(false);
+  const [authModalVisible, setAuthModalVisible] = useState(false);
+  const [authModalKind, setAuthModalKind] = useState<AuthModalKind>('membership');
   const expectReturnFromBrowser = useRef(false);
   const hasLoadedOnce = useRef(false);
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -660,7 +681,7 @@ export default function MembershipScreen() {
   }, [isGuest, studioId, load, refreshStudioActivity]);
 
   async function openCheckout(planId: string) {
-    if (isGuest) { goToRegister(); return; }
+    if (isGuest) { openAuthModal('membership'); return; }
     if (!studioId) return;
     setCheckoutPlanId(planId);
     try {
@@ -692,7 +713,7 @@ export default function MembershipScreen() {
   }
 
   async function buyDayPass() {
-    if (isGuest) { goToRegister(); return; }
+    if (isGuest) { openAuthModal('day-pass'); return; }
     if (!studioId) return;
     setDayPassBusy(true);
     setDayPassError(null);
@@ -798,7 +819,7 @@ export default function MembershipScreen() {
           <GuestMembershipPrompt
             studioName={publicStudio?.name ?? ''}
             primaryColor={primaryColor}
-            onRegister={goToRegister}
+            onRegister={() => openAuthModal('membership')}
             onLogin={goToLogin}
           />
         ) : sub ? (
@@ -849,7 +870,7 @@ export default function MembershipScreen() {
                 isLoading={!isGuest && checkoutPlanId === plan.id}
                 isDisabled={!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id}
                 subscribeLabel={isGuest ? 'Join Now' : 'Subscribe'}
-                onSubscribe={() => void (isGuest ? goToRegister() : openCheckout(plan.id))}
+                onSubscribe={() => void (isGuest ? openAuthModal('membership') : openCheckout(plan.id))}
               />
             ))}
           </View>
@@ -937,7 +958,7 @@ export default function MembershipScreen() {
                 accentColor={primaryColor}
                 loading={!isGuest && dayPassBusy}
                 disabled={!isGuest && dayPassBusy}
-                onPress={() => void (isGuest ? goToRegister() : buyDayPass())}
+                onPress={() => void (isGuest ? openAuthModal('day-pass') : buyDayPass())}
               />
               {isGuest ? (
                 <Pressable
@@ -970,6 +991,21 @@ export default function MembershipScreen() {
           ) : null}
         </View>
       </ScrollView>
+
+      <AuthRequiredModal
+        visible={authModalVisible}
+        title={AUTH_MODAL_COPY[authModalKind].title}
+        description={AUTH_MODAL_COPY[authModalKind].description}
+        onPrimary={() => {
+          setAuthModalVisible(false);
+          goToRegister();
+        }}
+        onSecondary={() => {
+          setAuthModalVisible(false);
+          goToLogin();
+        }}
+        onClose={() => setAuthModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }
