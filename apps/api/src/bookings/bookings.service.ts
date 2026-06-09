@@ -8,21 +8,16 @@ import {
   BookingStatus,
   CancelSource,
   ClassStatus,
-  DayPassStatus,
   Prisma,
   Role,
-  SubscriptionStatus,
 } from '@prisma/client';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
-import {
-  getStudioLocalDateKey,
-  studioLocalDateKeyToUtcAnchor,
-} from '../common/date/studio-local-date';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   type BookingCancellationResult,
   WaitlistService,
 } from '../waitlist/waitlist.service';
+import { BookingAccessService } from './booking-access.service';
 
 const rosterUserSelect = {
   id: true,
@@ -44,6 +39,7 @@ export class BookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly waitlistService: WaitlistService,
+    private readonly bookingAccess: BookingAccessService,
   ) {}
 
   async createBooking(studioId: string, scheduledClassId: string, actorUserId: string) {
@@ -84,7 +80,7 @@ export class BookingsService {
           throw new ConflictException('Cannot book a class that has already started');
         }
 
-        await this.assertBookingAccessForMember(
+        await this.bookingAccess.assertAccess(
           tx,
           studioId,
           actorUserId,
@@ -253,124 +249,4 @@ export class BookingsService {
     });
   }
 
-  private async assertBookingAccessForMember(
-    tx: Prisma.TransactionClient,
-    studioId: string,
-    userId: string,
-    membershipRole: Role,
-    classStartsAt: Date,
-    studioTimezone: string,
-    classTemplateId: string,
-  ): Promise<void> {
-    if (bypassSubscriptionRoles.has(membershipRole)) {
-      return;
-    }
-
-    // Gate 1: active or trialing subscription.
-    // currentPeriodStart/End are fetched here for the credit check below.
-    const sub = await tx.subscription.findFirst({
-      where: {
-        userId,
-        studioId,
-        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
-      },
-      select: {
-        currentPeriodStart: true,
-        currentPeriodEnd: true,
-        membershipPlan: {
-          select: {
-            allowedCategories: true,
-            classCredits: true,
-          },
-        },
-      },
-    });
-
-    // Denial flags — mutually exclusive, both checked before Gate 2 so a Day
-    // Pass can override either. subscriptionRestricted fires when category
-    // doesn't match (credit check is skipped in that case). creditsExhausted
-    // fires when category passes but all credits for the billing period are
-    // spent. Neither fires when sub is null (no subscription at all).
-    let subscriptionRestricted = false;
-    let creditsExhausted = false;
-
-    if (sub) {
-      const { allowedCategories, classCredits } = sub.membershipPlan;
-
-      // ── Category check ─────────────────────────────────────────────────────
-      if (allowedCategories.length > 0) {
-        // Category-restricted plan: verify the class template's category is
-        // allowed. A null category on the template fails the restriction.
-        const template = await tx.classTemplate.findUnique({
-          where: { id: classTemplateId },
-          select: { category: true },
-        });
-
-        if (!template?.category || !allowedCategories.includes(template.category)) {
-          // Plan doesn't cover this class type. Do NOT throw yet —
-          // a Day Pass overrides for its valid date.
-          subscriptionRestricted = true;
-        }
-      }
-
-      // ── Credit check (only when category passed) ───────────────────────────
-      if (!subscriptionRestricted && classCredits !== null) {
-        // Both period bounds must be present to enforce credits accurately.
-        // When either is missing (e.g. legacy subscription without a known
-        // billing window) skip enforcement rather than produce a false denial.
-        if (sub.currentPeriodStart && sub.currentPeriodEnd) {
-          const used = await tx.booking.count({
-            where: {
-              studioId,
-              userId,
-              status: BookingStatus.CONFIRMED,
-              scheduledClass: {
-                startsAt: {
-                  gte: sub.currentPeriodStart,
-                  lt: sub.currentPeriodEnd,
-                },
-              },
-            },
-          });
-
-          if (used >= classCredits) {
-            // All credits spent. Do NOT throw yet — a Day Pass overrides.
-            creditsExhausted = true;
-          }
-        }
-      }
-
-      // All Gate 1 checks passed — allow the booking.
-      if (!subscriptionRestricted && !creditsExhausted) {
-        return;
-      }
-    }
-
-    // Gate 2: active Day Pass for the class's studio-local calendar date.
-    // validForDate is the UTC anchor for local midnight on that date — computed
-    // from studio.timezone so it works for any studio, not just Mexico City.
-    // Day Pass is never category-restricted and bypasses credit limits.
-    const dateKey = getStudioLocalDateKey(classStartsAt, studioTimezone);
-    const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, studioTimezone);
-
-    const pass = await tx.dayPass.findFirst({
-      where: {
-        studioId,
-        userId,
-        status: DayPassStatus.ACTIVE,
-        validForDate,
-      },
-    });
-    if (pass) return;
-
-    // Neither gate succeeded. Error priority:
-    // category restriction > credits exhausted > no membership.
-    if (subscriptionRestricted) {
-      throw new ForbiddenException('Your membership does not include this class type.');
-    }
-    if (creditsExhausted) {
-      throw new ForbiddenException('You have used all your class credits for this billing period.');
-    }
-    throw new ForbiddenException('Active membership or Day Pass required to book this class.');
-  }
 }

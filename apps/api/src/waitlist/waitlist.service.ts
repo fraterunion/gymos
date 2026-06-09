@@ -9,10 +9,10 @@ import {
   ClassStatus,
   Prisma,
   Role,
-  SubscriptionStatus,
   WaitlistStatus,
 } from '@prisma/client';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
+import { BookingAccessService } from '../bookings/booking-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const bypassSubscriptionRoles: ReadonlySet<Role> = new Set([
@@ -62,7 +62,10 @@ export type ClassWaitlistEntryDto = {
 
 @Injectable()
 export class WaitlistService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly bookingAccess: BookingAccessService,
+  ) {}
 
   /**
    * Run inside an existing transaction after a CONFIRMED seat was freed.
@@ -127,13 +130,17 @@ export class WaitlistService {
       async (tx) => {
         await acquireBookingClassAdvisoryLock(tx, scheduledClassId);
 
-        const [membership, scheduledClass] = await Promise.all([
+        const [membership, scheduledClass, studio] = await Promise.all([
           tx.studioMembership.findFirst({
             where: { studioId, userId: actorUserId, deletedAt: null },
             include: { user: { select: { deletedAt: true } } },
           }),
           tx.scheduledClass.findFirst({
             where: { id: scheduledClassId, studioId },
+          }),
+          tx.studio.findUnique({
+            where: { id: studioId },
+            select: { timezone: true },
           }),
         ]);
 
@@ -143,6 +150,9 @@ export class WaitlistService {
         if (!scheduledClass) {
           throw new NotFoundException('Class not found');
         }
+        if (!studio) {
+          throw new NotFoundException('Studio not found');
+        }
         if (scheduledClass.status !== ClassStatus.SCHEDULED) {
           throw new ConflictException('This class is not open for the waitlist');
         }
@@ -151,7 +161,15 @@ export class WaitlistService {
           throw new ConflictException('Cannot join the waitlist for a class that has already started');
         }
 
-        await this.assertSubscriptionForMemberIfNeeded(tx, studioId, actorUserId, membership.role);
+        await this.bookingAccess.assertAccess(
+          tx,
+          studioId,
+          actorUserId,
+          membership.role,
+          scheduledClass.startsAt,
+          studio.timezone,
+          scheduledClass.classTemplateId,
+        );
 
         const confirmedCount = await tx.booking.count({
           where: {
@@ -390,24 +408,4 @@ export class WaitlistService {
     };
   }
 
-  private async assertSubscriptionForMemberIfNeeded(
-    tx: Prisma.TransactionClient,
-    studioId: string,
-    userId: string,
-    membershipRole: Role,
-  ): Promise<void> {
-    if (bypassSubscriptionRoles.has(membershipRole)) {
-      return;
-    }
-    const sub = await tx.subscription.findFirst({
-      where: {
-        userId,
-        studioId,
-        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
-      },
-    });
-    if (!sub) {
-      throw new ForbiddenException('Active subscription required to join the waitlist');
-    }
-  }
 }
