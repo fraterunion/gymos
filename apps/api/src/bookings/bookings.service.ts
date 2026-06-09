@@ -267,9 +267,7 @@ export class BookingsService {
     }
 
     // Gate 1: active or trialing subscription.
-    // Fetch allowedCategories in the same query — no extra round-trip for
-    // all-access plans (allowedCategories === []), one extra classTemplate
-    // lookup only when the plan is category-restricted.
+    // currentPeriodStart/End are fetched here for the credit check below.
     const sub = await tx.subscription.findFirst({
       where: {
         userId,
@@ -277,45 +275,81 @@ export class BookingsService {
         status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
       },
       select: {
+        currentPeriodStart: true,
+        currentPeriodEnd: true,
         membershipPlan: {
-          select: { allowedCategories: true },
+          select: {
+            allowedCategories: true,
+            classCredits: true,
+          },
         },
       },
     });
 
-    // Track whether Gate 1 was denied due to a category restriction.
-    // If true and Gate 2 also fails, we surface a specific error rather than
-    // the generic "no membership" message. This allows a Day Pass to override
-    // a restricted plan for its valid date.
+    // Denial flags — mutually exclusive, both checked before Gate 2 so a Day
+    // Pass can override either. subscriptionRestricted fires when category
+    // doesn't match (credit check is skipped in that case). creditsExhausted
+    // fires when category passes but all credits for the billing period are
+    // spent. Neither fires when sub is null (no subscription at all).
     let subscriptionRestricted = false;
+    let creditsExhausted = false;
 
     if (sub) {
-      const { allowedCategories } = sub.membershipPlan;
+      const { allowedCategories, classCredits } = sub.membershipPlan;
 
-      if (allowedCategories.length === 0) {
-        return; // all-access plan — no further check needed
+      // ── Category check ─────────────────────────────────────────────────────
+      if (allowedCategories.length > 0) {
+        // Category-restricted plan: verify the class template's category is
+        // allowed. A null category on the template fails the restriction.
+        const template = await tx.classTemplate.findUnique({
+          where: { id: classTemplateId },
+          select: { category: true },
+        });
+
+        if (!template?.category || !allowedCategories.includes(template.category)) {
+          // Plan doesn't cover this class type. Do NOT throw yet —
+          // a Day Pass overrides for its valid date.
+          subscriptionRestricted = true;
+        }
       }
 
-      // Category-restricted plan: verify the class template's category is allowed.
-      // A null category on the template is treated as not matching any restriction.
-      const template = await tx.classTemplate.findUnique({
-        where: { id: classTemplateId },
-        select: { category: true },
-      });
+      // ── Credit check (only when category passed) ───────────────────────────
+      if (!subscriptionRestricted && classCredits !== null) {
+        // Both period bounds must be present to enforce credits accurately.
+        // When either is missing (e.g. legacy subscription without a known
+        // billing window) skip enforcement rather than produce a false denial.
+        if (sub.currentPeriodStart && sub.currentPeriodEnd) {
+          const used = await tx.booking.count({
+            where: {
+              studioId,
+              userId,
+              status: BookingStatus.CONFIRMED,
+              scheduledClass: {
+                startsAt: {
+                  gte: sub.currentPeriodStart,
+                  lt: sub.currentPeriodEnd,
+                },
+              },
+            },
+          });
 
-      if (template?.category && allowedCategories.includes(template.category)) {
+          if (used >= classCredits) {
+            // All credits spent. Do NOT throw yet — a Day Pass overrides.
+            creditsExhausted = true;
+          }
+        }
+      }
+
+      // All Gate 1 checks passed — allow the booking.
+      if (!subscriptionRestricted && !creditsExhausted) {
         return;
       }
-
-      // Subscription exists but does not cover this class type.
-      // Do NOT throw yet — an active Day Pass overrides for its valid date.
-      subscriptionRestricted = true;
     }
 
     // Gate 2: active Day Pass for the class's studio-local calendar date.
     // validForDate is the UTC anchor for local midnight on that date — computed
     // from studio.timezone so it works for any studio, not just Mexico City.
-    // Day Pass access is never category-restricted.
+    // Day Pass is never category-restricted and bypasses credit limits.
     const dateKey = getStudioLocalDateKey(classStartsAt, studioTimezone);
     const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, studioTimezone);
 
@@ -329,10 +363,14 @@ export class BookingsService {
     });
     if (pass) return;
 
-    throw new ForbiddenException(
-      subscriptionRestricted
-        ? 'Your membership does not include this class type.'
-        : 'Active membership or Day Pass required to book this class.',
-    );
+    // Neither gate succeeded. Error priority:
+    // category restriction > credits exhausted > no membership.
+    if (subscriptionRestricted) {
+      throw new ForbiddenException('Your membership does not include this class type.');
+    }
+    if (creditsExhausted) {
+      throw new ForbiddenException('You have used all your class credits for this billing period.');
+    }
+    throw new ForbiddenException('Active membership or Day Pass required to book this class.');
   }
 }
