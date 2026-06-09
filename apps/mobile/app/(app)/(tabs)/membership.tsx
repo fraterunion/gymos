@@ -84,6 +84,23 @@ function creditsLabel(credits: number | null): string | null {
   return `${credits} visits per billing period`;
 }
 
+function membershipCreditDisplay(
+  classCredits: number | null,
+  creditsUsed: number | null,
+  creditsRemaining: number | null,
+): { primary: string; secondary?: string } {
+  if (classCredits === null) {
+    return { primary: 'Unlimited classes' };
+  }
+  if (typeof creditsUsed === 'number' && typeof creditsRemaining === 'number') {
+    return {
+      primary: `${creditsUsed} / ${classCredits} classes used`,
+      secondary: `${creditsRemaining} remaining this period`,
+    };
+  }
+  return { primary: `${classCredits} classes per period` };
+}
+
 // ---------------------------------------------------------------------------
 // Active membership — physical luxury card
 // ---------------------------------------------------------------------------
@@ -93,6 +110,9 @@ function MembershipCard({
   status,
   cancelAtPeriodEnd,
   renewsAt,
+  classCredits,
+  creditsUsed,
+  creditsRemaining,
   primaryColor,
   onManage,
   portalBusy,
@@ -101,6 +121,9 @@ function MembershipCard({
   status: string;
   cancelAtPeriodEnd: boolean;
   renewsAt: string;
+  classCredits: number | null;
+  creditsUsed: number | null;
+  creditsRemaining: number | null;
   primaryColor: string;
   onManage: () => void;
   portalBusy: boolean;
@@ -108,6 +131,7 @@ function MembershipCard({
   const C = getColors();
   const cfg = statusConfig(status, cancelAtPeriodEnd);
   const accentBarColor = (status === 'ACTIVE' || status === 'TRIALING') ? primaryColor : C.surface3;
+  const creditDisplay = membershipCreditDisplay(classCredits, creditsUsed, creditsRemaining);
 
   return (
     <Animated.View entering={FadeInDown.duration(450)}>
@@ -177,6 +201,41 @@ function MembershipCard({
           <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 20 }}>
             {renewsAt}
           </Text>
+
+          <View
+            style={{
+              marginTop: 16,
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              backgroundColor: 'rgba(255,255,255,0.04)',
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: C.separator,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 13,
+                fontWeight: '500',
+                color: C.textSub,
+                letterSpacing: -0.1,
+              }}
+            >
+              {creditDisplay.primary}
+            </Text>
+            {creditDisplay.secondary ? (
+              <Text
+                style={{
+                  fontSize: 12,
+                  color: C.textMute,
+                  marginTop: 4,
+                  letterSpacing: -0.05,
+                }}
+              >
+                {creditDisplay.secondary}
+              </Text>
+            ) : null}
+          </View>
 
           {/* Divider */}
           <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 24 }} />
@@ -844,6 +903,9 @@ export default function MembershipScreen() {
             status={sub.status}
             cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
             renewsAt={renewsLabel}
+            classCredits={sub.plan.classCredits}
+            creditsUsed={sub.creditsUsed}
+            creditsRemaining={sub.creditsRemaining}
             primaryColor={primaryColor}
             onManage={() => void openPortal()}
             portalBusy={portalBusy}

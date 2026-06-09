@@ -34,6 +34,8 @@ export type MyMemberProfileDto = {
     currentPeriodStart: string;
     currentPeriodEnd: string;
     cancelAtPeriodEnd: boolean;
+    creditsUsed: number | null;
+    creditsRemaining: number | null;
     plan: {
       id: string;
       name: string;
