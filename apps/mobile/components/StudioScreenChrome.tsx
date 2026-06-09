@@ -200,7 +200,7 @@ export function EmptyHint({ title, body }: { title: string; body: string }) {
 // ---------------------------------------------------------------------------
 
 export function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
-  const { primaryColor } = useBranding();
+  const C = getColors();
   return (
     <View
       style={{
@@ -217,7 +217,7 @@ export function ErrorBanner({ message, onRetry }: { message: string; onRetry: ()
         {message}
       </Text>
       <Pressable accessibilityRole="button" onPress={() => void onRetry()} hitSlop={8}>
-        <Text style={{ fontSize: 13, fontWeight: '600', color: primaryColor }}>Retry</Text>
+        <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>Retry</Text>
       </Pressable>
     </View>
   );

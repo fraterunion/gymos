@@ -107,7 +107,7 @@ function InstructorBlock({
             justifyContent: 'center',
           }}
         >
-          <Text style={{ fontSize: 16, fontWeight: '700', color: accentColor, letterSpacing: 0.5 }}>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: C.textSub, letterSpacing: 0.5 }}>
             {initials}
           </Text>
         </View>
@@ -611,7 +611,7 @@ export default function ClassDetailScreen() {
                 style={{
                   fontSize: 15,
                   fontWeight: '700',
-                  color: accentColor,
+                  color: C.text,
                   letterSpacing: -0.2,
                 }}
               >

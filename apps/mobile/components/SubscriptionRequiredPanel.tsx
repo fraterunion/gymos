@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { BrandButton } from '@/components/BrandButton';
+import { getColors } from '@/constants/Theme';
 
 type Props = {
   accentColor: string;
@@ -11,24 +12,60 @@ type Props = {
 
 export function SubscriptionRequiredPanel({ accentColor, appDisplayName }: Props) {
   const router = useRouter();
+  const C = getColors();
 
   return (
-    <View className="mt-8 overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900">
-      <View className="items-center px-5 pb-6 pt-8">
+    <View
+      style={{
+        overflow: 'hidden',
+        borderRadius: 28,
+        borderWidth: 1,
+        borderColor: C.separator,
+        backgroundColor: '#141416',
+      }}
+    >
+      <View style={{ alignItems: 'center', paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24 }}>
         <View
-          className="mb-4 h-14 w-14 items-center justify-center rounded-full"
-          style={{ backgroundColor: `${accentColor}22` }}>
-          <FontAwesome name="lock" size={26} color={accentColor} />
+          style={{
+            marginBottom: 18,
+            width: 56,
+            height: 56,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 28,
+            backgroundColor: 'rgba(255,255,255,0.08)',
+            borderWidth: 1,
+            borderColor: C.separator,
+          }}
+        >
+          <FontAwesome name="lock" size={24} color={C.text} />
         </View>
-        <Text className="text-center text-xl font-semibold text-neutral-900 dark:text-neutral-50">
+        <Text
+          style={{
+            textAlign: 'center',
+            fontSize: 20,
+            fontWeight: '800',
+            letterSpacing: -0.4,
+            color: C.text,
+          }}
+        >
           Choose a membership to book
         </Text>
-        <Text className="mt-3 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-          {appDisplayName} uses memberships to keep class sizes fair and your benefits clear. Pick a plan below, finish
-          checkout in your browser, then come back here—your schedule unlocks as soon as the studio confirms your
-          membership.
+        <Text
+          style={{
+            marginTop: 12,
+            textAlign: 'center',
+            fontSize: 15,
+            lineHeight: 23,
+            color: C.textSub,
+            letterSpacing: -0.1,
+          }}
+        >
+          {appDisplayName} uses memberships to keep class sizes fair and your benefits clear. Pick a
+          plan below, finish checkout in your browser, then come back here—your schedule unlocks as
+          soon as the studio confirms your membership.
         </Text>
-        <View className="mt-8 w-full gap-3">
+        <View style={{ marginTop: 24, width: '100%' }}>
           <BrandButton
             label="View membership"
             accentColor={accentColor}

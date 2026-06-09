@@ -370,7 +370,7 @@ function NextSessionHero({
               fontWeight: '700',
               letterSpacing: 1.4,
               textTransform: 'uppercase',
-              color: primaryColor,
+              color: 'rgba(255,255,255,0.55)',
             }}
           >
             Your next class
@@ -431,7 +431,7 @@ function NextSessionHero({
               style={{
                 fontSize: 14,
                 fontWeight: '700',
-                color: primaryColor,
+                color: '#FFFFFF',
                 letterSpacing: -0.1,
               }}
             >
@@ -828,7 +828,7 @@ export default function HomeScreen() {
                     fontWeight: '700',
                     letterSpacing: 1.0,
                     textTransform: 'uppercase',
-                    color: primaryColor,
+                    color: C.textMute,
                     marginBottom: 16,
                   }}
                 >

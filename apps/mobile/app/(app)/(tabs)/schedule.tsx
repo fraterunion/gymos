@@ -55,7 +55,7 @@ function DayHeader({
             fontSize: 30,
             fontWeight: '800',
             letterSpacing: -0.8,
-            color: accentColor,
+            color: C.text,
             lineHeight: 34,
           }}
         >

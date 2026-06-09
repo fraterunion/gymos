@@ -1,13 +1,12 @@
 import '../global.css';
 
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { StripeProvider } from '@/lib/stripe';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router/stack';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useMemo } from 'react';
-import { useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SpaceMono from '../assets/fonts/SpaceMono-Regular.ttf';
@@ -60,19 +59,23 @@ export default function RootLayout() {
 }
 
 function RootLayoutNav() {
-  const colorScheme = useColorScheme();
   const { primaryColor } = useBranding();
 
-  const theme = useMemo(() => {
-    const base = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
-    return {
-      ...base,
+  const theme = useMemo(
+    () => ({
+      ...DarkTheme,
       colors: {
-        ...base.colors,
-        primary: primaryColor,
+        ...DarkTheme.colors,
+        primary: '#FFFFFF',
+        background: '#0A0A0A',
+        card: '#0A0A0A',
+        text: '#FFFFFF',
+        border: 'rgba(255,255,255,0.07)',
+        notification: primaryColor,
       },
-    };
-  }, [colorScheme, primaryColor]);
+    }),
+    [primaryColor],
+  );
 
   return (
     <ThemeProvider value={theme}>

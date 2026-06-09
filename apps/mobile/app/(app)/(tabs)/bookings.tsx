@@ -364,7 +364,7 @@ export default function MyBookingsScreen() {
                               onPress={() => router.push(`/(app)/check-in/${b.id}`)}
                               hitSlop={8}
                             >
-                              <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor }}>
+                              <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
                                 Check-in QR →
                               </Text>
                             </Pressable>

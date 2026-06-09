@@ -84,7 +84,7 @@ export function FeaturedClassTile({
                 fontWeight: '700',
                 letterSpacing: 1.4,
                 textTransform: 'uppercase',
-                color: accentColor,
+                color: 'rgba(255,255,255,0.58)',
                 marginBottom: 8,
               }}
             >
