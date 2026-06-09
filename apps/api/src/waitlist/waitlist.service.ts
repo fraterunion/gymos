@@ -69,7 +69,9 @@ export class WaitlistService {
 
   /**
    * Run inside an existing transaction after a CONFIRMED seat was freed.
-   * If promotion booking insert hits P2002, throws and rolls back the entire outer transaction.
+   * Iterates candidates in waitlist order and promotes the first one whose
+   * access and overlap checks both pass. If no candidate is valid, returns null.
+   * If the promotion booking insert hits P2002, throws and rolls back the outer transaction.
    */
   async promoteNextAfterSpotOpenedInTx(
     tx: Prisma.TransactionClient,
@@ -81,7 +83,7 @@ export class WaitlistService {
     });
     const scheduledClass = await tx.scheduledClass.findFirst({
       where: { id: scheduledClassId, studioId },
-      select: { capacity: true },
+      select: { capacity: true, startsAt: true, endsAt: true, classTemplateId: true },
     });
     if (!scheduledClass) {
       return null;
@@ -90,39 +92,89 @@ export class WaitlistService {
       return null;
     }
 
-    const next = await tx.waitlistEntry.findFirst({
-      where: { studioId, scheduledClassId, status: WaitlistStatus.WAITING },
-      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    const studio = await tx.studio.findUnique({
+      where: { id: studioId },
+      select: { timezone: true },
     });
-    if (!next) {
+    if (!studio) {
       return null;
     }
 
-    try {
-      const booking = await tx.booking.create({
-        data: {
-          studioId,
-          scheduledClassId,
-          userId: next.userId,
-          status: BookingStatus.CONFIRMED,
-        },
-      });
-      await tx.waitlistEntry.update({
-        where: { id: next.id },
-        data: { status: WaitlistStatus.PROMOTED },
-      });
-      return {
-        performed: true,
-        bookingId: booking.id,
-        waitlistEntryId: next.id,
-        userId: next.userId,
-      };
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new ConflictException('Promotion failed due to a conflicting booking');
-      }
-      throw e;
+    const candidates = await tx.waitlistEntry.findMany({
+      where: { studioId, scheduledClassId, status: WaitlistStatus.WAITING },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (candidates.length === 0) {
+      return null;
     }
+
+    for (const candidate of candidates) {
+      const membership = await tx.studioMembership.findFirst({
+        where: { studioId, userId: candidate.userId, deletedAt: null },
+        select: { role: true },
+      });
+      if (!membership) continue;
+
+      try {
+        await this.bookingAccess.assertAccess(
+          tx,
+          studioId,
+          candidate.userId,
+          membership.role,
+          scheduledClass.startsAt,
+          studio.timezone,
+          scheduledClass.classTemplateId,
+        );
+      } catch (e) {
+        if (e instanceof ForbiddenException) continue;
+        throw e;
+      }
+
+      // Mirrors the overlap guard in joinWaitlist and createBooking.
+      if (!bypassSubscriptionRoles.has(membership.role)) {
+        const overlap = await tx.booking.findFirst({
+          where: {
+            studioId,
+            userId: candidate.userId,
+            status: BookingStatus.CONFIRMED,
+            scheduledClass: {
+              startsAt: { lt: scheduledClass.endsAt },
+              endsAt:   { gt: scheduledClass.startsAt },
+            },
+          },
+          select: { id: true },
+        });
+        if (overlap) continue;
+      }
+
+      try {
+        const booking = await tx.booking.create({
+          data: {
+            studioId,
+            scheduledClassId,
+            userId: candidate.userId,
+            status: BookingStatus.CONFIRMED,
+          },
+        });
+        await tx.waitlistEntry.update({
+          where: { id: candidate.id },
+          data: { status: WaitlistStatus.PROMOTED },
+        });
+        return {
+          performed: true,
+          bookingId: booking.id,
+          waitlistEntryId: candidate.id,
+          userId: candidate.userId,
+        };
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          throw new ConflictException('Promotion failed due to a conflicting booking');
+        }
+        throw e;
+      }
+    }
+
+    return null;
   }
 
   async joinWaitlist(studioId: string, scheduledClassId: string, actorUserId: string) {
