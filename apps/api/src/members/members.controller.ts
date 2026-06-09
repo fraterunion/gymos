@@ -25,6 +25,7 @@ import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
 import { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
 import { MembersService } from './members.service';
+import { ProgressService } from './progress.service';
 
 function parsePage(raw: string | undefined): number {
   const n = parseInt(raw ?? '1', 10);
@@ -40,7 +41,10 @@ function parseLimit(raw: string | undefined, def = 20): number {
 @Controller('studios/:studioId/members')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
 export class MembersController {
-  constructor(private readonly membersService: MembersService) {}
+  constructor(
+    private readonly membersService: MembersService,
+    private readonly progressService: ProgressService,
+  ) {}
 
   // ── Directory ──────────────────────────────────────────────────────────────
 
@@ -62,6 +66,14 @@ export class MembersController {
     @CurrentUser('sub') userId: string,
   ) {
     return this.membersService.getMemberProfile(studioId, userId);
+  }
+
+  @Get('me/progress')
+  getMyProgress(
+    @Param('studioId') studioId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.progressService.getMemberProgress(studioId, userId);
   }
 
   // ── Single member ──────────────────────────────────────────────────────────
