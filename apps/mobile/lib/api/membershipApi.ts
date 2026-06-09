@@ -41,6 +41,7 @@ export type MyMemberProfileDto = {
       priceCents: number;
       currency: string;
       classCredits: number | null;
+      allowedCategories: string[];
     };
   } | null;
 };

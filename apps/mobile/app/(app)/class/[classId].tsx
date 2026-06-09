@@ -1,7 +1,7 @@
 import { useNavigation } from '@react-navigation/native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -18,7 +18,7 @@ import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { cancelBooking, createClassBooking } from '@/lib/api/bookingsApi';
 import { fetchPublicSchedule } from '@/lib/api/publicScheduleApi';
 import { fetchMyDayPasses, type DayPassDto } from '@/lib/api/dayPassesApi';
-import { fetchMyMemberProfile } from '@/lib/api/membershipApi';
+import { fetchMyMemberProfile, type MyMemberProfileDto } from '@/lib/api/membershipApi';
 import { ApiError } from '@/lib/api/errors';
 import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionRequired';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
@@ -34,6 +34,9 @@ import { getStudioSlug } from '@/lib/env';
 import { resolveCoachPortraitUri, resolveScheduledClassImageUri } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
 import type { ScheduledClassDto } from '@/lib/types/studio';
+
+const PLAN_RESTRICTED_MESSAGE =
+  'Your current membership does not include this class type. Upgrade your plan or get a Day Pass to book this class.';
 
 function hasActiveDayPassForClassDate(
   dayPasses: DayPassDto[],
@@ -163,6 +166,8 @@ export default function ClassDetailScreen() {
   // false = no subscription or day pass for this date → "View Memberships"
   // true  = active subscription or matching day pass → "Book Class"
   const [hasAccess, setHasAccess] = useState<boolean | null>(null);
+  const [memberProfile, setMemberProfile] = useState<MyMemberProfileDto | null>(null);
+  const [hasMatchingDayPass, setHasMatchingDayPass] = useState(false);
   const [authModalVisible, setAuthModalVisible] = useState(false);
 
   const studioId = matched?.studio.id;
@@ -209,6 +214,8 @@ export default function ClassDetailScreen() {
 
     let cancelled = false;
     setHasAccess(null);
+    setMemberProfile(null);
+    setHasMatchingDayPass(false);
 
     void (async () => {
       const [profileResult, dayPassResult] = await Promise.allSettled([
@@ -219,9 +226,13 @@ export default function ClassDetailScreen() {
 
       let hasSubscription = false;
       if (profileResult.status === 'fulfilled') {
+        setMemberProfile(profileResult.value);
         hasSubscription = profileResult.value.activeSubscription !== null;
-      } else if (__DEV__) {
-        console.warn('[ClassDetail] fetchMyMemberProfile failed:', profileResult.reason);
+      } else {
+        setMemberProfile(null);
+        if (__DEV__) {
+          console.warn('[ClassDetail] fetchMyMemberProfile failed:', profileResult.reason);
+        }
       }
 
       let matchingDayPass = false;
@@ -231,8 +242,12 @@ export default function ClassDetailScreen() {
           cls.startsAt,
           timeZone,
         );
-      } else if (__DEV__) {
-        console.warn('[ClassDetail] fetchMyDayPasses failed:', dayPassResult.reason);
+        setHasMatchingDayPass(matchingDayPass);
+      } else {
+        setHasMatchingDayPass(false);
+        if (__DEV__) {
+          console.warn('[ClassDetail] fetchMyDayPasses failed:', dayPassResult.reason);
+        }
       }
 
       setHasAccess(hasSubscription || matchingDayPass);
@@ -319,8 +334,19 @@ export default function ClassDetailScreen() {
   const instructorProfile = cls.instructor?.staffProfiles[0] ?? null;
   const memberStudioId = studioId ?? '';
 
+  const activeSubscription = memberProfile?.activeSubscription ?? null;
+  const allowedCategories = activeSubscription?.plan.allowedCategories ?? [];
+  const classCategory = cls.classTemplate.category;
+  const isPlanRestricted =
+    !isGuest &&
+    activeSubscription !== null &&
+    allowedCategories.length > 0 &&
+    !!classCategory &&
+    !allowedCategories.includes(classCategory) &&
+    !hasMatchingDayPass;
+
   // CTA logic
-  let primaryCTA: { label: string; onPress: () => void; disabled?: boolean } | null = null;
+  let primaryCTA: { label: string; onPress: () => void; disabled?: boolean; muted?: boolean } | null = null;
   let secondaryCTA: { label: string; onPress: () => void } | null = null;
 
   if (booking) {
@@ -369,6 +395,12 @@ export default function ClassDetailScreen() {
       primaryCTA = {
         label: 'View Memberships',
         onPress: () => router.push('/(app)/(tabs)/membership'),
+      };
+    } else if (isPlanRestricted) {
+      primaryCTA = {
+        label: 'Not in your plan',
+        muted: true,
+        onPress: () => Alert.alert('Not in your plan', PLAN_RESTRICTED_MESSAGE),
       };
     } else {
       primaryCTA = {
@@ -590,7 +622,7 @@ export default function ClassDetailScreen() {
           {primaryCTA ? (
             <BrandButton
               label={primaryCTA.label}
-              accentColor={accentColor}
+              accentColor={primaryCTA.muted ? C.surface3 : accentColor}
               loading={busy}
               disabled={primaryCTA.disabled}
               onPress={primaryCTA.onPress}
