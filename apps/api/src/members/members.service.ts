@@ -259,6 +259,41 @@ export class MembersService {
     const noShowCount = bookingGroups.find((g) => g.status === BookingStatus.NO_SHOW)?._count._all ?? 0;
     const cancelledCount = bookingGroups.find((g) => g.status === BookingStatus.CANCELLED)?._count._all ?? 0;
 
+    // Compute credit usage for credit-limited plans. Runs after the parallel
+    // queries because it depends on subscription data. Skipped entirely for
+    // unlimited plans (classCredits = null) — zero extra DB round-trip.
+    let creditsUsed: number | null = null;
+    let creditsRemaining: number | null = null;
+
+    if (activeSubscription) {
+      const { classCredits } = activeSubscription.membershipPlan;
+
+      if (classCredits !== null) {
+        const { currentPeriodStart, currentPeriodEnd } = activeSubscription;
+
+        if (currentPeriodStart && currentPeriodEnd) {
+          // Must mirror BookingAccessService.assertAccess exactly:
+          // CONFIRMED bookings whose scheduled class starts within the period.
+          creditsUsed = await this.prisma.booking.count({
+            where: {
+              studioId,
+              userId,
+              status: BookingStatus.CONFIRMED,
+              scheduledClass: {
+                startsAt: {
+                  gte: currentPeriodStart,
+                  lt: currentPeriodEnd,
+                },
+              },
+            },
+          });
+          creditsRemaining = Math.max(classCredits - creditsUsed, 0);
+        }
+        // else: cannot compute without billing period bounds — leave null.
+      }
+      // else: unlimited plan (classCredits = null) — leave null.
+    }
+
     return {
       user: membership.user,
       role: membership.role,
@@ -284,6 +319,8 @@ export class MembersService {
             currentPeriodEnd: activeSubscription.currentPeriodEnd,
             cancelAtPeriodEnd: activeSubscription.cancelAtPeriodEnd,
             plan: activeSubscription.membershipPlan,
+            creditsUsed,
+            creditsRemaining,
           }
         : null,
     };
