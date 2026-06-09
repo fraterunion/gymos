@@ -21,6 +21,29 @@ function eventToJsonPayload(event: VerifiedStripeEvent): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(event)) as Prisma.InputJsonValue;
 }
 
+/**
+ * Safely converts a Stripe period timestamp to a Date.
+ *
+ * Stripe's basil API removed current_period_start/end from Subscription.
+ * Period dates now come from Invoice.period_start/end (Unix seconds, number).
+ * This helper is kept defensive to handle any future format variations.
+ *
+ * Returns null for: null, undefined, 0, negative numbers, non-finite numbers,
+ * and unparseable strings.
+ */
+function parseStripePeriodDate(value: number | string | null | undefined): Date | null {
+  if (value == null) return null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return new Date(value * 1000);
+  }
+  if (typeof value === 'string') {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
 function readTriplet(md: Record<string, string> | null | undefined): {
   userId?: string;
   studioId?: string;
@@ -164,12 +187,9 @@ export class StripeWebhookService {
     }
 
     const status = mapStripeSubscriptionStatus(sub.status);
-    const currentPeriodStart = sub.current_period_start
-      ? new Date(sub.current_period_start * 1000)
-      : null;
-    const currentPeriodEnd = sub.current_period_end
-      ? new Date(sub.current_period_end * 1000)
-      : null;
+    // Billing period (currentPeriodStart/End) is NOT sourced from the subscription
+    // object — Stripe's basil API removed current_period_start/current_period_end.
+    // Period dates are written by onInvoicePaid from Invoice.period_start/end instead.
 
     await this.prisma.subscription.upsert({
       where: { stripeSubscriptionId: sub.id },
@@ -179,14 +199,10 @@ export class StripeWebhookService {
         membershipPlanId: planId,
         status,
         stripeSubscriptionId: sub.id,
-        currentPeriodStart,
-        currentPeriodEnd,
         cancelAtPeriodEnd: sub.cancel_at_period_end,
       },
       update: {
         status,
-        currentPeriodStart,
-        currentPeriodEnd,
         cancelAtPeriodEnd: sub.cancel_at_period_end,
         membershipPlanId: planId,
       },
@@ -289,6 +305,21 @@ export class StripeWebhookService {
         paidAt,
       },
     });
+
+    // Update the subscription billing period from the paid invoice.
+    // In Stripe's basil API, current_period_start/end were removed from the
+    // Subscription object. Invoice.period_start/period_end are the authoritative
+    // source: period_end equals the next renewal date.
+    if (ctx.dbSubscriptionId) {
+      const periodStart = parseStripePeriodDate(invoice.period_start);
+      const periodEnd   = parseStripePeriodDate(invoice.period_end);
+      if (periodStart && periodEnd) {
+        await this.prisma.subscription.update({
+          where: { id: ctx.dbSubscriptionId },
+          data: { currentPeriodStart: periodStart, currentPeriodEnd: periodEnd },
+        });
+      }
+    }
   }
 
   private async onInvoicePaymentFailed(invoice: WebhookInvoicePayload): Promise<void> {

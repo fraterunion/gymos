@@ -15,8 +15,9 @@ export type WebhookSubscriptionPayload = {
   status: string;
   customer: string | { id: string } | null;
   metadata: Record<string, string> | null;
-  current_period_start: number;
-  current_period_end: number;
+  // current_period_start / current_period_end were removed from Subscription
+  // in the Stripe basil API (2025-08-27.basil). Billing period is now sourced
+  // from Invoice.period_start / period_end via the invoice.paid webhook.
   cancel_at_period_end: boolean;
   items: {
     data: Array<{ price: { id: string } | null }>;
@@ -37,6 +38,11 @@ export type WebhookInvoicePayload = {
   lines: {
     data: Array<{ price: { id: string } | null }>;
   } | null;
+  /// Unix timestamp (seconds) for the start of the billing period this invoice covers.
+  period_start: number | null;
+  /// Unix timestamp (seconds) for the end of the billing period this invoice covers.
+  /// Equal to the subscription's next renewal date.
+  period_end: number | null;
 };
 
 export type WebhookPaymentIntentPayload = {
