@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,10 +7,12 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BrandButton } from '@/components/BrandButton';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { MembershipStatusPill } from '@/components/MembershipStatusPill';
+import { ProgressSummaryCard } from '@/components/ProgressSummaryCard';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { fetchMyMemberProfile, type MyMemberProfileDto } from '@/lib/api/membershipApi';
+import { fetchMyProgress, type MemberProgressDto } from '@/lib/api/progressApi';
 import { getColors, Space } from '@/constants/Theme';
 
 function SectionDivider() {
@@ -151,6 +153,7 @@ export default function ProfileScreen() {
   const studioId = matched?.studio.id;
 
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
+  const [progress, setProgress] = useState<MemberProgressDto | null>(null);
 
   const loadProfile = useCallback(async () => {
     if (!studioId || !user) return;
@@ -159,6 +162,16 @@ export default function ProfileScreen() {
       setProfile(p);
     } catch {
       // Keep profile usable if membership status cannot be loaded
+    }
+    try {
+      const prog = await fetchMyProgress(studioId);
+      setProgress(prog);
+    } catch (e) {
+      // Progress card is optional — hide it if the fetch fails
+      setProgress(null);
+      if (__DEV__) {
+        console.warn('[Profile] fetchMyProgress failed:', e);
+      }
     }
   }, [studioId, user]);
 
@@ -264,6 +277,31 @@ export default function ProfileScreen() {
             </View>
           )}
         </Animated.View>
+
+        {/* Progress summary */}
+        {progress ? (
+          <>
+            <SectionDivider />
+            <Animated.View entering={FadeInDown.delay(140).duration(420)}>
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontWeight: '700',
+                  letterSpacing: 1.0,
+                  textTransform: 'uppercase',
+                  color: C.textMute,
+                  marginBottom: 12,
+                }}
+              >
+                Progress
+              </Text>
+              <ProgressSummaryCard
+                progress={progress}
+                onViewProgress={() => router.push('/(app)/progress' as Href)}
+              />
+            </Animated.View>
+          </>
+        ) : null}
 
         <SectionDivider />
 

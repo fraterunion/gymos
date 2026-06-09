@@ -78,6 +78,17 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="progress"
+          options={{
+            headerShown: true,
+            title: 'Progress',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: headerBg },
+            headerTintColor: '#FAFAFA',
+            headerBackTitle: 'Back',
+          }}
+        />
+        <Stack.Screen
           name="check-in/[bookingId]"
           options={{
             headerShown: true,
