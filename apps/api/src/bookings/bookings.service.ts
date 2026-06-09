@@ -90,6 +90,30 @@ export class BookingsService {
           scheduledClass.classTemplateId,
         );
 
+        // Overlap check — members cannot hold two CONFIRMED bookings whose
+        // scheduled classes overlap in time. Back-to-back is allowed (strict
+        // inequality: a class ending at T and one starting at T do not overlap).
+        // Staff/admin/instructor roles bypass this check.
+        if (!bypassSubscriptionRoles.has(membership.role)) {
+          const overlap = await tx.booking.findFirst({
+            where: {
+              studioId,
+              userId: actorUserId,
+              status: BookingStatus.CONFIRMED,
+              scheduledClass: {
+                startsAt: { lt: scheduledClass.endsAt },
+                endsAt:   { gt: scheduledClass.startsAt },
+              },
+            },
+            select: { id: true },
+          });
+          if (overlap) {
+            throw new ConflictException(
+              'You already have a class booked at this time. Cancel it before booking another.',
+            );
+          }
+        }
+
         const confirmedCount = await tx.booking.count({
           where: {
             scheduledClassId,
