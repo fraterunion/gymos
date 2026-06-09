@@ -18,7 +18,7 @@ import {
 const classTemplateSelect = {
   id: true,
   name: true,
-  color: true,
+  category: true,
 } as const;
 
 @Injectable()
@@ -60,12 +60,11 @@ export class ProgressService {
         this.prisma.attendance.findMany({
           where: attendanceWhere,
           select: {
-            id: true,
-            checkedInAt: true,
             scheduledClass: {
               select: {
                 startsAt: true,
                 classTemplate: { select: classTemplateSelect },
+                instructor: { select: { firstName: true, lastName: true } },
               },
             },
           },
@@ -113,15 +112,19 @@ export class ProgressService {
 
     const classBreakdown: MemberProgressClassBreakdownItemDto[] = [...templateCounts.values()]
       .map(({ classTemplate, checkIns }) => ({
-        classTemplate,
-        checkIns,
+        templateId: classTemplate.id,
+        className: classTemplate.name,
+        category: classTemplate.category,
+        count: checkIns,
       }))
-      .sort((a, b) => b.checkIns - a.checkIns || a.classTemplate.name.localeCompare(b.classTemplate.name));
+      .sort((a, b) => b.count - a.count || a.className.localeCompare(b.className));
 
     const favoriteClass: MemberProgressFavoriteClassDto | null = classBreakdown[0]
       ? {
-          ...classBreakdown[0].classTemplate,
-          checkIns: classBreakdown[0].checkIns,
+          templateId: classBreakdown[0].templateId,
+          name: classBreakdown[0].className,
+          category: classBreakdown[0].category,
+          count: classBreakdown[0].count,
         }
       : null;
 
@@ -131,12 +134,17 @@ export class ProgressService {
     );
 
     const recentActivity: MemberProgressRecentActivityItemDto[] = recentRows.map(
-      (row) => ({
-        attendanceId: row.id,
-        checkedInAt: row.checkedInAt.toISOString(),
-        classStartsAt: row.scheduledClass.startsAt.toISOString(),
-        classTemplate: row.scheduledClass.classTemplate,
-      }),
+      (row) => {
+        const instructor = row.scheduledClass.instructor;
+        return {
+          date: row.scheduledClass.startsAt.toISOString(),
+          className: row.scheduledClass.classTemplate.name,
+          category: row.scheduledClass.classTemplate.category,
+          coachName: instructor
+            ? `${instructor.firstName} ${instructor.lastName}`
+            : null,
+        };
+      },
     );
 
     return {

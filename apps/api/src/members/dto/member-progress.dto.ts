@@ -1,23 +1,23 @@
-export type MemberProgressClassTemplateDto = {
-  id: string;
+export type MemberProgressFavoriteClassDto = {
+  templateId: string;
   name: string;
-  color: string | null;
-};
-
-export type MemberProgressFavoriteClassDto = MemberProgressClassTemplateDto & {
-  checkIns: number;
+  category: string | null;
+  count: number;
 };
 
 export type MemberProgressClassBreakdownItemDto = {
-  classTemplate: MemberProgressClassTemplateDto;
-  checkIns: number;
+  templateId: string;
+  className: string;
+  category: string | null;
+  count: number;
 };
 
 export type MemberProgressRecentActivityItemDto = {
-  attendanceId: string;
-  checkedInAt: string;
-  classStartsAt: string;
-  classTemplate: MemberProgressClassTemplateDto;
+  /** scheduledClass.startsAt as ISO string. */
+  date: string;
+  className: string;
+  category: string | null;
+  coachName: string | null;
 };
 
 export type MemberProgressPeriodDto = {
