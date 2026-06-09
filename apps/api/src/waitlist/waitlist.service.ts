@@ -171,6 +171,30 @@ export class WaitlistService {
           scheduledClass.classTemplateId,
         );
 
+        // Overlap check — members cannot join a waitlist for a class that
+        // conflicts with an existing CONFIRMED booking. Back-to-back is allowed.
+        // Mirrors the same guard in BookingsService.createBooking.
+        // Staff/admin/instructor roles bypass this check.
+        if (!bypassSubscriptionRoles.has(membership.role)) {
+          const overlap = await tx.booking.findFirst({
+            where: {
+              studioId,
+              userId: actorUserId,
+              status: BookingStatus.CONFIRMED,
+              scheduledClass: {
+                startsAt: { lt: scheduledClass.endsAt },
+                endsAt:   { gt: scheduledClass.startsAt },
+              },
+            },
+            select: { id: true },
+          });
+          if (overlap) {
+            throw new ConflictException(
+              'You already have a class booked at this time. Cancel it before joining this waitlist.',
+            );
+          }
+        }
+
         const confirmedCount = await tx.booking.count({
           where: {
             studioId,
