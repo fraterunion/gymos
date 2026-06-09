@@ -437,6 +437,8 @@ model Attendance {
   @@unique([scheduledClassId, userId])
   @@index([studioId])
   @@index([studioId, scheduledClassId])
+  @@index([studioId, userId])
+  @@index([studioId, userId, checkedInAt])
   @@map("attendances")
 }
 
