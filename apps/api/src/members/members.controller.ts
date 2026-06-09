@@ -26,6 +26,7 @@ import { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dt
 import { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
 import { MembersService } from './members.service';
 import { ProgressService } from './progress.service';
+import type { LeaderboardPeriod } from './dto/member-progress.dto';
 
 function parsePage(raw: string | undefined): number {
   const n = parseInt(raw ?? '1', 10);
@@ -36,6 +37,10 @@ function parseLimit(raw: string | undefined, def = 20): number {
   const n = parseInt(raw ?? String(def), 10);
   if (Number.isNaN(n) || n < 1) return def;
   return Math.min(n, 100);
+}
+
+function parseLeaderboardPeriod(raw: string | undefined): LeaderboardPeriod {
+  return raw === 'all_time' ? 'all_time' : 'month';
 }
 
 @Controller('studios/:studioId/members')
@@ -74,6 +79,19 @@ export class MembersController {
     @CurrentUser('sub') userId: string,
   ) {
     return this.progressService.getMemberProgress(studioId, userId);
+  }
+
+  @Get('leaderboard')
+  getLeaderboard(
+    @Param('studioId') studioId: string,
+    @CurrentUser('sub') callerId: string,
+    @Query('period') period?: string,
+  ) {
+    return this.progressService.getLeaderboard(
+      studioId,
+      callerId,
+      parseLeaderboardPeriod(period),
+    );
   }
 
   // ── Single member ──────────────────────────────────────────────────────────

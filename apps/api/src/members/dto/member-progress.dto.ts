@@ -37,3 +37,30 @@ export type MemberProgressDto = {
   period: MemberProgressPeriodDto;
   generatedAt: string;
 };
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+
+export type LeaderboardPeriod = 'month' | 'all_time';
+
+export type LeaderboardEntryDto = {
+  rank: number;
+  displayName: string;
+  initials: string;
+  checkIns: number;
+};
+
+/**
+ * Always non-null: even when the caller has 0 check-ins, we return
+ * { rank: null, checkIns: 0 } so the client never needs a null guard.
+ */
+export type LeaderboardMeDto = {
+  rank: number | null;
+  checkIns: number;
+};
+
+export type LeaderboardDto = {
+  period: LeaderboardPeriod;
+  top: LeaderboardEntryDto[];
+  me: LeaderboardMeDto;
+  generatedAt: string;
+};

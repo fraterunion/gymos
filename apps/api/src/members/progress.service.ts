@@ -1,6 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
+  LeaderboardDto,
+  LeaderboardEntryDto,
+  LeaderboardPeriod,
   MemberProgressClassBreakdownItemDto,
   MemberProgressDto,
   MemberProgressFavoriteClassDto,
@@ -151,6 +154,97 @@ export class ProgressService {
       },
       generatedAt: now.toISOString(),
     };
+  }
+
+  async getLeaderboard(
+    studioId: string,
+    callerId: string,
+    period: LeaderboardPeriod,
+    now: Date = new Date(),
+  ): Promise<LeaderboardDto> {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { timezone: true },
+    });
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
+    }
+
+    let periodBounds: { start: Date; end: Date } | null = null;
+    if (period === 'month') {
+      const bounds = getCurrentStudioMonthBounds(studio.timezone, now);
+      periodBounds = { start: bounds.start, end: bounds.end };
+    }
+
+    const rows = await this.queryLeaderboardRows(studioId, periodBounds);
+
+    // rows already sorted: check_ins DESC, user_id ASC (deterministic tie-break)
+    const callerIndex = rows.findIndex((r) => r.user_id === callerId);
+    const callerRow = callerIndex >= 0 ? rows[callerIndex] : null;
+    const callerRank = callerIndex >= 0 && callerIndex < 5 ? callerIndex + 1 : null;
+
+    const top: LeaderboardEntryDto[] = rows.slice(0, 5).map((row, idx) => {
+      const lastInitial = row.last_name.length > 0 ? row.last_name[0] : '';
+      const firstInitial = row.first_name.length > 0 ? row.first_name[0].toUpperCase() : '';
+      const lastInitialUpper = lastInitial.toUpperCase();
+      return {
+        rank: idx + 1,
+        displayName: lastInitial
+          ? `${row.first_name} ${lastInitial.toUpperCase()}.`
+          : row.first_name,
+        initials: `${firstInitial}${lastInitialUpper}`,
+        checkIns: Number(row.check_ins),
+      };
+    });
+
+    return {
+      period,
+      top,
+      me: {
+        rank: callerRank,
+        checkIns: callerRow ? Number(callerRow.check_ins) : 0,
+      },
+      generatedAt: now.toISOString(),
+    };
+  }
+
+  private async queryLeaderboardRows(
+    studioId: string,
+    periodBounds: { start: Date; end: Date } | null,
+  ): Promise<{ user_id: string; first_name: string; last_name: string; check_ins: bigint }[]> {
+    if (periodBounds) {
+      return this.prisma.$queryRaw<
+        { user_id: string; first_name: string; last_name: string; check_ins: bigint }[]
+      >`
+        SELECT a.user_id, u.first_name, u.last_name, COUNT(*)::bigint AS check_ins
+        FROM attendances a
+        INNER JOIN scheduled_classes sc ON sc.id = a.scheduled_class_id
+        INNER JOIN studio_memberships sm
+          ON sm.user_id = a.user_id
+          AND sm.studio_id = a.studio_id
+          AND sm.deleted_at IS NULL
+        INNER JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+        WHERE a.studio_id = ${studioId}
+          AND sc.starts_at >= ${periodBounds.start}
+          AND sc.starts_at < ${periodBounds.end}
+        GROUP BY a.user_id, u.first_name, u.last_name
+        ORDER BY check_ins DESC, a.user_id ASC
+      `;
+    }
+    return this.prisma.$queryRaw<
+      { user_id: string; first_name: string; last_name: string; check_ins: bigint }[]
+    >`
+      SELECT a.user_id, u.first_name, u.last_name, COUNT(*)::bigint AS check_ins
+      FROM attendances a
+      INNER JOIN studio_memberships sm
+        ON sm.user_id = a.user_id
+        AND sm.studio_id = a.studio_id
+        AND sm.deleted_at IS NULL
+      INNER JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+      WHERE a.studio_id = ${studioId}
+      GROUP BY a.user_id, u.first_name, u.last_name
+      ORDER BY check_ins DESC, a.user_id ASC
+    `;
   }
 
   private async assertMembership(studioId: string, userId: string) {
