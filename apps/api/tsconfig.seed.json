@@ -7,5 +7,5 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["prisma/seed.ts", "prisma/seed-ares-production.ts", "prisma/diagnose-ares-demo.ts", "prisma/cleanup-ares-demo.ts"]
+  "include": ["prisma/seed.ts", "prisma/seed-ares-production.ts", "prisma/diagnose-ares-demo.ts", "prisma/cleanup-ares-demo.ts", "prisma/repair-subscription-periods.ts"]
 }
