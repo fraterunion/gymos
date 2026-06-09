@@ -14,6 +14,7 @@ import { BrandButton } from '@/components/BrandButton';
 import { Field } from '@/components/Field';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
+import { getColors, Space } from '@/constants/Theme';
 
 function searchParam(value: string | string[] | undefined): string | undefined {
   return typeof value === 'string' ? value : value?.[0];
@@ -21,6 +22,7 @@ function searchParam(value: string | string[] | undefined): string | undefined {
 
 export default function LoginScreen() {
   const router = useRouter();
+  const C = getColors();
   const searchParams = useLocalSearchParams<{
     returnTo?: string | string[];
     intent?: string | string[];
@@ -67,55 +69,105 @@ export default function LoginScreen() {
   const combinedError = localError || error;
 
   return (
-    <SafeAreaView className="flex-1 bg-neutral-50 dark:bg-neutral-950">
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        className="flex-1">
+        style={{ flex: 1 }}
+      >
         <ScrollView
           keyboardShouldPersistTaps="handled"
-          contentContainerClassName="grow px-6 pb-10 pt-4"
-          contentContainerStyle={{ flexGrow: 1 }}>
-          <View className="mb-10 mt-4">
-            <Text className="text-3xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingHorizontal: Space.screenH,
+            paddingBottom: 40,
+            paddingTop: 8,
+          }}
+        >
+          <View style={{ paddingTop: 12, marginBottom: 32 }}>
+            <Text
+              style={{
+                fontSize: 34,
+                fontWeight: '800',
+                letterSpacing: -1.1,
+                color: C.text,
+                lineHeight: 40,
+              }}
+            >
               Welcome back
             </Text>
-            <Text className="mt-2 text-base text-neutral-600 dark:text-neutral-400">
+            <Text
+              style={{
+                fontSize: 15,
+                color: C.textSub,
+                marginTop: 10,
+                lineHeight: 22,
+                letterSpacing: -0.1,
+              }}
+            >
               Sign in to {appDisplayName}
             </Text>
           </View>
 
-          <Field
-            label="Email"
-            autoCapitalize="none"
-            autoComplete="email"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
-          <Field
-            label="Password"
-            secureTextEntry
-            autoComplete="password"
-            value={password}
-            onChangeText={setPassword}
-          />
+          <View
+            style={{
+              backgroundColor: '#141416',
+              borderRadius: 28,
+              borderWidth: 1,
+              borderColor: C.separator,
+              padding: 28,
+            }}
+          >
+            <Field
+              label="Email"
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+            <Field
+              label="Password"
+              secureTextEntry
+              autoComplete="password"
+              value={password}
+              onChangeText={setPassword}
+            />
 
-          {combinedError ? (
-            <Text className="mb-4 text-center text-sm text-red-500">{combinedError}</Text>
-          ) : null}
+            {combinedError ? (
+              <Text
+                style={{
+                  marginBottom: 16,
+                  textAlign: 'center',
+                  fontSize: 14,
+                  color: C.negative,
+                  lineHeight: 20,
+                }}
+              >
+                {combinedError}
+              </Text>
+            ) : null}
 
-          <BrandButton
-            label="Sign in"
-            accentColor={primaryColor}
-            loading={busy}
-            onPress={() => void onSubmit()}
-          />
+            <BrandButton
+              label="Sign in"
+              accentColor={primaryColor}
+              loading={busy}
+              onPress={() => void onSubmit()}
+            />
+          </View>
 
-          <View className="mt-10 flex-row justify-center gap-1">
-            <Text className="text-neutral-600 dark:text-neutral-400">New here?</Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginTop: 28,
+              gap: 6,
+            }}
+          >
+            <Text style={{ fontSize: 14, color: C.textMute }}>New here?</Text>
             <Link href={{ pathname: '/(auth)/register', params: authLinkParams }} asChild>
-              <Pressable>
-                <Text className="font-semibold" style={{ color: primaryColor }}>
+              <Pressable hitSlop={8}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
                   Create an account
                 </Text>
               </Pressable>
@@ -123,8 +175,10 @@ export default function LoginScreen() {
           </View>
 
           {logoUrl ? (
-            <View className="mt-auto items-center pt-12 opacity-40">
-              <Text className="text-xs text-neutral-500">Secured member access</Text>
+            <View style={{ marginTop: 'auto', alignItems: 'center', paddingTop: 48, opacity: 0.35 }}>
+              <Text style={{ fontSize: 11, letterSpacing: 0.8, color: C.textMute, textTransform: 'uppercase' }}>
+                Secured member access
+              </Text>
             </View>
           ) : null}
         </ScrollView>
