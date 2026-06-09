@@ -47,9 +47,61 @@ import { statusConfig } from '@/lib/membershipStatus';
 import { todayKeyInZone } from '@/lib/datetime';
 import { getStudioSlug } from '@/lib/env';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
-import { getColors, Space } from '@/constants/Theme';
+import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
 type AuthModalKind = 'membership' | 'day-pass';
+
+const CARD_BG = '#141416';
+
+function premiumCardStyle(C: ThemeColors) {
+  return {
+    backgroundColor: CARD_BG,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: C.separator,
+  } as const;
+}
+
+function SectionLabel({ children }: { children: string }) {
+  const C = getColors();
+  return (
+    <Text
+      style={{
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        color: C.textMute,
+        marginBottom: 16,
+      }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function InlineAuthLink({
+  prompt,
+  action,
+  onPress,
+}: {
+  prompt: string;
+  action: string;
+  onPress: () => void;
+}) {
+  const C = getColors();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      hitSlop={8}
+      style={{ marginTop: 16, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 }}
+    >
+      <Text style={{ fontSize: 14, color: C.textMute }}>{prompt}</Text>
+      <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>{action}</Text>
+    </Pressable>
+  );
+}
 
 const MEMBERSHIP_RETURN_TO = '/(app)/(tabs)/membership' as const;
 
@@ -133,19 +185,24 @@ function MembershipCard({
   const accentBarColor = (status === 'ACTIVE' || status === 'TRIALING') ? primaryColor : C.surface3;
   const creditDisplay = membershipCreditDisplay(classCredits, creditsUsed, creditsRemaining);
 
+  const showCreditProgress =
+    classCredits !== null &&
+    typeof creditsUsed === 'number' &&
+    classCredits > 0;
+  const creditProgress = showCreditProgress
+    ? Math.min(creditsUsed! / classCredits!, 1)
+    : 0;
+
   return (
     <Animated.View entering={FadeInDown.duration(450)}>
-      {/* Card outer — layered for depth */}
       <View
         style={{
-          backgroundColor: '#1C1C1C',
-          borderRadius: 24,
+          ...premiumCardStyle(C),
           overflow: 'hidden',
           marginBottom: 8,
         }}
       >
-        {/* Top accent bar */}
-        <View style={{ height: 4, backgroundColor: accentBarColor }} />
+        <View style={{ height: 3, backgroundColor: accentBarColor }} />
 
         <View style={{ padding: 28 }}>
           {/* Status pill */}
@@ -204,21 +261,33 @@ function MembershipCard({
 
           <View
             style={{
-              marginTop: 16,
-              paddingVertical: 12,
-              paddingHorizontal: 14,
+              marginTop: 18,
+              paddingVertical: 14,
+              paddingHorizontal: 16,
               backgroundColor: 'rgba(255,255,255,0.04)',
-              borderRadius: 12,
+              borderRadius: 14,
               borderWidth: 1,
               borderColor: C.separator,
             }}
           >
             <Text
               style={{
-                fontSize: 13,
-                fontWeight: '500',
-                color: C.textSub,
-                letterSpacing: -0.1,
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 0.8,
+                textTransform: 'uppercase',
+                color: C.textMute,
+                marginBottom: 8,
+              }}
+            >
+              Class credits
+            </Text>
+            <Text
+              style={{
+                fontSize: 15,
+                fontWeight: '600',
+                color: C.text,
+                letterSpacing: -0.2,
               }}
             >
               {creditDisplay.primary}
@@ -226,14 +295,34 @@ function MembershipCard({
             {creditDisplay.secondary ? (
               <Text
                 style={{
-                  fontSize: 12,
-                  color: C.textMute,
+                  fontSize: 13,
+                  color: C.textSub,
                   marginTop: 4,
                   letterSpacing: -0.05,
                 }}
               >
                 {creditDisplay.secondary}
               </Text>
+            ) : null}
+            {showCreditProgress ? (
+              <View
+                style={{
+                  marginTop: 12,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  overflow: 'hidden',
+                }}
+              >
+                <View
+                  style={{
+                    height: '100%',
+                    width: `${creditProgress * 100}%`,
+                    backgroundColor: primaryColor,
+                    borderRadius: 2,
+                  }}
+                />
+              </View>
             ) : null}
           </View>
 
@@ -250,8 +339,8 @@ function MembershipCard({
             <Text
               style={{
                 fontSize: 15,
-                fontWeight: '700',
-                color: portalBusy ? C.textMute : primaryColor,
+                fontWeight: '600',
+                color: portalBusy ? C.textMute : C.text,
                 letterSpacing: -0.2,
               }}
             >
@@ -295,29 +384,21 @@ function PlanCard({
       entering={FadeInDown.delay(index * 80).duration(420)}
       style={{ marginBottom: Space.cardGap }}
     >
-      <View
-        style={{
-          backgroundColor: C.surface2,
-          borderRadius: 20,
-          padding: 26,
-        }}
-      >
-        {/* Plan name — editorial uppercase label */}
+      <View style={{ ...premiumCardStyle(C), padding: 26 }}>
         <Text
           style={{
             fontSize: 11,
             fontWeight: '700',
-            letterSpacing: 1.0,
+            letterSpacing: 1.2,
             textTransform: 'uppercase',
             color: C.textMute,
-            marginBottom: 8,
+            marginBottom: 10,
           }}
         >
           {plan.name}
         </Text>
 
-        {/* Price — the unmistakable hero */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 18 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16 }}>
           <Text
             style={{
               fontSize: 48,
@@ -357,15 +438,26 @@ function PlanCard({
           </Text>
         ) : null}
 
-        {/* Credits */}
         {credits ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 22 }}>
-            <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: C.textMute, marginRight: 8 }} />
-            <Text style={{ fontSize: 13, color: C.textMute }}>{credits}</Text>
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              backgroundColor: 'rgba(255,255,255,0.05)',
+              borderRadius: 8,
+              paddingVertical: 6,
+              paddingHorizontal: 10,
+              marginBottom: 22,
+              borderWidth: 1,
+              borderColor: C.separator,
+            }}
+          >
+            <Text style={{ fontSize: 12, color: C.textSub, letterSpacing: -0.05 }}>{credits}</Text>
           </View>
         ) : (
           <View style={{ marginBottom: 22 }} />
         )}
+
+        <View style={{ height: 1, backgroundColor: C.separator, marginBottom: 20 }} />
 
         <BrandButton
           label={subscribeLabel}
@@ -397,21 +489,15 @@ function GuestMembershipPrompt({
   const C = getColors();
   return (
     <Animated.View entering={FadeInDown.duration(400)}>
-      <View
-        style={{
-          backgroundColor: C.surface1,
-          borderRadius: 20,
-          padding: 28,
-          marginBottom: 8,
-        }}
-      >
+      <View style={{ ...premiumCardStyle(C), padding: 28, marginBottom: 8 }}>
         <Text
           style={{
-            fontSize: 22,
+            fontSize: 26,
             fontWeight: '800',
-            letterSpacing: -0.5,
+            letterSpacing: -0.6,
             color: C.text,
             marginBottom: 10,
+            lineHeight: 32,
           }}
         >
           Train with us.
@@ -439,11 +525,11 @@ function GuestMembershipPrompt({
           Create an account to subscribe, purchase a Day Pass, and book classes.
         </Text>
         <BrandButton label="Join Now" accentColor={primaryColor} onPress={onRegister} />
-        <Pressable accessibilityRole="button" onPress={onLogin} hitSlop={8} style={{ marginTop: 16 }}>
-          <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor, textAlign: 'center' }}>
-            Already have an account? Log in
-          </Text>
-        </Pressable>
+        <InlineAuthLink
+          prompt="Already have an account?"
+          action="Log in"
+          onPress={onLogin}
+        />
       </View>
     </Animated.View>
   );
@@ -454,7 +540,6 @@ function GuestMembershipPrompt({
 // ---------------------------------------------------------------------------
 
 function NoMembershipPrompt({
-  primaryColor,
   onManage,
   portalBusy,
 }: {
@@ -467,16 +552,30 @@ function NoMembershipPrompt({
     <Animated.View entering={FadeInDown.duration(400)}>
       <View
         style={{
-          backgroundColor: C.surface1,
-          borderRadius: 20,
-          padding: 28,
+          ...premiumCardStyle(C),
+          padding: 32,
           marginBottom: 8,
           alignItems: 'center',
         }}
       >
+        <View
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 24,
+            backgroundColor: 'rgba(255,255,255,0.06)',
+            borderWidth: 1,
+            borderColor: C.separator,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 18,
+          }}
+        >
+          <Text style={{ fontSize: 20, color: C.textMute }}>◇</Text>
+        </View>
         <Text
           style={{
-            fontSize: 22,
+            fontSize: 24,
             fontWeight: '800',
             letterSpacing: -0.5,
             color: C.text,
@@ -504,7 +603,7 @@ function NoMembershipPrompt({
           disabled={portalBusy}
           hitSlop={8}
         >
-          <Text style={{ fontSize: 15, fontWeight: '700', color: portalBusy ? C.textMute : primaryColor }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: portalBusy ? C.textMute : C.text }}>
             {portalBusy ? 'Opening…' : 'Manage billing →'}
           </Text>
         </Pressable>
@@ -540,7 +639,15 @@ function dayPassStatusConfig(status: DayPassStatus): {
 // Day Pass row — date on left, status pill on right
 // ---------------------------------------------------------------------------
 
-function DayPassRow({ dayPass, timeZone }: { dayPass: DayPassDto; timeZone: string }) {
+function DayPassRow({
+  dayPass,
+  timeZone,
+  isLast = false,
+}: {
+  dayPass: DayPassDto;
+  timeZone: string;
+  isLast?: boolean;
+}) {
   const C = getColors();
   const cfg = dayPassStatusConfig(dayPass.status);
   const dateLabel = new Intl.DateTimeFormat(undefined, {
@@ -556,8 +663,9 @@ function DayPassRow({ dayPass, timeZone }: { dayPass: DayPassDto; timeZone: stri
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingVertical: 14,
-        borderBottomWidth: 1,
+        paddingVertical: 16,
+        paddingHorizontal: 4,
+        borderBottomWidth: isLast ? 0 : 1,
         borderBottomColor: C.separator,
       }}
     >
@@ -868,7 +976,7 @@ export default function MembershipScreen() {
         }
       >
         {/* ── Page header ── */}
-        <Animated.View entering={FadeInDown.duration(400)} style={{ paddingTop: 28, marginBottom: 28 }}>
+        <Animated.View entering={FadeInDown.duration(400)} style={{ paddingTop: 28, marginBottom: 32 }}>
           <Text
             style={{
               fontSize: 38,
@@ -880,7 +988,15 @@ export default function MembershipScreen() {
           >
             Membership
           </Text>
-          <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
+          <Text
+            style={{
+              fontSize: 15,
+              color: C.textSub,
+              marginTop: 8,
+              letterSpacing: -0.1,
+              lineHeight: 22,
+            }}
+          >
             {appDisplayName}
           </Text>
         </Animated.View>
@@ -927,18 +1043,7 @@ export default function MembershipScreen() {
         {/* ── Available plans ── */}
         {plans.length > 0 ? (
           <View style={{ marginTop: Space.sectionGap }}>
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: '700',
-                letterSpacing: 1.0,
-                textTransform: 'uppercase',
-                color: C.textMute,
-                marginBottom: 18,
-              }}
-            >
-              Available plans
-            </Text>
+            <SectionLabel>Available plans</SectionLabel>
             {plans.map((plan, i) => (
               <PlanCard
                 key={plan.id}
@@ -965,51 +1070,54 @@ export default function MembershipScreen() {
 
         {/* ── Day Pass ── */}
         <View style={{ marginTop: Space.sectionGap }}>
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: '700',
-              letterSpacing: 1.0,
-              textTransform: 'uppercase',
-              color: C.textMute,
-              marginBottom: 18,
-            }}
-          >
-            Day Pass
-          </Text>
+          <SectionLabel>Day Pass</SectionLabel>
 
           <Animated.View entering={FadeInDown.duration(420)}>
             <View
               style={{
-                backgroundColor: C.surface2,
-                borderRadius: 20,
-                padding: 26,
+                ...premiumCardStyle(C),
+                overflow: 'hidden',
                 marginBottom: Space.cardGap,
               }}
             >
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  letterSpacing: 1.0,
-                  textTransform: 'uppercase',
-                  color: C.textMute,
-                  marginBottom: 8,
-                }}
-              >
-                One-Day Access
-              </Text>
-              <Text
-                style={{
-                  fontSize: 15,
-                  lineHeight: 22,
-                  color: C.textSub,
-                  marginBottom: 22,
-                  letterSpacing: -0.1,
-                }}
-              >
-                Train for one day without a membership.
-              </Text>
+              <View style={{ height: 3, backgroundColor: primaryColor }} />
+              <View style={{ padding: 26 }}>
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    letterSpacing: 1.2,
+                    textTransform: 'uppercase',
+                    color: C.textMute,
+                    marginBottom: 10,
+                  }}
+                >
+                  One-day access
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12 }}>
+                  <Text
+                    style={{
+                      fontSize: 40,
+                      fontWeight: '800',
+                      letterSpacing: -1.6,
+                      color: C.text,
+                      lineHeight: 44,
+                    }}
+                  >
+                    {formatMoneyFromCents(20000, 'mxn')}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    lineHeight: 23,
+                    color: C.textSub,
+                    marginBottom: 22,
+                    letterSpacing: -0.1,
+                  }}
+                >
+                  Train for one day without a membership. Book any class on the day of your pass.
+                </Text>
 
               {!isGuest && dayPassSuccess ? (
                 <Text
@@ -1031,25 +1139,21 @@ export default function MembershipScreen() {
                 </Text>
               ) : null}
 
-              <BrandButton
-                label={`Get Day Pass — ${formatMoneyFromCents(20000, 'mxn')}`}
-                accentColor={primaryColor}
-                loading={!isGuest && dayPassBusy}
-                disabled={!isGuest && dayPassBusy}
-                onPress={() => void (isGuest ? openAuthModal('day-pass') : buyDayPass())}
-              />
-              {isGuest ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => goToAuthLogin('day-pass')}
-                  hitSlop={8}
-                  style={{ marginTop: 14, alignItems: 'center' }}
-                >
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: primaryColor }}>
-                    Already have an account? Log in
-                  </Text>
-                </Pressable>
-              ) : null}
+                <BrandButton
+                  label="Get Day Pass"
+                  accentColor={primaryColor}
+                  loading={!isGuest && dayPassBusy}
+                  disabled={!isGuest && dayPassBusy}
+                  onPress={() => void (isGuest ? openAuthModal('day-pass') : buyDayPass())}
+                />
+                {isGuest ? (
+                  <InlineAuthLink
+                    prompt="Already have an account?"
+                    action="Log in"
+                    onPress={() => goToAuthLogin('day-pass')}
+                  />
+                ) : null}
+              </View>
             </View>
           </Animated.View>
 
@@ -1062,9 +1166,23 @@ export default function MembershipScreen() {
           {/* Active / pending day passes */}
           {!isGuest && dayPasses.length > 0 ? (
             <Animated.View entering={FadeInDown.duration(380)}>
-              {dayPasses.map((dp) => (
-                <DayPassRow key={dp.id} dayPass={dp} timeZone={timeZone} />
-              ))}
+              <SectionLabel>Your passes</SectionLabel>
+              <View
+                style={{
+                  ...premiumCardStyle(C),
+                  paddingHorizontal: 20,
+                  overflow: 'hidden',
+                }}
+              >
+                {dayPasses.map((dp, i) => (
+                  <DayPassRow
+                    key={dp.id}
+                    dayPass={dp}
+                    timeZone={timeZone}
+                    isLast={i === dayPasses.length - 1}
+                  />
+                ))}
+              </View>
             </Animated.View>
           ) : null}
         </View>
