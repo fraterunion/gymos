@@ -1,35 +1,37 @@
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Image, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { BrandWordmark } from '@/components/BrandWordmark';
 import { useBranding } from '@/contexts/BrandingContext';
 
 export function BrandingBootGate({ children }: { children: ReactNode }) {
-  const { status, error, retry, logoUrl, appDisplayName, primaryColor } = useBranding();
+  const { status, error, retry, logoUrl } = useBranding();
 
   if (status === 'loading') {
     return (
-      <SafeAreaView className="flex-1 items-center justify-center bg-neutral-50 dark:bg-neutral-950">
-        <View className="items-center px-10">
-          {logoUrl ? (
-            <Image
-              accessibilityIgnoresInvertColors
-              source={{ uri: logoUrl }}
-              className="mb-8 h-20 w-48"
-              resizeMode="contain"
-            />
-          ) : (
-            <View
-              className="mb-8 h-14 w-14 items-center justify-center rounded-2xl"
-              style={{ backgroundColor: `${primaryColor}22` }}>
-              <View className="h-8 w-8 rounded-lg" style={{ backgroundColor: primaryColor }} />
-            </View>
-          )}
-          <Text className="mb-6 text-center text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            {appDisplayName}
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+        <View
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingHorizontal: 40,
+          }}
+        >
+          <BrandWordmark logoUrl={logoUrl} />
+          <ActivityIndicator color="rgba(255,255,255,0.4)" style={{ marginTop: 40 }} />
+          <Text
+            style={{
+              marginTop: 18,
+              fontSize: 12,
+              letterSpacing: 0.6,
+              color: 'rgba(255,255,255,0.30)',
+              textAlign: 'center',
+            }}
+          >
+            Loading your training experience...
           </Text>
-          <ActivityIndicator size="large" color={primaryColor} />
-          <Text className="mt-4 text-center text-sm text-neutral-500 dark:text-neutral-400">Preparing your training experience…</Text>
         </View>
       </SafeAreaView>
     );
@@ -37,20 +39,46 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
 
   if (status === 'error') {
     return (
-      <SafeAreaView className="flex-1 bg-neutral-50 dark:bg-neutral-950">
-        <View className="flex-1 justify-center px-8">
-          <Text className="mb-2 text-center text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 32 }}>
+          <Text
+            style={{
+              marginBottom: 10,
+              textAlign: 'center',
+              fontSize: 24,
+              fontWeight: '700',
+              letterSpacing: -0.5,
+              color: '#FFFFFF',
+            }}
+          >
             Unable to connect
           </Text>
-          <Text className="mb-10 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
+          <Text
+            style={{
+              marginBottom: 36,
+              textAlign: 'center',
+              fontSize: 15,
+              lineHeight: 23,
+              color: 'rgba(255,255,255,0.55)',
+            }}
+          >
             {error?.message ??
               'Check your internet connection and try again. If the problem continues, contact the studio.'}
           </Text>
           <Pressable
             accessibilityRole="button"
             onPress={() => void retry()}
-            className="items-center rounded-2xl bg-neutral-900 py-4 dark:bg-neutral-100">
-            <Text className="text-base font-semibold text-white dark:text-neutral-900">Try again</Text>
+            style={{
+              minHeight: 60,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 22,
+              backgroundColor: '#FFFFFF',
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#0A0A0A' }}>
+              Try again
+            </Text>
           </Pressable>
         </View>
       </SafeAreaView>

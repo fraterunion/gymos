@@ -158,6 +158,7 @@ export default function RegisterScreen() {
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
+              placeholder="Enter your email"
               value={email}
               onChangeText={setEmail}
             />
@@ -185,30 +186,40 @@ export default function RegisterScreen() {
             ) : null}
 
             <BrandButton
-              label="Create account"
+              label="Create Account"
+              variant="white"
               accentColor={primaryColor}
               loading={busy}
               onPress={() => void onSubmit()}
             />
-          </View>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              justifyContent: 'center',
-              alignItems: 'center',
-              marginTop: 28,
-              gap: 6,
-            }}
-          >
-            <Text style={{ fontSize: 14, color: C.textMute }}>Already a member?</Text>
-            <Link href={{ pathname: '/(auth)/login', params: authLinkParams }} asChild>
-              <Pressable hitSlop={8}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
-                  Sign in
-                </Text>
-              </Pressable>
-            </Link>
+            <View style={{ marginTop: 12 }}>
+              <Link href={{ pathname: '/(auth)/login', params: authLinkParams }} asChild>
+                <Pressable
+                  accessibilityRole="button"
+                  style={({ pressed }) => ({
+                    minHeight: 56,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.35)',
+                    backgroundColor: pressed ? 'rgba(255,255,255,0.06)' : 'transparent',
+                  })}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: '600',
+                      letterSpacing: -0.1,
+                      color: C.text,
+                    }}
+                  >
+                    Log In
+                  </Text>
+                </Pressable>
+              </Link>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

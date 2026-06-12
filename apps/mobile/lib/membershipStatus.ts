@@ -17,7 +17,7 @@ export function statusConfig(status: string, cancelAtPeriodEnd: boolean): Member
     case 'ACTIVE':
       return { label: 'Active', dotColor: C.positive, bg: 'rgba(52,211,153,0.12)', textColor: C.positive };
     case 'TRIALING':
-      return { label: 'Trial', dotColor: '#60A5FA', bg: 'rgba(96,165,250,0.12)', textColor: '#60A5FA' };
+      return { label: 'Trial', dotColor: '#FFFFFF', bg: 'rgba(255,255,255,0.12)', textColor: '#FFFFFF' };
     case 'PAST_DUE':
       return { label: 'Past due', dotColor: C.caution, bg: 'rgba(251,191,36,0.12)', textColor: C.caution };
     case 'CANCELED':

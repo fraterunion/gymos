@@ -6,7 +6,8 @@ import { getColors } from '@/constants/Theme';
 type Props = {
   label: string;
   loading?: boolean;
-  variant?: 'primary' | 'ghost';
+  /** 'white' renders a solid white button with dark text (premium dark surfaces). */
+  variant?: 'primary' | 'ghost' | 'white';
   accentColor: string;
   disabled?: boolean;
   onPress?: () => void;
@@ -16,6 +17,7 @@ export function BrandButton({ label, loading, variant = 'primary', accentColor, 
   const scheme = useColorScheme();
   const C = getColors(scheme);
   const isPrimary = variant === 'primary';
+  const isWhite = variant === 'white';
   const isDisabled = disabled || loading;
 
   const scale = useSharedValue(1);
@@ -39,20 +41,26 @@ export function BrandButton({ label, loading, variant = 'primary', accentColor, 
             paddingHorizontal: 20,
             opacity: isDisabled ? 0.5 : 1,
           },
-          isPrimary
-            ? { backgroundColor: accentColor }
-            : { backgroundColor: 'transparent', borderWidth: 1, borderColor: C.separator },
+          isWhite
+            ? { backgroundColor: '#FFFFFF' }
+            : isPrimary
+              ? { backgroundColor: accentColor }
+              : {
+                  backgroundColor: 'transparent',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.35)',
+                },
         ]}
       >
         {loading ? (
-          <ActivityIndicator color={isPrimary ? '#fff' : accentColor} />
+          <ActivityIndicator color={isWhite ? '#0A0A0A' : isPrimary ? '#fff' : C.text} />
         ) : (
           <Text
             style={{
               fontSize: 16,
-              fontWeight: '600',
+              fontWeight: isWhite ? '700' : '600',
               letterSpacing: -0.1,
-              color: isPrimary ? '#FFFFFF' : C.textSub,
+              color: isWhite ? '#0A0A0A' : isPrimary ? '#FFFFFF' : C.text,
             }}
           >
             {label}

@@ -36,7 +36,7 @@ export default function LoginScreen() {
   };
 
   const { user, hydrated, login, busy, error, clearError } = useAuth();
-  const { primaryColor, appDisplayName, logoUrl } = useBranding();
+  const { primaryColor, appDisplayName } = useBranding();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -122,6 +122,7 @@ export default function LoginScreen() {
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
+              placeholder="Enter your email"
               value={email}
               onChangeText={setEmail}
             />
@@ -129,6 +130,7 @@ export default function LoginScreen() {
               label="Password"
               secureTextEntry
               autoComplete="password"
+              placeholder="Enter your password"
               value={password}
               onChangeText={setPassword}
             />
@@ -148,39 +150,47 @@ export default function LoginScreen() {
             ) : null}
 
             <BrandButton
-              label="Sign in"
+              label="Log In"
+              variant="white"
               accentColor={primaryColor}
               loading={busy}
               onPress={() => void onSubmit()}
             />
-          </View>
 
-          <View
-            style={{
-              flexDirection: 'row',
-              justifyContent: 'center',
-              alignItems: 'center',
-              marginTop: 28,
-              gap: 6,
-            }}
-          >
-            <Text style={{ fontSize: 14, color: C.textMute }}>New here?</Text>
-            <Link href={{ pathname: '/(auth)/register', params: authLinkParams }} asChild>
-              <Pressable hitSlop={8}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
-                  Create an account
-                </Text>
-              </Pressable>
-            </Link>
-          </View>
-
-          {logoUrl ? (
-            <View style={{ marginTop: 'auto', alignItems: 'center', paddingTop: 48, opacity: 0.35 }}>
-              <Text style={{ fontSize: 11, letterSpacing: 0.8, color: C.textMute, textTransform: 'uppercase' }}>
-                Secured member access
-              </Text>
+            <View style={{ marginTop: 12 }}>
+              <Link href={{ pathname: '/(auth)/register', params: authLinkParams }} asChild>
+                <Pressable
+                  accessibilityRole="button"
+                  style={({ pressed }) => ({
+                    minHeight: 56,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.35)',
+                    backgroundColor: pressed ? 'rgba(255,255,255,0.06)' : 'transparent',
+                  })}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: '600',
+                      letterSpacing: -0.1,
+                      color: C.text,
+                    }}
+                  >
+                    Create an account
+                  </Text>
+                </Pressable>
+              </Link>
             </View>
-          ) : null}
+          </View>
+
+          <View style={{ marginTop: 'auto', alignItems: 'center', paddingTop: 48, opacity: 0.4 }}>
+            <Text style={{ fontSize: 11, letterSpacing: 0.8, color: C.textMute, textTransform: 'uppercase' }}>
+              Secured member access
+            </Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

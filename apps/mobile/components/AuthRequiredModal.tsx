@@ -140,10 +140,10 @@ export function AuthRequiredModal({
             accessibilityRole="button"
             onPress={onPrimary}
             style={{
-              minHeight: 56,
+              minHeight: 60,
               alignItems: 'center',
               justifyContent: 'center',
-              borderRadius: 14,
+              borderRadius: 22,
               backgroundColor: '#FFFFFF',
             }}
           >
@@ -153,6 +153,7 @@ export function AuthRequiredModal({
                 fontWeight: '700',
                 letterSpacing: -0.2,
                 color: '#0A0A0A',
+                textAlign: 'center',
               }}
             >
               {primaryLabel}
@@ -163,22 +164,23 @@ export function AuthRequiredModal({
             accessibilityRole="button"
             onPress={onSecondary}
             style={({ pressed }) => ({
-              minHeight: 56,
+              minHeight: 60,
               alignItems: 'center',
               justifyContent: 'center',
-              borderRadius: 14,
-              marginTop: 10,
+              borderRadius: 22,
+              marginTop: 12,
               borderWidth: 1,
-              borderColor: C.separator,
-              backgroundColor: pressed ? 'rgba(255,255,255,0.04)' : 'transparent',
+              borderColor: 'rgba(255,255,255,0.75)',
+              backgroundColor: pressed ? 'rgba(255,255,255,0.06)' : 'transparent',
             })}
           >
             <Text
               style={{
                 fontSize: 16,
-                fontWeight: '600',
-                letterSpacing: -0.1,
-                color: C.text,
+                fontWeight: '700',
+                letterSpacing: -0.2,
+                color: '#FFFFFF',
+                textAlign: 'center',
               }}
             >
               {secondaryLabel}
