@@ -583,7 +583,7 @@ function NoMembershipPrompt({
             marginBottom: 10,
           }}
         >
-          No active membership
+          Start your training journey.
         </Text>
         <Text
           style={{
@@ -595,7 +595,7 @@ function NoMembershipPrompt({
             marginBottom: 24,
           }}
         >
-          Choose a plan below to unlock class booking.
+          Choose a membership plan to unlock class booking and check-ins.
         </Text>
         <Pressable
           accessibilityRole="button"
@@ -1129,7 +1129,7 @@ export default function MembershipScreen() {
                     letterSpacing: -0.1,
                   }}
                 >
-                  Day Pass purchased!
+                  Day Pass activated.
                 </Text>
               ) : null}
 

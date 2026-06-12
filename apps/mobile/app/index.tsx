@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/contexts/AuthContext';
@@ -16,8 +16,19 @@ export default function BootScreen() {
   }, [status, hydrated, router]);
 
   return (
-    <View className="flex-1 items-center justify-center bg-neutral-50 dark:bg-neutral-950">
-      <ActivityIndicator />
+    <View style={{ flex: 1, backgroundColor: '#0A0A0A', alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator color="rgba(255,255,255,0.35)" />
+      <Text
+        style={{
+          marginTop: 20,
+          fontSize: 12,
+          letterSpacing: 0.6,
+          color: 'rgba(255,255,255,0.22)',
+          textTransform: 'uppercase',
+        }}
+      >
+        Preparing your club experience…
+      </Text>
     </View>
   );
 }

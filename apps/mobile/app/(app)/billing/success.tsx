@@ -53,25 +53,24 @@ export default function BillingCheckoutSuccessScreen() {
           )}
         </View>
         <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-          Payment processing
+          Activating your membership
         </Text>
         {busy ? (
           <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-            Updating your account with the latest subscription and schedule data…
+            Activating your membership and syncing your schedule…
           </Text>
         ) : (
           <>
             <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-              Thank you. {appDisplayName} confirms paid membership only after your payment provider finishes processing
-              and our systems receive the update—usually within a minute.
+              Your payment was received. Membership activates once your payment provider confirms the transaction — usually within moments.
             </Text>
             {!error && profile?.activeSubscription ? (
               <Text className="mt-4 text-center text-base font-medium text-emerald-700 dark:text-emerald-400">
-                We see an active subscription on your account. You can book classes when your plan allows.
+                Your membership is active. You're ready to start booking classes.
               </Text>
             ) : !error ? (
               <Text className="mt-4 text-center text-base text-neutral-600 dark:text-neutral-400">
-                If membership does not appear yet, wait a moment, then open Membership and pull down to refresh.
+                If your membership hasn't appeared yet, wait a moment and pull to refresh on the Membership tab.
               </Text>
             ) : null}
             {error ? (

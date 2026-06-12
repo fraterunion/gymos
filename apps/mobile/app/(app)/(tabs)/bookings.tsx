@@ -314,8 +314,8 @@ export default function MyBookingsScreen() {
             <View>
               {myBookings.length === 0 ? (
                 <EmptyHint
-                  title="No upcoming reservations"
-                  body="Reserve a spot from the schedule when you're ready."
+                  title="Your session list is clear."
+                  body="Head to the schedule to book your next class and secure your spot."
                 />
               ) : (
                 <>

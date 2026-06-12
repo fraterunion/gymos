@@ -44,7 +44,7 @@ export default function BillingPortalReturnScreen() {
           <View className="items-center py-12">
             <ActivityIndicator size="large" color={primaryColor} />
             <Text className="mt-6 text-center text-base text-neutral-600 dark:text-neutral-400">
-              Syncing your account…
+              Syncing your membership…
             </Text>
           </View>
         ) : (
@@ -55,11 +55,10 @@ export default function BillingPortalReturnScreen() {
               <FontAwesome name="check-circle" size={36} color={primaryColor} />
             </View>
             <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-              Welcome back
+              You're back.
             </Text>
             <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-              Your billing session in {appDisplayName} is closed. Schedule and bookings below reflect the latest data we
-              have from the server.
+              Your billing session is complete. Your membership and schedule are now up to date.
             </Text>
             {error ? (
               <Text className="mt-4 text-center text-sm text-red-600 dark:text-red-400">{error}</Text>

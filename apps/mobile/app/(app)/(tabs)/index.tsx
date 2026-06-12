@@ -875,8 +875,8 @@ export default function HomeScreen() {
             ) : !nextBooking ? (
               <View style={{ marginTop: 8 }}>
                 <EmptyHint
-                  title="Nothing scheduled today"
-                  body="Browse the schedule for upcoming sessions."
+                  title="Ready for your next session?"
+                  body="Book a class and keep your streak alive."
                 />
               </View>
             ) : null}

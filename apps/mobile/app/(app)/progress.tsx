@@ -228,7 +228,7 @@ export default function ProgressScreen() {
                   marginBottom: 10,
                 }}
               >
-                Your progress starts with your first check-in.
+                Every champion starts with a first session.
               </Text>
               <Text
                 style={{
@@ -239,7 +239,7 @@ export default function ProgressScreen() {
                   maxWidth: 260,
                 }}
               >
-                Book a class and check in to start tracking your training.
+                Check in to your first class and begin building your training history.
               </Text>
             </View>
           </Animated.View>
@@ -394,7 +394,42 @@ export default function ProgressScreen() {
         )}
 
         {/* ── Leaderboard ── */}
-        {leaderboard && leaderboard.top.length > 0 ? (
+        {leaderboard && leaderboard.top.length === 0 ? (
+          <Animated.View entering={FadeInDown.delay(240).duration(420)}>
+            <SectionLabel>This month's leaderboard</SectionLabel>
+            <View
+              style={{
+                ...cardStyle(C),
+                padding: 32,
+                alignItems: 'center',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: '700',
+                  color: C.text,
+                  letterSpacing: -0.3,
+                  textAlign: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                Leaderboard coming soon.
+              </Text>
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: C.textSub,
+                  lineHeight: 20,
+                  textAlign: 'center',
+                  maxWidth: 240,
+                }}
+              >
+                Be one of the first members to start climbing the rankings.
+              </Text>
+            </View>
+          </Animated.View>
+        ) : leaderboard && leaderboard.top.length > 0 ? (
           <Animated.View entering={FadeInDown.delay(240).duration(420)}>
             <SectionLabel>This month's leaderboard</SectionLabel>
             <View style={{ ...cardStyle(C), paddingHorizontal: 22 }}>

@@ -29,7 +29,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
             {appDisplayName}
           </Text>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text className="mt-4 text-center text-sm text-neutral-500 dark:text-neutral-400">Opening your studio…</Text>
+          <Text className="mt-4 text-center text-sm text-neutral-500 dark:text-neutral-400">Preparing your training experience…</Text>
         </View>
       </SafeAreaView>
     );
@@ -40,7 +40,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
       <SafeAreaView className="flex-1 bg-neutral-50 dark:bg-neutral-950">
         <View className="flex-1 justify-center px-8">
           <Text className="mb-2 text-center text-2xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50">
-            Could not load studio
+            Unable to connect
           </Text>
           <Text className="mb-10 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
             {error?.message ??

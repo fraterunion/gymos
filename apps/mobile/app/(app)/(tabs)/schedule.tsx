@@ -180,8 +180,8 @@ export default function ScheduleScreen() {
           ListEmptyComponent={
             <View style={{ marginTop: 80 }}>
               <EmptyHint
-                title="Schedule is clear"
-                body="When the studio publishes upcoming classes, they'll appear here."
+                title="Classes coming soon."
+                body="The studio is putting together the schedule. Check back shortly."
               />
             </View>
           }
