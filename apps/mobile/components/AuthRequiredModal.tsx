@@ -133,23 +133,25 @@ export function AuthRequiredModal({
             {description}
           </Text>
 
+          {/* Primary CTA — solid white surface, dark text for guaranteed contrast
+              on the dark modal card. Static style (no function) so the white
+              background can never be dropped by a style-resolution edge case. */}
           <Pressable
             accessibilityRole="button"
             onPress={onPrimary}
-            style={({ pressed }) => ({
+            style={{
               minHeight: 56,
               alignItems: 'center',
               justifyContent: 'center',
               borderRadius: 14,
               backgroundColor: '#FFFFFF',
-              opacity: pressed ? 0.92 : 1,
-            })}
+            }}
           >
             <Text
               style={{
                 fontSize: 16,
-                fontWeight: '600',
-                letterSpacing: -0.1,
+                fontWeight: '700',
+                letterSpacing: -0.2,
                 color: '#0A0A0A',
               }}
             >
@@ -176,7 +178,7 @@ export function AuthRequiredModal({
                 fontSize: 16,
                 fontWeight: '600',
                 letterSpacing: -0.1,
-                color: C.textSub,
+                color: C.text,
               }}
             >
               {secondaryLabel}

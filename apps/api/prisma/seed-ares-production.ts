@@ -276,9 +276,9 @@ async function main(): Promise<void> {
     await prisma.studio.update({
       where: { id: studio.id },
       data: {
-        name: 'ARES Fitness',
+        name: 'Ares Training Club',
         timezone: 'America/Mexico_City',
-        appName: 'ARES Fitness',
+        appName: 'Ares Training Club',
         brandPrimaryColor: '#0f172a',
         brandSecondaryColor: '#c9a227',
         brandLogoUrl: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400',
