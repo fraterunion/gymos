@@ -44,7 +44,8 @@
         "IOS_BUNDLE_IDENTIFIER": "com.fraterunion.aresfitness",
         "ANDROID_PACKAGE": "com.fraterunion.aresfitness",
         "APP_ICON_PATH": "./assets/images/icon.png",
-        "APP_SPLASH_PATH": "./assets/images/splash-icon.png",
+        "APP_SPLASH_PATH": "./assets/brand/ares-training-club-splash.png",
+        "APP_SPLASH_BG_COLOR": "#0A0A0A",
         "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png",
         "EXPO_NO_DOTENV": "1"
       }
@@ -62,7 +63,8 @@
         "IOS_BUNDLE_IDENTIFIER": "com.fraterunion.aresfitness",
         "ANDROID_PACKAGE": "com.fraterunion.aresfitness",
         "APP_ICON_PATH": "./assets/images/icon.png",
-        "APP_SPLASH_PATH": "./assets/images/splash-icon.png",
+        "APP_SPLASH_PATH": "./assets/brand/ares-training-club-splash.png",
+        "APP_SPLASH_BG_COLOR": "#0A0A0A",
         "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png",
         "EXPO_NO_DOTENV": "1"
       }

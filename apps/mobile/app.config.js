@@ -95,6 +95,8 @@ module.exports = ({ config }) => {
   const icon = resolveAssetPath(profile, 'APP_ICON_PATH');
   const splashImage = resolveAssetPath(profile, 'APP_SPLASH_PATH');
   const adaptiveForeground = resolveAssetPath(profile, 'APP_ADAPTIVE_ICON_PATH');
+  // Optional per-tenant splash background (e.g. '#0A0A0A' for dark-brand tenants).
+  const splashBackgroundColor = process.env.APP_SPLASH_BG_COLOR?.trim() || '#ffffff';
 
   return {
     ...config,
@@ -109,7 +111,7 @@ module.exports = ({ config }) => {
     splash: {
       image: splashImage,
       resizeMode: 'contain',
-      backgroundColor: '#ffffff',
+      backgroundColor: splashBackgroundColor,
     },
     ios: {
       ...(config.ios ?? {}),
