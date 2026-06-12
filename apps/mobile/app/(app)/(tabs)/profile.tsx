@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -13,11 +13,48 @@ import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { fetchMyMemberProfile, type MyMemberProfileDto } from '@/lib/api/membershipApi';
 import { fetchMyProgress, type MemberProgressDto } from '@/lib/api/progressApi';
-import { getColors, Space } from '@/constants/Theme';
+import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
-function SectionDivider() {
+const CARD_BG = '#141416';
+
+function premiumCardStyle(C: ThemeColors) {
+  return {
+    backgroundColor: CARD_BG,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: C.separator,
+  } as const;
+}
+
+function SectionLabel({ children }: { children: string }) {
   const C = getColors();
-  return <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 24 }} />;
+  return (
+    <Text
+      style={{
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        color: C.textMute,
+        marginBottom: 14,
+        marginTop: 32,
+      }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function membershipCreditsLine(
+  classCredits: number | null,
+  creditsUsed: number | null,
+  creditsRemaining: number | null,
+): string {
+  if (classCredits === null) return 'Unlimited classes';
+  if (typeof creditsUsed === 'number' && typeof creditsRemaining === 'number') {
+    return `${creditsUsed} / ${classCredits} used · ${creditsRemaining} remaining`;
+  }
+  return `${classCredits} classes per period`;
 }
 
 const GUEST_FEATURES = [
@@ -151,8 +188,10 @@ export default function ProfileScreen() {
   const { matched } = useMemberStudio();
   const C = getColors();
   const studioId = matched?.studio.id;
+  const timeZone = matched?.studio.timezone ?? 'UTC';
 
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
+  const [profileError, setProfileError] = useState(false);
   const [progress, setProgress] = useState<MemberProgressDto | null>(null);
 
   const loadProfile = useCallback(async () => {
@@ -160,8 +199,10 @@ export default function ProfileScreen() {
     try {
       const p = await fetchMyMemberProfile(studioId);
       setProfile(p);
+      setProfileError(false);
     } catch {
       // Keep profile usable if membership status cannot be loaded
+      setProfileError(true);
     }
     try {
       const prog = await fetchMyProgress(studioId);
@@ -187,6 +228,14 @@ export default function ProfileScreen() {
   }
 
   const sub = profile?.activeSubscription;
+  const initials = `${user.firstName?.[0] ?? ''}${user.lastName?.[0] ?? ''}`.toUpperCase() || '?';
+  const isMembershipActive = sub?.status === 'ACTIVE' || sub?.status === 'TRIALING';
+
+  const renewsLabel = sub
+    ? `Renews ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
+        new Date(sub.currentPeriodEnd),
+      )}${sub.cancelAtPeriodEnd ? ' · Cancelling' : ''}`
+    : null;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
@@ -198,7 +247,7 @@ export default function ProfileScreen() {
         }}
       >
         {/* Page header */}
-        <Animated.View entering={FadeInDown.duration(450)} style={{ paddingTop: 28, paddingBottom: 28 }}>
+        <Animated.View entering={FadeInDown.duration(450)} style={{ paddingTop: 28, paddingBottom: 24 }}>
           <Text
             style={{
               fontSize: 38,
@@ -210,65 +259,180 @@ export default function ProfileScreen() {
           >
             Profile
           </Text>
-          {appDisplayName ? (
-            <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
-              {appDisplayName}
-            </Text>
-          ) : null}
+          <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
+            {appDisplayName || 'Athlete Profile'}
+          </Text>
         </Animated.View>
 
-        {/* Account */}
-        <Animated.View entering={FadeInDown.delay(80).duration(420)}>
-          <Text
-            style={{
-              fontSize: 22,
-              fontWeight: '700',
-              letterSpacing: -0.4,
-              color: C.text,
-              marginBottom: 4,
-            }}
-          >
-            {user?.firstName} {user?.lastName}
-          </Text>
-          <Text style={{ fontSize: 14, color: C.textSub }}>{user?.email}</Text>
-        </Animated.View>
-
-        <SectionDivider />
-
-        {/* Membership */}
-        <Animated.View entering={FadeInDown.delay(120).duration(420)}>
-          <Text
-            style={{
-              fontSize: 10,
-              fontWeight: '700',
-              letterSpacing: 1.0,
-              textTransform: 'uppercase',
-              color: C.textMute,
-              marginBottom: 12,
-            }}
-          >
-            Membership
-          </Text>
-
-          {sub ? (
-            <View style={{ gap: 10 }}>
-              <Text
+        {/* Hero / athlete card */}
+        <Animated.View entering={FadeInDown.delay(60).duration(420)}>
+          <View style={[premiumCardStyle(C), { padding: 24 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View
                 style={{
-                  fontSize: 17,
-                  fontWeight: '600',
-                  letterSpacing: -0.3,
-                  color: C.text,
+                  width: 64,
+                  height: 64,
+                  borderRadius: 32,
+                  backgroundColor: '#1E1E22',
+                  borderWidth: 1,
+                  borderColor: C.separator,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 16,
                 }}
               >
-                {sub.plan.name}
+                <Text
+                  style={{
+                    fontSize: 22,
+                    fontWeight: '800',
+                    letterSpacing: 0.5,
+                    color: C.text,
+                  }}
+                >
+                  {initials}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: 20,
+                    fontWeight: '700',
+                    letterSpacing: -0.4,
+                    color: C.text,
+                  }}
+                  numberOfLines={1}
+                >
+                  {user.firstName} {user.lastName}
+                </Text>
+                <Text
+                  style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}
+                  numberOfLines={1}
+                >
+                  {user.email}
+                </Text>
+              </View>
+            </View>
+
+            {sub && isMembershipActive ? (
+              <View style={{ marginTop: 18 }}>
+                <MembershipStatusPill
+                  status={sub.status}
+                  cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
+                />
+              </View>
+            ) : null}
+          </View>
+        </Animated.View>
+
+        {/* Progress */}
+        {progress ? (
+          <Animated.View entering={FadeInDown.delay(100).duration(420)}>
+            <SectionLabel>Progress</SectionLabel>
+            <ProgressSummaryCard
+              progress={progress}
+              onViewProgress={() => router.push('/(app)/progress' as Href)}
+            />
+          </Animated.View>
+        ) : null}
+
+        {/* Membership */}
+        <Animated.View entering={FadeInDown.delay(140).duration(420)}>
+          <SectionLabel>Membership</SectionLabel>
+
+          {sub ? (
+            <View style={[premiumCardStyle(C), { padding: 24 }]}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 14,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontWeight: '700',
+                    letterSpacing: -0.3,
+                    color: C.text,
+                    flex: 1,
+                    marginRight: 12,
+                  }}
+                  numberOfLines={1}
+                >
+                  {sub.plan.name}
+                </Text>
+                <MembershipStatusPill
+                  status={sub.status}
+                  cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
+                />
+              </View>
+
+              {renewsLabel ? (
+                <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 6 }}>
+                  {renewsLabel}
+                </Text>
+              ) : null}
+
+              <Text style={{ fontSize: 13, color: C.textSub }}>
+                {membershipCreditsLine(
+                  sub.plan.classCredits,
+                  sub.creditsUsed,
+                  sub.creditsRemaining,
+                )}
               </Text>
-              <MembershipStatusPill status={sub.status} cancelAtPeriodEnd={sub.cancelAtPeriodEnd} />
+
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push('/(app)/(tabs)/membership')}
+                hitSlop={8}
+                style={{ marginTop: 18 }}
+              >
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: '600',
+                    color: C.text,
+                    letterSpacing: -0.2,
+                  }}
+                >
+                  Manage Membership →
+                </Text>
+              </Pressable>
             </View>
           ) : (
-            <View style={{ gap: 16 }}>
-              <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>
-                No active membership
+            <View style={[premiumCardStyle(C), { padding: 24 }]}>
+              <Text
+                style={{
+                  fontSize: 15,
+                  color: C.textSub,
+                  lineHeight: 22,
+                  marginBottom: profileError ? 8 : 18,
+                }}
+              >
+                {profileError
+                  ? 'We couldn’t load your membership right now.'
+                  : 'No active membership'}
               </Text>
+              {profileError ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void loadProfile()}
+                  hitSlop={8}
+                  style={{ marginBottom: 18 }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '600',
+                      color: C.text,
+                      letterSpacing: -0.2,
+                    }}
+                  >
+                    Try again
+                  </Text>
+                </Pressable>
+              ) : null}
               <BrandButton
                 label="View Memberships"
                 accentColor={primaryColor}
@@ -278,35 +442,9 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
-        {/* Progress summary */}
-        {progress ? (
-          <>
-            <SectionDivider />
-            <Animated.View entering={FadeInDown.delay(140).duration(420)}>
-              <Text
-                style={{
-                  fontSize: 10,
-                  fontWeight: '700',
-                  letterSpacing: 1.0,
-                  textTransform: 'uppercase',
-                  color: C.textMute,
-                  marginBottom: 12,
-                }}
-              >
-                Progress
-              </Text>
-              <ProgressSummaryCard
-                progress={progress}
-                onViewProgress={() => router.push('/(app)/progress' as Href)}
-              />
-            </Animated.View>
-          </>
-        ) : null}
-
-        <SectionDivider />
-
-        {/* Sign out */}
-        <Animated.View entering={FadeInDown.delay(160).duration(420)}>
+        {/* Account */}
+        <Animated.View entering={FadeInDown.delay(180).duration(420)}>
+          <SectionLabel>Account</SectionLabel>
           <BrandButton
             label="Sign out"
             variant="ghost"
