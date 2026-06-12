@@ -16,6 +16,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { AuthRequiredModal } from '@/components/AuthRequiredModal';
 import { BrandButton } from '@/components/BrandButton';
+import { ImageSlot } from '@/components/ImageSlot';
 import { LoadRetryPanel, ScreenLoader, Skeleton } from '@/components/StudioScreenChrome';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
@@ -43,6 +44,7 @@ import {
   type DayPassStatus,
 } from '@/lib/api/dayPassesApi';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
+import { FitnessImages } from '@/lib/imagery';
 import { statusConfig } from '@/lib/membershipStatus';
 import { todayKeyInZone } from '@/lib/datetime';
 import { getStudioSlug } from '@/lib/env';
@@ -354,8 +356,56 @@ function MembershipCard({
 }
 
 // ---------------------------------------------------------------------------
-// Plan card — price as the dominant element
+// Plan card — cinematic hero with per-plan theme
 // ---------------------------------------------------------------------------
+
+const PLAN_HERO_HEIGHT = 188;
+
+type PlanHeroTheme = {
+  accentColor: string;
+  borderColor: string;
+  badge: string | null;
+  imageUri: string;
+  tagline: string;
+};
+
+const PLAN_THEME_DEFAULTS: PlanHeroTheme[] = [
+  {
+    accentColor: '#F59E0B',
+    borderColor: 'rgba(245,158,11,0.35)',
+    badge: 'MOST POPULAR',
+    imageUri: FitnessImages.strength,
+    tagline: 'Train without limits.',
+  },
+  {
+    accentColor: '#14B8A6',
+    borderColor: 'rgba(20,184,166,0.35)',
+    badge: 'BEST START',
+    imageUri: FitnessImages.hiit,
+    tagline: 'Build your foundation.',
+  },
+  {
+    accentColor: '#8B5CF6',
+    borderColor: 'rgba(139,92,246,0.35)',
+    badge: 'FOR COMPETITORS',
+    imageUri: FitnessImages.running,
+    tagline: 'Built for competition.',
+  },
+];
+
+function resolvePlanTheme(planName: string, index: number): PlanHeroTheme {
+  const lower = planName.toLowerCase();
+  if (lower.includes('hyrox')) {
+    return PLAN_THEME_DEFAULTS[2]!;
+  }
+  if (lower.includes('full') || lower.includes('unlimited') || lower.includes('all access')) {
+    return PLAN_THEME_DEFAULTS[0]!;
+  }
+  if (lower.includes('basic') || lower.includes('starter') || lower.includes('intro') || lower.includes('essential')) {
+    return PLAN_THEME_DEFAULTS[1]!;
+  }
+  return PLAN_THEME_DEFAULTS[index % PLAN_THEME_DEFAULTS.length]!;
+}
 
 function PlanCard({
   plan,
@@ -375,6 +425,7 @@ function PlanCard({
   subscribeLabel?: string;
 }) {
   const C = getColors();
+  const theme = resolvePlanTheme(plan.name, index);
   const priceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
   const intervalStr = billingIntervalLabel(plan.billingInterval);
   const credits = creditsLabel(plan.classCredits);
@@ -384,88 +435,161 @@ function PlanCard({
       entering={FadeInDown.delay(index * 80).duration(420)}
       style={{ marginBottom: Space.cardGap }}
     >
-      <View style={{ ...premiumCardStyle(C), padding: 26 }}>
-        <Text
-          style={{
-            fontSize: 11,
-            fontWeight: '700',
-            letterSpacing: 1.2,
-            textTransform: 'uppercase',
-            color: C.textMute,
-            marginBottom: 10,
-          }}
-        >
-          {plan.name}
-        </Text>
+      <View
+        style={{
+          backgroundColor: CARD_BG,
+          borderRadius: 28,
+          borderWidth: 1,
+          borderColor: theme.borderColor,
+          overflow: 'hidden',
+        }}
+      >
+        {/* ── Hero image ── */}
+        <View style={{ height: PLAN_HERO_HEIGHT }}>
+          <ImageSlot
+            uri={theme.imageUri}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          />
+          {/* Layered gradient simulation — no expo-linear-gradient required */}
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.20)' }}
+          />
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%', backgroundColor: 'rgba(0,0,0,0.52)' }}
+          />
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%', backgroundColor: 'rgba(0,0,0,0.36)' }}
+          />
 
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16 }}>
-          <Text
-            style={{
-              fontSize: 48,
-              fontWeight: '800',
-              letterSpacing: -2,
-              color: C.text,
-              lineHeight: 52,
-            }}
-          >
-            {priceStr}
-          </Text>
-          <Text
-            style={{
-              fontSize: 16,
-              color: C.textMute,
-              marginBottom: 8,
-              marginLeft: 4,
-              letterSpacing: -0.2,
-            }}
-          >
-            {intervalStr}
-          </Text>
+          {/* Badge */}
+          {theme.badge ? (
+            <View
+              style={{
+                position: 'absolute',
+                top: 16,
+                right: 16,
+                backgroundColor: theme.accentColor,
+                borderRadius: 100,
+                paddingVertical: 5,
+                paddingHorizontal: 11,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 9,
+                  fontWeight: '800',
+                  letterSpacing: 1.0,
+                  textTransform: 'uppercase',
+                  color: '#0A0A0A',
+                }}
+              >
+                {theme.badge}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
-        {/* Description */}
-        {plan.description ? (
+        {/* Accent bar */}
+        <View style={{ height: 2, backgroundColor: theme.accentColor }} />
+
+        {/* ── Content ── */}
+        <View style={{ padding: 24 }}>
+          {/* Plan name + tagline */}
+          <Text
+            style={{
+              fontSize: 26,
+              fontWeight: '800',
+              letterSpacing: -0.8,
+              color: C.text,
+              textTransform: 'uppercase',
+              lineHeight: 30,
+              marginBottom: 6,
+            }}
+          >
+            {plan.name}
+          </Text>
           <Text
             style={{
               fontSize: 14,
-              lineHeight: 22,
               color: C.textSub,
-              marginBottom: 12,
               letterSpacing: -0.1,
+              marginBottom: 20,
             }}
           >
-            {plan.description}
+            {theme.tagline}
           </Text>
-        ) : null}
 
-        {credits ? (
-          <View
-            style={{
-              alignSelf: 'flex-start',
-              backgroundColor: 'rgba(255,255,255,0.05)',
-              borderRadius: 8,
-              paddingVertical: 6,
-              paddingHorizontal: 10,
-              marginBottom: 22,
-              borderWidth: 1,
-              borderColor: C.separator,
-            }}
-          >
-            <Text style={{ fontSize: 12, color: C.textSub, letterSpacing: -0.05 }}>{credits}</Text>
+          {/* Price */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16 }}>
+            <Text
+              style={{
+                fontSize: 48,
+                fontWeight: '800',
+                letterSpacing: -2,
+                color: C.text,
+                lineHeight: 52,
+              }}
+            >
+              {priceStr}
+            </Text>
+            <Text
+              style={{
+                fontSize: 16,
+                color: C.textMute,
+                marginBottom: 8,
+                marginLeft: 5,
+                letterSpacing: -0.2,
+              }}
+            >
+              {intervalStr}
+            </Text>
           </View>
-        ) : (
-          <View style={{ marginBottom: 22 }} />
-        )}
 
-        <View style={{ height: 1, backgroundColor: C.separator, marginBottom: 20 }} />
+          {plan.description ? (
+            <Text
+              style={{
+                fontSize: 14,
+                lineHeight: 22,
+                color: C.textSub,
+                marginBottom: 14,
+                letterSpacing: -0.1,
+              }}
+            >
+              {plan.description}
+            </Text>
+          ) : null}
 
-        <BrandButton
-          label={subscribeLabel}
-          accentColor={primaryColor}
-          loading={isLoading}
-          disabled={isDisabled}
-          onPress={onSubscribe}
-        />
+          {credits ? (
+            <View
+              style={{
+                alignSelf: 'flex-start',
+                backgroundColor: 'rgba(255,255,255,0.05)',
+                borderRadius: 8,
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                marginBottom: 22,
+                borderWidth: 1,
+                borderColor: C.separator,
+              }}
+            >
+              <Text style={{ fontSize: 12, color: C.textSub, letterSpacing: -0.05 }}>{credits}</Text>
+            </View>
+          ) : (
+            <View style={{ marginBottom: 22 }} />
+          )}
+
+          <BrandButton
+            label={subscribeLabel}
+            variant="white"
+            accentColor={primaryColor}
+            loading={isLoading}
+            disabled={isDisabled}
+            onPress={onSubscribe}
+          />
+        </View>
       </View>
     </Animated.View>
   );
