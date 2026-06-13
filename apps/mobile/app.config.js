@@ -19,6 +19,8 @@ const LOCAL_TEMPLATE_DEFAULTS = {
 const ARES_PROFILE_DEFAULTS = {
   APP_VERSION: '1.0.0',
   IOS_BUILD_NUMBER: '2',
+  // Native launcher name (iOS home screen / Android drawer). Intentionally short.
+  APP_LAUNCHER_NAME: 'ARES',
   APP_ICON_PATH: './assets/branding/ares/icon.png',
   APP_SPLASH_PATH: './assets/branding/ares/splash-logo.png',
   APP_ADAPTIVE_ICON_PATH: './assets/branding/ares/adaptive-icon.png',
@@ -106,7 +108,14 @@ function resolveAssetPath(profile, key) {
 module.exports = ({ config }) => {
   const profile = loadProfileEnvFiles();
 
-  const name = requireOrDefault(profile, 'APP_DISPLAY_NAME');
+  // APP_LAUNCHER_NAME → native iOS CFBundleDisplayName / Android android:label (home screen).
+  // APP_DISPLAY_NAME  → in-app branding / store listing copy (Ares Training Club).
+  // Falls back to APP_DISPLAY_NAME if APP_LAUNCHER_NAME is not set (non-Ares profiles).
+  const launcherName =
+    process.env.APP_LAUNCHER_NAME?.trim() ||
+    profileDefaults(profile).APP_LAUNCHER_NAME ||
+    requireOrDefault(profile, 'APP_DISPLAY_NAME');
+  const name = launcherName;
   const scheme = requireOrDefault(profile, 'APP_SCHEME');
   const slug = process.env.EXPO_SLUG?.trim() || requireOrDefault(profile, 'EXPO_SLUG');
   const iosBundleIdentifier = requireOrDefault(profile, 'IOS_BUNDLE_IDENTIFIER');
