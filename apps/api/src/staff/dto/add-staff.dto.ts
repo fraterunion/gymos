@@ -25,7 +25,7 @@ export class AddStaffDto {
   @MaxLength(100)
   lastName?: string;
 
-  @IsIn([Role.ADMIN, Role.STAFF])
+  @IsIn([Role.ADMIN, Role.STAFF, Role.INSTRUCTOR])
   role!: Role;
 
   @IsEnum(StaffType)

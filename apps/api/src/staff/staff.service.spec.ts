@@ -171,3 +171,103 @@ describe('StaffService.addStaff passwords', () => {
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
 });
+
+describe('StaffService.addStaff roles', () => {
+  let service: StaffService;
+  let prisma: {
+    studioMembership: {
+      findFirst: jest.Mock;
+      create: jest.Mock;
+    };
+    user: { findFirst: jest.Mock; create: jest.Mock };
+    studioStaffProfile: { upsert: jest.Mock };
+    scheduledClass: { count: jest.Mock };
+  };
+
+  const instructorDto: AddStaffDto = {
+    email: 'coach@example.com',
+    firstName: 'Coach',
+    lastName: 'Test',
+    role: Role.INSTRUCTOR,
+    staffType: StaffType.COACH,
+    temporaryPassword: 'TempPass2026!',
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      studioMembership: {
+        findFirst: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: 'membership-1' }),
+      },
+      user: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'user-1' }),
+      },
+      studioStaffProfile: { upsert: jest.fn().mockResolvedValue({}) },
+      scheduledClass: { count: jest.fn().mockResolvedValue(0) },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        StaffService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AuthService, useValue: { hashPassword: jest.fn().mockResolvedValue('hashed') } },
+      ],
+    }).compile();
+
+    service = module.get(StaffService);
+
+    prisma.studioMembership.findFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+      if (args.where.userId === 'owner') {
+        return { id: 'owner-membership', role: Role.OWNER };
+      }
+      if (args.where.userId === 'admin') {
+        return { id: 'admin-membership', role: Role.ADMIN };
+      }
+      if (args.where.id === 'membership-1') {
+        return {
+          id: 'membership-1',
+          role: Role.INSTRUCTOR,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          userId: 'user-1',
+          user: {
+            id: 'user-1',
+            email: 'coach@example.com',
+            firstName: 'Coach',
+            lastName: 'Test',
+            phone: null,
+            createdAt: new Date('2026-01-01T00:00:00.000Z'),
+            staffProfiles: [],
+          },
+        };
+      }
+      return null;
+    });
+  });
+
+  it('allows OWNER to create INSTRUCTOR', async () => {
+    await service.addStaff('studio-1', 'owner', instructorDto);
+
+    expect(prisma.studioMembership.create).toHaveBeenCalledWith({
+      data: { studioId: 'studio-1', userId: 'user-1', role: Role.INSTRUCTOR },
+    });
+  });
+
+  it('allows ADMIN to create INSTRUCTOR', async () => {
+    await service.addStaff('studio-1', 'admin', instructorDto);
+
+    expect(prisma.studioMembership.create).toHaveBeenCalledWith({
+      data: { studioId: 'studio-1', userId: 'user-1', role: Role.INSTRUCTOR },
+    });
+  });
+
+  it('denies ADMIN from creating ADMIN', async () => {
+    await expect(
+      service.addStaff('studio-1', 'admin', {
+        ...instructorDto,
+        role: Role.ADMIN,
+        staffType: StaffType.MANAGER,
+      }),
+    ).rejects.toThrow('Insufficient permissions to manage this role');
+  });
+});

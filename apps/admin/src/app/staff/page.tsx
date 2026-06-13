@@ -116,10 +116,12 @@ function RowSkeleton() {
 
 function AddStaffModal({
   studioId,
+  canCreateAdmin,
   onClose,
   onDone,
 }: {
   studioId: string;
+  canCreateAdmin: boolean;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -155,7 +157,7 @@ function AddStaffModal({
       const payload: AddStaffInput = {
         email: form.email.trim(),
         role: form.role,
-        staffType: form.staffType,
+        staffType: form.role === "INSTRUCTOR" ? "COACH" : form.staffType,
         isActive: form.isActive,
         temporaryPassword: pwd,
       };
@@ -271,17 +273,33 @@ function AddStaffModal({
               </label>
               <select
                 value={form.role}
-                onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as "ADMIN" | "STAFF" }))}
+                onChange={(e) => {
+                  const role = e.target.value as AddStaffInput["role"];
+                  setForm((f) => ({
+                    ...f,
+                    role,
+                    staffType: role === "INSTRUCTOR" ? "COACH" : f.staffType,
+                  }));
+                }}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
               >
                 <option value="STAFF">Staff</option>
-                <option value="ADMIN">Admin</option>
+                <option value="INSTRUCTOR">Coach / Instructor</option>
+                {canCreateAdmin ? <option value="ADMIN">Admin</option> : null}
               </select>
             </div>
             <div>
               <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
                 Type <span className="text-red-500">*</span>
               </label>
+              {form.role === "INSTRUCTOR" ? (
+                <input
+                  type="text"
+                  readOnly
+                  value="Coach"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-300"
+                />
+              ) : (
               <select
                 value={form.staffType}
                 onChange={(e) => setForm((f) => ({ ...f, staffType: e.target.value as StaffType }))}
@@ -291,6 +309,7 @@ function AddStaffModal({
                   <option key={t} value={t}>{STAFF_TYPE_LABELS[t]}</option>
                 ))}
               </select>
+              )}
             </div>
           </div>
           <div>
@@ -809,7 +828,7 @@ export default function StaffPage() {
   const handleAddDone = () => {
     setShowAdd(false);
     setSuccessMessage(
-      "Staff account created. Share the temporary password securely — it cannot be viewed again.",
+      "Team account created. Share the temporary password securely — it cannot be viewed again.",
     );
     void load();
   };
@@ -901,6 +920,7 @@ export default function StaffPage() {
             <option value="OWNER">Owner</option>
             <option value="ADMIN">Admin</option>
             <option value="STAFF">Staff</option>
+            <option value="INSTRUCTOR">Instructor</option>
           </select>
           <select
             value={filterType}
@@ -1007,6 +1027,7 @@ export default function StaffPage() {
       {showAdd && selectedStudioId ? (
         <AddStaffModal
           studioId={selectedStudioId}
+          canCreateAdmin={selected?.role === "OWNER"}
           onClose={() => setShowAdd(false)}
           onDone={handleAddDone}
         />

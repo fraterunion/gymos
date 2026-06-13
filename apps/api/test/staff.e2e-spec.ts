@@ -208,4 +208,65 @@ describe('Staff account passwords (e2e)', () => {
     });
     expect(membership?.role).toBe(Role.STAFF);
   });
+
+  it('creates INSTRUCTOR with password and login works', async () => {
+    const { studio, token } = await ownerContext();
+    const tempPassword = 'CoachPass2026!';
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/staff`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(
+        addStaffPayload({
+          email: 'coach@e2e.local',
+          firstName: 'Coach',
+          lastName: 'E2E',
+          role: Role.INSTRUCTOR,
+          staffType: StaffType.COACH,
+          temporaryPassword: tempPassword,
+        }),
+      )
+      .expect(201);
+
+    expect((res.body as { role: string }).role).toBe(Role.INSTRUCTOR);
+
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: 'coach@e2e.local', password: tempPassword })
+      .expect(201);
+  });
+
+  it('allows ADMIN to create INSTRUCTOR but not ADMIN', async () => {
+    const studio = await createStudio(prisma);
+    const admin = await createUserWithPassword(prisma, {
+      email: 'admin-create@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, admin.id, studio.id, Role.ADMIN);
+    const token = await loginAccessToken(app, admin.email, admin.password);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/staff`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(
+        addStaffPayload({
+          email: 'coach-by-admin@e2e.local',
+          role: Role.INSTRUCTOR,
+          staffType: StaffType.COACH,
+        }),
+      )
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/staff`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(
+        addStaffPayload({
+          email: 'admin-by-admin@e2e.local',
+          role: Role.ADMIN,
+          staffType: StaffType.MANAGER,
+        }),
+      )
+      .expect(403);
+  });
 });

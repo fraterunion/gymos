@@ -59,7 +59,7 @@ export type AddStaffInput = {
   email: string;
   firstName?: string;
   lastName?: string;
-  role: "ADMIN" | "STAFF";
+  role: "ADMIN" | "STAFF" | "INSTRUCTOR";
   staffType: StaffType;
   phone?: string;
   bio?: string;
