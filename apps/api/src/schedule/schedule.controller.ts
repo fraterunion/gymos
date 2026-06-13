@@ -35,6 +35,13 @@ export class ScheduleController {
     return this.scheduleService.listSchedule(studioId, query);
   }
 
+  @Get('today-summary')
+  @UseGuards(RolesGuard)
+  @Roles(Role.STAFF, Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
+  todaySummary(@Param('studioId') studioId: string) {
+    return this.scheduleService.getTodaySummaryForStaff(studioId);
+  }
+
   @Post()
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)

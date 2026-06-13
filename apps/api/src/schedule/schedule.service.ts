@@ -4,8 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma, ScheduledClass } from '@prisma/client';
-import { ClassStatus } from '@prisma/client';
+import { BookingStatus, ClassStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  getStudioLocalDateKey,
+  studioLocalDateKeyToUtcAnchor,
+} from '../common/date/studio-local-date';
 import type { ScheduleQueryDto } from './dto/schedule-query.dto';
 import type {
   CancelScheduledClassDto,
@@ -198,6 +202,70 @@ export class ScheduleService {
           : {}),
       },
     });
+  }
+
+  async getTodaySummaryForStaff(studioId: string, now: Date = new Date()) {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { timezone: true },
+    });
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
+    }
+
+    // Compute the UTC window that spans today in the studio's local timezone.
+    // dayStart = local midnight (00:00:00) in UTC.
+    // dayEnd   = next local midnight (00:00:00) in UTC.
+    // DST-safe: studioLocalDateKeyToUtcAnchor handles the offset for each boundary
+    // independently, so a 23- or 25-hour DST day is handled correctly.
+    const dayKey = getStudioLocalDateKey(now, studio.timezone);
+    const dayStart = studioLocalDateKeyToUtcAnchor(dayKey, studio.timezone);
+
+    const [y, m, d] = dayKey.split('-').map(Number);
+    // JS Date.UTC handles month/year rollover when day overflows (e.g. Jan 32 → Feb 1).
+    const nextDayUtcMidnight = new Date(Date.UTC(y!, m! - 1, d! + 1));
+    const nextDayKey = getStudioLocalDateKey(nextDayUtcMidnight, studio.timezone);
+    const dayEnd = studioLocalDateKeyToUtcAnchor(nextDayKey, studio.timezone);
+
+    const rows = await this.prisma.scheduledClass.findMany({
+      where: {
+        studioId,
+        startsAt: { lt: dayEnd },
+        endsAt:   { gt: dayStart },
+        classTemplate: { deletedAt: null },
+      },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+        capacity: true,
+        status: true,
+        classTemplate: { select: { name: true, color: true } },
+        instructor:    { select: { firstName: true, lastName: true } },
+        _count: {
+          select: {
+            bookings:    { where: { status: BookingStatus.CONFIRMED } },
+            attendances: true,
+          },
+        },
+      },
+      orderBy: { startsAt: 'asc' },
+    });
+
+    return rows.map((row) => ({
+      scheduledClassId: row.id,
+      className:        row.classTemplate.name,
+      color:            row.classTemplate.color,
+      startsAt:         row.startsAt.toISOString(),
+      endsAt:           row.endsAt.toISOString(),
+      capacity:         row.capacity,
+      status:           row.status,
+      instructor:       row.instructor
+        ? { firstName: row.instructor.firstName, lastName: row.instructor.lastName }
+        : null,
+      bookedCount:      row._count.bookings,
+      checkedInCount:   row._count.attendances,
+    }));
   }
 
   private async assertActiveStudioMember(studioId: string, userId: string): Promise<void> {
