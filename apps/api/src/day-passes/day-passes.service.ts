@@ -56,6 +56,8 @@ export class DayPassesService {
     validForDate: string;
   }): Promise<DayPassPaymentSheetResponse> {
     const { studioId, userId, validForDate } = params;
+    const priceCents = parseInt(this.config.get<string>('DAY_PASS_PRICE_CENTS', '20000'), 10);
+    const currency = this.config.get<string>('DAY_PASS_CURRENCY', 'mxn').toLowerCase();
 
     const studio = await this.prisma.studio.findFirst({
       where: { id: studioId, deletedAt: null },
@@ -115,8 +117,8 @@ export class DayPassesService {
           studioId,
           userId,
           validForDate: validForDateUtc,
-          priceCents: 20000,
-          currency: 'mxn',
+          priceCents,
+          currency,
           status: DayPassStatus.PENDING,
         },
         select: { id: true },
@@ -136,8 +138,8 @@ export class DayPassesService {
 
     try {
       const paymentIntent = await this.stripe.createPaymentIntent({
-        amount: 20000,
-        currency: 'mxn',
+        amount: priceCents,
+        currency,
         customer: customer.id,
         metadata: {
           type: 'day_pass',

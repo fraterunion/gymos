@@ -118,6 +118,7 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
   out['BCRYPT_ROUNDS'] = assertBcryptRounds(out['BCRYPT_ROUNDS']);
   assertStripeBillingEnv(out, nodeEnv);
   assertExpoBuildWebhookEnv(out, nodeEnv);
+  assertDayPassEnv(out);
 
   return out;
 }
@@ -149,6 +150,30 @@ const STRIPE_DEFAULTS: ReadonlyArray<[string, string]> = [
   ['STRIPE_CANCEL_URL', 'http://localhost:3000/billing/cancel'],
   ['STRIPE_BILLING_PORTAL_RETURN_URL', 'http://localhost:3000/billing/portal-return'],
 ];
+
+function assertDayPassEnv(out: Record<string, unknown>): void {
+  const priceRaw = out['DAY_PASS_PRICE_CENTS'];
+  if (priceRaw === undefined || priceRaw === null || priceRaw === '') {
+    out['DAY_PASS_PRICE_CENTS'] = '20000';
+  } else {
+    const n = Number(String(priceRaw).trim());
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error('DAY_PASS_PRICE_CENTS must be a positive integer when set');
+    }
+    out['DAY_PASS_PRICE_CENTS'] = String(n);
+  }
+
+  const currencyRaw = out['DAY_PASS_CURRENCY'];
+  if (currencyRaw === undefined || currencyRaw === null || currencyRaw === '') {
+    out['DAY_PASS_CURRENCY'] = 'mxn';
+  } else {
+    const c = String(currencyRaw).trim().toLowerCase();
+    if (c.length < 2 || c.length > 10 || !/^[a-z]+$/.test(c)) {
+      throw new Error('DAY_PASS_CURRENCY must be a 2–10 character lowercase currency code when set');
+    }
+    out['DAY_PASS_CURRENCY'] = c;
+  }
+}
 
 function assertStripeBillingEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): void {
   if (nodeEnv === 'production') {
