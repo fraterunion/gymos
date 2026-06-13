@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="#FFFFFF">
-  <!-- ARES triangle mark  open bottom-left, flat white on black -->
-  <polygon points="47,4 53,4 14,92 8,92"/>
-  <polygon points="47,4 53,4 92,92 86,92"/>
-  <polygon points="22,48 78,48 78,56 22,56"/>
-  <polygon points="38,84 92,84 92,92 38,92"/>
-</svg>
