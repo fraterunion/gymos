@@ -28,6 +28,7 @@
     "test:e2e": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.e2e.ts --runInBand",
     "test:cov": "TS_NODE_PROJECT=tsconfig.jest.json jest --config jest.config.unit.ts --coverage",
     "seed:ares": "ts-node --project tsconfig.seed.json prisma/seed-ares-production.ts",
+    "seed:ares-review": "ts-node --project tsconfig.seed.json prisma/seed-ares-review-accounts.ts",
     "diagnose:ares-demo": "ts-node --project tsconfig.seed.json prisma/diagnose-ares-demo.ts",
     "cleanup:ares-demo": "ts-node --project tsconfig.seed.json prisma/cleanup-ares-demo.ts"
   },
