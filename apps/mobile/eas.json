@@ -50,7 +50,7 @@
         "APP_ADAPTIVE_ICON_PATH": "./assets/branding/ares/adaptive-icon.png",
         "APP_ADAPTIVE_ICON_BG_COLOR": "#000000",
         "APP_VERSION": "1.0.0",
-        "IOS_BUILD_NUMBER": "3",
+        "IOS_BUILD_NUMBER": "4",
         "EXPO_NO_DOTENV": "1"
       }
     },
@@ -73,7 +73,7 @@
         "APP_ADAPTIVE_ICON_PATH": "./assets/branding/ares/adaptive-icon.png",
         "APP_ADAPTIVE_ICON_BG_COLOR": "#000000",
         "APP_VERSION": "1.0.0",
-        "IOS_BUILD_NUMBER": "3",
+        "IOS_BUILD_NUMBER": "4",
         "EXPO_NO_DOTENV": "1"
       }
     },
