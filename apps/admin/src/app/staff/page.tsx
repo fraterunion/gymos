@@ -64,6 +64,37 @@ function fmtDate(iso: string | null | undefined) {
   });
 }
 
+function secureRandomInt(max: number): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0]! % max;
+}
+
+/** 12–16 chars with uppercase, lowercase, digit, and symbol. */
+function generateTemporaryPassword(): string {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%&*";
+  const length = 12 + secureRandomInt(5);
+  const all = upper + lower + digits + symbols;
+
+  const chars = [
+    upper[secureRandomInt(upper.length)]!,
+    lower[secureRandomInt(lower.length)]!,
+    digits[secureRandomInt(digits.length)]!,
+    symbols[secureRandomInt(symbols.length)]!,
+    ...Array.from({ length: length - 4 }, () => all[secureRandomInt(all.length)]!),
+  ];
+
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = secureRandomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j]!, chars[i]!];
+  }
+
+  return chars.join("");
+}
+
 // ── Skeleton ─────────────────────────────────────────────────────────────────
 
 function RowSkeleton() {
@@ -104,12 +135,21 @@ function AddStaffModal({
     isActive: true,
   });
   const [specialtiesInput, setSpecialtiesInput] = useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    const pwd = temporaryPassword.trim();
+    if (pwd.length < 8 || pwd.length > 128) {
+      setError("Temporary password must be between 8 and 128 characters.");
+      return;
+    }
+
     setSaving(true);
     try {
       const payload: AddStaffInput = {
@@ -117,6 +157,7 @@ function AddStaffModal({
         role: form.role,
         staffType: form.staffType,
         isActive: form.isActive,
+        temporaryPassword: pwd,
       };
       if (form.firstName?.trim()) payload.firstName = form.firstName.trim();
       if (form.lastName?.trim()) payload.lastName = form.lastName.trim();
@@ -161,7 +202,8 @@ function AddStaffModal({
             />
           </div>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            If no account exists with this email, fill in name below to create one. Email invitations coming soon.
+            If no account exists with this email, fill in name below to create one. Set a temporary
+            password so this team member can sign in immediately.
           </p>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -186,6 +228,41 @@ function AddStaffModal({
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              Temporary password <span className="text-red-500">*</span>
+            </label>
+            <div className="mt-1 flex gap-2">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={8}
+                maxLength={128}
+                value={temporaryPassword}
+                onChange={(e) => setTemporaryPassword(e.target.value)}
+                placeholder="Set a temporary password"
+                autoComplete="new-password"
+                className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="shrink-0 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTemporaryPassword(generateTemporaryPassword())}
+                className="shrink-0 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Generate
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+              Share this password securely with the team member. It cannot be recovered later.
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -680,6 +757,7 @@ export default function StaffPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [editTarget, setEditTarget] = useState<StaffMember | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<StaffMember | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -728,6 +806,14 @@ export default function StaffPage() {
     void load();
   };
 
+  const handleAddDone = () => {
+    setShowAdd(false);
+    setSuccessMessage(
+      "Staff account created. Share the temporary password securely — it cannot be viewed again.",
+    );
+    void load();
+  };
+
   const handleDeactivateClick = (member: StaffMember) => {
     // If already inactive, use edit modal to reactivate via isActive toggle
     if (member.staffProfile?.isActive === false) {
@@ -773,13 +859,29 @@ export default function StaffPage() {
           {canManage ? (
             <button
               type="button"
-              onClick={() => setShowAdd(true)}
+              onClick={() => {
+                setSuccessMessage(null);
+                setShowAdd(true);
+              }}
               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
             >
               + Add staff member
             </button>
           ) : null}
         </div>
+
+        {successMessage ? (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+            {successMessage}
+            <button
+              type="button"
+              className="ml-3 font-semibold underline"
+              onClick={() => setSuccessMessage(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3">
@@ -876,7 +978,10 @@ export default function StaffPage() {
                     {!debouncedSearch && !filterRole && !filterType && !filterActive && canManage ? (
                       <button
                         type="button"
-                        onClick={() => setShowAdd(true)}
+                        onClick={() => {
+                          setSuccessMessage(null);
+                          setShowAdd(true);
+                        }}
                         className="mt-3 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
                       >
                         Add first staff member
@@ -903,7 +1008,7 @@ export default function StaffPage() {
         <AddStaffModal
           studioId={selectedStudioId}
           onClose={() => setShowAdd(false)}
-          onDone={handleDone}
+          onDone={handleAddDone}
         />
       ) : null}
 

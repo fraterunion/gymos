@@ -66,6 +66,7 @@ export type AddStaffInput = {
   specialties?: string[];
   photoUrl?: string;
   isActive?: boolean;
+  temporaryPassword?: string;
 };
 
 export type UpdateStaffInput = {
