@@ -143,6 +143,13 @@ module.exports = ({ config }) => {
           enableGooglePay: true,
         },
       ],
+      [
+        'expo-camera',
+        {
+          // Staff Mode: scan member booking QR codes at the front desk.
+          cameraPermission: 'Scan member QR codes to check in attendees.',
+        },
+      ],
     ],
     updates: {
       url: 'https://u.expo.dev/9f5697a5-b5cb-425b-850f-fa2f61068f20',

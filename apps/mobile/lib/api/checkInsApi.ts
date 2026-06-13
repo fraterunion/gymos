@@ -41,3 +41,14 @@ export async function createBookingQr(studioId: string, bookingId: string): Prom
     body: '{}',
   });
 }
+
+/** Staff Mode: submit a scanned member QR token (STAFF | INSTRUCTOR | ADMIN | OWNER). */
+export async function submitStaffQrScan(
+  studioId: string,
+  qrToken: string,
+): Promise<AttendanceSummaryDto> {
+  return apiRequest<AttendanceSummaryDto>(`/studios/${studioId}/check-ins/qr`, {
+    method: 'POST',
+    body: JSON.stringify({ qrToken }),
+  });
+}
