@@ -124,6 +124,17 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="staff-class-roster"
+          options={{
+            headerShown: true,
+            title: 'Class Roster',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: headerBg },
+            headerTintColor: '#FAFAFA',
+            headerBackTitle: 'Back',
+          }}
+        />
+        <Stack.Screen
           name="billing"
           options={{
             headerShown: false,
