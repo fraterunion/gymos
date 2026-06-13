@@ -279,6 +279,7 @@ async function main(): Promise<void> {
         name: 'Ares Training Club',
         timezone: 'America/Mexico_City',
         appName: 'Ares Training Club',
+        appDisplayName: 'Ares Training Club',
         brandPrimaryColor: '#0f172a',
         brandSecondaryColor: '#c9a227',
         brandLogoUrl: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400',
