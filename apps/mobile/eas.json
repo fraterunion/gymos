@@ -43,10 +43,11 @@
         "EXPO_SLUG": "gymos",
         "IOS_BUNDLE_IDENTIFIER": "com.fraterunion.aresfitness",
         "ANDROID_PACKAGE": "com.fraterunion.aresfitness",
-        "APP_ICON_PATH": "./assets/images/icon.png",
-        "APP_SPLASH_PATH": "./assets/brand/ares-training-club-splash.png",
-        "APP_SPLASH_BG_COLOR": "#0A0A0A",
-        "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png",
+        "APP_ICON_PATH": "./assets/branding/ares/icon.png",
+        "APP_SPLASH_PATH": "./assets/branding/ares/splash-logo.png",
+        "APP_SPLASH_BG_COLOR": "#000000",
+        "APP_ADAPTIVE_ICON_PATH": "./assets/branding/ares/adaptive-icon.png",
+        "APP_ADAPTIVE_ICON_BG_COLOR": "#000000",
         "EXPO_NO_DOTENV": "1"
       }
     },
@@ -62,10 +63,11 @@
         "EXPO_SLUG": "gymos",
         "IOS_BUNDLE_IDENTIFIER": "com.fraterunion.aresfitness",
         "ANDROID_PACKAGE": "com.fraterunion.aresfitness",
-        "APP_ICON_PATH": "./assets/images/icon.png",
-        "APP_SPLASH_PATH": "./assets/brand/ares-training-club-splash.png",
-        "APP_SPLASH_BG_COLOR": "#0A0A0A",
-        "APP_ADAPTIVE_ICON_PATH": "./assets/images/adaptive-icon.png",
+        "APP_ICON_PATH": "./assets/branding/ares/icon.png",
+        "APP_SPLASH_PATH": "./assets/branding/ares/splash-logo.png",
+        "APP_SPLASH_BG_COLOR": "#000000",
+        "APP_ADAPTIVE_ICON_PATH": "./assets/branding/ares/adaptive-icon.png",
+        "APP_ADAPTIVE_ICON_BG_COLOR": "#000000",
         "EXPO_NO_DOTENV": "1"
       }
     },

@@ -15,6 +15,15 @@ const LOCAL_TEMPLATE_DEFAULTS = {
   APP_ADAPTIVE_ICON_PATH: './assets/images/adaptive-icon.png',
 };
 
+/** Checked-in Ares Training Club brand assets (WHITELABEL_PROFILE=ares). */
+const ARES_PROFILE_DEFAULTS = {
+  APP_ICON_PATH: './assets/branding/ares/icon.png',
+  APP_SPLASH_PATH: './assets/branding/ares/splash-logo.png',
+  APP_ADAPTIVE_ICON_PATH: './assets/branding/ares/adaptive-icon.png',
+  APP_SPLASH_BG_COLOR: '#000000',
+  APP_ADAPTIVE_ICON_BG_COLOR: '#000000',
+};
+
 /**
  * Minimal .env parser (no dotenv package — works when node_modules is absent, e.g. EAS temp workspace).
  * - KEY=value lines; first '=' separates key from value
@@ -69,9 +78,17 @@ function isClientProfile(profile) {
   return profile !== 'local';
 }
 
+function profileDefaults(profile) {
+  if (profile === 'ares') return { ...ARES_PROFILE_DEFAULTS };
+  if (!isClientProfile(profile)) return { ...LOCAL_TEMPLATE_DEFAULTS };
+  return {};
+}
+
 function requireOrDefault(profile, key) {
   const raw = process.env[key]?.trim();
   if (raw) return raw;
+  const defaults = profileDefaults(profile);
+  if (key in defaults) return defaults[key];
   if (!isClientProfile(profile)) {
     return LOCAL_TEMPLATE_DEFAULTS[key];
   }
@@ -95,8 +112,14 @@ module.exports = ({ config }) => {
   const icon = resolveAssetPath(profile, 'APP_ICON_PATH');
   const splashImage = resolveAssetPath(profile, 'APP_SPLASH_PATH');
   const adaptiveForeground = resolveAssetPath(profile, 'APP_ADAPTIVE_ICON_PATH');
-  // Optional per-tenant splash background (e.g. '#0A0A0A' for dark-brand tenants).
-  const splashBackgroundColor = process.env.APP_SPLASH_BG_COLOR?.trim() || '#ffffff';
+  const splashBackgroundColor =
+    process.env.APP_SPLASH_BG_COLOR?.trim() ||
+    profileDefaults(profile).APP_SPLASH_BG_COLOR ||
+    '#ffffff';
+  const adaptiveIconBackgroundColor =
+    process.env.APP_ADAPTIVE_ICON_BG_COLOR?.trim() ||
+    profileDefaults(profile).APP_ADAPTIVE_ICON_BG_COLOR ||
+    splashBackgroundColor;
 
   return {
     ...config,
@@ -123,7 +146,7 @@ module.exports = ({ config }) => {
       adaptiveIcon: {
         ...(config.android?.adaptiveIcon ?? {}),
         foregroundImage: adaptiveForeground,
-        backgroundColor: '#ffffff',
+        backgroundColor: adaptiveIconBackgroundColor,
       },
       package: androidPackage,
       edgeToEdgeEnabled: true,
