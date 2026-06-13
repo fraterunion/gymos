@@ -24,6 +24,9 @@ const ROUTE_ICONS: Record<string, IconName> = {
   bookings: 'bookmark',
   membership: 'star',
   profile: 'user',
+  // Staff tabs
+  scan: 'qrcode',
+  today: 'calendar-check-o',
 };
 
 const ROUTE_LABELS: Record<string, string> = {
@@ -32,6 +35,9 @@ const ROUTE_LABELS: Record<string, string> = {
   bookings: 'Bookings',
   membership: 'Membership',
   profile: 'Profile',
+  // Staff tabs
+  scan: 'Scan',
+  today: 'Today',
 };
 
 const ACTIVE_COLOR = '#FFFFFF';

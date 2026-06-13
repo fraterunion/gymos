@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { MemberStudioProvider, useMemberStudio } from '@/contexts/MemberStudioContext';
 import { StudioActivityProvider } from '@/contexts/StudioActivityContext';
+import { isStaffRole } from '@/lib/staffRole';
 
 export default function AppGroupLayout() {
   const { hydrated } = useAuth();
@@ -56,6 +57,10 @@ function MemberShell() {
     return <MembershipRequiredScreen onRetry={() => void ms.refetch()} />;
   }
 
+  // Staff/instructor/admin/owner accounts get the staff shell instead of member tabs.
+  // Computed only after ms.status === 'ready' (gated above), so there is no flicker.
+  const staff = isStaffRole(ms.matched?.role);
+
   // Always mount StudioActivityProvider to keep the tree stable through login/logout.
   // Guests receive studioId = '' which causes the context to skip all authenticated fetches.
   return (
@@ -65,7 +70,15 @@ function MemberShell() {
           headerShown: false,
           contentStyle: { backgroundColor: headerBg },
         }}>
-        <Stack.Screen name="(tabs)" />
+        {/* Protected guards: navigation to a blocked group falls back to the
+            first allowed route, so boot's replace('/(app)/(tabs)') lands staff
+            users in the staff shell automatically. */}
+        <Stack.Protected guard={staff}>
+          <Stack.Screen name="(staff-tabs)" />
+        </Stack.Protected>
+        <Stack.Protected guard={!staff}>
+          <Stack.Screen name="(tabs)" />
+        </Stack.Protected>
         <Stack.Screen
           name="class/[classId]"
           options={{
