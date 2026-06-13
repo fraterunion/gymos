@@ -17,6 +17,8 @@ const LOCAL_TEMPLATE_DEFAULTS = {
 
 /** Checked-in Ares Training Club brand assets (WHITELABEL_PROFILE=ares). */
 const ARES_PROFILE_DEFAULTS = {
+  APP_VERSION: '1.0.0',
+  IOS_BUILD_NUMBER: '2',
   APP_ICON_PATH: './assets/branding/ares/icon.png',
   APP_SPLASH_PATH: './assets/branding/ares/splash-logo.png',
   APP_ADAPTIVE_ICON_PATH: './assets/branding/ares/adaptive-icon.png',
@@ -120,12 +122,16 @@ module.exports = ({ config }) => {
     process.env.APP_ADAPTIVE_ICON_BG_COLOR?.trim() ||
     profileDefaults(profile).APP_ADAPTIVE_ICON_BG_COLOR ||
     splashBackgroundColor;
+  const version =
+    process.env.APP_VERSION?.trim() || profileDefaults(profile).APP_VERSION || '0.0.0';
+  const iosBuildNumber =
+    process.env.IOS_BUILD_NUMBER?.trim() || profileDefaults(profile).IOS_BUILD_NUMBER;
 
   return {
     ...config,
     name,
     slug,
-    version: '0.0.0',
+    version,
     orientation: 'portrait',
     icon,
     scheme,
@@ -140,6 +146,7 @@ module.exports = ({ config }) => {
       ...(config.ios ?? {}),
       supportsTablet: true,
       bundleIdentifier: iosBundleIdentifier,
+      ...(iosBuildNumber ? { buildNumber: iosBuildNumber } : {}),
     },
     android: {
       ...(config.android ?? {}),
