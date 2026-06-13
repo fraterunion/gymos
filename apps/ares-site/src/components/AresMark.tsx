@@ -1,23 +1,33 @@
+import Image from 'next/image';
+
+const MARK_SRC = '/ares-mark.png';
+/** Intrinsic dimensions of the cropped brand asset (from source image). */
+const MARK_WIDTH = 569;
+const MARK_HEIGHT = 388;
+const MARK_ASPECT = MARK_WIDTH / MARK_HEIGHT;
+
 type Props = {
+  /** Display height in pixels. Width follows the source mark aspect ratio. */
   size?: number;
   className?: string;
+  priority?: boolean;
 };
 
-/** ARES triangle mark — matches mobile brand icon geometry. */
-export function AresMark({ size = 40, className }: Props) {
+/** Official ARES mark — raster asset from brand source (no SVG redraw). */
+export function AresMark({ size = 40, className, priority = false }: Props) {
+  const height = size;
+  const width = Math.round(size * MARK_ASPECT);
+
   return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 100 100"
-      fill="#FFFFFF"
+    <Image
+      src={MARK_SRC}
+      alt=""
       aria-hidden
-    >
-      <polygon points="47,4 53,4 14,92 8,92" />
-      <polygon points="47,4 53,4 92,92 86,92" />
-      <polygon points="22,48 78,48 78,56 22,56" />
-      <polygon points="38,84 92,84 92,92 38,92" />
-    </svg>
+      width={MARK_WIDTH}
+      height={MARK_HEIGHT}
+      className={className}
+      priority={priority}
+      style={{ width, height, objectFit: 'contain' }}
+    />
   );
 }

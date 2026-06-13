@@ -34,7 +34,7 @@ export default function HomePage() {
   return (
     <section className="hero">
       <div className="hero-mark">
-        <AresMark size={72} />
+        <AresMark size={72} priority />
       </div>
       <p className="eyebrow">Ares Training Club</p>
       <h1>ARES Training Club</h1>
