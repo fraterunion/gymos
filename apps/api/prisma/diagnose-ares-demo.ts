@@ -1,5 +1,5 @@
 /**
- * ARES Fitness — demo cleanup diagnostic.
+ * Ares Training Club — demo cleanup diagnostic.
  *
  * READ-ONLY. Zero writes. Safe to run against production at any time.
  * Only .findFirst, .findUniqueOrThrow, and .count are called — never

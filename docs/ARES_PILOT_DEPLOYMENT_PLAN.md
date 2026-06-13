@@ -1,4 +1,4 @@
-# ARES Fitness — first real pilot deployment plan (Phase 8A)
+# Ares Training Club — first real pilot deployment plan (Phase 8A)
 
 **Execution plan only.** This document does not deploy anything by itself. Operators follow it step-by-step on **Neon**, **Railway**, **Vercel**, **EAS**, and **Stripe test mode** to stand up the first **ARES** white-label pilot.
 
@@ -80,7 +80,7 @@ Set as **EAS secrets / environment variables** for the `preview-ares` profile (a
 | `WHITELABEL_PROFILE` | `ares` (set by `eas.json` for `preview-ares`; confirm not overridden). |
 | `EXPO_PUBLIC_API_URL` | Same origin as `NEXT_PUBLIC_API_URL`. |
 | `EXPO_PUBLIC_STUDIO_SLUG` | `ares-fitness` |
-| `APP_DISPLAY_NAME` | `ARES Fitness` |
+| `APP_DISPLAY_NAME` | `Ares Training Club` |
 | `APP_SCHEME` | `aresfitness` |
 | `IOS_BUNDLE_IDENTIFIER` | `com.fraterunion.aresfitness` |
 | `ANDROID_PACKAGE` | `com.fraterunion.aresfitness` |
@@ -129,7 +129,7 @@ Use these values for **this** first real pilot (EAS + any local `env/.env.ares`)
 |-----|--------|
 | `WHITELABEL_PROFILE` | `ares` |
 | `EXPO_PUBLIC_STUDIO_SLUG` | `ares-fitness` |
-| `APP_DISPLAY_NAME` | `ARES Fitness` |
+| `APP_DISPLAY_NAME` | `Ares Training Club` |
 | `APP_SCHEME` | `aresfitness` |
 | `IOS_BUNDLE_IDENTIFIER` | `com.fraterunion.aresfitness` |
 | `ANDROID_PACKAGE` | `com.fraterunion.aresfitness` |

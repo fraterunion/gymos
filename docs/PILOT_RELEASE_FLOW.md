@@ -24,7 +24,7 @@ Step-by-step **operator runbook** for a pilot or demo **release candidate**. Pai
 
 ---
 
-## ARES Fitness example
+## Ares Training Club example
 
 **Full stack execution plan:** [`ARES_PILOT_DEPLOYMENT_PLAN.md`](./ARES_PILOT_DEPLOYMENT_PLAN.md) (Phase 8A — Neon, Railway, Vercel, EAS `preview-ares`, Stripe test mode, smoke commands, QA + go/no-go).
 

@@ -1,5 +1,5 @@
 /**
- * ARES Fitness — demo data cleanup script.
+ * Ares Training Club — demo data cleanup script.
  *
  * SAFE BY DEFAULT: runs in DRY_RUN mode unless LIVE_RUN=true is explicitly set.
  * Every write is logged before execution. All decisions are re-verified at

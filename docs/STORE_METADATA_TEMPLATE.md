@@ -141,14 +141,14 @@ Use if you add a first-run screen; keep short and **non-medical** unless complia
 
 ---
 
-## Appendix A — Example: ARES Fitness (illustrative only)
+## Appendix A — Example: Ares Training Club (illustrative only)
 
 **Do not** ship this verbatim if it does not match the real business.
 
-- **Title:** ARES Fitness  
+- **Title:** Ares Training Club  
 - **Subtitle:** Strength & conditioning in [Your city]  
-- **Short description (Play):** Book small-group strength sessions and open gym at ARES Fitness.  
-- **Keywords (App Store):** ares fitness,strength training,gym,classes,[neighborhood]  
+- **Short description (Play):** Book small-group strength sessions and open gym at Ares Training Club.  
+- **Keywords (App Store):** ares training club,strength training,gym,classes,[neighborhood]  
 - **Long description:** Expand templates with real schedule types, pricing disclaimers (“membership required where applicable”), and real support email.
 
 ---

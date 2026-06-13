@@ -1,6 +1,6 @@
 # Demo & pilot data (GymOS)
 
-This document describes the **Prisma seed** in `apps/api/prisma/seed.ts`: two white-label studios (**ARES Fitness**, **Pilates Toluca**), realistic schedules, roles, billing-shaped rows with **fake Stripe identifiers only**, and a **single shared demo password** for local or private pilot machines.
+This document describes the **Prisma seed** in `apps/api/prisma/seed.ts`: two white-label studios (**Ares Training Club**, **Pilates Toluca**), realistic schedules, roles, billing-shaped rows with **fake Stripe identifiers only**, and a **single shared demo password** for local or private pilot machines.
 
 **This is not Stripe test mode:** rows like `cus_demo_*` / `price_demo_*` are placeholders for UI and API shape only. For **real** Checkout, webhooks, and `sub_…` IDs, use a separate lane documented in [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) (`sk_test_`, real test prices created or synced by the API). The seed file is **unchanged** for Stripe pilot docs (Phase 7A/7B) — do not replace fake IDs with live keys in seed data.
 
@@ -31,7 +31,7 @@ This is **intentionally weak** and **public** — suitable only for local dev, C
 
 | Studio | Slug | Mobile env (`EXPO_PUBLIC_STUDIO_SLUG`) |
 |--------|------|----------------------------------------|
-| ARES Fitness | `ares-fitness` | Matches `apps/mobile/env/.env.ares.example` |
+| Ares Training Club | `ares-fitness` | Matches `apps/mobile/env/.env.ares.example` |
 | Pilates Toluca | `pilates-toluca` | Matches `apps/mobile/env/.env.pilates-toluca.example` |
 
 Branding includes display name, primary/secondary colors, support contacts, placeholder legal URLs, and sample logo image URLs (Unsplash — replace for real clients).
@@ -40,7 +40,7 @@ Branding includes display name, primary/secondary colors, support contacts, plac
 
 ## Demo accounts (password: `DemoGymOS2026!`)
 
-### ARES Fitness (`ares-fitness`)
+### Ares Training Club (`ares-fitness`)
 
 | Email | Role | Notes |
 |-------|------|--------|

@@ -1,5 +1,5 @@
 /**
- * GymOS pilot seed — ARES Fitness & Pilates Toluca.
+ * GymOS pilot seed — Ares Training Club & Pilates Toluca.
  * Idempotent for re-runs: clears prior demo studios/users (see DEMO_SLUGS / demo email domains).
  *
  * Shared demo password: see docs/DEMO_ENVIRONMENT.md (not a production secret).
@@ -131,7 +131,7 @@ async function main(): Promise<void> {
   const passwordHash = hashDemoPassword();
   const now = new Date();
 
-  // ─── ARES Fitness ──────────────────────────────────────────────────────────
+  // ─── Ares Training Club ──────────────────────────────────────────────────────────
 
   const ares = await prisma.studio.create({
     data: {

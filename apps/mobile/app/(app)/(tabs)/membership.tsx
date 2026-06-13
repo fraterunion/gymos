@@ -1204,67 +1204,132 @@ export default function MembershipScreen() {
                 marginBottom: Space.cardGap,
               }}
             >
-              <View style={{ height: 3, backgroundColor: primaryColor }} />
-              <View style={{ padding: 26 }}>
+              {/* ── Hero image ── */}
+              <View style={{ height: 150 }}>
+                <ImageSlot
+                  uri={FitnessImages.performance}
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                />
+                <View
+                  pointerEvents="none"
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.20)' }}
+                />
+                <View
+                  pointerEvents="none"
+                  style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%', backgroundColor: 'rgba(0,0,0,0.52)' }}
+                />
+                <View
+                  pointerEvents="none"
+                  style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%', backgroundColor: 'rgba(0,0,0,0.36)' }}
+                />
+              </View>
+
+              {/* Accent bar */}
+              <View style={{ height: 2, backgroundColor: primaryColor }} />
+
+              {/* ── Content ── */}
+              <View style={{ padding: 24 }}>
                 <Text
                   style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    letterSpacing: 1.2,
+                    fontSize: 26,
+                    fontWeight: '800',
+                    letterSpacing: -0.8,
+                    color: C.text,
                     textTransform: 'uppercase',
-                    color: C.textMute,
-                    marginBottom: 10,
+                    lineHeight: 30,
+                    marginBottom: 6,
                   }}
                 >
-                  One-day access
+                  Day Pass
                 </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12 }}>
+                <Text
+                  style={{
+                    fontSize: 14,
+                    color: C.textSub,
+                    letterSpacing: -0.1,
+                    marginBottom: 20,
+                  }}
+                >
+                  Train today. No membership required.
+                </Text>
+
+                {/* Price hero */}
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 18 }}>
                   <Text
                     style={{
-                      fontSize: 40,
+                      fontSize: 48,
                       fontWeight: '800',
-                      letterSpacing: -1.6,
+                      letterSpacing: -2,
                       color: C.text,
-                      lineHeight: 44,
+                      lineHeight: 52,
                     }}
                   >
                     {formatMoneyFromCents(20000, 'mxn')}
                   </Text>
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      color: C.textMute,
+                      marginBottom: 8,
+                      marginLeft: 5,
+                      letterSpacing: -0.2,
+                    }}
+                  >
+                    / day
+                  </Text>
                 </View>
-                <Text
-                  style={{
-                    fontSize: 15,
-                    lineHeight: 23,
-                    color: C.textSub,
-                    marginBottom: 22,
-                    letterSpacing: -0.1,
-                  }}
-                >
-                  Train for one day without a membership. Book any class on the day of your pass.
-                </Text>
 
-              {!isGuest && dayPassSuccess ? (
-                <Text
-                  style={{
-                    fontSize: 14,
-                    color: C.positive,
-                    fontWeight: '600',
-                    marginBottom: 12,
-                    letterSpacing: -0.1,
-                  }}
-                >
-                  Day Pass activated.
-                </Text>
-              ) : null}
+                {/* Benefits */}
+                <View style={{ gap: 10, marginBottom: 24 }}>
+                  {['Full-day access', 'Book eligible classes', 'Perfect for first-time visitors'].map(
+                    (benefit) => (
+                      <View key={benefit} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <View
+                          style={{
+                            width: 5,
+                            height: 5,
+                            borderRadius: 2.5,
+                            backgroundColor: 'rgba(255,255,255,0.55)',
+                            marginRight: 10,
+                          }}
+                        />
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            color: C.textSub,
+                            letterSpacing: -0.1,
+                          }}
+                        >
+                          {benefit}
+                        </Text>
+                      </View>
+                    ),
+                  )}
+                </View>
 
-              {!isGuest && dayPassError ? (
-                <Text style={{ fontSize: 13, color: C.negative, marginBottom: 12, lineHeight: 19 }}>
-                  {dayPassError}
-                </Text>
-              ) : null}
+                {!isGuest && dayPassSuccess ? (
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      color: C.positive,
+                      fontWeight: '600',
+                      marginBottom: 12,
+                      letterSpacing: -0.1,
+                    }}
+                  >
+                    Day Pass activated.
+                  </Text>
+                ) : null}
+
+                {!isGuest && dayPassError ? (
+                  <Text style={{ fontSize: 13, color: C.negative, marginBottom: 12, lineHeight: 19 }}>
+                    {dayPassError}
+                  </Text>
+                ) : null}
 
                 <BrandButton
                   label="Get Day Pass"
+                  variant="white"
                   accentColor={primaryColor}
                   loading={!isGuest && dayPassBusy}
                   disabled={!isGuest && dayPassBusy}

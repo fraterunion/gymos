@@ -13,7 +13,7 @@ const banner = `
   This operation (prisma migrate reset) will:
     - DROP all data in the database pointed to by DATABASE_URL
     - Re-apply migrations from scratch
-    - Run the Prisma seed (ARES Fitness + Pilates Toluca demo data)
+    - Run the Prisma seed (Ares Training Club + Pilates Toluca demo data)
 
   Do NOT run against production, staging with real members, or shared Neon prod.
 

@@ -1,5 +1,5 @@
 /**
- * ARES Fitness — safe production update script.
+ * Ares Training Club — safe production update script.
  *
  * Use this instead of seed.ts when the ares-fitness studio is already live.
  * This script NEVER deletes or modifies:

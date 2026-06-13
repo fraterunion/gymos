@@ -36,6 +36,7 @@ import {
   resolveScheduledClassImageUri,
   resolveCoachPortraitUri,
   CATEGORY_MODULES,
+  FitnessImages,
   type CategoryModule,
 } from '@/lib/imagery';
 import { getColors, Space } from '@/constants/Theme';
@@ -557,39 +558,74 @@ function GuestLanding({
 
         {/* Value proposition + CTAs */}
         <Animated.View entering={FadeInDown.delay(80).duration(460)} style={{ marginBottom: Space.sectionGap }}>
-          <Text
+          <View
             style={{
-              fontSize: 22,
-              fontWeight: '800',
-              letterSpacing: -0.5,
-              color: C.text,
-              marginBottom: 12,
+              backgroundColor: '#141416',
+              borderRadius: 28,
+              borderWidth: 1,
+              borderColor: C.separator,
+              overflow: 'hidden',
             }}
           >
-            Train with us.
-          </Text>
-          <Text
-            style={{
-              fontSize: 15,
-              color: C.textSub,
-              lineHeight: 22,
-              marginBottom: 28,
-            }}
-          >
-            Browse the schedule, pick up a Day Pass, or join with a membership.
-          </Text>
-          <View style={{ gap: 12 }}>
-            <BrandButton
-              label="View Schedule"
-              accentColor={primaryColor}
-              onPress={() => router.push('/(app)/(tabs)/schedule')}
-            />
-            <BrandButton
-              label="View Memberships"
-              variant="ghost"
-              accentColor={primaryColor}
-              onPress={() => router.push('/(app)/(tabs)/membership')}
-            />
+            {/* Hero image with cinematic overlay */}
+            <View style={{ height: 150 }}>
+              <ImageSlot
+                uri={FitnessImages.gym}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+              />
+              <View
+                pointerEvents="none"
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.20)' }}
+              />
+              <View
+                pointerEvents="none"
+                style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%', backgroundColor: 'rgba(0,0,0,0.52)' }}
+              />
+              <View
+                pointerEvents="none"
+                style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '30%', backgroundColor: 'rgba(0,0,0,0.36)' }}
+              />
+            </View>
+
+            <View style={{ padding: 24 }}>
+              <Text
+                style={{
+                  fontSize: 26,
+                  fontWeight: '800',
+                  letterSpacing: -0.6,
+                  color: C.text,
+                  lineHeight: 32,
+                  marginBottom: 10,
+                }}
+              >
+                Train with us.
+              </Text>
+              <Text
+                style={{
+                  fontSize: 15,
+                  color: C.textSub,
+                  lineHeight: 23,
+                  letterSpacing: -0.1,
+                  marginBottom: 24,
+                }}
+              >
+                Book a class, get a Day Pass, or choose the membership that fits your goals.
+              </Text>
+              <View style={{ gap: 12 }}>
+                <BrandButton
+                  label="View Schedule"
+                  variant="white"
+                  accentColor={primaryColor}
+                  onPress={() => router.push('/(app)/(tabs)/schedule')}
+                />
+                <BrandButton
+                  label="View Memberships"
+                  variant="ghost"
+                  accentColor={primaryColor}
+                  onPress={() => router.push('/(app)/(tabs)/membership')}
+                />
+              </View>
+            </View>
           </View>
         </Animated.View>
 

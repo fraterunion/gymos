@@ -18,7 +18,7 @@ Pause for questions; set expectation: **demo data**, not production payments unl
 
 Open the **ARES** member app cold start.
 
-> “Notice there is no generic app name here—this is **ARES Fitness**: colors, logo, and tone come from the studio’s public branding feed. Every client ships their **own** App Store listing and bundle ID; the same platform powers the next example you will see.”
+> “Notice there is no generic app name here—this is **Ares Training Club**: colors, logo, and tone come from the studio’s public branding feed. Every client ships their **own** App Store listing and bundle ID; the same platform powers the next example you will see.”
 
 Point at home/schedule chrome matching brand.
 
