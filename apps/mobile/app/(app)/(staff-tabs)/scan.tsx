@@ -22,6 +22,7 @@ import {
   resolveStaffScanClassDetails,
   staffScanErrorCopy,
 } from '@/lib/staffScanFeedback';
+import { canAccessStaffScan } from '@/lib/staffRole';
 import { getColors, Space } from '@/constants/Theme';
 
 const SCAN_FRAME_SIZE = 248;
@@ -120,9 +121,18 @@ export default function StaffScanScreen() {
   const C = getColors();
   const { appDisplayName } = useBranding();
   const { matched, refetch } = useMemberStudio();
+  const role = matched?.role;
   const studioId = matched?.studio.id;
   const timeZone = matched?.studio.timezone ?? 'UTC';
   const studioSlug = getStudioSlug();
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!canAccessStaffScan(role)) {
+        router.replace('/(app)/(staff-tabs)/today' as Href);
+      }
+    }, [role, router]),
+  );
 
   const [permission, requestPermission] = useCameraPermissions();
   const [submitting, setSubmitting] = useState(false);
@@ -139,8 +149,9 @@ export default function StaffScanScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (!canAccessStaffScan(role)) return;
       resetScanState();
-    }, [resetScanState]),
+    }, [role, resetScanState]),
   );
 
   const handleBarcode = useCallback(
@@ -185,6 +196,10 @@ export default function StaffScanScreen() {
     },
     [studioId, studioSlug, timeZone, submitting, router],
   );
+
+  if (!canAccessStaffScan(role)) {
+    return <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} />;
+  }
 
   if (!studioId) {
     return (

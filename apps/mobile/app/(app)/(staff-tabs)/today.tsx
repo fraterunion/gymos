@@ -14,6 +14,7 @@ import {
   type TodayClassSummaryDto,
 } from '@/lib/api/scheduleApi';
 import { formatClassTime } from '@/lib/datetime';
+import { todayScreenSubtitle } from '@/lib/staffRole';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
@@ -370,7 +371,7 @@ export default function StaffTodayScreen() {
               letterSpacing: -0.1,
             }}
           >
-            Monitor today&apos;s classes and attendance.
+            {todayScreenSubtitle(matched?.role)}
           </Text>
         </Animated.View>
 

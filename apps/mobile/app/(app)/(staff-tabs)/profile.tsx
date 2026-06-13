@@ -7,6 +7,7 @@ import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
+import { staffModeTitle } from '@/lib/staffRole';
 import { getColors, Space } from '@/constants/Theme';
 
 function roleLabel(role: string | null | undefined): string {
@@ -48,7 +49,7 @@ export default function StaffProfileScreen() {
               lineHeight: 44,
             }}
           >
-            Staff Mode
+            {staffModeTitle(matched?.role)}
           </Text>
           <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
             {appDisplayName}
