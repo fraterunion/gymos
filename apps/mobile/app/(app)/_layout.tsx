@@ -113,6 +113,17 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="staff-scan-result"
+          options={{
+            headerShown: true,
+            title: 'Check-in result',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: headerBg },
+            headerTintColor: '#FAFAFA',
+            headerBackTitle: 'Back',
+          }}
+        />
+        <Stack.Screen
           name="billing"
           options={{
             headerShown: false,
