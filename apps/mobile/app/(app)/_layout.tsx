@@ -135,6 +135,17 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="staff-member/[userId]"
+          options={{
+            headerShown: true,
+            title: 'Team Member',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: headerBg },
+            headerTintColor: '#FAFAFA',
+            headerBackTitle: 'Back',
+          }}
+        />
+        <Stack.Screen
           name="billing"
           options={{
             headerShown: false,

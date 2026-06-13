@@ -27,6 +27,7 @@ const ROUTE_ICONS: Record<string, IconName> = {
   // Staff tabs
   scan: 'qrcode',
   today: 'calendar-check-o',
+  team: 'users',
 };
 
 const ROUTE_LABELS: Record<string, string> = {
@@ -38,6 +39,7 @@ const ROUTE_LABELS: Record<string, string> = {
   // Staff tabs
   scan: 'Scan',
   today: 'Today',
+  team: 'Team',
 };
 
 const ACTIVE_COLOR = '#FFFFFF';

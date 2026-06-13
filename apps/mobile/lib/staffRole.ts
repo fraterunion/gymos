@@ -23,6 +23,13 @@ export function canAccessStaffScan(role: string | null | undefined): boolean {
   return Boolean(role && MANUAL_CHECK_IN_ROLES.has(role));
 }
 
+/** Team directory tab is ADMIN | OWNER only. */
+const TEAM_TAB_ROLES = new Set<string>(['ADMIN', 'OWNER']);
+
+export function canAccessTeamTab(role: string | null | undefined): boolean {
+  return Boolean(role && TEAM_TAB_ROLES.has(role));
+}
+
 export function staffModeTitle(role: string | null | undefined): string {
   switch (role) {
     case 'INSTRUCTOR':
