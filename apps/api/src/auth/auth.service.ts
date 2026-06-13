@@ -43,7 +43,7 @@ export class AuthService {
     if (existing) {
       throw new ConflictException('Email already registered');
     }
-    const passwordHash = await bcrypt.hash(dto.password, this.getBcryptRounds());
+    const passwordHash = await this.hashPassword(dto.password);
 
     if (dto.studioSlug) {
       const studio = await this.prisma.studio.findFirst({
@@ -176,6 +176,10 @@ export class AuthService {
 
   async getMe(userId: string): Promise<SafeUser> {
     return this.getSafeUser(userId);
+  }
+
+  async hashPassword(plain: string): Promise<string> {
+    return bcrypt.hash(plain, this.getBcryptRounds());
   }
 
   private async issueAuthBundle(userId: string, email: string): Promise<AuthBundle> {

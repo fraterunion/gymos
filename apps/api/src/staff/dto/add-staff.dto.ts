@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 
 export class AddStaffDto {
@@ -53,4 +54,10 @@ export class AddStaffDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  temporaryPassword?: string;
 }

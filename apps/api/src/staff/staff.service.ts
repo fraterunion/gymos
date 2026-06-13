@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ClassStatus, Prisma, Role, StaffType } from '@prisma/client';
+import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AddStaffDto } from './dto/add-staff.dto';
 import type { ListStaffQueryDto } from './dto/list-staff-query.dto';
@@ -33,7 +34,10 @@ const staffProfileSelect = {
 
 @Injectable()
 export class StaffService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly authService: AuthService,
+  ) {}
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -43,6 +47,38 @@ export class StaffService {
     });
     if (!m) throw new ForbiddenException();
     return m;
+  }
+
+  /**
+   * Sets login credentials for new staff users or existing users without a password.
+   * Rejects temporaryPassword when the user already has login credentials.
+   */
+  private async resolveStaffPassword(
+    existing: { passwordHash: string | null } | null,
+    dto: AddStaffDto,
+  ): Promise<string | null> {
+    const plain = dto.temporaryPassword?.trim();
+    const hasPlain = Boolean(plain);
+
+    if (!existing) {
+      if (!hasPlain) {
+        throw new BadRequestException('Temporary password is required for new staff accounts.');
+      }
+      return this.authService.hashPassword(plain!);
+    }
+
+    if (!existing.passwordHash) {
+      if (!hasPlain) {
+        throw new BadRequestException('Temporary password is required for new staff accounts.');
+      }
+      return this.authService.hashPassword(plain!);
+    }
+
+    if (hasPlain) {
+      throw new BadRequestException('This user already has login credentials.');
+    }
+
+    return null;
   }
 
   private assertCanManageRole(actorRole: Role, targetRole: Role): void {
@@ -246,30 +282,49 @@ export class StaffService {
     const actorMembership = await this.getActorMembership(studioId, actorUserId);
     this.assertCanManageRole(actorMembership.role, dto.role);
 
-    // Find or create user
-    let user = await this.prisma.user.findFirst({
-      where: { email: dto.email.toLowerCase(), deletedAt: null },
+    const email = dto.email.toLowerCase();
+
+    const existingUser = await this.prisma.user.findFirst({
+      where: { email, deletedAt: null },
+      select: { id: true, passwordHash: true },
     });
 
-    if (!user) {
+    if (!existingUser) {
       if (!dto.firstName || !dto.lastName) {
         throw new BadRequestException(
           'No user found with that email. Provide firstName and lastName to create one.',
         );
       }
-      user = await this.prisma.user.create({
+    }
+
+    const passwordHash = await this.resolveStaffPassword(existingUser, dto);
+
+    let userId: string;
+    if (!existingUser) {
+      const created = await this.prisma.user.create({
         data: {
-          email: dto.email.toLowerCase(),
-          firstName: dto.firstName,
-          lastName: dto.lastName,
+          email,
+          firstName: dto.firstName!,
+          lastName: dto.lastName!,
           phone: dto.phone ?? null,
+          passwordHash: passwordHash!,
         },
+        select: { id: true },
       });
+      userId = created.id;
+    } else {
+      if (passwordHash) {
+        await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: { passwordHash },
+        });
+      }
+      userId = existingUser.id;
     }
 
     // Find or update membership
     const existingMembership = await this.prisma.studioMembership.findFirst({
-      where: { studioId, userId: user.id },
+      where: { studioId, userId },
     });
 
     let membershipId: string;
@@ -302,17 +357,17 @@ export class StaffService {
       }
     } else {
       const created = await this.prisma.studioMembership.create({
-        data: { studioId, userId: user.id, role: dto.role },
+        data: { studioId, userId, role: dto.role },
       });
       membershipId = created.id;
     }
 
     // Upsert staff profile
     await this.prisma.studioStaffProfile.upsert({
-      where: { studioId_userId: { studioId, userId: user.id } },
+      where: { studioId_userId: { studioId, userId } },
       create: {
         studioId,
-        userId: user.id,
+        userId,
         staffType: dto.staffType,
         phone: dto.phone ?? null,
         bio: dto.bio ?? null,
