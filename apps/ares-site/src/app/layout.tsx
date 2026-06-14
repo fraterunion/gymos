@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { SiteShell } from '@/components/SiteShell';
 import './globals.css';
 
-const SITE_URL = 'https://ares.fraterunion.com';
+const SITE_URL = 'https://arestrainingclub.com';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
