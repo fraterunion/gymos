@@ -18,7 +18,7 @@ const LOCAL_TEMPLATE_DEFAULTS = {
 /** Checked-in Ares Training Club brand assets (WHITELABEL_PROFILE=ares). */
 const ARES_PROFILE_DEFAULTS = {
   APP_VERSION: '1.0.0',
-  IOS_BUILD_NUMBER: '5',
+  IOS_BUILD_NUMBER: '6',
   // Native launcher name (iOS home screen / Android drawer). Intentionally short.
   APP_LAUNCHER_NAME: 'ARES',
   APP_ICON_PATH: './assets/branding/ares/icon.png',
@@ -153,7 +153,8 @@ module.exports = ({ config }) => {
     },
     ios: {
       ...(config.ios ?? {}),
-      supportsTablet: true,
+      // ARES is iPhone-only — excludes iPad from App Store device family.
+      supportsTablet: profile !== 'ares',
       bundleIdentifier: iosBundleIdentifier,
       ...(iosBuildNumber ? { buildNumber: iosBuildNumber } : {}),
     },
