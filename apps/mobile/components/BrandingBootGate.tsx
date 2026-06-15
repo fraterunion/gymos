@@ -1,45 +1,20 @@
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BrandWordmark } from '@/components/BrandWordmark';
+import { PremiumBootScreen } from '@/components/PremiumBootScreen';
 import { useBranding } from '@/contexts/BrandingContext';
 
 export function BrandingBootGate({ children }: { children: ReactNode }) {
   const { status, error, retry, logoUrl } = useBranding();
 
   if (status === 'loading') {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
-        <View
-          style={{
-            flex: 1,
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingHorizontal: 40,
-          }}
-        >
-          <BrandWordmark logoUrl={logoUrl} />
-          <ActivityIndicator color="rgba(255,255,255,0.4)" style={{ marginTop: 40 }} />
-          <Text
-            style={{
-              marginTop: 18,
-              fontSize: 12,
-              letterSpacing: 0.6,
-              color: 'rgba(255,255,255,0.30)',
-              textAlign: 'center',
-            }}
-          >
-            Loading your training experience...
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
+    return <PremiumBootScreen logoUrl={logoUrl} />;
   }
 
   if (status === 'error') {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }}>
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 32 }}>
           <Text
             style={{
@@ -76,7 +51,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
               backgroundColor: '#FFFFFF',
             }}
           >
-            <Text style={{ fontSize: 16, fontWeight: '700', color: '#0A0A0A' }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#000000' }}>
               Try again
             </Text>
           </Pressable>

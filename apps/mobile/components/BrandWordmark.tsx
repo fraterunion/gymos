@@ -1,22 +1,39 @@
 import Constants from 'expo-constants';
-import { Image, Text, View, type ImageSourcePropType } from 'react-native';
+import { Image } from 'expo-image';
+import { PixelRatio, Text, View } from 'react-native';
 
-import { getColors } from '@/constants/Theme';
 import { getWhitelabelBuildProfile } from '@/lib/env';
+
+/** Logical display width on boot surfaces. Asset is 1800px+ for @3x sharpness. */
+const BOOT_LOGO_WIDTH = 300;
+
+type ImageSource = number | { uri: string };
+
+const LOCAL_BRAND_LOGOS: Record<string, ImageSource> = {
+  ares: require('../assets/branding/ares/splash-wordmark.png'),
+};
+
+/** Intrinsic size of the bundled Ares splash wordmark (1800 × 461). */
+const ARES_WORDMARK_ASPECT = 461 / 1800;
 
 type Props = {
   /** Remote brand logo (from branding API). Used when no bundled logo exists. */
   logoUrl?: string | null;
+  /** Override display width in logical pixels (default: boot width). */
+  width?: number;
 };
 
-/**
- * Bundled brand logos per white-label profile. These win over the remote
- * logoUrl because they are available before branding hydrates (boot/loading)
- * and are the approved marks for the build.
- */
-const LOCAL_BRAND_LOGOS: Record<string, ImageSourcePropType> = {
-  ares: require('../assets/brand/ares-training-club-logo.png'),
-};
+export function getBootWordmarkSource(): ImageSource | null {
+  return LOCAL_BRAND_LOGOS[getWhitelabelBuildProfile()] ?? null;
+}
+
+export function getBootWordmarkSize(width = BOOT_LOGO_WIDTH): { width: number; height: number } {
+  const profile = getWhitelabelBuildProfile();
+  const aspect = profile === 'ares' ? ARES_WORDMARK_ASPECT : 82 / 240;
+  const w = width;
+  const h = Math.round(w * aspect);
+  return { width: w, height: h };
+}
 
 /**
  * Brand lockup for boot/loading surfaces.
@@ -25,17 +42,20 @@ const LOCAL_BRAND_LOGOS: Record<string, ImageSourcePropType> = {
  * typographic lockup from the build-time app display name (APP_DISPLAY_NAME
  * via app.config.js), which never shows the studio slug.
  */
-export function BrandWordmark({ logoUrl }: Props) {
-  const C = getColors();
-  const localLogo = LOCAL_BRAND_LOGOS[getWhitelabelBuildProfile()];
+export function BrandWordmark({ logoUrl, width = BOOT_LOGO_WIDTH }: Props) {
+  const localLogo = getBootWordmarkSource();
+  const { width: w, height: h } = getBootWordmarkSize(width);
 
   if (localLogo) {
     return (
       <Image
         accessibilityIgnoresInvertColors
         source={localLogo}
-        resizeMode="contain"
-        style={{ width: 240, height: 82 }}
+        contentFit="contain"
+        transition={0}
+        style={{ width: w, height: h }}
+        // Hint RN to pick a full-resolution decode on retina devices.
+        cachePolicy="memory-disk"
       />
     );
   }
@@ -45,8 +65,10 @@ export function BrandWordmark({ logoUrl }: Props) {
       <Image
         accessibilityIgnoresInvertColors
         source={{ uri: logoUrl }}
-        resizeMode="contain"
-        style={{ width: 220, height: 88 }}
+        contentFit="contain"
+        transition={0}
+        style={{ width: w, height: h }}
+        cachePolicy="memory-disk"
       />
     );
   }
@@ -62,7 +84,7 @@ export function BrandWordmark({ logoUrl }: Props) {
           fontSize: 42,
           fontWeight: '900',
           letterSpacing: 8,
-          color: C.text,
+          color: '#FFFFFF',
           textTransform: 'uppercase',
           textAlign: 'center',
         }}
@@ -86,4 +108,9 @@ export function BrandWordmark({ logoUrl }: Props) {
       ) : null}
     </View>
   );
+}
+
+/** Minimum bundled asset pixel width for the current display size (@3x safe). */
+export function requiredWordmarkPixelWidth(displayWidth = BOOT_LOGO_WIDTH): number {
+  return Math.ceil(displayWidth * PixelRatio.get());
 }
