@@ -648,7 +648,7 @@ function GuestMembershipPrompt({
         >
           Create an account to subscribe, purchase a Day Pass, and book classes.
         </Text>
-        <BrandButton label="Join Now" accentColor={primaryColor} onPress={onRegister} />
+        <BrandButton label="Join Now" variant="white" accentColor={primaryColor} onPress={onRegister} />
         <InlineAuthLink
           prompt="Already have an account?"
           action="Log in"

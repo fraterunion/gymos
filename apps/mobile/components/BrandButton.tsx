@@ -53,14 +53,14 @@ export function BrandButton({ label, loading, variant = 'primary', accentColor, 
         ]}
       >
         {loading ? (
-          <ActivityIndicator color={isWhite ? '#0A0A0A' : isPrimary ? '#fff' : C.text} />
+          <ActivityIndicator color={isWhite ? '#000000' : isPrimary ? '#fff' : C.text} />
         ) : (
           <Text
             style={{
               fontSize: 16,
               fontWeight: isWhite ? '700' : '600',
               letterSpacing: -0.1,
-              color: isWhite ? '#0A0A0A' : isPrimary ? '#FFFFFF' : C.text,
+              color: isWhite ? '#000000' : isPrimary ? '#FFFFFF' : C.text,
             }}
           >
             {label}

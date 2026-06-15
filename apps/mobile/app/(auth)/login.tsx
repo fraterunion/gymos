@@ -128,8 +128,10 @@ export default function LoginScreen() {
             />
             <Field
               label="Password"
+              showPasswordToggle
               secureTextEntry
               autoComplete="password"
+              textContentType="password"
               placeholder="Enter your password"
               value={password}
               onChangeText={setPassword}

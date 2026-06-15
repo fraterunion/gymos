@@ -166,6 +166,7 @@ function GuestProfileWall({ primaryColor }: { primaryColor: string }) {
         >
           <BrandButton
             label="Create Account"
+            variant="white"
             accentColor={primaryColor}
             onPress={() => router.push('/(auth)/register')}
           />

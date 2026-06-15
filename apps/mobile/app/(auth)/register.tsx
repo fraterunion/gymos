@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -42,7 +42,29 @@ export default function RegisterScreen() {
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [confirmTouched, setConfirmTouched] = useState(false);
+
+  const passwordsMismatch = useMemo(
+    () => confirmPassword.length > 0 && password !== confirmPassword,
+    [password, confirmPassword],
+  );
+
+  const confirmPasswordError = useMemo(() => {
+    if (!confirmTouched && !localError) return null;
+    if (passwordsMismatch) return 'Passwords do not match.';
+    return null;
+  }, [confirmTouched, localError, passwordsMismatch]);
+
+  const canSubmit =
+    !busy &&
+    firstName.trim().length > 0 &&
+    lastName.trim().length > 0 &&
+    email.trim().length > 0 &&
+    password.length >= 8 &&
+    confirmPassword.length > 0 &&
+    !passwordsMismatch;
 
   useEffect(() => {
     if (hydrated && user) {
@@ -58,6 +80,8 @@ export default function RegisterScreen() {
 
   async function onSubmit() {
     setLocalError(null);
+    setConfirmTouched(true);
+
     if (!firstName.trim() || !lastName.trim()) {
       setLocalError('First and last name are required.');
       return;
@@ -70,6 +94,15 @@ export default function RegisterScreen() {
       setLocalError('Password must be at least 8 characters.');
       return;
     }
+    if (!confirmPassword) {
+      setLocalError('Please confirm your password.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setLocalError('Passwords do not match.');
+      return;
+    }
+
     try {
       const studioSlug = getStudioSlug();
       await register({
@@ -84,7 +117,8 @@ export default function RegisterScreen() {
     }
   }
 
-  const combinedError = localError || error;
+  const combinedError =
+    localError && localError !== 'Passwords do not match.' ? localError : error;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
@@ -158,17 +192,36 @@ export default function RegisterScreen() {
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
+              textContentType="emailAddress"
               placeholder="Enter your email"
+              helperText="Used for your account, receipts, and support."
               value={email}
               onChangeText={setEmail}
             />
             <Field
               label="Password"
+              showPasswordToggle
               secureTextEntry
               autoComplete="new-password"
+              textContentType="newPassword"
               value={password}
               onChangeText={setPassword}
               placeholder="Min. 8 characters"
+            />
+            <Field
+              label="Confirm password"
+              showPasswordToggle
+              secureTextEntry
+              autoComplete="new-password"
+              textContentType="newPassword"
+              value={confirmPassword}
+              onChangeText={(value) => {
+                setConfirmPassword(value);
+                if (!confirmTouched) setConfirmTouched(true);
+              }}
+              onBlur={() => setConfirmTouched(true)}
+              placeholder="Re-enter your password"
+              error={confirmPasswordError}
             />
 
             {combinedError ? (
@@ -190,6 +243,7 @@ export default function RegisterScreen() {
               variant="white"
               accentColor={primaryColor}
               loading={busy}
+              disabled={!canSubmit}
               onPress={() => void onSubmit()}
             />
 
