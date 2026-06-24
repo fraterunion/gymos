@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useMemo } from 'react';
-import { RefreshControl, SectionList, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Pressable, RefreshControl, SectionList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ClassCard } from '@/components/ClassCard';
@@ -21,6 +21,7 @@ import {
   calendarDayKeyInZone,
   formatClassDateLabel,
   todayKeyInZone,
+  weekBoundsInZone,
 } from '@/lib/datetime';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 import { getColors, Space } from '@/constants/Theme';
@@ -104,6 +105,84 @@ function DayHeader({
 }
 
 // ---------------------------------------------------------------------------
+// Week navigation
+// ---------------------------------------------------------------------------
+
+function WeekNavigator({
+  label,
+  weekOffset,
+  onChange,
+  accentColor,
+}: {
+  label: string;
+  weekOffset: number;
+  onChange: (next: number) => void;
+  accentColor: string;
+}) {
+  const C = getColors();
+  const canGoPrev = weekOffset > 0;
+
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingTop: 20,
+        paddingBottom: 8,
+        gap: 12,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Semana anterior"
+        onPress={() => canGoPrev && onChange(weekOffset - 1)}
+        disabled={!canGoPrev}
+        hitSlop={10}
+        style={{ opacity: canGoPrev ? 1 : 0.35, minWidth: 72 }}
+      >
+        <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>← Anterior</Text>
+      </Pressable>
+
+      <View style={{ flex: 1, alignItems: 'center' }}>
+        <Text
+          style={{
+            fontSize: 12,
+            fontWeight: '700',
+            letterSpacing: 0.6,
+            textTransform: 'uppercase',
+            color: weekOffset === 0 ? accentColor : C.textMute,
+          }}
+        >
+          {weekOffset === 0 ? 'Esta semana' : 'Semana'}
+        </Text>
+        <Text
+          style={{
+            fontSize: 13,
+            color: C.textSub,
+            marginTop: 4,
+            letterSpacing: -0.1,
+            textAlign: 'center',
+          }}
+        >
+          {label}
+        </Text>
+      </View>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Siguiente semana"
+        onPress={() => onChange(weekOffset + 1)}
+        hitSlop={10}
+        style={{ minWidth: 72, alignItems: 'flex-end' }}
+      >
+        <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>Siguiente →</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 
@@ -113,18 +192,26 @@ export default function ScheduleScreen() {
   const { primaryColor } = useBranding();
   const { timezone, loading: studioLoading } = usePublicStudio();
   const { classes, loading: scheduleLoading, error, refresh } = usePublicSchedule();
+  const [weekOffset, setWeekOffset] = useState(0);
 
   const timeZone = timezone;
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
+  const weekBounds = useMemo(
+    () => weekBoundsInZone(timeZone, weekOffset),
+    [timeZone, weekOffset],
+  );
 
   const sections: Section[] = useMemo(() => {
     const now = Date.now();
     const fut = classes.filter(
-      (c) => c.status === 'SCHEDULED' && new Date(c.startsAt).getTime() > now,
+      (c) =>
+        c.status === 'SCHEDULED' &&
+        new Date(c.startsAt).getTime() > now,
     );
     const map = new Map<string, ScheduledClassDto[]>();
     for (const c of fut) {
       const k = calendarDayKeyInZone(c.startsAt, timeZone);
+      if (k < weekBounds.startKey || k > weekBounds.endKey) continue;
       if (!map.has(k)) map.set(k, []);
       map.get(k)!.push(c);
     }
@@ -138,7 +225,7 @@ export default function ScheduleScreen() {
         data: map.get(k)!,
       };
     });
-  }, [classes, timeZone, todayKey]);
+  }, [classes, timeZone, todayKey, weekBounds.startKey, weekBounds.endKey]);
 
   if (studioLoading) return <ScreenLoader />;
   if (error && classes.length === 0) return <LoadRetryPanel message={error} onRetry={refresh} />;
@@ -171,11 +258,19 @@ export default function ScheduleScreen() {
             />
           }
           ListHeaderComponent={
-            error ? (
-              <View style={{ paddingTop: 8 }}>
-                <ErrorBanner message={error} onRetry={refresh} />
-              </View>
-            ) : null
+            <>
+              <WeekNavigator
+                label={weekBounds.label}
+                weekOffset={weekOffset}
+                onChange={setWeekOffset}
+                accentColor={primaryColor}
+              />
+              {error ? (
+                <View style={{ paddingTop: 8 }}>
+                  <ErrorBanner message={error} onRetry={refresh} />
+                </View>
+              ) : null}
+            </>
           }
           ListEmptyComponent={
             <View style={{ marginTop: 80 }}>

@@ -32,6 +32,9 @@ import {
 } from '@/lib/datetime';
 import { getStudioSlug } from '@/lib/env';
 import { resolveCoachPortraitUri, resolveScheduledClassImageUri } from '@/lib/imagery';
+import { LowSpotsBadge } from '@/components/LowSpotsBadge';
+import { resolveCoachDisplayName } from '@/lib/coachDisplay';
+import { lowSpotsLabel } from '@/lib/spotsRemaining';
 import { getColors, Space } from '@/constants/Theme';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
@@ -59,17 +62,16 @@ function InstructorBlock({
   firstName,
   lastName,
   photoUrl,
-  bio,
   accentColor,
 }: {
   firstName: string;
   lastName: string;
   photoUrl?: string | null;
-  bio?: string | null;
   accentColor: string;
 }) {
   const C = getColors();
-  const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
+  const displayName = resolveCoachDisplayName(firstName, lastName);
+  const initials = `${displayName[0] ?? ''}`.toUpperCase();
   const portraitUri = photoUrl ?? resolveCoachPortraitUri(firstName, lastName);
 
   return (
@@ -115,14 +117,9 @@ function InstructorBlock({
 
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 }}>
-          {firstName} {lastName}
+          {displayName}
         </Text>
         <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>Coach</Text>
-        {bio ? (
-          <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, marginTop: 8 }}>
-            {bio}
-          </Text>
-        ) : null}
       </View>
     </View>
   );
@@ -502,6 +499,11 @@ export default function ClassDetailScreen() {
                   Hasta {cls.capacity}
                 </Text>
               </View>
+              {lowSpotsLabel(cls) ? (
+                <View style={{ marginTop: 12 }}>
+                  <LowSpotsBadge label={lowSpotsLabel(cls)!} />
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -513,7 +515,6 @@ export default function ClassDetailScreen() {
                 firstName={cls.instructor.firstName}
                 lastName={cls.instructor.lastName}
                 photoUrl={instructorProfile?.photoUrl}
-                bio={instructorProfile?.bio}
                 accentColor={accentColor}
               />
             ) : null}

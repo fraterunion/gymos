@@ -11,6 +11,9 @@ import { ImageSlot } from '@/components/ImageSlot';
 import { Space } from '@/constants/Theme';
 import { bookingStatusColors, type BookingStatusPillConfig } from '@/lib/bookingStatus';
 import { formatClassTime } from '@/lib/datetime';
+import { resolveCoachDisplayName } from '@/lib/coachDisplay';
+import { lowSpotsLabel } from '@/lib/spotsRemaining';
+import { LowSpotsBadge } from '@/components/LowSpotsBadge';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
 type Props = {
@@ -40,8 +43,9 @@ export function ClassCard({
   footer,
 }: Props) {
   const ins = item.instructor
-    ? `${item.instructor.firstName} ${item.instructor.lastName}`.trim()
+    ? resolveCoachDisplayName(item.instructor.firstName, item.instructor.lastName)
     : null;
+  const spotsWarning = lowSpotsLabel(item);
   const duration = item.classTemplate.durationMinutes;
   const time = formatClassTime(item.startsAt, timeZone);
 
@@ -143,6 +147,8 @@ export function ClassCard({
               {ins}
             </Text>
           ) : null}
+
+          {spotsWarning ? <LowSpotsBadge label={spotsWarning} /> : null}
         </View>
 
         {/* Right image thumbnail */}

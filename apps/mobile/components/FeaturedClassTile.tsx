@@ -8,6 +8,9 @@ import Animated, {
 
 import { ImageSlot } from '@/components/ImageSlot';
 import { formatClassTime } from '@/lib/datetime';
+import { resolveCoachDisplayName } from '@/lib/coachDisplay';
+import { lowSpotsLabel } from '@/lib/spotsRemaining';
+import { LowSpotsBadge } from '@/components/LowSpotsBadge';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
 type Props = {
@@ -36,8 +39,9 @@ export function FeaturedClassTile({
   imageUri,
 }: Props) {
   const ins = item.instructor
-    ? `${item.instructor.firstName} ${item.instructor.lastName}`.trim()
+    ? resolveCoachDisplayName(item.instructor.firstName, item.instructor.lastName)
     : null;
+  const spotsWarning = lowSpotsLabel(item);
   const time = formatClassTime(item.startsAt, timeZone);
   const duration = item.classTemplate.durationMinutes;
 
@@ -130,6 +134,11 @@ export function FeaturedClassTile({
               </>
             ) : null}
           </View>
+          {spotsWarning ? (
+            <View style={{ marginTop: 10 }}>
+              <LowSpotsBadge label={spotsWarning} />
+            </View>
+          ) : null}
         </View>
       </Pressable>
     </Animated.View>

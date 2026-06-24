@@ -44,6 +44,7 @@ import {
   type DayPassStatus,
 } from '@/lib/api/dayPassesApi';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
+import { resolveAresPlanBenefits, resolveAresPricePerClassLabel } from '@/lib/aresMembershipPlans';
 import { FitnessImages } from '@/lib/imagery';
 import { statusConfig } from '@/lib/membershipStatus';
 import { todayKeyInZone } from '@/lib/datetime';
@@ -406,6 +407,40 @@ function resolvePlanTheme(planName: string, index: number): PlanHeroTheme {
   return PLAN_THEME_DEFAULTS[index % PLAN_THEME_DEFAULTS.length]!;
 }
 
+function PlanBenefitRow({ text }: { text: string }) {
+  const C = getColors();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+      <View
+        style={{
+          width: 20,
+          height: 20,
+          borderRadius: 10,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'rgba(255,255,255,0.08)',
+          borderWidth: 1,
+          borderColor: 'rgba(255,255,255,0.12)',
+          marginTop: 1,
+        }}
+      >
+        <Text style={{ fontSize: 11, fontWeight: '700', color: C.text }}>✓</Text>
+      </View>
+      <Text
+        style={{
+          flex: 1,
+          fontSize: 14,
+          lineHeight: 21,
+          color: C.textSub,
+          letterSpacing: -0.1,
+        }}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
 function PlanCard({
   plan,
   onSubscribe,
@@ -428,6 +463,8 @@ function PlanCard({
   const priceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
   const intervalStr = billingIntervalLabel(plan.billingInterval);
   const credits = creditsLabel(plan.classCredits);
+  const benefits = resolveAresPlanBenefits(plan.name);
+  const pricePerClass = resolveAresPricePerClassLabel(plan);
 
   return (
     <Animated.View
@@ -547,7 +584,27 @@ function PlanCard({
             </Text>
           </View>
 
-          {plan.description ? (
+          {pricePerClass ? (
+            <Text
+              style={{
+                fontSize: 17,
+                fontWeight: '700',
+                color: theme.accentColor,
+                letterSpacing: -0.3,
+                marginBottom: 18,
+              }}
+            >
+              {pricePerClass}
+            </Text>
+          ) : null}
+
+          {benefits.length > 0 ? (
+            <View style={{ marginBottom: credits ? 14 : 22 }}>
+              {benefits.map((benefit) => (
+                <PlanBenefitRow key={benefit} text={benefit} />
+              ))}
+            </View>
+          ) : plan.description ? (
             <Text
               style={{
                 fontSize: 14,

@@ -117,10 +117,7 @@ export type CategoryModule = {
 };
 
 export const CATEGORY_MODULES: CategoryModule[] = [
-  { id: 'strength',    label: 'Fuerza',     imageUri: FitnessImages.strength,    accent: '#E87B35' },
-  { id: 'running',     label: 'Cardio',     imageUri: FitnessImages.running,     accent: '#F59E0B' },
-  { id: 'yoga',        label: 'Yoga',       imageUri: FitnessImages.yoga,        accent: '#8B5CF6' },
-  { id: 'hiit',        label: 'HIIT',       imageUri: FitnessImages.hiit,        accent: '#EF4444' },
-  { id: 'boxing',      label: 'Boxing',     imageUri: FitnessImages.boxing,      accent: '#F59E0B' },
-  { id: 'recovery',    label: 'Recuperación', imageUri: FitnessImages.recovery,  accent: '#10B981' },
+  { id: 'mobility', label: 'Calistenia', imageUri: FitnessImages.mobility, accent: '#10B981' },
+  { id: 'strength', label: 'Fuerza', imageUri: FitnessImages.strength, accent: '#E87B35' },
+  { id: 'running', label: 'Hyrox', imageUri: FitnessImages.running, accent: '#06B6D4' },
 ];

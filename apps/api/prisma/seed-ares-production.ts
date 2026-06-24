@@ -148,7 +148,7 @@ const PLAN_DEFS = [
   {
     name: 'Full Access',
     description:
-      'Clases ilimitadas + Open Gym (11am–10pm) + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
+      'Clases ilimitadas + Open Gym · 11:00 a.m. – 5:00 p.m. + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
     priceCents: 195000,
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
@@ -158,7 +158,7 @@ const PLAN_DEFS = [
   {
     name: 'Basic Access',
     description:
-      '12 clases al mes + Open Gym (11am–10pm) + 3 guest passes. Créditos no acumulables.',
+      '12 clases al mes + Open Gym · 11:00 a.m. – 5:00 p.m. + 3 guest passes. Créditos no acumulables.',
     priceCents: 130000,
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
@@ -190,7 +190,7 @@ const PLAN_DEFS = [
 const TEMPLATE_DEFS = [
   {
     name: 'Upper Push',
-    description: 'Pecho, hombro y tríceps — press, dips y variantes de empuje. Escala de peso para todos los niveles.',
+    description: 'Rutina enfocada al grupo muscular seleccionado por día. ARES Method.',
     duration: 60,
     color: '#c9a227',
     category: ClassCategory.STRENGTH,
@@ -199,7 +199,7 @@ const TEMPLATE_DEFS = [
   },
   {
     name: 'Upper Pull',
-    description: 'Espalda, bíceps y tracción — jalones, remos y dominadas. Mejora tu pull strength en cada sesión.',
+    description: 'Rutina enfocada al grupo muscular seleccionado por día. ARES Method.',
     duration: 60,
     color: '#0f172a',
     category: ClassCategory.STRENGTH,
@@ -226,7 +226,7 @@ const TEMPLATE_DEFS = [
   },
   {
     name: 'Calirox',
-    description: 'Calistenia explosiva + intervalos de alta intensidad. Sin equipo, máximo esfuerzo.',
+    description: 'Un festín entre calistenia y Hyrox. En Calirox encontrarás un entrenamiento basado en fuerza y control corporal combinado con la resistencia y funcionalidad de Hyrox. Sin duda, uno de los favoritos.',
     duration: 45,
     color: '#f97316',
     category: ClassCategory.HIIT,
@@ -235,7 +235,7 @@ const TEMPLATE_DEFS = [
   },
   {
     name: 'Hyrox',
-    description: 'Entrenamiento específico para competencia Hyrox: ski erg, sled, burpees broadjump y más. Pace + fuerza.',
+    description: 'Sesiones personalizadas enfocadas totalmente en las estaciones de Hyrox. Aprenderás a mejorar tu tiempo y eficientar la ejecución de cada ejercicio.',
     duration: 60,
     color: '#06b6d4',
     category: ClassCategory.HYROX,
@@ -244,7 +244,7 @@ const TEMPLATE_DEFS = [
   },
   {
     name: 'Street Bars',
-    description: 'Street workout en barra fija y paralelas — muscle-ups, front lever progressions y dominadas weighted.',
+    description: 'Clase 100% enfocada en técnica y mejora de tu fuerza y control corporal. Aprenderás a controlar tu cuerpo y su fuerza.',
     duration: 60,
     color: '#10b981',
     category: ClassCategory.STRENGTH,

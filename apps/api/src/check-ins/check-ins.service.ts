@@ -86,9 +86,8 @@ function isQrJwtPayload(v: JwtPayload | string): v is QrJwtPayload & JwtPayload 
 function isWithinCheckInWindow(classStartsAt: Date, now: Date): boolean {
   const startMs = classStartsAt.getTime();
   const nowMs = now.getTime();
-  const earlyMs = 15 * 60 * 1000;
   const lateMs = 30 * 60 * 1000;
-  return nowMs >= startMs - earlyMs && nowMs <= startMs + lateMs;
+  return nowMs <= startMs + lateMs;
 }
 
 @Injectable()

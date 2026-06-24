@@ -15,9 +15,6 @@ import { createBookingQr, fetchBookingAttendance, type AttendanceSummaryDto } fr
 import { ApiError } from '@/lib/api/errors';
 import {
   isAfterCheckInWindow,
-  isBeforeCheckInWindow,
-  isWithinCheckInWindow,
-  msUntilCheckInOpens,
 } from '@/lib/checkInWindow';
 import { formatClassRange } from '@/lib/datetime';
 import { scheduledClassTitle } from '@/lib/classUtils';
@@ -74,8 +71,6 @@ export default function CheckInQrScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const classStartsAt = booking?.scheduledClass.startsAt ?? null;
-  const inWindow = classStartsAt ? isWithinCheckInWindow(classStartsAt) : false;
-  const tooEarly = classStartsAt ? isBeforeCheckInWindow(classStartsAt) : false;
   const tooLate = classStartsAt ? isAfterCheckInWindow(classStartsAt) : false;
 
   const secondsLeft = useMemo(() => {
@@ -106,11 +101,7 @@ export default function CheckInQrScreen() {
   }, [studioId, bookingId]);
 
   const requestQr = useCallback(async () => {
-    if (!studioId || !bookingId || !classStartsAt) return;
-    if (!isWithinCheckInWindow(classStartsAt)) {
-      setError(null);
-      return;
-    }
+    if (!studioId || !bookingId) return;
     setLoadingQr(true);
     setError(null);
     try {
@@ -125,7 +116,7 @@ export default function CheckInQrScreen() {
     } finally {
       setLoadingQr(false);
     }
-  }, [studioId, bookingId, classStartsAt]);
+  }, [studioId, bookingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +130,7 @@ export default function CheckInQrScreen() {
       try {
         const att = await loadAttendance();
         if (cancelled) return;
-        if (!att && classStartsAt && isWithinCheckInWindow(classStartsAt)) {
+        if (!att) {
           await requestQr();
         }
       } catch (e) {
@@ -180,9 +171,7 @@ export default function CheckInQrScreen() {
       const att = await loadAttendance();
       if (att) return;
       if (qrExpired || !qrToken) {
-        if (classStartsAt && isWithinCheckInWindow(classStartsAt)) {
-          await requestQr();
-        }
+        await requestQr();
       }
       await refresh();
     } catch (e) {
@@ -283,23 +272,6 @@ export default function CheckInQrScreen() {
               <BrandButton label="Actualizar estado" accentColor={primaryColor} onPress={() => void onRefresh()} />
             </View>
           </View>
-        ) : tooEarly ? (
-          <View className="mt-10 rounded-3xl border border-neutral-200 bg-white px-6 py-10 dark:border-neutral-800 dark:bg-neutral-900">
-            <Text className="text-center text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-              El check-in abre pronto
-            </Text>
-            <Text className="mt-3 text-center text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-              Podrás mostrar tu código de check-in a partir de 15 minutos antes de la clase y durante un periodo breve después del inicio.
-            </Text>
-            {tooEarly && msUntilCheckInOpens(classStartsAt) > 0 ? (
-              <Text className="mt-6 text-center text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                Abre en ~{Math.ceil(msUntilCheckInOpens(classStartsAt) / 60000)} min
-              </Text>
-            ) : null}
-            <View className="mt-8">
-              <BrandButton label="Actualizar estado" accentColor={primaryColor} onPress={() => void onRefresh()} />
-            </View>
-          </View>
         ) : qrExpired ? (
           <View className="mt-10">
             <View className="rounded-3xl border border-amber-200 bg-amber-50 px-6 py-8 dark:border-amber-900/40 dark:bg-amber-950/30">
@@ -366,7 +338,7 @@ export default function CheckInQrScreen() {
           </View>
         )}
 
-        {error && hasLoadedAttendance && inWindow && qrToken && !qrExpired && !checkedIn ? (
+        {error && hasLoadedAttendance && qrToken && !qrExpired && !checkedIn && !tooLate ? (
           <Text className="mt-6 text-center text-sm text-red-600 dark:text-red-400">{error}</Text>
         ) : null}
       </ScrollView>

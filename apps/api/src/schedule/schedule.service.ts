@@ -76,16 +76,27 @@ export class ScheduleService {
     if (from >= to) {
       throw new BadRequestException('from must be before to');
     }
-    return this.prisma.scheduledClass.findMany({
+    const rows = await this.prisma.scheduledClass.findMany({
       where: {
         studioId,
         startsAt: { lt: to },
         endsAt: { gt: from },
         classTemplate: { deletedAt: null },
       },
-      include: scheduleInclude(studioId),
+      include: {
+        ...scheduleInclude(studioId),
+        _count: {
+          select: {
+            bookings: { where: { status: BookingStatus.CONFIRMED } },
+          },
+        },
+      },
       orderBy: { startsAt: 'asc' },
     });
+    return rows.map(({ _count, ...row }) => ({
+      ...row,
+      bookedCount: _count.bookings,
+    }));
   }
 
   async listPublicSchedule(studioId: string, query: ScheduleQueryDto) {
@@ -97,7 +108,7 @@ export class ScheduleService {
     if (from >= to) {
       throw new BadRequestException('from must be before to');
     }
-    return this.prisma.scheduledClass.findMany({
+    const rows = await this.prisma.scheduledClass.findMany({
       where: {
         studioId,
         status: ClassStatus.SCHEDULED,
@@ -105,9 +116,20 @@ export class ScheduleService {
         endsAt: { gt: from },
         classTemplate: { deletedAt: null },
       },
-      include: scheduleInclude(studioId),
+      include: {
+        ...scheduleInclude(studioId),
+        _count: {
+          select: {
+            bookings: { where: { status: BookingStatus.CONFIRMED } },
+          },
+        },
+      },
       orderBy: { startsAt: 'asc' },
     });
+    return rows.map(({ _count, ...row }) => ({
+      ...row,
+      bookedCount: _count.bookings,
+    }));
   }
 
   async createScheduledClass(

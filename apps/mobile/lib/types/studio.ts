@@ -51,6 +51,7 @@ export type ScheduledClassDto = {
   startsAt: string;
   endsAt: string;
   capacity: number;
+  bookedCount?: number;
   status: string;
   instructorId: string | null;
   classTemplateId: string;

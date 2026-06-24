@@ -39,6 +39,7 @@ import {
   FitnessImages,
   type CategoryModule,
 } from '@/lib/imagery';
+import { resolveCoachDisplayName } from '@/lib/coachDisplay';
 import { getColors, Space } from '@/constants/Theme';
 import { fetchMyMemberProfile } from '@/lib/api/membershipApi';
 import type { BookingWithClass, ScheduledClassDto } from '@/lib/types/studio';
@@ -181,7 +182,7 @@ function CategoryStrip() {
         contentContainerStyle={{ paddingHorizontal: Space.screenH, gap: 10 }}
       >
         {CATEGORY_MODULES.map((cat, i) => (
-          <CategoryTile key={cat.id} category={cat} delay={100 + i * 45} />
+          <CategoryTile key={`${cat.id}-${cat.label}`} category={cat} delay={100 + i * 45} />
         ))}
       </ScrollView>
     </Animated.View>
@@ -195,8 +196,9 @@ function CategoryStrip() {
 type CoachEntry = { key: string; firstName: string; lastName: string; classCount: number; photoUrl?: string | null };
 
 function CoachCard({ coach }: { coach: CoachEntry }) {
+  const displayName = resolveCoachDisplayName(coach.firstName, coach.lastName);
   const portraitUri = coach.photoUrl ?? resolveCoachPortraitUri(coach.firstName, coach.lastName);
-  const initials = `${coach.firstName[0] ?? ''}${coach.lastName[0] ?? ''}`.toUpperCase();
+  const initials = `${displayName[0] ?? ''}`.toUpperCase();
 
   return (
     <View style={{ alignItems: 'center', width: 76 }}>
@@ -242,10 +244,7 @@ function CoachCard({ coach }: { coach: CoachEntry }) {
           textAlign: 'center',
         }}
       >
-        {coach.firstName}
-      </Text>
-      <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2, textAlign: 'center' }}>
-        {coach.classCount} {coach.classCount === 1 ? 'clase' : 'clases'}
+        {displayName}
       </Text>
     </View>
   );

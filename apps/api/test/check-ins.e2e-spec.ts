@@ -34,8 +34,9 @@ function classTimesWithinCheckInWindow() {
   return { start, end };
 }
 
+/** Class started 45 minutes ago — outside the 30-minute post-start check-in window. */
 function classTimesOutsideCheckInWindow() {
-  const start = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  const start = new Date(Date.now() - 45 * 60 * 1000);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   return { start, end };
 }
