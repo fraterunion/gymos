@@ -44,9 +44,9 @@ function MemberShell() {
     return (
       <View style={{ flex: 1, justifyContent: 'center', backgroundColor: '#0A0A0A', paddingHorizontal: 32 }}>
         <Text style={{ textAlign: 'center', fontSize: 15, lineHeight: 22, color: 'rgba(255,255,255,0.50)', marginBottom: 32 }}>
-          {ms.error ?? 'Could not verify studio access.'}
+          {ms.error ?? 'No pudimos verificar tu acceso al estudio.'}
         </Text>
-        <BrandButton label="Try again" accentColor={primaryColor} onPress={() => void ms.refetch()} />
+        <BrandButton label="Reintentar" accentColor={primaryColor} onPress={() => void ms.refetch()} />
       </View>
     );
   }
@@ -83,22 +83,22 @@ function MemberShell() {
           name="class/[classId]"
           options={{
             headerShown: true,
-            title: 'Class',
+            title: 'Clase',
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
             headerTintColor: '#FAFAFA',
-            headerBackTitle: 'Back',
+            headerBackTitle: 'Atrás',
           }}
         />
         <Stack.Screen
           name="progress"
           options={{
             headerShown: true,
-            title: 'Progress',
+            title: 'Progreso',
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
             headerTintColor: '#FAFAFA',
-            headerBackTitle: 'Back',
+            headerBackTitle: 'Atrás',
           }}
         />
         <Stack.Screen
@@ -109,40 +109,40 @@ function MemberShell() {
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
             headerTintColor: '#FAFAFA',
-            headerBackTitle: 'Back',
+            headerBackTitle: 'Atrás',
           }}
         />
         <Stack.Screen
           name="staff-scan-result"
           options={{
             headerShown: true,
-            title: 'Check-in result',
+            title: 'Resultado del check-in',
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
             headerTintColor: '#FAFAFA',
-            headerBackTitle: 'Back',
+            headerBackTitle: 'Atrás',
           }}
         />
         <Stack.Screen
           name="staff-class-roster"
           options={{
             headerShown: true,
-            title: 'Class Roster',
+            title: 'Lista de clase',
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
             headerTintColor: '#FAFAFA',
-            headerBackTitle: 'Back',
+            headerBackTitle: 'Atrás',
           }}
         />
         <Stack.Screen
           name="staff-member/[userId]"
           options={{
             headerShown: true,
-            title: 'Team Member',
+            title: 'Miembro del equipo',
             headerShadowVisible: false,
             headerStyle: { backgroundColor: headerBg },
             headerTintColor: '#FAFAFA',
-            headerBackTitle: 'Back',
+            headerBackTitle: 'Atrás',
           }}
         />
         <Stack.Screen

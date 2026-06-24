@@ -14,11 +14,11 @@ export type AuthRequiredModalProps = {
   onClose: () => void;
 };
 
-const DEFAULT_TITLE = 'Create your account';
+const DEFAULT_TITLE = 'Crea tu cuenta';
 const DEFAULT_DESCRIPTION =
-  'Create an account to book classes, purchase day passes, manage memberships, and track your training.';
-const DEFAULT_PRIMARY_LABEL = 'Create Account';
-const DEFAULT_SECONDARY_LABEL = 'Log In';
+  'Reserva clases, compra pases diarios y administra tu membresía desde un solo lugar.';
+const DEFAULT_PRIMARY_LABEL = 'Crear cuenta';
+const DEFAULT_SECONDARY_LABEL = 'Iniciar sesión';
 
 const CARD_MAX_WIDTH = 420;
 
@@ -46,7 +46,7 @@ export function AuthRequiredModal({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Close dialog"
+        accessibilityLabel="Cerrar diálogo"
         onPress={onClose}
         style={{
           flex: 1,
@@ -71,7 +71,7 @@ export function AuthRequiredModal({
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close"
+            accessibilityLabel="Cerrar"
             onPress={onClose}
             hitSlop={12}
             style={{

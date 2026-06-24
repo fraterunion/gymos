@@ -35,7 +35,7 @@ export function PublicScheduleProvider({ children }: { children: ReactNode }) {
       const data = await fetchPublicSchedule(slug, from, to);
       setClasses(data);
     } catch (e) {
-      setError(userFacingApiMessage(e, 'We could not load the schedule. Pull to try again.'));
+      setError(userFacingApiMessage(e, 'No pudimos cargar el horario. Desliza para intentar de nuevo.'));
     } finally {
       setLoading(false);
     }

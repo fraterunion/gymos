@@ -128,7 +128,7 @@ export default function ProgressScreen() {
         setError(
           userFacingApiMessage(
             progressResult.reason,
-            'Could not load your progress. Pull to refresh.',
+            'No pudimos cargar tu progreso. Desliza hacia abajo para actualizar.',
           ),
         );
       }
@@ -189,7 +189,7 @@ export default function ProgressScreen() {
               lineHeight: 44,
             }}
           >
-            Progress
+            Progreso
           </Text>
         </Animated.View>
 
@@ -228,7 +228,7 @@ export default function ProgressScreen() {
                   marginBottom: 10,
                 }}
               >
-                Every champion starts with a first session.
+                Todo campeón empieza con su primera sesión.
               </Text>
               <Text
                 style={{
@@ -239,7 +239,7 @@ export default function ProgressScreen() {
                   maxWidth: 260,
                 }}
               >
-                Check in to your first class and begin building your training history.
+                Haz check-in en tu primera clase y empieza a construir tu historial de entrenamiento.
               </Text>
             </View>
           </Animated.View>
@@ -255,16 +255,16 @@ export default function ProgressScreen() {
                 marginTop: 16,
               }}
             >
-              <HeroStat value={String(progress.totalCheckIns)} label="Total check-ins" />
-              <HeroStat value={String(progress.monthCheckIns)} label="This month" />
-              <HeroStat value={`${progress.currentStreak}w`} label="Current streak" />
-              <HeroStat value={`${progress.bestStreak}w`} label="Best streak" />
+              <HeroStat value={String(progress.totalCheckIns)} label="Check-ins totales" />
+              <HeroStat value={String(progress.monthCheckIns)} label="Este mes" />
+              <HeroStat value={`${progress.currentStreak}w`} label="Racha actual" />
+              <HeroStat value={`${progress.bestStreak}w`} label="Mejor racha" />
             </Animated.View>
 
             {/* ── Favorite class ── */}
             {progress.favoriteClass ? (
               <Animated.View entering={FadeInDown.delay(120).duration(420)}>
-                <SectionLabel>Favorite class</SectionLabel>
+                <SectionLabel>Clase favorita</SectionLabel>
                 <View style={{ ...cardStyle(C), overflow: 'hidden' }}>
                   <View style={{ height: 3, backgroundColor: primaryColor }} />
                   <View style={{ padding: 24 }}>
@@ -280,7 +280,7 @@ export default function ProgressScreen() {
                       {progress.favoriteClass.name}
                     </Text>
                     <Text style={{ fontSize: 14, color: C.textSub }}>
-                      {progress.favoriteClass.count} check-ins all time
+                      {progress.favoriteClass.count} check-ins en total
                     </Text>
                   </View>
                 </View>
@@ -290,7 +290,7 @@ export default function ProgressScreen() {
             {/* ── Class breakdown ── */}
             {progress.classBreakdown.length > 0 ? (
               <Animated.View entering={FadeInDown.delay(160).duration(420)}>
-                <SectionLabel>Class breakdown</SectionLabel>
+                <SectionLabel>Desglose por clase</SectionLabel>
                 <View style={{ ...cardStyle(C), padding: 22, gap: 16 }}>
                   {progress.classBreakdown.map((item) => (
                     <View key={item.templateId}>
@@ -342,7 +342,7 @@ export default function ProgressScreen() {
             {/* ── Recent activity ── */}
             {progress.recentActivity.length > 0 ? (
               <Animated.View entering={FadeInDown.delay(200).duration(420)}>
-                <SectionLabel>Recent activity</SectionLabel>
+                <SectionLabel>Actividad reciente</SectionLabel>
                 <View style={{ ...cardStyle(C), paddingHorizontal: 22 }}>
                   {progress.recentActivity.map((item, i) => (
                     <View
@@ -396,7 +396,7 @@ export default function ProgressScreen() {
         {/* ── Leaderboard ── */}
         {leaderboard && leaderboard.top.length === 0 ? (
           <Animated.View entering={FadeInDown.delay(240).duration(420)}>
-            <SectionLabel>This month's leaderboard</SectionLabel>
+            <SectionLabel>Tabla del mes</SectionLabel>
             <View
               style={{
                 ...cardStyle(C),
@@ -414,7 +414,7 @@ export default function ProgressScreen() {
                   marginBottom: 8,
                 }}
               >
-                Leaderboard coming soon.
+                Tabla de posiciones próximamente.
               </Text>
               <Text
                 style={{
@@ -425,13 +425,13 @@ export default function ProgressScreen() {
                   maxWidth: 240,
                 }}
               >
-                Be one of the first members to start climbing the rankings.
+                Sé de los primeros en empezar a subir en el ranking.
               </Text>
             </View>
           </Animated.View>
         ) : leaderboard && leaderboard.top.length > 0 ? (
           <Animated.View entering={FadeInDown.delay(240).duration(420)}>
-            <SectionLabel>This month's leaderboard</SectionLabel>
+            <SectionLabel>Tabla del mes</SectionLabel>
             <View style={{ ...cardStyle(C), paddingHorizontal: 22 }}>
               {leaderboard.top.map((entry, i) => {
                 const isMe = leaderboard.me.rank === entry.rank;
@@ -491,7 +491,7 @@ export default function ProgressScreen() {
                       }}
                     >
                       {entry.displayName}
-                      {isMe ? '  ·  You' : ''}
+                      {isMe ? '  ·  Tú' : ''}
                     </Text>
                     <Text style={{ fontSize: 14, fontWeight: '600', color: C.textSub }}>
                       {entry.checkIns}
@@ -503,9 +503,8 @@ export default function ProgressScreen() {
 
             {leaderboard.me.rank === null && leaderboard.me.checkIns > 0 ? (
               <Text style={{ fontSize: 13, color: C.textMute, marginTop: 12 }}>
-                You have {leaderboard.me.checkIns} check-in
-                {leaderboard.me.checkIns === 1 ? '' : 's'} this month. Keep going to reach the
-                top 5.
+                Tienes {leaderboard.me.checkIns} check-in
+                {leaderboard.me.checkIns === 1 ? '' : 's'} este mes. Sigue así para llegar al top 5.
               </Text>
             ) : null}
           </Animated.View>

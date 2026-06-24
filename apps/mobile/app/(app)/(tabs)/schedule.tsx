@@ -59,7 +59,7 @@ function DayHeader({
             lineHeight: 34,
           }}
         >
-          Today
+          Hoy
         </Text>
       </View>
     );
@@ -133,7 +133,7 @@ export default function ScheduleScreen() {
       const first = map.get(k)![0]!;
       return {
         key: k,
-        title: k === todayKey ? 'Today' : formatClassDateLabel(first.startsAt, timeZone),
+        title: k === todayKey ? 'Hoy' : formatClassDateLabel(first.startsAt, timeZone),
         isToday: k === todayKey,
         data: map.get(k)!,
       };
@@ -180,8 +180,8 @@ export default function ScheduleScreen() {
           ListEmptyComponent={
             <View style={{ marginTop: 80 }}>
               <EmptyHint
-                title="Classes coming soon."
-                body="The studio is putting together the schedule. Check back shortly."
+                title="Próximamente habrá clases."
+                body="Estamos preparando el horario. Vuelve pronto."
               />
             </View>
           }
@@ -203,7 +203,7 @@ export default function ScheduleScreen() {
                   accentColor={item.classTemplate.color ?? primaryColor}
                   imageUri={resolveScheduledClassImageUri(item.classTemplate, 'hero')}
                   height={section.isToday ? 240 : 210}
-                  label={section.isToday ? 'Today' : undefined}
+                  label={section.isToday ? 'Hoy' : undefined}
                   delay={0}
                   onPress={() => router.push(`/(app)/class/${item.id}`)}
                 />

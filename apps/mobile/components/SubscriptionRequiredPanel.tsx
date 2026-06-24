@@ -10,7 +10,7 @@ type Props = {
   appDisplayName: string;
 };
 
-export function SubscriptionRequiredPanel({ accentColor, appDisplayName }: Props) {
+export function SubscriptionRequiredPanel({ accentColor }: Props) {
   const router = useRouter();
   const C = getColors();
 
@@ -49,7 +49,7 @@ export function SubscriptionRequiredPanel({ accentColor, appDisplayName }: Props
             color: C.text,
           }}
         >
-          Choose a membership to book
+          Elige una membresía para reservar
         </Text>
         <Text
           style={{
@@ -61,13 +61,13 @@ export function SubscriptionRequiredPanel({ accentColor, appDisplayName }: Props
             letterSpacing: -0.1,
           }}
         >
-          {appDisplayName} uses memberships to keep class sizes fair and your benefits clear. Pick a
-          plan below, finish checkout in your browser, then come back here—your schedule unlocks as
-          soon as the studio confirms your membership.
+          Con tu membresía reservas clases y tienes acceso al gimnasio. Elige un plan, completa el
+          pago en tu navegador y regresa aquí: tu acceso se activa en cuanto el estudio confirme
+          tu membresía.
         </Text>
         <View style={{ marginTop: 24, width: '100%' }}>
           <BrandButton
-            label="View membership"
+            label="Ver membresía"
             accentColor={accentColor}
             onPress={() => router.push('/(app)/(tabs)/membership')}
           />

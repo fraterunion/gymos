@@ -66,7 +66,7 @@ function PermissionState({ onEnable }: { onEnable: () => void }) {
           marginBottom: 10,
         }}
       >
-        Camera access required
+        Se requiere acceso a la cámara
       </Text>
       <Text
         style={{
@@ -78,10 +78,10 @@ function PermissionState({ onEnable }: { onEnable: () => void }) {
           maxWidth: 280,
         }}
       >
-        Allow camera access to scan member QR codes.
+        Permite el acceso a la cámara para escanear códigos QR de miembros.
       </Text>
       <View style={{ alignSelf: 'stretch' }}>
-        <BrandButton label="Enable Camera" variant="white" accentColor={primaryColor} onPress={onEnable} />
+        <BrandButton label="Activar cámara" variant="white" accentColor={primaryColor} onPress={onEnable} />
       </View>
     </View>
   );
@@ -107,7 +107,7 @@ function UnsupportedState({ message }: { message: string }) {
           marginBottom: 8,
         }}
       >
-        Scanner unavailable
+        Escáner no disponible
       </Text>
       <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, textAlign: 'center' }}>
         {message}
@@ -205,7 +205,7 @@ export default function StaffScanScreen() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <LoadRetryPanel
-          message="We could not load your studio. Check your connection and try again."
+          message="No pudimos cargar tu estudio. Revisa tu conexión e inténtalo de nuevo."
           onRetry={() => void refetch()}
         />
       </SafeAreaView>
@@ -215,7 +215,7 @@ export default function StaffScanScreen() {
   if (Platform.OS === 'web') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
-        <UnsupportedState message={`QR scanning requires the ${appDisplayName} mobile app on iOS or Android.`} />
+        <UnsupportedState message={`El escaneo de QR requiere la app móvil de ${appDisplayName} en iOS o Android.`} />
       </SafeAreaView>
     );
   }
@@ -253,7 +253,7 @@ export default function StaffScanScreen() {
               lineHeight: 38,
             }}
           >
-            Scan Member QR
+            Escanear QR de miembro
           </Text>
           <Text
             style={{
@@ -264,7 +264,7 @@ export default function StaffScanScreen() {
               letterSpacing: -0.1,
             }}
           >
-            Point the camera at the member&apos;s check-in code.
+            Apunta la cámara al código de check-in del miembro.
           </Text>
         </Animated.View>
 
@@ -317,7 +317,7 @@ export default function StaffScanScreen() {
                   letterSpacing: -0.1,
                 }}
               >
-                Checking in…
+                Procesando check-in…
               </Text>
             </View>
           ) : null}
@@ -332,7 +332,7 @@ export default function StaffScanScreen() {
             lineHeight: 19,
           }}
         >
-          QR codes expire after a few minutes.
+          Los códigos QR expiran después de unos minutos.
         </Text>
 
         <Text
@@ -345,7 +345,7 @@ export default function StaffScanScreen() {
             textAlign: 'center',
           }}
         >
-          QR validation is secured by {appDisplayName}.
+          La validación de QR está protegida por {appDisplayName}.
         </Text>
       </View>
     </SafeAreaView>

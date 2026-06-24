@@ -56,7 +56,7 @@ export default function LoginScreen() {
   async function onSubmit() {
     setLocalError(null);
     if (!email.trim() || !password) {
-      setLocalError('Enter email and password.');
+      setLocalError('Ingresa tu correo y contraseña.');
       return;
     }
     try {
@@ -93,7 +93,7 @@ export default function LoginScreen() {
                 lineHeight: 40,
               }}
             >
-              Welcome back
+              Bienvenido de nuevo
             </Text>
             <Text
               style={{
@@ -104,7 +104,7 @@ export default function LoginScreen() {
                 letterSpacing: -0.1,
               }}
             >
-              Sign in to {appDisplayName}
+              Inicia sesión en {appDisplayName}
             </Text>
           </View>
 
@@ -118,21 +118,21 @@ export default function LoginScreen() {
             }}
           >
             <Field
-              label="Email"
+              label="Correo"
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
-              placeholder="Enter your email"
+              placeholder="Ingresa tu correo"
               value={email}
               onChangeText={setEmail}
             />
             <Field
-              label="Password"
+              label="Contraseña"
               showPasswordToggle
               secureTextEntry
               autoComplete="password"
               textContentType="password"
-              placeholder="Enter your password"
+              placeholder="Ingresa tu contraseña"
               value={password}
               onChangeText={setPassword}
             />
@@ -152,7 +152,7 @@ export default function LoginScreen() {
             ) : null}
 
             <BrandButton
-              label="Log In"
+              label="Iniciar sesión"
               variant="white"
               accentColor={primaryColor}
               loading={busy}
@@ -181,7 +181,7 @@ export default function LoginScreen() {
                       color: C.text,
                     }}
                   >
-                    Create an account
+                    Crear una cuenta
                   </Text>
                 </Pressable>
               </Link>
@@ -190,7 +190,7 @@ export default function LoginScreen() {
 
           <View style={{ marginTop: 'auto', alignItems: 'center', paddingTop: 48, opacity: 0.4 }}>
             <Text style={{ fontSize: 11, letterSpacing: 0.8, color: C.textMute, textTransform: 'uppercase' }}>
-              Secured member access
+              Acceso seguro para miembros
             </Text>
           </View>
         </ScrollView>

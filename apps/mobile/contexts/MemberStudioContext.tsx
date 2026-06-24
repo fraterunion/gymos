@@ -33,7 +33,7 @@ export function MemberStudioProvider({ children }: { children: ReactNode }) {
     }
     const slug = getStudioSlug();
     if (!slug) {
-      setError('This app build is missing studio settings. Ask your studio for an updated app.');
+      setError('A esta versión de la app le faltan ajustes del estudio. Pídele a tu estudio una versión actualizada.');
       setMatched(null);
       setStatus('error');
       return;
@@ -46,7 +46,7 @@ export function MemberStudioProvider({ children }: { children: ReactNode }) {
       setMatched(hit);
       setStatus('ready');
     } catch (e) {
-      setError(userFacingApiMessage(e, 'We could not load your studio membership. Please try again.'));
+      setError(userFacingApiMessage(e, 'No pudimos cargar tu membresía del estudio. Inténtalo de nuevo.'));
       setMatched(null);
       setStatus('error');
     }

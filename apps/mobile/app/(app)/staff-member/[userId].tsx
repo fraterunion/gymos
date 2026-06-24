@@ -11,18 +11,18 @@ import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
 const ROLE_LABELS: Record<StaffRole, string> = {
-  OWNER: 'Owner',
-  ADMIN: 'Admin',
+  OWNER: 'Propietario',
+  ADMIN: 'Administrador',
   STAFF: 'Staff',
   INSTRUCTOR: 'Coach',
 };
 
 const STAFF_TYPE_LABELS: Record<string, string> = {
   COACH: 'Coach',
-  FRONT_DESK: 'Front Desk',
-  MANAGER: 'Manager',
-  OPERATIONS: 'Operations',
-  OTHER: 'Other',
+  FRONT_DESK: 'Recepción',
+  MANAGER: 'Gerente',
+  OPERATIONS: 'Operaciones',
+  OTHER: 'Otro',
 };
 
 function searchParam(value: string | string[] | undefined): string | undefined {
@@ -61,7 +61,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
+  return new Date(iso).toLocaleDateString('es-MX', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -87,7 +87,7 @@ export default function StaffMemberDetailScreen() {
   const load = useCallback(async () => {
     if (!studioId || !targetUserId) {
       setLoading(false);
-      setError('Missing team member.');
+      setError('Falta el miembro del equipo.');
       return;
     }
     setLoading(true);
@@ -97,7 +97,7 @@ export default function StaffMemberDetailScreen() {
       setMember(data);
     } catch (e) {
       setMember(null);
-      setError(userFacingApiMessage(e, 'We could not load this team member.'));
+      setError(userFacingApiMessage(e, 'No pudimos cargar este miembro del equipo.'));
     } finally {
       setLoading(false);
     }
@@ -111,7 +111,7 @@ export default function StaffMemberDetailScreen() {
 
   const fullName = member
     ? `${member.user.firstName} ${member.user.lastName}`.trim()
-    : 'Team Member';
+    : 'Miembro del equipo';
 
   return (
     <>
@@ -121,7 +121,7 @@ export default function StaffMemberDetailScreen() {
           <ScreenLoader />
         ) : error || !member ? (
           <LoadRetryPanel
-            message={error ?? 'Team member not found.'}
+            message={error ?? 'Miembro del equipo no encontrado.'}
             onRetry={() => void load()}
           />
         ) : (
@@ -207,25 +207,25 @@ export default function StaffMemberDetailScreen() {
                         color: (member.staffProfile?.isActive ?? true) ? '#6EE7B7' : C.textMute,
                       }}
                     >
-                      {(member.staffProfile?.isActive ?? true) ? 'Active' : 'Inactive'}
+                      {(member.staffProfile?.isActive ?? true) ? 'Activo' : 'Inactivo'}
                     </Text>
                   </View>
                 </View>
 
-                <DetailRow label="Email" value={member.user.email} />
+                <DetailRow label="Correo" value={member.user.email} />
                 {member.user.phone || member.staffProfile?.phone ? (
                   <DetailRow
-                    label="Phone"
+                    label="Teléfono"
                     value={member.user.phone ?? member.staffProfile?.phone ?? '—'}
                   />
                 ) : null}
-                <DetailRow label="Joined" value={formatDate(member.joinedAt)} />
+                <DetailRow label="Se unió" value={formatDate(member.joinedAt)} />
                 <DetailRow
-                  label="Upcoming classes"
+                  label="Clases próximas"
                   value={String(member.assignedClassesCount)}
                 />
                 {member.staffProfile?.bio ? (
-                  <DetailRow label="Bio" value={member.staffProfile.bio} />
+                  <DetailRow label="Biografía" value={member.staffProfile.bio} />
                 ) : null}
               </View>
             </Animated.View>
@@ -243,7 +243,7 @@ export default function StaffMemberDetailScreen() {
                     marginBottom: 12,
                   }}
                 >
-                  Specialties
+                  Especialidades
                 </Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                   {member.staffProfile.specialties.map((s) => (
@@ -275,7 +275,7 @@ export default function StaffMemberDetailScreen() {
                 paddingHorizontal: 8,
               }}
             >
-              Team changes are managed from the Admin Web dashboard.
+              Los cambios del equipo se administran desde el panel de administración web.
             </Text>
           </ScrollView>
         )}

@@ -14,8 +14,8 @@ export type StaffScanSuccessDetails = {
 export function staffScanErrorCopy(error: unknown): { title: string; message: string } {
   if (!(error instanceof ApiError)) {
     return {
-      title: 'Network error',
-      message: 'We could not reach the server. Check your connection and try again.',
+      title: 'Error de red',
+      message: 'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.',
     };
   }
 
@@ -24,8 +24,8 @@ export function staffScanErrorCopy(error: unknown): { title: string; message: st
 
   if (m.includes('already checked in')) {
     return {
-      title: 'Already checked in',
-      message: 'This member has already checked in for this class.',
+      title: 'Ya registrado',
+      message: 'Este miembro ya hizo check-in para esta clase.',
     };
   }
 
@@ -36,42 +36,42 @@ export function staffScanErrorCopy(error: unknown): { title: string; message: st
     m.includes('invalid or expired')
   ) {
     return {
-      title: 'QR expired or invalid',
-      message: 'Ask the member to refresh their QR code from the booking screen and try again.',
+      title: 'Código QR expirado o inválido',
+      message: 'Pide al miembro que actualice su código QR desde la pantalla de reservas e inténtalo de nuevo.',
     };
   }
 
   if (m.includes('time window') || m.includes('not available outside')) {
     return {
-      title: 'Check-in window not open',
-      message: 'Check-in opens 15 minutes before class and closes 30 minutes after it starts.',
+      title: 'Ventana de check-in cerrada',
+      message: 'El check-in abre 15 minutos antes de la clase y cierra 30 minutos después de que inicia.',
     };
   }
 
   if (error.status === 403) {
     return {
-      title: 'Not authorized',
-      message: 'Your account does not have permission to check in members for this studio.',
+      title: 'Sin autorización',
+      message: 'Tu cuenta no tiene permiso para registrar miembros en este estudio.',
     };
   }
 
   if (error.status === 401) {
     return {
-      title: 'Not authorized',
-      message: 'Your session may have expired. Sign in again and retry the scan.',
+      title: 'Sin autorización',
+      message: 'Tu sesión puede haber expirado. Inicia sesión de nuevo e intenta escanear otra vez.',
     };
   }
 
   if (error.status >= 500) {
     return {
-      title: 'Network error',
-      message: 'The studio service is temporarily unavailable. Please try again in a moment.',
+      title: 'Error de red',
+      message: 'El servicio del estudio no está disponible por el momento. Inténtalo de nuevo en un momento.',
     };
   }
 
   return {
-    title: 'Check-in failed',
-    message: userFacingApiMessage(error, 'We could not complete this check-in. Please try again.'),
+    title: 'Check-in fallido',
+    message: userFacingApiMessage(error, 'No pudimos completar este check-in. Inténtalo de nuevo.'),
   };
 }
 
@@ -90,7 +90,7 @@ export async function resolveStaffScanClassDetails(
     };
   } catch {
     return {
-      className: 'Scheduled class',
+      className: 'Clase programada',
       classStartTime: '—',
     };
   }

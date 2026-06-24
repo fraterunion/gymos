@@ -26,7 +26,7 @@ export function PublicStudioProvider({ children }: { children: ReactNode }) {
     const slug = getStudioSlug();
     if (!slug) {
       setStudio(null);
-      setError('App is missing studio configuration.');
+      setError('A la app le falta la configuración del estudio.');
       setLoading(false);
       return;
     }
@@ -37,7 +37,7 @@ export function PublicStudioProvider({ children }: { children: ReactNode }) {
       setStudio(data);
     } catch (e) {
       setStudio(null);
-      setError(userFacingApiMessage(e, 'Could not load studio information.'));
+      setError(userFacingApiMessage(e, 'No se pudo cargar la información del estudio.'));
     } finally {
       setLoading(false);
     }

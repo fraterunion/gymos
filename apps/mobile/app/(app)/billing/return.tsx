@@ -25,7 +25,7 @@ export default function BillingPortalReturnScreen() {
     try {
       await refreshAll();
     } catch {
-      setError('Could not refresh. Open Membership and pull to refresh.');
+      setError('No pudimos actualizar. Abre Membresía y desliza hacia abajo para actualizar.');
     } finally {
       setBusy(false);
     }
@@ -44,7 +44,7 @@ export default function BillingPortalReturnScreen() {
           <View className="items-center py-12">
             <ActivityIndicator size="large" color={primaryColor} />
             <Text className="mt-6 text-center text-base text-neutral-600 dark:text-neutral-400">
-              Syncing your membership…
+              Actualizando tu membresía…
             </Text>
           </View>
         ) : (
@@ -55,10 +55,10 @@ export default function BillingPortalReturnScreen() {
               <FontAwesome name="check-circle" size={36} color={primaryColor} />
             </View>
             <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-              You're back.
+              Ya regresaste
             </Text>
             <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-              Your billing session is complete. Your membership and schedule are now up to date.
+              Listo. Tu membresía ya está actualizada.
             </Text>
             {error ? (
               <Text className="mt-4 text-center text-sm text-red-600 dark:text-red-400">{error}</Text>
@@ -67,7 +67,7 @@ export default function BillingPortalReturnScreen() {
         )}
         <View className="mt-10">
           <BrandButton
-            label="Back to membership"
+            label="Volver a membresía"
             accentColor={primaryColor}
             onPress={() => router.replace('/(app)/(tabs)/membership')}
           />

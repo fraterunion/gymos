@@ -21,6 +21,8 @@ function searchParam(value: string | string[] | undefined): string | undefined {
   return typeof value === 'string' ? value : value?.[0];
 }
 
+const PASSWORDS_MISMATCH = 'Las contraseñas no coinciden.';
+
 export default function RegisterScreen() {
   const router = useRouter();
   const C = getColors();
@@ -53,7 +55,7 @@ export default function RegisterScreen() {
 
   const confirmPasswordError = useMemo(() => {
     if (!confirmTouched && !localError) return null;
-    if (passwordsMismatch) return 'Passwords do not match.';
+    if (passwordsMismatch) return PASSWORDS_MISMATCH;
     return null;
   }, [confirmTouched, localError, passwordsMismatch]);
 
@@ -83,23 +85,23 @@ export default function RegisterScreen() {
     setConfirmTouched(true);
 
     if (!firstName.trim() || !lastName.trim()) {
-      setLocalError('First and last name are required.');
+      setLocalError('El nombre y apellido son obligatorios.');
       return;
     }
     if (!email.trim()) {
-      setLocalError('Email is required.');
+      setLocalError('El correo es obligatorio.');
       return;
     }
     if (password.length < 8) {
-      setLocalError('Password must be at least 8 characters.');
+      setLocalError('La contraseña debe tener al menos 8 caracteres.');
       return;
     }
     if (!confirmPassword) {
-      setLocalError('Please confirm your password.');
+      setLocalError('Confirma tu contraseña.');
       return;
     }
     if (password !== confirmPassword) {
-      setLocalError('Passwords do not match.');
+      setLocalError(PASSWORDS_MISMATCH);
       return;
     }
 
@@ -118,7 +120,7 @@ export default function RegisterScreen() {
   }
 
   const combinedError =
-    localError && localError !== 'Passwords do not match.' ? localError : error;
+    localError && localError !== PASSWORDS_MISMATCH ? localError : error;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
@@ -145,7 +147,7 @@ export default function RegisterScreen() {
                 lineHeight: 40,
               }}
             >
-              Join {appDisplayName}
+              Únete a {appDisplayName}
             </Text>
             <Text
               style={{
@@ -156,7 +158,7 @@ export default function RegisterScreen() {
                 letterSpacing: -0.1,
               }}
             >
-              Create your member account
+              Crea tu cuenta de miembro
             </Text>
           </View>
 
@@ -172,7 +174,7 @@ export default function RegisterScreen() {
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="First name"
+                  label="Nombre"
                   autoComplete="given-name"
                   value={firstName}
                   onChangeText={setFirstName}
@@ -180,7 +182,7 @@ export default function RegisterScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="Last name"
+                  label="Apellido"
                   autoComplete="family-name"
                   value={lastName}
                   onChangeText={setLastName}
@@ -188,28 +190,28 @@ export default function RegisterScreen() {
               </View>
             </View>
             <Field
-              label="Email"
+              label="Correo"
               autoCapitalize="none"
               autoComplete="email"
               keyboardType="email-address"
               textContentType="emailAddress"
-              placeholder="Enter your email"
-              helperText="Used for your account, receipts, and support."
+              placeholder="Ingresa tu correo"
+              helperText="Se usa para tu cuenta, recibos y soporte."
               value={email}
               onChangeText={setEmail}
             />
             <Field
-              label="Password"
+              label="Contraseña"
               showPasswordToggle
               secureTextEntry
               autoComplete="new-password"
               textContentType="newPassword"
               value={password}
               onChangeText={setPassword}
-              placeholder="Min. 8 characters"
+              placeholder="Mín. 8 caracteres"
             />
             <Field
-              label="Confirm password"
+              label="Confirmar contraseña"
               showPasswordToggle
               secureTextEntry
               autoComplete="new-password"
@@ -220,7 +222,7 @@ export default function RegisterScreen() {
                 if (!confirmTouched) setConfirmTouched(true);
               }}
               onBlur={() => setConfirmTouched(true)}
-              placeholder="Re-enter your password"
+              placeholder="Vuelve a ingresar tu contraseña"
               error={confirmPasswordError}
             />
 
@@ -239,7 +241,7 @@ export default function RegisterScreen() {
             ) : null}
 
             <BrandButton
-              label="Create Account"
+              label="Crear cuenta"
               variant="white"
               accentColor={primaryColor}
               loading={busy}
@@ -269,7 +271,7 @@ export default function RegisterScreen() {
                       color: C.text,
                     }}
                   >
-                    Log In
+                    Iniciar sesión
                   </Text>
                 </Pressable>
               </Link>

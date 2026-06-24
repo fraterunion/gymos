@@ -36,7 +36,7 @@ import { getColors, Space } from '@/constants/Theme';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
 const PLAN_RESTRICTED_MESSAGE =
-  'Your current membership does not include this class type. Upgrade your plan or get a Day Pass to book this class.';
+  'Tu membresía actual no incluye este tipo de clase. Cambia de plan o compra un pase diario para reservar esta clase.';
 
 function hasActiveDayPassForClassDate(
   dayPasses: DayPassDto[],
@@ -117,7 +117,7 @@ function InstructorBlock({
         <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 }}>
           {firstName} {lastName}
         </Text>
-        <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>Instructor</Text>
+        <Text style={{ fontSize: 12, color: C.textMute, marginTop: 2 }}>Coach</Text>
         {bio ? (
           <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, marginTop: 8 }}>
             {bio}
@@ -186,7 +186,7 @@ export default function ClassDetailScreen() {
   const loadGuestSchedule = useCallback(async () => {
     const slug = getStudioSlug();
     if (!slug) {
-      setGuestError('App is missing studio configuration.');
+      setGuestError('Falta la configuración del estudio en la app.');
       setGuestLoading(false);
       return;
     }
@@ -197,7 +197,7 @@ export default function ClassDetailScreen() {
       const data = await fetchPublicSchedule(slug, from, to);
       setGuestClasses(data);
     } catch (e) {
-      setGuestError(userFacingApiMessage(e, 'We could not load this class. Pull to try again.'));
+      setGuestError(userFacingApiMessage(e, 'No pudimos cargar esta clase. Desliza hacia abajo para reintentar.'));
     } finally {
       setGuestLoading(false);
     }
@@ -272,7 +272,7 @@ export default function ClassDetailScreen() {
   );
 
   useLayoutEffect(() => {
-    navigation.setOptions({ title: cls?.classTemplate.name ?? 'Class' });
+    navigation.setOptions({ title: cls?.classTemplate.name ?? 'Clase' });
   }, [navigation, cls]);
 
   const now = Date.now();
@@ -295,7 +295,7 @@ export default function ClassDetailScreen() {
         setOfferWaitlist(true);
         return;
       }
-      setInlineError(userFacingApiMessage(e, 'That action could not be completed. Please try again.'));
+      setInlineError(userFacingApiMessage(e, 'No se pudo completar esa acción. Inténtalo de nuevo.'));
     } finally {
       setBusy(false);
     }
@@ -305,7 +305,7 @@ export default function ClassDetailScreen() {
   if (!classId) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom']}>
-        <EmptyHint title="Missing class" body="Go back and choose a class from the schedule." />
+        <EmptyHint title="Clase no especificada" body="Regresa y elige una clase del horario." />
       </SafeAreaView>
     );
   }
@@ -317,11 +317,11 @@ export default function ClassDetailScreen() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg, paddingHorizontal: Space.screenH }} edges={['bottom']}>
         <EmptyHint
-          title="Class not found"
-          body="It may be outside the current schedule window. Try refreshing from the schedule tab."
+          title="Clase no encontrada"
+          body="Puede que esté fuera del periodo del horario actual. Intenta actualizar desde la pestaña de horario."
         />
         <View style={{ marginTop: 24 }}>
-          <BrandButton label="Refresh" accentColor={primaryColor} onPress={() => void refresh()} />
+          <BrandButton label="Actualizar" accentColor={primaryColor} onPress={() => void refresh()} />
         </View>
       </SafeAreaView>
     );
@@ -351,22 +351,22 @@ export default function ClassDetailScreen() {
 
   if (booking) {
     primaryCTA = {
-      label: 'Cancel booking',
+      label: 'Cancelar reserva',
       onPress: () => void run(async () => { await cancelBooking(memberStudioId, booking.id); }),
     };
   } else if (waitlistEntry?.status === 'WAITING') {
     primaryCTA = {
-      label: 'Leave waitlist',
+      label: 'Salir de la lista de espera',
       onPress: () => void run(async () => { await cancelWaitlistEntry(memberStudioId, waitlistEntry.id); }),
     };
   } else if (canAct) {
     if (isGuest) {
       primaryCTA = {
-        label: 'Create Account to Book',
+        label: 'Crear cuenta para reservar',
         onPress: () => setAuthModalVisible(true),
       };
       secondaryCTA = {
-        label: 'Log In',
+        label: 'Iniciar sesión',
         onPress: () =>
           router.push({
             pathname: '/(auth)/login',
@@ -378,33 +378,33 @@ export default function ClassDetailScreen() {
       };
     } else if (offerWaitlist) {
       primaryCTA = {
-        label: 'Join waitlist',
+        label: 'Unirse a la lista de espera',
         onPress: () => void run(async () => { await joinClassWaitlist(memberStudioId, classId); }),
       };
       secondaryCTA = {
-        label: 'Try booking again',
+        label: 'Volver a intentar',
         onPress: () => void run(async () => { await createClassBooking(memberStudioId, classId); }),
       };
     } else if (hasAccess === null) {
       primaryCTA = {
-        label: 'Checking access...',
+        label: 'Confirmando acceso…',
         onPress: () => {},
         disabled: true,
       };
     } else if (hasAccess === false) {
       primaryCTA = {
-        label: 'View Memberships',
+        label: 'Ver membresías',
         onPress: () => router.push('/(app)/(tabs)/membership'),
       };
     } else if (isPlanRestricted) {
       primaryCTA = {
-        label: 'Not in your plan',
+        label: 'No incluido en tu plan',
         muted: true,
-        onPress: () => Alert.alert('Not in your plan', PLAN_RESTRICTED_MESSAGE),
+        onPress: () => Alert.alert('No incluido en tu plan', PLAN_RESTRICTED_MESSAGE),
       };
     } else {
       primaryCTA = {
-        label: 'Book Class',
+        label: 'Reservar clase',
         onPress: () => void run(async () => { await createClassBooking(memberStudioId, classId); }),
       };
     }
@@ -499,7 +499,7 @@ export default function ClassDetailScreen() {
                 </Text>
                 <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)', marginHorizontal: 8 }}>·</Text>
                 <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.40)' }}>
-                  Up to {cls.capacity}
+                  Hasta {cls.capacity}
                 </Text>
               </View>
             </View>
@@ -536,17 +536,17 @@ export default function ClassDetailScreen() {
             {/* Status messages */}
             {!isScheduled ? (
               <View style={{ marginTop: 32 }}>
-                <EmptyHint title="Not bookable" body="This session is not open for new bookings." />
+                <EmptyHint title="No disponible para reservar" body="Esta sesión no acepta nuevas reservas." />
               </View>
             ) : hasStarted ? (
               <View style={{ marginTop: 32 }}>
-                <EmptyHint title="Class has started" body="Booking and waitlist changes are closed." />
+                <EmptyHint title="La clase ya comenzó" body="Las reservas y cambios en la lista de espera están cerrados." />
               </View>
             ) : waitlistEntry?.status === 'PROMOTED' && !booking ? (
               <View style={{ marginTop: 32 }}>
                 <EmptyHint
-                  title="You've been promoted"
-                  body="A seat may be held for you. Pull to refresh or check My bookings."
+                  title="¡Subiste de la lista de espera!"
+                  body="Puede que tengas un lugar reservado. Desliza para actualizar o revisa Mis reservas."
                 />
               </View>
             ) : null}
@@ -561,7 +561,7 @@ export default function ClassDetailScreen() {
                   color: C.textMute,
                 }}
               >
-                This class is full. Join the waitlist and we'll notify you if a spot opens.
+                Esta clase está llena. Únete a la lista de espera y te avisaremos si se libera un lugar.
               </Text>
             ) : null}
 
@@ -615,7 +615,7 @@ export default function ClassDetailScreen() {
                   letterSpacing: -0.2,
                 }}
               >
-                Check-in QR →
+                QR de check-in →
               </Text>
             </Pressable>
           ) : null}
@@ -642,8 +642,8 @@ export default function ClassDetailScreen() {
 
       <AuthRequiredModal
         visible={authModalVisible}
-        title="Create your account to book"
-        description="Create an account to reserve this class, manage your bookings, and check in from your phone."
+        title="Regístrate para reservar"
+        description="Regístrate para reservar clases, ver tu código QR y hacer check-in en recepción."
         onPrimary={() => {
           setAuthModalVisible(false);
           router.push({

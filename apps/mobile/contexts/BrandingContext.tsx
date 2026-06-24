@@ -42,7 +42,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(async () => {
     if (!slug) {
-      setError(new Error('This app build is missing studio settings. Ask your studio for an updated app.'));
+      setError(new Error('A esta versión de la app le faltan ajustes del estudio. Pídele a tu estudio una versión actualizada.'));
       setStatus('error');
       setBranding(null);
       return;
@@ -57,10 +57,10 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       setBranding(null);
       const msg =
         e instanceof ApiError
-          ? userFacingApiMessage(e, 'We could not load this studio. Check your connection and try again.')
+          ? userFacingApiMessage(e, 'No pudimos cargar este estudio. Revisa tu conexión e inténtalo de nuevo.')
           : e instanceof Error
             ? e.message
-            : 'We could not load this studio. Check your connection and try again.';
+            : 'No pudimos cargar este estudio. Revisa tu conexión e inténtalo de nuevo.';
       setError(new Error(msg));
       setStatus('error');
     }
@@ -71,7 +71,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   }, [load]);
 
   const { primary, secondary } = resolveColors(branding);
-  const appDisplayName = branding?.appName?.trim() || branding?.name?.trim() || slug || 'Studio';
+  const appDisplayName = branding?.appName?.trim() || branding?.name?.trim() || slug || 'Estudio';
 
   const value = useMemo<BrandingContextValue>(
     () => ({

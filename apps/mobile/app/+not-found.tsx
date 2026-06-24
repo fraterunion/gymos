@@ -9,7 +9,7 @@ export default function NotFoundScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Not found', headerTintColor: C.text }} />
+      <Stack.Screen options={{ title: 'No encontrada', headerTintColor: C.text }} />
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <View
           style={{
@@ -28,11 +28,11 @@ export default function NotFoundScreen() {
               color: C.text,
             }}
           >
-            This screen does not exist.
+            Esta pantalla no existe.
           </Text>
           <Link href="/" asChild>
             <Pressable hitSlop={8} style={{ marginTop: 24 }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>Back to start</Text>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>Volver al inicio</Text>
             </Pressable>
           </Link>
         </View>

@@ -49,7 +49,7 @@ import type { BookingWithClass, ScheduledClassDto } from '@/lib/types/studio';
 
 function buildGreeting(firstName: string | null | undefined): string {
   const h = new Date().getHours();
-  const s = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  const s = h < 12 ? 'Buenos días' : h < 17 ? 'Buenas tardes' : 'Buenas noches';
   return firstName ? `${s},\n${firstName}.` : `${s}.`;
 }
 
@@ -83,7 +83,7 @@ function MembershipActivationCard({
             marginBottom: 10,
           }}
         >
-          Choose your membership
+          Elige tu membresía
         </Text>
         <Text
           style={{
@@ -93,9 +93,9 @@ function MembershipActivationCard({
             marginBottom: 24,
           }}
         >
-          Purchase a membership to unlock class bookings and reserve your first session.
+          Compra una membresía para reservar clases y acceder al gimnasio.
         </Text>
-        <BrandButton label="View plans" accentColor={primaryColor} onPress={onViewPlans} />
+        <BrandButton label="Ver planes" accentColor={primaryColor} onPress={onViewPlans} />
       </View>
     </Animated.View>
   );
@@ -172,7 +172,7 @@ function CategoryStrip() {
           marginBottom: 14,
         }}
       >
-        Explore
+        Explorar
       </Text>
       <ScrollView
         horizontal
@@ -245,7 +245,7 @@ function CoachCard({ coach }: { coach: CoachEntry }) {
         {coach.firstName}
       </Text>
       <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2, textAlign: 'center' }}>
-        {coach.classCount} {coach.classCount === 1 ? 'class' : 'classes'}
+        {coach.classCount} {coach.classCount === 1 ? 'clase' : 'clases'}
       </Text>
     </View>
   );
@@ -294,7 +294,7 @@ function CoachSpotlight({ classes }: { classes: ScheduledClassDto[] }) {
           marginBottom: 18,
         }}
       >
-        Coaches
+        Entrenadores
       </Text>
       <ScrollView
         horizontal
@@ -374,7 +374,7 @@ function NextSessionHero({
               color: 'rgba(255,255,255,0.55)',
             }}
           >
-            Your next class
+            Tu próxima clase
           </Text>
         </View>
 
@@ -391,7 +391,7 @@ function NextSessionHero({
               marginBottom: 10,
             }}
           >
-            {cls?.name ?? 'Class'}
+            {cls?.name ?? 'Clase'}
           </Text>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
@@ -436,7 +436,7 @@ function NextSessionHero({
                 letterSpacing: -0.1,
               }}
             >
-              Check-in QR →
+              Código QR →
             </Text>
           </Pressable>
         </View>
@@ -487,7 +487,7 @@ function WaitlistRow({
           </Text>
           {rank != null ? (
             <Text style={{ fontSize: 12, color: C.textMute, marginTop: 4 }}>
-              #{rank} on waitlist
+              #{rank} en lista de espera
             </Text>
           ) : null}
         </View>
@@ -598,7 +598,7 @@ function GuestLanding({
                   marginBottom: 10,
                 }}
               >
-                Train with us.
+                Entrena con nosotros.
               </Text>
               <Text
                 style={{
@@ -609,17 +609,17 @@ function GuestLanding({
                   marginBottom: 24,
                 }}
               >
-                Book a class, get a Day Pass, or choose the membership that fits your goals.
+                Reserva una clase, compra un pase diario o elige la membresía ideal para ti.
               </Text>
               <View style={{ gap: 12 }}>
                 <BrandButton
-                  label="View Schedule"
+                  label="Ver horario"
                   variant="white"
                   accentColor={primaryColor}
                   onPress={() => router.push('/(app)/(tabs)/schedule')}
                 />
                 <BrandButton
-                  label="View Memberships"
+                  label="Ver membresías"
                   variant="ghost"
                   accentColor={primaryColor}
                   onPress={() => router.push('/(app)/(tabs)/membership')}
@@ -642,7 +642,7 @@ function GuestLanding({
                 marginBottom: 16,
               }}
             >
-              Upcoming classes
+              Próximas clases
             </Text>
             {upcoming.map((item, index) => (
               <View key={item.id} style={index > 0 ? { marginTop: Space.cardGap } : undefined}>
@@ -868,7 +868,7 @@ export default function HomeScreen() {
                     marginBottom: 16,
                   }}
                 >
-                  Today
+                  Hoy
                 </Text>
 
                 {!nextBooking && todayFeatured ? (
@@ -879,7 +879,7 @@ export default function HomeScreen() {
                       accentColor={todayFeatured.classTemplate.color ?? primaryColor}
                       imageUri={resolveScheduledClassImageUri(todayFeatured.classTemplate, 'hero')}
                       height={240}
-                      label="Book now"
+                      label="Reservar ahora"
                       onPress={() => router.push(`/(app)/class/${todayFeatured.id}`)}
                     />
                     {todayRest.map((c, i) => (
@@ -911,8 +911,8 @@ export default function HomeScreen() {
             ) : !nextBooking ? (
               <View style={{ marginTop: 8 }}>
                 <EmptyHint
-                  title="Ready for your next session?"
-                  body="Book a class and keep your streak alive."
+                  title="Tu agenda está libre"
+                  body="Reserva una clase y mantén tu racha."
                 />
               </View>
             ) : null}
@@ -933,14 +933,14 @@ export default function HomeScreen() {
                     marginBottom: 16,
                   }}
                 >
-                  Waitlist
+                  Lista de espera
                 </Text>
                 {waitlistPreview.map((w, i) => {
                   const cls = classes.find((c) => c.id === w.scheduledClassId);
                   return (
                     <WaitlistRow
                       key={w.id}
-                      name={cls?.classTemplate.name ?? 'Class'}
+                      name={cls?.classTemplate.name ?? 'Clase'}
                       rank={w.queueRank}
                       index={i}
                       onPress={() => router.push(`/(app)/class/${w.scheduledClassId}`)}

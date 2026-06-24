@@ -31,15 +31,15 @@ const ROUTE_ICONS: Record<string, IconName> = {
 };
 
 const ROUTE_LABELS: Record<string, string> = {
-  index: 'Home',
-  schedule: 'Classes',
-  bookings: 'Bookings',
-  membership: 'Membership',
-  profile: 'Profile',
+  index: 'Inicio',
+  schedule: 'Clases',
+  bookings: 'Reservas',
+  membership: 'Membresía',
+  profile: 'Perfil',
   // Staff tabs
-  scan: 'Scan',
-  today: 'Today',
-  team: 'Team',
+  scan: 'Escanear',
+  today: 'Hoy',
+  team: 'Equipo',
 };
 
 const ACTIVE_COLOR = '#FFFFFF';

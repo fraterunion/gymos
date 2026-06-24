@@ -26,7 +26,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
               color: '#FFFFFF',
             }}
           >
-            Unable to connect
+            No se pudo conectar
           </Text>
           <Text
             style={{
@@ -38,7 +38,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
             }}
           >
             {error?.message ??
-              'Check your internet connection and try again. If the problem continues, contact the studio.'}
+              'Revisa tu conexión a internet e inténtalo de nuevo. Si el problema continúa, contacta al estudio.'}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -52,7 +52,7 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
             }}
           >
             <Text style={{ fontSize: 16, fontWeight: '700', color: '#000000' }}>
-              Try again
+              Reintentar
             </Text>
           </Pressable>
         </View>

@@ -62,15 +62,15 @@ export function ProgressSummaryCard({ progress, onViewProgress }: Props) {
           marginBottom: 20,
         }}
       >
-        Your training
+        Tu entrenamiento
       </Text>
 
       <View style={{ flexDirection: 'row' }}>
         <Stat value={String(progress.totalCheckIns)} label="Check-ins" />
-        <Stat value={String(progress.monthCheckIns)} label="This month" />
+        <Stat value={String(progress.monthCheckIns)} label="Este mes" />
         <Stat
           value={`${progress.currentStreak}w`}
-          label="Streak"
+          label="Racha"
         />
       </View>
 
@@ -84,7 +84,7 @@ export function ProgressSummaryCard({ progress, onViewProgress }: Props) {
           }}
         >
           <Text style={{ fontSize: 12, color: C.textMute, marginBottom: 3 }}>
-            Favorite class
+            Clase favorita
           </Text>
           <Text
             style={{
@@ -113,7 +113,7 @@ export function ProgressSummaryCard({ progress, onViewProgress }: Props) {
             letterSpacing: -0.2,
           }}
         >
-          View Progress →
+          Ver progreso →
         </Text>
       </Pressable>
     </View>

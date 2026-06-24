@@ -19,14 +19,14 @@ export default function BillingCheckoutCancelScreen() {
           <FontAwesome name="times-circle" size={36} color={primaryColor} />
         </View>
         <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-          Checkout cancelled
+          Pago cancelado
         </Text>
         <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-          No changes were made to your billing. You can choose a plan again anytime from Membership in {appDisplayName}.
+          No se hicieron cambios en tu membresía. Puedes elegir un plan de nuevo en cualquier momento desde Membresía en {appDisplayName}.
         </Text>
         <View className="mt-10">
           <BrandButton
-            label="Back to membership"
+            label="Volver a membresía"
             accentColor={primaryColor}
             onPress={() => router.replace('/(app)/(tabs)/membership')}
           />

@@ -28,18 +28,18 @@ import { useStudioActivity } from '@/contexts/StudioActivityContext';
 function friendlyApiMessage(e: unknown): string {
   if (e instanceof ApiError) {
     const m = e.message.toLowerCase();
-    if (e.status === 404) return 'This reservation could not be found.';
-    if (e.status === 403) return 'You do not have access to this reservation.';
+    if (e.status === 404) return 'No encontramos esta reserva.';
+    if (e.status === 403) return 'No tienes acceso a esta reserva.';
     if (m.includes('outside') && m.includes('window')) {
-      return 'Check-in is only available shortly before class starts through a short window after start time.';
+      return 'El check-in solo está disponible poco antes de que empiece la clase y durante un periodo breve después del inicio.';
     }
-    if (m.includes('already checked in')) return 'You are already checked in for this class.';
-    if (m.includes('expired') || m.includes('invalid')) return 'This code is no longer valid. Generate a new one.';
-    if (m.includes('only confirmed')) return 'Only active reservations can show a check-in code.';
-    if (m.includes('already used')) return 'This code was already used. Generate a new one.';
+    if (m.includes('already checked in')) return 'Ya hiciste check-in en esta clase.';
+    if (m.includes('expired') || m.includes('invalid')) return 'Este código ya no es válido. Genera uno nuevo.';
+    if (m.includes('only confirmed')) return 'Solo las reservas activas pueden mostrar un código de check-in.';
+    if (m.includes('already used')) return 'Este código ya se usó. Genera uno nuevo.';
     return e.message;
   }
-  return 'Something went wrong. Please try again.';
+  return 'Algo salió mal. Inténtalo de nuevo.';
 }
 
 function formatCountdown(seconds: number): string {
@@ -201,7 +201,7 @@ export default function CheckInQrScreen() {
   if (!bookingId) {
     return (
       <SafeAreaView className="flex-1 bg-neutral-50 px-6 pt-4 dark:bg-neutral-950">
-        <Text className="text-center text-neutral-600 dark:text-neutral-400">Missing booking.</Text>
+        <Text className="text-center text-neutral-600 dark:text-neutral-400">Falta la reserva.</Text>
       </SafeAreaView>
     );
   }
@@ -210,13 +210,13 @@ export default function CheckInQrScreen() {
     return (
       <SafeAreaView className="flex-1 bg-neutral-50 px-6 pt-4 dark:bg-neutral-950">
         <Text className="text-center text-lg font-medium text-neutral-800 dark:text-neutral-100">
-          Reservation not in your list
+          Esta reserva no está en tu lista
         </Text>
         <Text className="mt-3 text-center text-sm leading-5 text-neutral-500 dark:text-neutral-400">
-          Pull down to refresh, or open this screen from My bookings after your schedule syncs.
+          Desliza hacia abajo para actualizar, o abre esta pantalla desde Mis reservas cuando se sincronice tu horario.
         </Text>
         <View className="mt-8">
-          <BrandButton label="Refresh" accentColor={primaryColor} onPress={() => void onRefresh()} />
+          <BrandButton label="Actualizar" accentColor={primaryColor} onPress={() => void onRefresh()} />
         </View>
       </SafeAreaView>
     );
@@ -257,10 +257,10 @@ export default function CheckInQrScreen() {
               <Text className="text-2xl text-white">✓</Text>
             </View>
             <Text className="text-center text-xl font-semibold text-emerald-900 dark:text-emerald-100">
-              Checked in
+              Check-in confirmado
             </Text>
             <Text className="mt-3 text-center text-sm leading-5 text-emerald-800/90 dark:text-emerald-200/90">
-              You are on the roster for this class. Enjoy your session.
+              Ya estás en la lista de esta clase. ¡Disfruta tu sesión!
             </Text>
             <Text className="mt-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
               {new Intl.DateTimeFormat(undefined, {
@@ -270,50 +270,49 @@ export default function CheckInQrScreen() {
             </Text>
           </View>
         ) : !classStartsAt ? (
-          <Text className="mt-8 text-center text-neutral-600 dark:text-neutral-400">Unable to load class time.</Text>
+          <Text className="mt-8 text-center text-neutral-600 dark:text-neutral-400">No pudimos cargar el horario de la clase.</Text>
         ) : tooLate ? (
           <View className="mt-10 rounded-3xl border border-neutral-200 bg-white px-6 py-10 dark:border-neutral-800 dark:bg-neutral-900">
             <Text className="text-center text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-              Check-in window closed
+              Ventana de check-in cerrada
             </Text>
             <Text className="mt-3 text-center text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-              The check-in period for this class has ended. If you still need help, speak with the front desk.
+              El periodo de check-in para esta clase ya terminó. Si aún necesitas ayuda, acércate a recepción.
             </Text>
             <View className="mt-8">
-              <BrandButton label="Refresh status" accentColor={primaryColor} onPress={() => void onRefresh()} />
+              <BrandButton label="Actualizar estado" accentColor={primaryColor} onPress={() => void onRefresh()} />
             </View>
           </View>
         ) : tooEarly ? (
           <View className="mt-10 rounded-3xl border border-neutral-200 bg-white px-6 py-10 dark:border-neutral-800 dark:bg-neutral-900">
             <Text className="text-center text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-              Check-in opens soon
+              El check-in abre pronto
             </Text>
             <Text className="mt-3 text-center text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-              You can show a check-in code starting 15 minutes before class through a short window after start
-              time.
+              Podrás mostrar tu código de check-in a partir de 15 minutos antes de la clase y durante un periodo breve después del inicio.
             </Text>
             {tooEarly && msUntilCheckInOpens(classStartsAt) > 0 ? (
               <Text className="mt-6 text-center text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                Opens in ~{Math.ceil(msUntilCheckInOpens(classStartsAt) / 60000)} min
+                Abre en ~{Math.ceil(msUntilCheckInOpens(classStartsAt) / 60000)} min
               </Text>
             ) : null}
             <View className="mt-8">
-              <BrandButton label="Refresh status" accentColor={primaryColor} onPress={() => void onRefresh()} />
+              <BrandButton label="Actualizar estado" accentColor={primaryColor} onPress={() => void onRefresh()} />
             </View>
           </View>
         ) : qrExpired ? (
           <View className="mt-10">
             <View className="rounded-3xl border border-amber-200 bg-amber-50 px-6 py-8 dark:border-amber-900/40 dark:bg-amber-950/30">
               <Text className="text-center text-base font-semibold text-amber-900 dark:text-amber-100">
-                Code expired
+                Código expirado
               </Text>
               <Text className="mt-2 text-center text-sm text-amber-900/80 dark:text-amber-200/80">
-                Generate a fresh code for the front desk.
+                Genera un código nuevo para recepción.
               </Text>
             </View>
             <View className="mt-6">
               <BrandButton
-                label="Show new code"
+                label="Mostrar código nuevo"
                 accentColor={primaryColor}
                 loading={loadingQr}
                 onPress={() => void requestQr()}
@@ -327,14 +326,14 @@ export default function CheckInQrScreen() {
                 <QRCode value={qrToken} size={220} color="#0a0a0a" backgroundColor="#ffffff" />
               </View>
               <Text className="mt-6 text-center text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                Show this code at the front desk
+                Muestra este código en recepción
               </Text>
               <Text className="mt-2 text-center text-xs leading-5 text-neutral-500 dark:text-neutral-400">
-                Staff will scan it to confirm your arrival. Do not share this screen with anyone else.
+                El personal lo escaneará para confirmar tu llegada. No compartas esta pantalla con nadie más.
               </Text>
               <View className="mt-6 rounded-2xl bg-neutral-100 px-4 py-3 dark:bg-neutral-900">
                 <Text className="text-center text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-                  Refreshes in
+                  Se renueva en
                 </Text>
                 <Text className="mt-1 text-center text-lg font-semibold tabular-nums text-neutral-900 dark:text-neutral-50">
                   {formatCountdown(secondsLeft)}
@@ -343,7 +342,7 @@ export default function CheckInQrScreen() {
             </View>
             <View className="mt-8 w-full max-w-[320px]">
               <BrandButton
-                label="Refresh code"
+                label="Actualizar código"
                 variant="ghost"
                 accentColor={primaryColor}
                 loading={loadingQr}
@@ -359,7 +358,7 @@ export default function CheckInQrScreen() {
               </View>
             ) : null}
             <BrandButton
-              label={loadingQr ? 'Preparing…' : 'Show check-in code'}
+              label={loadingQr ? 'Preparando…' : 'Mostrar código de check-in'}
               accentColor={primaryColor}
               loading={loadingQr}
               onPress={() => void requestQr()}

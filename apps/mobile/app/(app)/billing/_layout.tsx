@@ -12,12 +12,12 @@ export default function BillingStackLayout() {
         headerShadowVisible: false,
         headerStyle: { backgroundColor: headerBg },
         headerTintColor: colorScheme === 'dark' ? '#fafafa' : '#171717',
-        headerBackTitle: 'Back',
+        headerBackTitle: 'Atrás',
         headerTitleStyle: { fontWeight: '600', fontSize: 17 },
       }}>
-      <Stack.Screen name="success" options={{ title: 'Checkout' }} />
-      <Stack.Screen name="cancel" options={{ title: 'Checkout' }} />
-      <Stack.Screen name="return" options={{ title: 'Billing' }} />
+      <Stack.Screen name="success" options={{ title: 'Pago' }} />
+      <Stack.Screen name="cancel" options={{ title: 'Pago' }} />
+      <Stack.Screen name="return" options={{ title: 'Membresía' }} />
     </Stack>
   );
 }

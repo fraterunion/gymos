@@ -63,10 +63,10 @@ function resolveBookingClassItem(
 }
 
 const GUEST_FEATURES = [
-  'Upcoming bookings',
-  'Waitlists',
-  'QR check-ins',
-  'Attendance history',
+  'Próximas reservas',
+  'Listas de espera',
+  'Check-in con QR',
+  'Historial de asistencia',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ function GuestBookingsWall({ primaryColor }: { primaryColor: string }) {
               lineHeight: 44,
             }}
           >
-            Your Training Journey
+            Tu camino de entrenamiento
           </Text>
           <Text
             style={{
@@ -107,8 +107,8 @@ function GuestBookingsWall({ primaryColor }: { primaryColor: string }) {
               letterSpacing: -0.1,
             }}
           >
-            Track upcoming classes, waitlists, attendance history, and check-ins after creating
-            your account.
+            Consulta tus próximas clases, listas de espera, historial de asistencia y check-ins
+            después de crear tu cuenta.
           </Text>
         </Animated.View>
 
@@ -130,7 +130,7 @@ function GuestBookingsWall({ primaryColor }: { primaryColor: string }) {
                 marginBottom: 18,
               }}
             >
-              What you unlock
+              Con tu cuenta
             </Text>
             {GUEST_FEATURES.map((feature, index) => (
               <View
@@ -170,13 +170,13 @@ function GuestBookingsWall({ primaryColor }: { primaryColor: string }) {
           style={{ marginTop: 28, gap: 12 }}
         >
           <BrandButton
-            label="Create Account"
+            label="Crear cuenta"
             variant="white"
             accentColor={primaryColor}
             onPress={() => router.push('/(auth)/register')}
           />
           <BrandButton
-            label="Log In"
+            label="Iniciar sesión"
             variant="ghost"
             accentColor={primaryColor}
             onPress={() => router.push('/(auth)/login')}
@@ -233,10 +233,10 @@ function WaitlistRow({
           </Text>
           <Text style={{ fontSize: 12, color: isPromoted ? C.caution : C.textMute, marginTop: 3 }}>
             {isPromoted
-              ? 'Promoted — tap to finish booking'
+              ? 'Promovido — toca para completar la reserva'
               : entry.queueRank != null
-                ? `#${entry.queueRank} · ${entry.waitingCountForClass} waiting`
-                : 'Waitlist'}
+                ? `#${entry.queueRank} · ${entry.waitingCountForClass} en espera`
+                : 'Lista de espera'}
           </Text>
         </View>
         <Text style={{ fontSize: 13, color: C.textMute, marginLeft: 8 }}>›</Text>
@@ -273,7 +273,7 @@ export default function MyBookingsScreen() {
   const showSkeleton = loading && myBookings.length === 0 && myWaitlist.length === 0;
 
   function resolveClassName(classId: string): string {
-    return classes.find((c) => c.id === classId)?.classTemplate.name ?? 'Class';
+    return classes.find((c) => c.id === classId)?.classTemplate.name ?? 'Clase';
   }
 
   return (
@@ -295,7 +295,7 @@ export default function MyBookingsScreen() {
               lineHeight: 44,
             }}
           >
-            My Bookings
+            Mis reservas
           </Text>
         </View>
         {error ? (
@@ -315,8 +315,8 @@ export default function MyBookingsScreen() {
             <View>
               {myBookings.length === 0 ? (
                 <EmptyHint
-                  title="Your session list is clear."
-                  body="Head to the schedule to book your next class and secure your spot."
+                  title="Aún no tienes reservas"
+                  body="Revisa el horario y aparta tu lugar."
                 />
               ) : (
                 <>
@@ -330,7 +330,7 @@ export default function MyBookingsScreen() {
                       marginBottom: 14,
                     }}
                   >
-                    Upcoming
+                    Próximas
                   </Text>
                   {myBookings.map((b, i) => {
                     const cls = getClass(b.scheduledClassId);
@@ -361,12 +361,12 @@ export default function MyBookingsScreen() {
                           showCheckIn ? (
                             <Pressable
                               accessibilityRole="button"
-                              accessibilityLabel="Open check-in QR code"
+                              accessibilityLabel="Abrir código QR"
                               onPress={() => router.push(`/(app)/check-in/${b.id}`)}
                               hitSlop={8}
                             >
                               <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
-                                Check-in QR →
+                                Código QR →
                               </Text>
                             </Pressable>
                           ) : undefined
@@ -390,7 +390,7 @@ export default function MyBookingsScreen() {
                     marginBottom: 14,
                   }}
                 >
-                  Waitlist
+                  Lista de espera
                 </Text>
                 {myWaitlist.map((w, i) => (
                   <WaitlistRow

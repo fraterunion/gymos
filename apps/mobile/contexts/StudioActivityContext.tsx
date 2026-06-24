@@ -52,7 +52,7 @@ export function StudioActivityProvider({
       setMyBookings(b);
       setMyWaitlist(w);
     } catch (e) {
-      setError(userFacingApiMessage(e, 'We could not load your schedule. Pull to try again.'));
+      setError(userFacingApiMessage(e, 'No pudimos cargar tu horario. Desliza para intentar de nuevo.'));
     } finally {
       setLoading(false);
     }

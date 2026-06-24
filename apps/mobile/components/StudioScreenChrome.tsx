@@ -97,7 +97,7 @@ export function LoadRetryPanel({ message, onRetry }: { message: string; onRetry:
       >
         {message}
       </Text>
-      <BrandButton label="Try again" accentColor={primaryColor} onPress={() => void onRetry()} />
+      <BrandButton label="Reintentar" accentColor={primaryColor} onPress={() => void onRetry()} />
     </View>
   );
 }
@@ -217,7 +217,7 @@ export function ErrorBanner({ message, onRetry }: { message: string; onRetry: ()
         {message}
       </Text>
       <Pressable accessibilityRole="button" onPress={() => void onRetry()} hitSlop={8}>
-        <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>Retry</Text>
+        <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>Reintentar</Text>
       </Pressable>
     </View>
   );

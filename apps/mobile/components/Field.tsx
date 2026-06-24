@@ -63,7 +63,7 @@ export function Field({
         {showPasswordToggle ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={passwordVisible ? 'Hide password' : 'Show password'}
+            accessibilityLabel={passwordVisible ? 'Ocultar contraseña' : 'Mostrar contraseña'}
             hitSlop={8}
             onPress={() => setPasswordVisible((v) => !v)}
             style={{

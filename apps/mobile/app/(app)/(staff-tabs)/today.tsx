@@ -104,13 +104,13 @@ function TodaySummaryCard({ classes }: { classes: TodayClassSummaryDto[] }) {
           marginBottom: 20,
         }}
       >
-        Classes Today
+        Clases de hoy
       </Text>
       <View style={{ flexDirection: 'row' }}>
-        <SummaryStat value={String(classCount)} label="Classes" />
-        <SummaryStat value={String(totalBooked)} label="Booked" />
-        <SummaryStat value={String(totalCheckedIn)} label="Checked In" />
-        <SummaryStat value={`${overallPct}%`} label="Attendance" />
+        <SummaryStat value={String(classCount)} label="Clases" />
+        <SummaryStat value={String(totalBooked)} label="Reservados" />
+        <SummaryStat value={String(totalCheckedIn)} label="Check-in" />
+        <SummaryStat value={`${overallPct}%`} label="Asistencia" />
       </View>
     </View>
   );
@@ -136,7 +136,7 @@ function TodayClassCard({
   const timeRange = `${formatClassTime(item.startsAt, timeZone)} – ${formatClassTime(item.endsAt, timeZone)}`;
   const coach = item.instructor
     ? `Coach ${item.instructor.firstName} ${item.instructor.lastName}`.trim()
-    : 'No coach assigned';
+    : 'Sin coach asignado';
   const progress = item.bookedCount > 0 ? item.checkedInCount / item.bookedCount : 0;
 
   return (
@@ -196,7 +196,7 @@ function TodayClassCard({
                     color: C.negative,
                   }}
                 >
-                  CANCELLED
+                  CANCELADA
                 </Text>
               </View>
             ) : null}
@@ -210,7 +210,7 @@ function TodayClassCard({
           </Text>
 
           <Text style={{ fontSize: 14, color: C.textSub, marginBottom: 10 }}>
-            {item.bookedCount} / {item.capacity} booked · {item.checkedInCount} checked in
+            {item.bookedCount} / {item.capacity} reservados · {item.checkedInCount} con check-in
           </Text>
 
           <View
@@ -233,7 +233,7 @@ function TodayClassCard({
           </View>
 
           <BrandButton
-            label="View Roster"
+            label="Ver lista"
             variant="ghost"
             accentColor={primaryColor}
             onPress={onViewRoster}
@@ -275,7 +275,7 @@ export default function StaffTodayScreen() {
         setClasses(sorted);
       } catch (e) {
         setError(
-          userFacingApiMessage(e, 'We could not load today\'s classes. Pull to refresh and try again.'),
+          userFacingApiMessage(e, 'No pudimos cargar las clases de hoy. Desliza hacia abajo para actualizar e inténtalo de nuevo.'),
         );
         if (!isRefresh) {
           setClasses([]);
@@ -311,7 +311,7 @@ export default function StaffTodayScreen() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <LoadRetryPanel
-          message="We could not load your studio. Check your connection and try again."
+          message="No pudimos cargar tu estudio. Revisa tu conexión e inténtalo de nuevo."
           onRetry={() => void refetch()}
         />
       </SafeAreaView>
@@ -360,7 +360,7 @@ export default function StaffTodayScreen() {
               lineHeight: 44,
             }}
           >
-            Today
+            Hoy
           </Text>
           <Text
             style={{
@@ -392,16 +392,16 @@ export default function StaffTodayScreen() {
                   marginBottom: 8,
                 }}
               >
-                No classes scheduled today.
+                No hay clases programadas para hoy.
               </Text>
               <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, textAlign: 'center' }}>
-                Today&apos;s schedule is clear.
+                El horario de hoy está libre.
               </Text>
             </View>
           </Animated.View>
         ) : (
           <>
-            <SectionLabel>Today&apos;s Classes</SectionLabel>
+            <SectionLabel>Clases de hoy</SectionLabel>
             {classes.map((item, index) => (
               <TodayClassCard
                 key={item.scheduledClassId}

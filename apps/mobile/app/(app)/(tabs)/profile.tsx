@@ -50,18 +50,18 @@ function membershipCreditsLine(
   creditsUsed: number | null,
   creditsRemaining: number | null,
 ): string {
-  if (classCredits === null) return 'Unlimited classes';
+  if (classCredits === null) return 'Clases ilimitadas';
   if (typeof creditsUsed === 'number' && typeof creditsRemaining === 'number') {
-    return `${creditsUsed} / ${classCredits} used · ${creditsRemaining} remaining`;
+    return `${creditsUsed} / ${classCredits} usadas · ${creditsRemaining} restantes`;
   }
-  return `${classCredits} classes per period`;
+  return `${classCredits} clases por periodo`;
 }
 
 const GUEST_FEATURES = [
-  'Membership status',
-  'Booking history',
-  'QR check-ins',
-  'Account settings',
+  'Estado de membresía',
+  'Historial de reservas',
+  'Check-in con QR',
+  'Configuración de cuenta',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ function GuestProfileWall({ primaryColor }: { primaryColor: string }) {
               lineHeight: 44,
             }}
           >
-            Your Account
+            Tu cuenta
           </Text>
           <Text
             style={{
@@ -102,8 +102,8 @@ function GuestProfileWall({ primaryColor }: { primaryColor: string }) {
               letterSpacing: -0.1,
             }}
           >
-            Create an account to manage your membership, bookings, check-ins, and training
-            history.
+            Crea una cuenta para administrar tu membresía, reservas, check-ins e historial de
+            entrenamiento.
           </Text>
         </Animated.View>
 
@@ -125,7 +125,7 @@ function GuestProfileWall({ primaryColor }: { primaryColor: string }) {
                 marginBottom: 18,
               }}
             >
-              What you unlock
+              Con tu cuenta
             </Text>
             {GUEST_FEATURES.map((feature, index) => (
               <View
@@ -165,13 +165,13 @@ function GuestProfileWall({ primaryColor }: { primaryColor: string }) {
           style={{ marginTop: 28, gap: 12 }}
         >
           <BrandButton
-            label="Create Account"
+            label="Crear cuenta"
             variant="white"
             accentColor={primaryColor}
             onPress={() => router.push('/(auth)/register')}
           />
           <BrandButton
-            label="Log In"
+            label="Iniciar sesión"
             variant="ghost"
             accentColor={primaryColor}
             onPress={() => router.push('/(auth)/login')}
@@ -233,9 +233,9 @@ export default function ProfileScreen() {
   const isMembershipActive = sub?.status === 'ACTIVE' || sub?.status === 'TRIALING';
 
   const renewsLabel = sub
-    ? `Renews ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
+    ? `Se renueva el ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
         new Date(sub.currentPeriodEnd),
-      )}${sub.cancelAtPeriodEnd ? ' · Cancelling' : ''}`
+      )}${sub.cancelAtPeriodEnd ? ' · Cancelación programada' : ''}`
     : null;
 
   return (
@@ -258,10 +258,10 @@ export default function ProfileScreen() {
               lineHeight: 44,
             }}
           >
-            Profile
+            Perfil
           </Text>
           <Text style={{ fontSize: 14, color: C.textMute, marginTop: 6 }}>
-            {appDisplayName || 'Athlete Profile'}
+            {appDisplayName || 'Perfil de atleta'}
           </Text>
         </Animated.View>
 
@@ -328,7 +328,7 @@ export default function ProfileScreen() {
         {/* Progress */}
         {progress ? (
           <Animated.View entering={FadeInDown.delay(100).duration(420)}>
-            <SectionLabel>Progress</SectionLabel>
+            <SectionLabel>Progreso</SectionLabel>
             <ProgressSummaryCard
               progress={progress}
               onViewProgress={() => router.push('/(app)/progress' as Href)}
@@ -338,7 +338,7 @@ export default function ProfileScreen() {
 
         {/* Membership */}
         <Animated.View entering={FadeInDown.delay(140).duration(420)}>
-          <SectionLabel>Membership</SectionLabel>
+          <SectionLabel>Membresía</SectionLabel>
 
           {sub ? (
             <View style={[premiumCardStyle(C), { padding: 24 }]}>
@@ -397,7 +397,7 @@ export default function ProfileScreen() {
                     letterSpacing: -0.2,
                   }}
                 >
-                  Manage Membership →
+                  Gestionar membresía →
                 </Text>
               </Pressable>
             </View>
@@ -412,8 +412,8 @@ export default function ProfileScreen() {
                 }}
               >
                 {profileError
-                  ? 'We couldn’t load your membership right now.'
-                  : 'No active membership'}
+                  ? 'No pudimos cargar tu membresía en este momento.'
+                  : 'Sin membresía activa'}
               </Text>
               {profileError ? (
                 <Pressable
@@ -430,12 +430,12 @@ export default function ProfileScreen() {
                       letterSpacing: -0.2,
                     }}
                   >
-                    Try again
+                    Reintentar
                   </Text>
                 </Pressable>
               ) : null}
               <BrandButton
-                label="View Memberships"
+                label="Ver membresías"
                 accentColor={primaryColor}
                 onPress={() => router.push('/(app)/(tabs)/membership')}
               />
@@ -445,9 +445,9 @@ export default function ProfileScreen() {
 
         {/* Account */}
         <Animated.View entering={FadeInDown.delay(180).duration(420)}>
-          <SectionLabel>Account</SectionLabel>
+          <SectionLabel>Cuenta</SectionLabel>
           <BrandButton
-            label="Sign out"
+            label="Cerrar sesión"
             variant="ghost"
             accentColor={primaryColor}
             loading={busy}

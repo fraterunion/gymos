@@ -14,11 +14,11 @@ const VARIANT_COLORS: Record<BookingStatusVariant, { text: string; bg: string }>
 export function bookingStatusPill(status: string): BookingStatusPillConfig {
   switch (status) {
     case 'CANCELLED':
-      return { label: 'Cancelled', variant: 'cancelled' };
+      return { label: 'Cancelada', variant: 'cancelled' };
     case 'COMPLETED':
-      return { label: 'Checked In', variant: 'checkedIn' };
+      return { label: 'Check-in hecho', variant: 'checkedIn' };
     default:
-      return { label: 'Confirmed', variant: 'confirmed' };
+      return { label: 'Confirmada', variant: 'confirmed' };
   }
 }
 

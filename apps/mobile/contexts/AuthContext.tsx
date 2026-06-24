@@ -100,7 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await meRequest();
       setUser(me);
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Could not sign in';
+      const msg = e instanceof ApiError ? e.message : 'No se pudo iniciar sesión';
       setError(msg);
       throw e;
     } finally {
@@ -118,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await meRequest();
       setUser(me);
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Could not create account';
+      const msg = e instanceof ApiError ? e.message : 'No se pudo crear la cuenta';
       setError(msg);
       throw e;
     } finally {

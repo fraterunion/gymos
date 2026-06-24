@@ -12,7 +12,13 @@ import { getColors, Space } from '@/constants/Theme';
 
 function roleLabel(role: string | null | undefined): string {
   if (!role) return 'Staff';
-  return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
+  const labels: Record<string, string> = {
+    OWNER: 'Propietario',
+    ADMIN: 'Administrador',
+    STAFF: 'Staff',
+    INSTRUCTOR: 'Coach',
+  };
+  return labels[role.toUpperCase()] ?? role;
 }
 
 export default function StaffProfileScreen() {
@@ -163,10 +169,10 @@ export default function StaffProfileScreen() {
               marginTop: 32,
             }}
           >
-            Account
+            Cuenta
           </Text>
           <BrandButton
-            label="Sign out"
+            label="Cerrar sesión"
             variant="ghost"
             accentColor={primaryColor}
             loading={busy}

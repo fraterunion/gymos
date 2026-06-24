@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getBootWordmarkSource, getBootWordmarkSize } from '@/components/BrandWordmark';
 
 const BG = '#000000';
-const LOADING_COPY = 'Preparing your training experience';
+const LOADING_COPY = 'Preparando tu experiencia de entrenamiento';
 
 type Props = {
   logoUrl?: string | null;

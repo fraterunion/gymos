@@ -33,20 +33,20 @@ export function canAccessTeamTab(role: string | null | undefined): boolean {
 export function staffModeTitle(role: string | null | undefined): string {
   switch (role) {
     case 'INSTRUCTOR':
-      return 'Coach Mode';
+      return 'Modo coach';
     case 'ADMIN':
-      return 'Admin Mode';
+      return 'Modo admin';
     case 'OWNER':
-      return 'Owner Mode';
+      return 'Modo propietario';
     case 'STAFF':
     default:
-      return 'Staff Mode';
+      return 'Modo staff';
   }
 }
 
 export function todayScreenSubtitle(role: string | null | undefined): string {
   if (role === 'INSTRUCTOR') {
-    return "View today's classes and attendance.";
+    return 'Consulta las clases y asistencia de hoy.';
   }
-  return "Monitor today's classes and attendance.";
+  return 'Supervisa las clases y asistencia de hoy.';
 }

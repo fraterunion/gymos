@@ -33,7 +33,7 @@ export async function initStripe(_params: { publishableKey: string }): Promise<v
 
 const WEB_PAYMENT_ERROR: StripeError = {
   code: 'WEB_UNAVAILABLE',
-  message: 'Day Pass payments are only available in the mobile app.',
+  message: 'Los pases diarios solo están disponibles en la app móvil.',
 };
 
 export function useStripe() {

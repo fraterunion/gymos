@@ -61,12 +61,12 @@ export default function StaffScanResultScreen() {
   const outcome = searchParam(params.outcome);
   const isSuccess = outcome === 'success';
 
-  const errorTitle = searchParam(params.title) ?? 'Check-in failed';
+  const errorTitle = searchParam(params.title) ?? 'Check-in fallido';
   const errorMessage =
-    searchParam(params.message) ?? 'We could not complete this check-in. Please try again.';
+    searchParam(params.message) ?? 'No pudimos completar este check-in. Inténtalo de nuevo.';
 
-  const memberName = searchParam(params.memberName) ?? 'Member';
-  const className = searchParam(params.className) ?? 'Scheduled class';
+  const memberName = searchParam(params.memberName) ?? 'Miembro';
+  const className = searchParam(params.className) ?? 'Clase programada';
   const classStartTime = searchParam(params.classStartTime) ?? '—';
   const checkedInAtRaw = searchParam(params.checkedInAt);
   const timeZone = searchParam(params.timeZone) ?? 'UTC';
@@ -133,15 +133,15 @@ export default function StaffScanResultScreen() {
                 marginBottom: 8,
               }}
             >
-              {isSuccess ? 'Checked in' : errorTitle}
+              {isSuccess ? 'Check-in registrado' : errorTitle}
             </Text>
 
             {isSuccess ? (
               <View style={{ alignSelf: 'stretch', marginTop: 12, marginBottom: 8 }}>
-                <DetailRow label="Member" value={memberName} />
-                <DetailRow label="Class" value={className} />
-                <DetailRow label="Class start" value={classStartTime} />
-                <DetailRow label="Checked in at" value={checkedInLabel} />
+                <DetailRow label="Miembro" value={memberName} />
+                <DetailRow label="Clase" value={className} />
+                <DetailRow label="Inicio de clase" value={classStartTime} />
+                <DetailRow label="Check-in a las" value={checkedInLabel} />
               </View>
             ) : (
               <Text
@@ -160,7 +160,7 @@ export default function StaffScanResultScreen() {
 
             <View style={{ alignSelf: 'stretch', marginTop: 20 }}>
               <BrandButton
-                label={isSuccess ? 'Scan another' : 'Try again'}
+                label={isSuccess ? 'Escanear otro' : 'Reintentar'}
                 variant="white"
                 accentColor={primaryColor}
                 onPress={scanAnother}

@@ -86,7 +86,7 @@ function formatCheckInMethod(method: string | null): string {
     case 'MANUAL':
       return 'Manual';
     case 'KIOSK':
-      return 'Kiosk';
+      return 'Kiosco';
     default:
       return method;
   }
@@ -261,13 +261,13 @@ function ExpectedRow({
             {row.fullName}
           </Text>
           <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>
-            Not checked in
+            Sin check-in
           </Text>
         </View>
       </View>
       {canCheckIn ? (
         <BrandButton
-          label="Check in"
+          label="Check-in"
           variant="white"
           accentColor={primaryColor}
           loading={checkingIn}
@@ -320,7 +320,7 @@ export default function StaffClassRosterScreen() {
         setRows(mergeRosterRows(roster, attendance));
       } catch (e) {
         setError(
-          userFacingApiMessage(e, 'We could not load the class roster. Pull to refresh and try again.'),
+          userFacingApiMessage(e, 'No pudimos cargar la lista de la clase. Desliza hacia abajo para actualizar e inténtalo de nuevo.'),
         );
         if (!isRefresh) {
           setRows([]);
@@ -381,16 +381,16 @@ export default function StaffClassRosterScreen() {
     [studioId, manualCheckInAllowed, load],
   );
 
-  const headerTitle = className?.trim() || 'Class Roster';
+  const headerTitle = className?.trim() || 'Lista de clase';
   const showInitialLoader = loading && !loadedOnce;
 
   if (!classId) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-        <Stack.Screen options={{ title: 'Class Roster' }} />
+        <Stack.Screen options={{ title: 'Lista de clase' }} />
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 32 }}>
           <Text style={{ textAlign: 'center', fontSize: 15, lineHeight: 22, color: C.textSub }}>
-            Missing class information. Go back and try again.
+            Falta información de la clase. Regresa e inténtalo de nuevo.
           </Text>
         </View>
       </SafeAreaView>
@@ -402,7 +402,7 @@ export default function StaffClassRosterScreen() {
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <Stack.Screen options={{ title: headerTitle }} />
         <LoadRetryPanel
-          message="We could not load your studio. Check your connection and try again."
+          message="No pudimos cargar tu estudio. Revisa tu conexión e inténtalo de nuevo."
           onRetry={() => void refetch()}
         />
       </SafeAreaView>
@@ -447,7 +447,7 @@ export default function StaffClassRosterScreen() {
       >
         <Animated.View entering={FadeInDown.duration(420)} style={{ paddingTop: 8, paddingBottom: 20 }}>
           <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>
-            {checkedInCount} checked in · {totalBooked} booked
+            {checkedInCount} con check-in · {totalBooked} reservados
           </Text>
         </Animated.View>
 
@@ -464,7 +464,7 @@ export default function StaffClassRosterScreen() {
               }}
             >
               <Text style={{ fontSize: 14, fontWeight: '600', color: C.positive, textAlign: 'center' }}>
-                {successName} checked in
+                {successName} registró check-in
               </Text>
             </View>
           </Animated.View>
@@ -473,9 +473,9 @@ export default function StaffClassRosterScreen() {
         <Animated.View entering={FadeInDown.delay(40).duration(420)}>
           <View style={cardStyle(C)}>
             <View style={{ flexDirection: 'row' }}>
-              <SummaryStat value={String(totalBooked)} label="Booked" />
-              <SummaryStat value={String(checkedInCount)} label="Checked In" />
-              <SummaryStat value={String(pendingCount)} label="Pending" />
+              <SummaryStat value={String(totalBooked)} label="Reservados" />
+              <SummaryStat value={String(checkedInCount)} label="Check-in" />
+              <SummaryStat value={String(pendingCount)} label="Pendientes" />
             </View>
           </View>
         </Animated.View>
@@ -493,10 +493,10 @@ export default function StaffClassRosterScreen() {
                   marginBottom: 8,
                 }}
               >
-                No confirmed bookings yet.
+                Aún no hay reservaciones confirmadas.
               </Text>
               <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, textAlign: 'center' }}>
-                Members with confirmed reservations will appear here.
+                Los miembros con reservaciones confirmadas aparecerán aquí.
               </Text>
             </View>
           </Animated.View>
@@ -504,7 +504,7 @@ export default function StaffClassRosterScreen() {
           <>
             {checkedInRows.length > 0 ? (
               <Animated.View entering={FadeInDown.delay(80).duration(420)}>
-                <SectionLabel>Checked In</SectionLabel>
+                <SectionLabel>Check-in</SectionLabel>
                 <View style={[cardStyle(C), { paddingVertical: 8, paddingHorizontal: 20 }]}>
                   {checkedInRows.map((row, index) => (
                     <CheckedInRow
@@ -520,7 +520,7 @@ export default function StaffClassRosterScreen() {
 
             {expectedRows.length > 0 ? (
               <Animated.View entering={FadeInDown.delay(120).duration(420)}>
-                <SectionLabel>Expected</SectionLabel>
+                <SectionLabel>Esperados</SectionLabel>
                 {isInstructor ? (
                   <Text
                     style={{
@@ -530,7 +530,7 @@ export default function StaffClassRosterScreen() {
                       marginBottom: 14,
                     }}
                   >
-                    Manual check-in is available to staff and admins.
+                    El check-in manual está disponible para staff y administradores.
                   </Text>
                 ) : null}
                 <View style={[cardStyle(C), { paddingVertical: 8, paddingHorizontal: 20 }]}>

@@ -32,7 +32,7 @@ export function ClassCardRow({ item, timeZone, accentColor, onPress }: Props) {
             <Text className="mt-1 text-sm text-neutral-600 dark:text-neutral-300">{ins}</Text>
           ) : null}
           <Text className="mt-2 text-xs font-medium uppercase tracking-wide text-neutral-400">
-            Capacity {item.capacity}
+            Capacidad {item.capacity}
           </Text>
         </View>
       </View>

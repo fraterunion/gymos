@@ -37,7 +37,7 @@ export function MembershipRequiredScreen({ onRetry }: Props) {
           lineHeight: 32,
         }}
       >
-        We do not see a membership here yet
+        Aún no vemos una membresía aquí
       </Text>
       <Text
         style={{
@@ -49,9 +49,9 @@ export function MembershipRequiredScreen({ onRetry }: Props) {
           letterSpacing: -0.1,
         }}
       >
-        Your login is valid, but this app is tied to{' '}
-        <Text style={{ fontWeight: '600', color: C.text }}>{displayName}</Text>. Ask the front desk
-        to add your account to this studio, then tap try again.
+        Tu inicio de sesión es válido, pero esta app está vinculada a{' '}
+        <Text style={{ fontWeight: '600', color: C.text }}>{displayName}</Text>. Pide en recepción
+        que agreguen tu cuenta a este estudio y luego toca intentar de nuevo.
       </Text>
       {supportEmail ? (
         <Pressable
@@ -73,9 +73,9 @@ export function MembershipRequiredScreen({ onRetry }: Props) {
         </Pressable>
       ) : null}
       <View style={{ marginTop: 40, gap: 12 }}>
-        <BrandButton label="Try again" accentColor={primaryColor} onPress={() => void onRetry()} />
+        <BrandButton label="Reintentar" accentColor={primaryColor} onPress={() => void onRetry()} />
         <BrandButton
-          label="Sign out"
+          label="Cerrar sesión"
           variant="ghost"
           accentColor={primaryColor}
           onPress={() => void logout()}

@@ -187,7 +187,7 @@ module.exports = ({ config }) => {
         'expo-camera',
         {
           // Staff Mode: scan member booking QR codes at the front desk.
-          cameraPermission: 'Scan member QR codes to check in attendees.',
+          cameraPermission: 'Escanea códigos QR de miembros para registrar su check-in.',
         },
       ],
     ],

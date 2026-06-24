@@ -28,7 +28,7 @@ export default function BillingCheckoutSuccessScreen() {
       const { profile: p } = await refreshAll();
       setProfile(p);
     } catch {
-      setError('Could not refresh your account. You can open Membership and pull to refresh.');
+      setError('No pudimos actualizar tu cuenta. Puedes abrir Membresía y deslizar hacia abajo para actualizar.');
     } finally {
       setBusy(false);
     }
@@ -53,24 +53,24 @@ export default function BillingCheckoutSuccessScreen() {
           )}
         </View>
         <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
-          Activating your membership
+          Confirmando tu membresía
         </Text>
         {busy ? (
           <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-            Activating your membership and syncing your schedule…
+            Estamos confirmando tu pago. En un momento podrás reservar clases.
           </Text>
         ) : (
           <>
             <Text className="mt-4 text-center text-base leading-6 text-neutral-600 dark:text-neutral-400">
-              Your payment was received. Membership activates once your payment provider confirms the transaction — usually within moments.
+              Recibimos tu pago. Tu membresía se activa cuando tu proveedor de pagos confirma la transacción — normalmente en unos momentos.
             </Text>
             {!error && profile?.activeSubscription ? (
               <Text className="mt-4 text-center text-base font-medium text-emerald-700 dark:text-emerald-400">
-                Your membership is active. You're ready to start booking classes.
+                Tu membresía está activa. Ya puedes reservar clases y acceder al gimnasio.
               </Text>
             ) : !error ? (
               <Text className="mt-4 text-center text-base text-neutral-600 dark:text-neutral-400">
-                If your membership hasn't appeared yet, wait a moment and pull to refresh on the Membership tab.
+                Si tu membresía aún no aparece, espera un momento y desliza hacia abajo para actualizar en la pestaña Membresía.
               </Text>
             ) : null}
             {error ? (
@@ -80,7 +80,7 @@ export default function BillingCheckoutSuccessScreen() {
         )}
         <View className="mt-10 gap-3">
           <BrandButton
-            label="Back to membership"
+            label="Volver a membresía"
             accentColor={primaryColor}
             onPress={() => router.replace('/(app)/(tabs)/membership')}
           />

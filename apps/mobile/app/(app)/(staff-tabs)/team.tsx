@@ -26,16 +26,16 @@ import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 type RoleFilter = 'ALL' | StaffRole;
 
 const ROLE_FILTERS: { id: RoleFilter; label: string }[] = [
-  { id: 'ALL', label: 'All' },
-  { id: 'OWNER', label: 'Owners' },
-  { id: 'ADMIN', label: 'Admins' },
+  { id: 'ALL', label: 'Todos' },
+  { id: 'OWNER', label: 'Propietarios' },
+  { id: 'ADMIN', label: 'Administradores' },
   { id: 'STAFF', label: 'Staff' },
-  { id: 'INSTRUCTOR', label: 'Coaches' },
+  { id: 'INSTRUCTOR', label: 'Entrenadores' },
 ];
 
 const ROLE_LABELS: Record<StaffRole, string> = {
-  OWNER: 'Owner',
-  ADMIN: 'Admin',
+  OWNER: 'Propietario',
+  ADMIN: 'Administrador',
   STAFF: 'Staff',
   INSTRUCTOR: 'Coach',
 };
@@ -49,10 +49,10 @@ const ROLE_COLORS: Record<StaffRole, { bg: string; text: string }> = {
 
 const STAFF_TYPE_LABELS: Record<string, string> = {
   COACH: 'Coach',
-  FRONT_DESK: 'Front Desk',
-  MANAGER: 'Manager',
-  OPERATIONS: 'Operations',
-  OTHER: 'Other',
+  FRONT_DESK: 'Recepción',
+  MANAGER: 'Gerente',
+  OPERATIONS: 'Operaciones',
+  OTHER: 'Otro',
 };
 
 function cardStyle(C: ThemeColors) {
@@ -232,14 +232,14 @@ function StaffCard({
                     color: isActive ? '#6EE7B7' : C.textMute,
                   }}
                 >
-                  {isActive ? 'Active' : 'Inactive'}
+                  {isActive ? 'Activo' : 'Inactivo'}
                 </Text>
               </View>
             </View>
             {member.assignedClassesCount > 0 ? (
               <Text style={{ fontSize: 12, color: C.textMute, marginTop: 10 }}>
-                {member.assignedClassesCount} upcoming{' '}
-                {member.assignedClassesCount === 1 ? 'class' : 'classes'}
+                {member.assignedClassesCount}{' '}
+                {member.assignedClassesCount === 1 ? 'clase próxima' : 'clases próximas'}
               </Text>
             ) : null}
           </View>
@@ -303,7 +303,7 @@ export default function StaffTeamScreen() {
         setStaff(res.data);
         setTotal(res.total);
       } catch (e) {
-        setError(userFacingApiMessage(e, 'We could not load your team. Pull to refresh and try again.'));
+        setError(userFacingApiMessage(e, 'No pudimos cargar tu equipo. Desliza hacia abajo para actualizar e inténtalo de nuevo.'));
         if (!isRefresh) {
           setStaff([]);
           setTotal(0);
@@ -344,7 +344,7 @@ export default function StaffTeamScreen() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <LoadRetryPanel
-          message="We could not load your studio. Check your connection and try again."
+          message="No pudimos cargar tu estudio. Revisa tu conexión e inténtalo de nuevo."
           onRetry={() => void refetch()}
         />
       </SafeAreaView>
@@ -394,7 +394,7 @@ export default function StaffTeamScreen() {
               lineHeight: 44,
             }}
           >
-            Team
+            Equipo
           </Text>
           <Text
             style={{
@@ -405,14 +405,14 @@ export default function StaffTeamScreen() {
               letterSpacing: -0.1,
             }}
           >
-            Manage your coaching and operations team.
+            Administra tu equipo de coaching y operaciones.
           </Text>
         </Animated.View>
 
         <TextInput
           value={search}
           onChangeText={setSearch}
-          placeholder="Search name or email…"
+          placeholder="Buscar por nombre o correo…"
           placeholderTextColor={C.textMute}
           autoCapitalize="none"
           autoCorrect={false}
@@ -449,7 +449,7 @@ export default function StaffTeamScreen() {
         ) : null}
 
         <Text style={{ fontSize: 12, color: C.textMute, marginBottom: 16 }}>
-          {total} team member{total !== 1 ? 's' : ''}
+          {total} miembro{total !== 1 ? 's' : ''} del equipo
         </Text>
 
         {staff.length === 0 ? (
@@ -463,12 +463,12 @@ export default function StaffTeamScreen() {
                 marginBottom: 8,
               }}
             >
-              No team members found.
+              No se encontraron miembros del equipo.
             </Text>
             <Text style={{ fontSize: 14, color: C.textSub, textAlign: 'center', lineHeight: 21 }}>
               {debouncedSearch || roleFilter !== 'ALL'
-                ? 'Try adjusting your search or filters.'
-                : 'Your team directory is empty.'}
+                ? 'Intenta ajustar tu búsqueda o filtros.'
+                : 'Tu directorio de equipo está vacío.'}
             </Text>
           </View>
         ) : (
@@ -494,7 +494,7 @@ export default function StaffTeamScreen() {
             paddingHorizontal: 12,
           }}
         >
-          Create and edit team members from the Admin Web dashboard.
+          Crea y edita miembros del equipo desde el panel de administración web.
         </Text>
       </ScrollView>
     </SafeAreaView>

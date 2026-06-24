@@ -109,13 +109,12 @@ const MEMBERSHIP_RETURN_TO = '/(app)/(tabs)/membership' as const;
 
 const AUTH_MODAL_COPY: Record<AuthModalKind, { title: string; description: string }> = {
   membership: {
-    title: 'Create your account to join',
-    description:
-      'Create an account to choose a membership, manage your billing, and book classes.',
+    title: 'Únete para elegir tu plan',
+    description: 'Únete para elegir tu plan y reservar clases.',
   },
   'day-pass': {
-    title: 'Create your account to get a Day Pass',
-    description: 'Create an account to purchase a Day Pass and reserve classes from your phone.',
+    title: 'Regístrate y compra tu pase diario',
+    description: 'Compra un pase diario para acceder al gimnasio y reservar clases hoy.',
   },
 };
 
@@ -125,17 +124,17 @@ function toMembershipPlanDto(plan: PublicMembershipPlanDto): MembershipPlanDto {
 
 function billingIntervalLabel(interval: BillingInterval): string {
   switch (interval) {
-    case 'MONTHLY': return '/mo';
-    case 'YEARLY':  return '/yr';
-    case 'WEEKLY':  return '/wk';
+    case 'MONTHLY': return '/mes';
+    case 'YEARLY':  return '/año';
+    case 'WEEKLY':  return '/sem';
     default:        return '';
   }
 }
 
 function creditsLabel(credits: number | null): string | null {
-  if (credits === null) return 'Unlimited class visits';
+  if (credits === null) return 'Visitas ilimitadas a clases';
   if (credits <= 0) return null;
-  return `${credits} visits per billing period`;
+  return `${credits} visitas al mes`;
 }
 
 function membershipCreditDisplay(
@@ -144,15 +143,15 @@ function membershipCreditDisplay(
   creditsRemaining: number | null,
 ): { primary: string; secondary?: string } {
   if (classCredits === null) {
-    return { primary: 'Unlimited classes' };
+    return { primary: 'Clases ilimitadas' };
   }
   if (typeof creditsUsed === 'number' && typeof creditsRemaining === 'number') {
     return {
-      primary: `${creditsUsed} / ${classCredits} classes used`,
-      secondary: `${creditsRemaining} remaining this period`,
+      primary: `${creditsUsed} / ${classCredits} clases usadas`,
+      secondary: `${creditsRemaining} restantes en este periodo`,
     };
   }
-  return { primary: `${classCredits} classes per period` };
+  return { primary: `${classCredits} clases por periodo` };
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +281,7 @@ function MembershipCard({
                 marginBottom: 8,
               }}
             >
-              Class credits
+              Créditos de clases
             </Text>
             <Text
               style={{
@@ -346,7 +345,7 @@ function MembershipCard({
                 letterSpacing: -0.2,
               }}
             >
-              {portalBusy ? 'Opening…' : 'Manage billing →'}
+              {portalBusy ? 'Abriendo…' : 'Gestionar membresía →'}
             </Text>
           </Pressable>
         </View>
@@ -373,23 +372,23 @@ const PLAN_THEME_DEFAULTS: PlanHeroTheme[] = [
   {
     accentColor: '#F59E0B',
     borderColor: 'rgba(245,158,11,0.35)',
-    badge: 'MOST POPULAR',
+    badge: 'MÁS POPULAR',
     imageUri: FitnessImages.strength,
-    tagline: 'Train without limits.',
+    tagline: 'Entrena sin límites.',
   },
   {
     accentColor: '#14B8A6',
     borderColor: 'rgba(20,184,166,0.35)',
-    badge: 'BEST START',
+    badge: 'PARA EMPEZAR',
     imageUri: FitnessImages.hiit,
-    tagline: 'Build your foundation.',
+    tagline: 'Construye tu base.',
   },
   {
     accentColor: '#8B5CF6',
     borderColor: 'rgba(139,92,246,0.35)',
-    badge: 'FOR COMPETITORS',
+    badge: 'PARA COMPETIDORES',
     imageUri: FitnessImages.running,
-    tagline: 'Built for competition.',
+    tagline: 'Hecho para competir.',
   },
 ];
 
@@ -414,7 +413,7 @@ function PlanCard({
   isDisabled,
   primaryColor,
   index,
-  subscribeLabel = 'Subscribe',
+  subscribeLabel = 'Suscribirme',
 }: {
   plan: MembershipPlanDto;
   onSubscribe: () => void;
@@ -624,7 +623,7 @@ function GuestMembershipPrompt({
             lineHeight: 32,
           }}
         >
-          Train with us.
+          Entrena con nosotros.
         </Text>
         <Text
           style={{
@@ -635,8 +634,8 @@ function GuestMembershipPrompt({
           }}
         >
           {studioName
-            ? `Browse plans at ${studioName}, pick up a Day Pass, or join with a membership.`
-            : 'Browse plans, pick up a Day Pass, or join with a membership.'}
+            ? `Explora los planes en ${studioName}, compra un pase diario o únete con una membresía.`
+            : 'Explora los planes, compra un pase diario o únete con una membresía.'}
         </Text>
         <Text
           style={{
@@ -646,12 +645,12 @@ function GuestMembershipPrompt({
             marginBottom: 24,
           }}
         >
-          Create an account to subscribe, purchase a Day Pass, and book classes.
+          Crea una cuenta para suscribirte, comprar un pase diario y reservar clases.
         </Text>
-        <BrandButton label="Join Now" variant="white" accentColor={primaryColor} onPress={onRegister} />
+        <BrandButton label="Únete ahora" variant="white" accentColor={primaryColor} onPress={onRegister} />
         <InlineAuthLink
-          prompt="Already have an account?"
-          action="Log in"
+          prompt="¿Ya tienes cuenta?"
+          action="Iniciar sesión"
           onPress={onLogin}
         />
       </View>
@@ -707,7 +706,7 @@ function NoMembershipPrompt({
             marginBottom: 10,
           }}
         >
-          Start your training journey.
+          Comienza tu camino de entrenamiento.
         </Text>
         <Text
           style={{
@@ -719,7 +718,7 @@ function NoMembershipPrompt({
             marginBottom: 24,
           }}
         >
-          Choose a membership plan to unlock class booking and check-ins.
+          Elige un plan de membresía para reservar clases y hacer check-in en el gimnasio.
         </Text>
         <Pressable
           accessibilityRole="button"
@@ -728,7 +727,7 @@ function NoMembershipPrompt({
           hitSlop={8}
         >
           <Text style={{ fontSize: 15, fontWeight: '600', color: portalBusy ? C.textMute : C.text }}>
-            {portalBusy ? 'Opening…' : 'Manage billing →'}
+            {portalBusy ? 'Abriendo…' : 'Gestionar membresía →'}
           </Text>
         </Pressable>
       </View>
@@ -749,13 +748,13 @@ function dayPassStatusConfig(status: DayPassStatus): {
   const C = getColors();
   switch (status) {
     case 'ACTIVE':
-      return { label: 'Active', dotColor: C.positive, bg: 'rgba(52,211,153,0.12)', textColor: C.positive };
+      return { label: 'Activo', dotColor: C.positive, bg: 'rgba(52,211,153,0.12)', textColor: C.positive };
     case 'PENDING':
-      return { label: 'Pending', dotColor: C.caution, bg: 'rgba(251,191,36,0.12)', textColor: C.caution };
+      return { label: 'Pendiente', dotColor: C.caution, bg: 'rgba(251,191,36,0.12)', textColor: C.caution };
     case 'EXPIRED':
-      return { label: 'Expired', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
+      return { label: 'Vencido', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
     case 'REFUNDED':
-      return { label: 'Refunded', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
+      return { label: 'Reembolsado', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
   }
 }
 
@@ -905,7 +904,7 @@ export default function MembershipScreen() {
       setDayPassLoadError(null);
     } catch (e) {
       setDayPasses([]);
-      setDayPassLoadError('Day passes are temporarily unavailable.');
+      setDayPassLoadError('Los pases diarios no están disponibles por el momento.');
       if (__DEV__) {
         console.warn('[Membership] fetchMyDayPasses failed:', e);
       }
@@ -915,7 +914,7 @@ export default function MembershipScreen() {
   const loadGuest = useCallback(async (mode: 'initial' | 'refresh') => {
     const slug = getStudioSlug();
     if (!slug) {
-      setError('App is missing studio configuration.');
+      setError('Falta la configuración del estudio en la app.');
       setLoading(false);
       return;
     }
@@ -929,7 +928,7 @@ export default function MembershipScreen() {
       setDayPasses([]);
       setDayPassLoadError(null);
     } catch (e) {
-      setError(userFacingApiMessage(e, 'Could not load membership plans. Pull to refresh.'));
+      setError(userFacingApiMessage(e, 'No se pudieron cargar los planes de membresía. Desliza para actualizar.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -953,7 +952,7 @@ export default function MembershipScreen() {
         setPlans(p);
         setProfile(prof);
       } catch (e) {
-        setError(userFacingApiMessage(e, 'Could not load membership info. Pull to refresh.'));
+        setError(userFacingApiMessage(e, 'No se pudo cargar la información de membresía. Desliza para actualizar.'));
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -997,7 +996,7 @@ export default function MembershipScreen() {
       await Linking.openURL(url);
     } catch (e) {
       expectReturnFromBrowser.current = false;
-      setError(userFacingApiMessage(e, 'Checkout could not be started. Please try again.'));
+      setError(userFacingApiMessage(e, 'No se pudo iniciar el pago. Inténtalo de nuevo.'));
     } finally {
       setCheckoutPlanId(null);
     }
@@ -1013,7 +1012,7 @@ export default function MembershipScreen() {
       await Linking.openURL(url);
     } catch (e) {
       expectReturnFromBrowser.current = false;
-      setPortalError(userFacingApiMessage(e, 'Billing could not be opened. Please try again.'));
+      setPortalError(userFacingApiMessage(e, 'No se pudo abrir la gestión de membresía. Inténtalo de nuevo.'));
     } finally {
       setPortalBusy(false);
     }
@@ -1059,7 +1058,7 @@ export default function MembershipScreen() {
       successTimer.current = setTimeout(() => setDayPassSuccess(false), 4000);
       void load('refresh');
     } catch (e) {
-      setDayPassError(userFacingApiMessage(e, 'Could not start day pass purchase. Please try again.'));
+      setDayPassError(userFacingApiMessage(e, 'No se pudo iniciar la compra del pase diario. Inténtalo de nuevo.'));
     } finally {
       setDayPassBusy(false);
     }
@@ -1081,9 +1080,9 @@ export default function MembershipScreen() {
   const sub = profile?.activeSubscription;
 
   const renewsLabel = sub
-    ? `Renews ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
+    ? `Se renueva el ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
         new Date(sub.currentPeriodEnd),
-      )}${sub.cancelAtPeriodEnd ? ' · Cancelling' : ''}`
+      )}${sub.cancelAtPeriodEnd ? ' · Cancelación programada' : ''}`
     : '';
 
   return (
@@ -1110,7 +1109,7 @@ export default function MembershipScreen() {
               lineHeight: 44,
             }}
           >
-            Membership
+            Membresía
           </Text>
           <Text
             style={{
@@ -1167,7 +1166,7 @@ export default function MembershipScreen() {
         {/* ── Available plans ── */}
         {plans.length > 0 ? (
           <View style={{ marginTop: Space.sectionGap }}>
-            <SectionLabel>Available plans</SectionLabel>
+            <SectionLabel>Planes disponibles</SectionLabel>
             {plans.map((plan, i) => (
               <PlanCard
                 key={plan.id}
@@ -1176,7 +1175,7 @@ export default function MembershipScreen() {
                 index={i}
                 isLoading={!isGuest && checkoutPlanId === plan.id}
                 isDisabled={!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id}
-                subscribeLabel={isGuest ? 'Join Now' : 'Subscribe'}
+                subscribeLabel={isGuest ? 'Únete ahora' : 'Suscribirme'}
                 onSubscribe={() => void (isGuest ? openAuthModal('membership') : openCheckout(plan.id))}
               />
             ))}
@@ -1188,13 +1187,13 @@ export default function MembershipScreen() {
           </View>
         ) : (
           <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 22, marginTop: Space.sectionGap }}>
-            No published plans yet. Check back later or contact the studio.
+            Aún no hay planes publicados. Vuelve más tarde o contacta al estudio.
           </Text>
         )}
 
         {/* ── Day Pass ── */}
         <View style={{ marginTop: Space.sectionGap }}>
-          <SectionLabel>Day Pass</SectionLabel>
+          <SectionLabel>Pase diario</SectionLabel>
 
           <Animated.View entering={FadeInDown.duration(420)}>
             <View
@@ -1240,7 +1239,7 @@ export default function MembershipScreen() {
                     marginBottom: 6,
                   }}
                 >
-                  Day Pass
+                  Pase diario
                 </Text>
                 <Text
                   style={{
@@ -1250,7 +1249,7 @@ export default function MembershipScreen() {
                     marginBottom: 20,
                   }}
                 >
-                  Train today. No membership required.
+                  Entrena hoy. Sin membresía.
                 </Text>
 
                 {/* Price hero */}
@@ -1275,13 +1274,13 @@ export default function MembershipScreen() {
                       letterSpacing: -0.2,
                     }}
                   >
-                    / day
+                    / día
                   </Text>
                 </View>
 
                 {/* Benefits */}
                 <View style={{ gap: 10, marginBottom: 24 }}>
-                  {['Full-day access', 'Book eligible classes', 'Perfect for first-time visitors'].map(
+                  {['Acceso todo el día', 'Reserva clases elegibles', 'Ideal para tu primera visita'].map(
                     (benefit) => (
                       <View key={benefit} style={{ flexDirection: 'row', alignItems: 'center' }}>
                         <View
@@ -1317,7 +1316,7 @@ export default function MembershipScreen() {
                       letterSpacing: -0.1,
                     }}
                   >
-                    Day Pass activated.
+                    Pase diario activado.
                   </Text>
                 ) : null}
 
@@ -1328,7 +1327,7 @@ export default function MembershipScreen() {
                 ) : null}
 
                 <BrandButton
-                  label="Get Day Pass"
+                  label="Comprar pase diario"
                   variant="white"
                   accentColor={primaryColor}
                   loading={!isGuest && dayPassBusy}
@@ -1337,8 +1336,8 @@ export default function MembershipScreen() {
                 />
                 {isGuest ? (
                   <InlineAuthLink
-                    prompt="Already have an account?"
-                    action="Log in"
+                    prompt="¿Ya tienes cuenta?"
+                    action="Iniciar sesión"
                     onPress={() => goToAuthLogin('day-pass')}
                   />
                 ) : null}
@@ -1355,7 +1354,7 @@ export default function MembershipScreen() {
           {/* Active / pending day passes */}
           {!isGuest && dayPasses.length > 0 ? (
             <Animated.View entering={FadeInDown.duration(380)}>
-              <SectionLabel>Your passes</SectionLabel>
+              <SectionLabel>Tus pases</SectionLabel>
               <View
                 style={{
                   ...premiumCardStyle(C),
