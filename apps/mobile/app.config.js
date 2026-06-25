@@ -17,8 +17,8 @@ const LOCAL_TEMPLATE_DEFAULTS = {
 
 /** Checked-in Ares Training Club brand assets (WHITELABEL_PROFILE=ares). */
 const ARES_PROFILE_DEFAULTS = {
-  APP_VERSION: '1.0.1',
-  IOS_BUILD_NUMBER: '7',
+  APP_VERSION: '1.1',
+  IOS_BUILD_NUMBER: '8',
   // Native launcher name (iOS home screen / Android drawer). Intentionally short.
   APP_LAUNCHER_NAME: 'ARES',
   APP_ICON_PATH: './assets/branding/ares/icon.png',
