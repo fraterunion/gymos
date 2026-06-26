@@ -76,6 +76,37 @@ export function getStudioLocalDateKey(date: Date, timezone: string): string {
 }
 
 /**
+ * Returns the day-of-week (0 = Sunday … 6 = Saturday) for a 'YYYY-MM-DD' date key.
+ * Timezone-independent: a calendar date always has the same DOW regardless of observer timezone.
+ */
+export function getDayOfWeekFromDateKey(dateKey: string): number {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
+}
+
+/**
+ * Converts a studio-local 'YYYY-MM-DD' + 'HH:MM' pair to a UTC Date.
+ *
+ * Builds on studioLocalDateKeyToUtcAnchor (local midnight → UTC), then adds the
+ * requested hours and minutes. DST-safe for the same reason as the anchor function.
+ *
+ * @param dateKey  - 'YYYY-MM-DD' in the studio's local calendar
+ * @param timeStr  - 'HH:MM' in 24-hour local time
+ * @param timezone - IANA timezone string from studio.timezone
+ */
+export function studioLocalTimeToUtc(
+  dateKey: string,
+  timeStr: string,
+  timezone: string,
+): Date {
+  const [hourStr, minStr] = timeStr.split(':');
+  const hour = Number(hourStr ?? '0');
+  const minute = Number(minStr ?? '0');
+  const localMidnightUtc = studioLocalDateKeyToUtcAnchor(dateKey, timezone);
+  return new Date(localMidnightUtc.getTime() + (hour * 60 + minute) * 60_000);
+}
+
+/**
  * Converts a studio-local 'YYYY-MM-DD' date key back to the UTC Date anchor
  * used as DayPass.validForDate.
  *

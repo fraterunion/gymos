@@ -19,6 +19,9 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
     { href: "/check-in", label: "Today" },
     { href: "/schedule", label: "Schedule" },
     { href: "/classes", label: "Class types" },
+    ...(canManageStudioSettings
+      ? ([{ href: "/schedule-generator", label: "Generator" }] as const)
+      : []),
     { href: "/members", label: "Members" },
     ...(canManageStudioSettings
       ? ([{ href: "/staff", label: "Staff" }] as const)

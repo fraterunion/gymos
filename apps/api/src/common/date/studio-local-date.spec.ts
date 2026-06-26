@@ -1,4 +1,9 @@
-import { getStudioLocalDateKey, studioLocalDateKeyToUtcAnchor } from './studio-local-date';
+import {
+  getDayOfWeekFromDateKey,
+  getStudioLocalDateKey,
+  studioLocalDateKeyToUtcAnchor,
+  studioLocalTimeToUtc,
+} from './studio-local-date';
 
 // ── getStudioLocalDateKey ────────────────────────────────────────────────────
 
@@ -82,5 +87,56 @@ describe('studioLocalDateKeyToUtcAnchor', () => {
     expect(dateKey).toBe('2026-06-08'); // still June 8 local
     const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, 'America/Mexico_City');
     expect(validForDate.toISOString()).toBe('2026-06-08T06:00:00.000Z');
+  });
+});
+
+// ── getDayOfWeekFromDateKey ──────────────────────────────────────────────────
+
+describe('getDayOfWeekFromDateKey', () => {
+  it('returns 1 (Monday) for 2026-06-08 (a known Monday)', () => {
+    expect(getDayOfWeekFromDateKey('2026-06-08')).toBe(1);
+  });
+
+  it('returns 0 (Sunday) for 2026-06-07', () => {
+    expect(getDayOfWeekFromDateKey('2026-06-07')).toBe(0);
+  });
+
+  it('returns 6 (Saturday) for 2026-06-06', () => {
+    expect(getDayOfWeekFromDateKey('2026-06-06')).toBe(6);
+  });
+
+  it('is timezone-independent for the same calendar date', () => {
+    expect(getDayOfWeekFromDateKey('2026-06-08')).toBe(1);
+  });
+});
+
+// ── studioLocalTimeToUtc ─────────────────────────────────────────────────────
+
+describe('studioLocalTimeToUtc', () => {
+  it('converts 06:00 local on 2026-06-08 in Mexico City (UTC-6) to 12:00 UTC', () => {
+    const result = studioLocalTimeToUtc('2026-06-08', '06:00', 'America/Mexico_City');
+    expect(result.toISOString()).toBe('2026-06-08T12:00:00.000Z');
+  });
+
+  it('converts 08:00 local on 2026-06-08 in Mexico City to 14:00 UTC', () => {
+    const result = studioLocalTimeToUtc('2026-06-08', '08:00', 'America/Mexico_City');
+    expect(result.toISOString()).toBe('2026-06-08T14:00:00.000Z');
+  });
+
+  it('converts 00:00 local to the UTC midnight anchor (same as studioLocalDateKeyToUtcAnchor)', () => {
+    const result = studioLocalTimeToUtc('2026-06-08', '00:00', 'America/Mexico_City');
+    const anchor = studioLocalDateKeyToUtcAnchor('2026-06-08', 'America/Mexico_City');
+    expect(result.toISOString()).toBe(anchor.toISOString());
+  });
+
+  it('works correctly for a UTC+ timezone (Asia/Karachi, UTC+5)', () => {
+    // 06:00 Karachi = 01:00 UTC previous day? No: 06:00 on Jun 8 Karachi = Jun 8 01:00 UTC
+    const result = studioLocalTimeToUtc('2026-06-08', '06:00', 'Asia/Karachi');
+    expect(result.toISOString()).toBe('2026-06-08T01:00:00.000Z');
+  });
+
+  it('handles 20:00 local on Mexico City correctly', () => {
+    const result = studioLocalTimeToUtc('2026-06-08', '20:00', 'America/Mexico_City');
+    expect(result.toISOString()).toBe('2026-06-09T02:00:00.000Z');
   });
 });

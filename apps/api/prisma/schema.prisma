@@ -137,6 +137,11 @@ enum DayPassStatus {
   REFUNDED
 }
 
+enum ScheduleGenerationTrigger {
+  MANUAL
+  AUTOMATIC
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -192,10 +197,13 @@ model Studio {
   attendances    Attendance[]
   qrTokens       QRToken[]
   payments       Payment[]
-  buildJobs         BuildJob[]
-  staffProfiles     StudioStaffProfile[]
-  memberCrmProfiles StudioMemberProfile[]
-  dayPasses         DayPass[]
+  buildJobs                  BuildJob[]
+  staffProfiles              StudioStaffProfile[]
+  memberCrmProfiles          StudioMemberProfile[]
+  dayPasses                  DayPass[]
+  scheduleTemplates          ScheduleTemplate[]
+  scheduleGenerationRuns     ScheduleGenerationRun[]
+  scheduleAutomationSettings ScheduleAutomationSettings?
 
   @@map("studios")
 }
@@ -221,12 +229,14 @@ model User {
   qrTokens            QRToken[]
   payments            Payment[]
   refreshTokens       RefreshToken[]
-  instructedClasses   ScheduledClass[]   @relation("ScheduledClassInstructor")
-  defaultClassTemplates ClassTemplate[] @relation("ClassTemplateDefaultInstructor")
-  buildJobsRequested    BuildJob[]
-  staffProfiles         StudioStaffProfile[]
-  memberCrmProfiles     StudioMemberProfile[]
-  dayPasses             DayPass[]
+  instructedClasses           ScheduledClass[]        @relation("ScheduledClassInstructor")
+  defaultClassTemplates       ClassTemplate[]         @relation("ClassTemplateDefaultInstructor")
+  buildJobsRequested          BuildJob[]
+  staffProfiles               StudioStaffProfile[]
+  memberCrmProfiles           StudioMemberProfile[]
+  dayPasses                   DayPass[]
+  instructedScheduleTemplates ScheduleTemplate[]      @relation("ScheduleTemplateInstructor")
+  scheduleGenerationRuns      ScheduleGenerationRun[] @relation("ScheduleGenerationRunUser")
 
   @@map("users")
 }
@@ -338,6 +348,7 @@ model ClassTemplate {
   studio             Studio            @relation(fields: [studioId], references: [id], onDelete: Restrict)
   defaultInstructor  User?             @relation("ClassTemplateDefaultInstructor", fields: [defaultInstructorId], references: [id], onDelete: SetNull)
   classes            ScheduledClass[]
+  scheduleTemplates  ScheduleTemplate[]
 
   @@index([studioId])
   @@index([studioId, category])
@@ -646,4 +657,70 @@ model DayPass {
   @@index([studioId, validForDate])
   @@index([status])
   @@map("day_passes")
+}
+
+/// Recurring weekly slot definition. The generator reads these to produce ScheduledClass rows.
+/// dayOfWeek uses JS convention: 0 = Sunday, 6 = Saturday.
+/// startTime is "HH:MM" in the studio's local IANA timezone (never UTC).
+model ScheduleTemplate {
+  id              String    @id @default(cuid())
+  studioId        String    @map("studio_id")
+  classTemplateId String    @map("class_template_id")
+  instructorId    String?   @map("instructor_id")
+  dayOfWeek       Int       @map("day_of_week")
+  startTime       String    @map("start_time")
+  capacity        Int?
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  studio        Studio        @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  classTemplate ClassTemplate @relation(fields: [classTemplateId], references: [id], onDelete: Restrict)
+  instructor    User?         @relation("ScheduleTemplateInstructor", fields: [instructorId], references: [id])
+
+  @@index([studioId])
+  @@index([studioId, active])
+  @@index([studioId, dayOfWeek])
+  @@map("schedule_templates")
+}
+
+/// Immutable log of every generation run (real or dry-run).
+model ScheduleGenerationRun {
+  id          String                    @id @default(cuid())
+  studioId    String                    @map("studio_id")
+  triggeredBy ScheduleGenerationTrigger @map("triggered_by")
+  userId      String?                   @map("user_id")
+  isDryRun    Boolean                   @default(false) @map("is_dry_run")
+  fromDate    DateTime                  @map("from_date")
+  toDate      DateTime                  @map("to_date")
+  generated   Int                       @default(0)
+  skipped     Int                       @default(0)
+  conflicts   Int                       @default(0)
+  errors      Int                       @default(0)
+  durationMs  Int?                      @map("duration_ms")
+  breakdown   Json?
+  startedAt   DateTime                  @default(now()) @map("started_at")
+  finishedAt  DateTime?                 @map("finished_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user   User?  @relation("ScheduleGenerationRunUser", fields: [userId], references: [id])
+
+  @@index([studioId])
+  @@index([studioId, startedAt])
+  @@map("schedule_generation_runs")
+}
+
+/// Per-studio automation config. Created on-demand; absence = automation disabled.
+model ScheduleAutomationSettings {
+  id            String   @id @default(cuid())
+  studioId      String   @unique @map("studio_id")
+  enabled       Boolean  @default(false)
+  minFutureDays Int      @default(90) @map("min_future_days")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+
+  @@map("schedule_automation_settings")
 }
