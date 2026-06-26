@@ -19,6 +19,10 @@ enum Role {
   OWNER
 }
 
+enum PlatformRole {
+  PLATFORM_ADMIN
+}
+
 enum SubscriptionStatus {
   ACTIVE
   PAST_DUE
@@ -238,9 +242,10 @@ model User {
   firstName        String    @map("first_name")
   lastName         String    @map("last_name")
   phone            String?   @map("phone")
-  passwordHash     String?   @map("password_hash")
-  stripeCustomerId String?   @unique @map("stripe_customer_id")
-  createdAt        DateTime  @default(now()) @map("created_at")
+  passwordHash     String?       @map("password_hash")
+  platformRole     PlatformRole? @map("platform_role")
+  stripeCustomerId String?       @unique @map("stripe_customer_id")
+  createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
 

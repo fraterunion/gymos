@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Role } from '@prisma/client';
+import { PlatformRole, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +20,7 @@ export type SafeUser = {
   firstName: string;
   lastName: string;
   phone: string | null;
+  platformRole: PlatformRole | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -150,8 +151,8 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token reuse detected');
     }
 
-    const accessToken = await this.signAccessToken(record.userId, record.user.email);
     const user = await this.getSafeUser(record.userId);
+    const accessToken = await this.signAccessToken(record.userId, record.user.email, user.platformRole);
     return { accessToken, refreshToken: newRefresh.raw, user };
   }
 
@@ -193,8 +194,8 @@ export class AuthService {
         expiresAt: this.refreshExpiryDate(),
       },
     });
-    const accessToken = await this.signAccessToken(userId, email);
     const user = await this.getSafeUser(userId);
+    const accessToken = await this.signAccessToken(userId, email, user.platformRole);
     return { accessToken, refreshToken: raw, user };
   }
 
@@ -232,8 +233,8 @@ export class AuthService {
     return d;
   }
 
-  private async signAccessToken(sub: string, email: string): Promise<string> {
-    return this.jwtService.signAsync({ sub, email });
+  private async signAccessToken(sub: string, email: string, platformRole: PlatformRole | null): Promise<string> {
+    return this.jwtService.signAsync({ sub, email, platformRole });
   }
 
   private async getSafeUser(userId: string): Promise<SafeUser> {
@@ -245,6 +246,7 @@ export class AuthService {
         firstName: true,
         lastName: true,
         phone: true,
+        platformRole: true,
         createdAt: true,
         updatedAt: true,
         deletedAt: true,
@@ -259,6 +261,7 @@ export class AuthService {
       firstName: user.firstName,
       lastName: user.lastName,
       phone: user.phone,
+      platformRole: user.platformRole,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };

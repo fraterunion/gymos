@@ -6,6 +6,7 @@ export type AuthUser = {
   firstName: string;
   lastName: string;
   phone: string | null;
+  platformRole: "PLATFORM_ADMIN" | null;
   createdAt: string;
   updatedAt: string;
 };

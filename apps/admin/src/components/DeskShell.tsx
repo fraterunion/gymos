@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
-import { isPlatformOperatorEmail } from "@/lib/platformAccess";
+import { isPlatformAdmin } from "@/lib/platformAccess";
 
 export function DeskShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -79,7 +79,7 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
                 </select>
               </label>
             ) : null}
-            {user && isPlatformOperatorEmail(user.email) ? (
+            {user && isPlatformAdmin(user.platformRole) ? (
               <Link
                 href="/platform"
                 className={`hidden rounded-lg border px-2 py-1 text-[11px] font-semibold sm:inline ${

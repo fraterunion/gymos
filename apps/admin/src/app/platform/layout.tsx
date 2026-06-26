@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import { PlatformShell } from "@/components/PlatformShell";
 import { DeskStudioProvider } from "@/contexts/DeskStudioContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { isPlatformOperatorEmail } from "@/lib/platformAccess";
+import { isPlatformAdmin } from "@/lib/platformAccess";
 
 export default function PlatformLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -18,7 +18,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
       router.replace("/login");
       return;
     }
-    if (!isPlatformOperatorEmail(user.email)) {
+    if (!isPlatformAdmin(user.platformRole)) {
       router.replace("/check-in");
     }
   }, [hydrated, user, router]);
@@ -31,7 +31,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
     );
   }
 
-  if (!isPlatformOperatorEmail(user.email)) {
+  if (!isPlatformAdmin(user.platformRole)) {
     return (
       <div className="flex min-h-full flex-1 items-center justify-center bg-zinc-950">
         <p className="text-sm text-zinc-500">Redirecting…</p>
