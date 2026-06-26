@@ -9,6 +9,7 @@ import type { BillingInterval } from '@prisma/client';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
+import { EnrollmentService } from '../enrollment/enrollment.service';
 import { billingIntervalToStripeRecurring, stripeIntervalToBillingInterval } from './stripe-plan-interval';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
     private readonly config: ConfigService,
+    private readonly enrollment: EnrollmentService,
   ) {}
 
   async createMemberCheckoutSession(params: {
@@ -69,25 +71,49 @@ export class BillingService {
     }
 
     const successUrl = this.config.getOrThrow<string>('STRIPE_SUCCESS_URL');
-    const cancelUrl = this.config.getOrThrow<string>('STRIPE_CANCEL_URL');
+    const cancelUrl  = this.config.getOrThrow<string>('STRIPE_CANCEL_URL');
+
+    // Enrollment fee logic
+    const quote = await this.enrollment.calculateCheckoutQuote(
+      params.userId,
+      params.studioId,
+      params.planId,
+    );
+
+    const enrollmentMeta: Record<string, string> = {};
+    let addInvoiceItems: Array<{ price: string; quantity: number }> = [];
+
+    if (quote.enrollmentFeeApplies && quote.settingsId) {
+      enrollmentMeta['enrollmentSettingsId'] = quote.settingsId;
+      enrollmentMeta['enrollmentCandidate']  = quote.isPromoCandidate ? 'true' : 'false';
+
+      if (!quote.isPromoCandidate) {
+        // Non-promo path: charge enrollment fee on the first invoice
+        const feePriceId = await this.enrollment.ensureEnrollmentFeeStripePrice(quote.settingsId);
+        addInvoiceItems = [{ price: feePriceId, quantity: 1 }];
+      }
+      // Promo candidate path: omit fee — finalized as WAIVED by webhook
+    }
 
     const session = await this.stripe.createCheckoutSession({
       mode: 'subscription',
       customer: customer.id,
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: successUrl,
-      cancel_url: cancelUrl,
+      cancel_url:  cancelUrl,
       metadata: {
-        userId: user.id,
+        userId:   user.id,
         studioId: params.studioId,
-        planId: plan.id,
+        planId:   plan.id,
+        ...enrollmentMeta,
       },
       subscription_data: {
         metadata: {
-          userId: user.id,
+          userId:   user.id,
           studioId: params.studioId,
-          planId: plan.id,
+          planId:   plan.id,
         },
+        ...(addInvoiceItems.length > 0 ? { add_invoice_items: addInvoiceItems } : {}),
       },
     });
 

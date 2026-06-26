@@ -94,6 +94,18 @@ export class StripeService {
     });
   }
 
+  async createOneTimePrice(params: {
+    productId: string;
+    unitAmount: number;
+    currency: string;
+  }): Promise<Stripe.Price> {
+    return this.getClient().prices.create({
+      product: params.productId,
+      unit_amount: params.unitAmount,
+      currency: params.currency.toLowerCase(),
+    });
+  }
+
   async updateSubscription(
     subscriptionId: string,
     params: Stripe.SubscriptionUpdateParams,

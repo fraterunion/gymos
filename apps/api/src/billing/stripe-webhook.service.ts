@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DayPassStatus, PaymentStatus, Prisma, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
+import { EnrollmentService } from '../enrollment/enrollment.service';
 import { markStripeWebhookEventProcessed, tryClaimStripeWebhookEvent } from './stripe-webhook-idempotency';
 import {
   type WebhookCheckoutSessionPayload,
@@ -61,6 +62,7 @@ export class StripeWebhookService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
+    private readonly enrollment: EnrollmentService,
   ) {}
 
   async handleIncomingWebhook(rawBody: Buffer, signature: string): Promise<void> {
@@ -125,6 +127,21 @@ export class StripeWebhookService {
     const md = readTriplet(session.metadata);
     const stripeSub = (await this.stripe.retrieveSubscription(subId)) as unknown as WebhookSubscriptionPayload;
     await this.upsertSubscriptionFromStripe(stripeSub, md);
+
+    // Enrollment finalization — only when metadata signals an enrollment-aware checkout
+    const sessionMeta = session.metadata ?? {};
+    const enrollmentSettingsId = sessionMeta['enrollmentSettingsId'];
+    const userId = sessionMeta['userId'];
+    const studioId = sessionMeta['studioId'];
+    if (enrollmentSettingsId && userId && studioId) {
+      await this.enrollment.finalizeEnrollment({
+        userId,
+        studioId,
+        settingsId: enrollmentSettingsId,
+        stripeCheckoutSessionId: session.id,
+        wasPromoCandidate: sessionMeta['enrollmentCandidate'] === 'true',
+      });
+    }
   }
 
   private async onCustomerSubscription(subscription: WebhookSubscriptionPayload): Promise<void> {

@@ -72,3 +72,22 @@ export async function createBillingPortalSession(studioId: string): Promise<{ ur
     body: '{}',
   });
 }
+
+export type CheckoutPreviewDto = {
+  planPriceCents: number;
+  currency: string;
+  enrollmentFeeApplies: boolean;
+  enrollmentFeeCents: number;
+  promoLikelySlotsAvailable: boolean;
+  campaignName: string | null;
+};
+
+export async function fetchCheckoutPreview(
+  studioId: string,
+  planId: string,
+): Promise<CheckoutPreviewDto> {
+  return apiRequest<CheckoutPreviewDto>(
+    `/studios/${studioId}/membership-plans/${planId}/checkout-preview`,
+    { method: 'GET' },
+  );
+}

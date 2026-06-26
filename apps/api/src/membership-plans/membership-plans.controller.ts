@@ -18,6 +18,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { BillingService } from '../billing/billing.service';
+import { EnrollmentService } from '../enrollment/enrollment.service';
 import { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
 import { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
 import { MembershipPlansService } from './membership-plans.service';
@@ -28,11 +29,23 @@ export class MembershipPlansController {
   constructor(
     private readonly membershipPlansService: MembershipPlansService,
     private readonly billingService: BillingService,
+    private readonly enrollmentService: EnrollmentService,
   ) {}
 
   @Get()
   list(@Param('studioId') studioId: string) {
     return this.membershipPlansService.listActivePlans(studioId);
+  }
+
+  @Get(':planId/checkout-preview')
+  @UseGuards(RolesGuard)
+  @Roles(Role.MEMBER)
+  checkoutPreview(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.enrollmentService.calculateCheckoutQuote(req.user.sub, studioId, planId);
   }
 
   @Post(':planId/checkout')

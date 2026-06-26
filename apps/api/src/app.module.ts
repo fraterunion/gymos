@@ -12,6 +12,7 @@ import { BrandingModule } from './branding/branding.module';
 import { BuildJobsModule } from './build-jobs/build-jobs.module';
 import { CheckInsModule } from './check-ins/check-ins.module';
 import { DayPassesModule } from './day-passes/day-passes.module';
+import { EnrollmentModule } from './enrollment/enrollment.module';
 import { ClassTemplatesModule } from './class-templates/class-templates.module';
 import { ScheduleTemplatesModule } from './schedule-templates/schedule-templates.module';
 import { ScheduleGeneratorModule } from './schedule-generator/schedule-generator.module';
@@ -74,6 +75,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     BookingsModule,
     CheckInsModule,
     DayPassesModule,
+    EnrollmentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

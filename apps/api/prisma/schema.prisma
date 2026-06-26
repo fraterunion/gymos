@@ -74,6 +74,28 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+enum EnrollmentFeeStatus {
+  PAID
+  WAIVED
+}
+
+enum WaivedReason {
+  FIRST_N_PROMO
+  FIRST_N_PROMO_OVERFLOW
+  ADMIN_WAIVER
+  STAFF
+  LEGACY_MEMBER
+  OTHER
+}
+
+enum CampaignType {
+  FIRST_N_MEMBERS
+}
+
+enum CampaignAppliesTo {
+  ENROLLMENT_FEE
+}
+
 enum BuildJobPlatform {
   IOS
   ANDROID
@@ -204,6 +226,8 @@ model Studio {
   scheduleTemplates          ScheduleTemplate[]
   scheduleGenerationRuns     ScheduleGenerationRun[]
   scheduleAutomationSettings ScheduleAutomationSettings?
+  enrollmentSettings         StudioEnrollmentSettings?
+  memberEnrollments          MemberEnrollment[]
 
   @@map("studios")
 }
@@ -237,6 +261,7 @@ model User {
   dayPasses                   DayPass[]
   instructedScheduleTemplates ScheduleTemplate[]      @relation("ScheduleTemplateInstructor")
   scheduleGenerationRuns      ScheduleGenerationRun[] @relation("ScheduleGenerationRunUser")
+  enrollments                 MemberEnrollment[]
 
   @@map("users")
 }
@@ -723,4 +748,59 @@ model ScheduleAutomationSettings {
   studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
 
   @@map("schedule_automation_settings")
+}
+
+/// One-time enrollment fee configuration per studio.
+/// Absence = no enrollment fee for that studio.
+/// campaignEnabled gates the promo block; all campaign_* fields are only read when campaignEnabled = true.
+model StudioEnrollmentSettings {
+  id                   String             @id @default(cuid())
+  studioId             String             @unique @map("studio_id")
+  enrollmentFeeCents   Int                @map("enrollment_fee_cents")
+  currency             String             @default("mxn")
+
+  campaignEnabled      Boolean            @default(false) @map("campaign_enabled")
+  campaignType         CampaignType?      @map("campaign_type")
+  campaignName         String?            @map("campaign_name")
+  campaignLimit        Int?               @map("campaign_limit")
+  campaignDiscountPct  Int?               @map("campaign_discount_pct")
+  campaignAppliesTo    CampaignAppliesTo? @map("campaign_applies_to")
+
+  stripeProductId      String?            @map("stripe_product_id")
+  stripePriceId        String?            @map("stripe_price_id")
+  active               Boolean            @default(true)
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  studio      Studio             @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  enrollments MemberEnrollment[]
+
+  @@map("studio_enrollment_settings")
+}
+
+/// One enrollment record per user per studio — written only on webhook finalization.
+/// memberNumber: sequential across all PAID + WAIVED for the studio.
+/// founderNumber: sequential within FIRST_N_PROMO waivers only.
+model MemberEnrollment {
+  id                      String              @id @default(cuid())
+  studioId                String              @map("studio_id")
+  userId                  String              @map("user_id")
+  settingsId              String              @map("settings_id")
+  status                  EnrollmentFeeStatus
+  memberNumber            Int?                @map("member_number")
+  founderNumber           Int?                @map("founder_number")
+  waivedReason            WaivedReason?       @map("waived_reason")
+  stripeCheckoutSessionId String?             @unique @map("stripe_checkout_session_id")
+  finalizedAt             DateTime?           @map("finalized_at")
+  createdAt               DateTime            @default(now()) @map("created_at")
+  updatedAt               DateTime            @updatedAt @map("updated_at")
+
+  studio   Studio                   @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user     User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  settings StudioEnrollmentSettings @relation(fields: [settingsId], references: [id], onDelete: Restrict)
+
+  @@unique([studioId, userId])
+  @@index([studioId])
+  @@index([userId])
+  @@map("member_enrollments")
 }

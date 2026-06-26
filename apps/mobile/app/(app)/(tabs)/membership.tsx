@@ -31,9 +31,11 @@ import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import {
   createBillingPortalSession,
   createMembershipCheckoutSession,
+  fetchCheckoutPreview,
   fetchMembershipPlans,
   fetchMyMemberProfile,
   type BillingInterval,
+  type CheckoutPreviewDto,
   type MembershipPlanDto,
   type MyMemberProfileDto,
 } from '@/lib/api/membershipApi';
@@ -928,6 +930,7 @@ export default function MembershipScreen() {
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
   const [dayPasses, setDayPasses] = useState<DayPassDto[]>([]);
+  const [checkoutPreview, setCheckoutPreview] = useState<CheckoutPreviewDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1008,6 +1011,18 @@ export default function MembershipScreen() {
         ]);
         setPlans(p);
         setProfile(prof);
+
+        // Fetch enrollment preview for the first available plan (fee info is studio-wide)
+        if (p.length > 0 && !prof.activeSubscription) {
+          try {
+            const preview = await fetchCheckoutPreview(studioId, p[0]!.id);
+            setCheckoutPreview(preview);
+          } catch {
+            setCheckoutPreview(null);
+          }
+        } else {
+          setCheckoutPreview(null);
+        }
       } catch (e) {
         setError(userFacingApiMessage(e, 'No se pudo cargar la información de membresía. Desliza para actualizar.'));
       } finally {
@@ -1224,6 +1239,39 @@ export default function MembershipScreen() {
         {plans.length > 0 ? (
           <View style={{ marginTop: Space.sectionGap }}>
             <SectionLabel>Planes disponibles</SectionLabel>
+
+            {/* Enrollment fee / founders promo disclosure */}
+            {!isGuest && checkoutPreview?.enrollmentFeeApplies ? (
+              <View
+                style={{
+                  marginBottom: 20,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: checkoutPreview.promoLikelySlotsAvailable
+                    ? 'rgba(251,191,36,0.35)'
+                    : 'rgba(255,255,255,0.10)',
+                  backgroundColor: checkoutPreview.promoLikelySlotsAvailable
+                    ? 'rgba(251,191,36,0.06)'
+                    : 'rgba(255,255,255,0.03)',
+                  paddingVertical: 14,
+                  paddingHorizontal: 16,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 13,
+                    lineHeight: 19,
+                    color: checkoutPreview.promoLikelySlotsAvailable ? '#FCD34D' : C.textSub,
+                    letterSpacing: -0.1,
+                  }}
+                >
+                  {checkoutPreview.promoLikelySlotsAvailable
+                    ? `¡Aún hay lugares de ${checkoutPreview.campaignName ?? 'Fundadores'}! Si completas tu pago ahora, tu inscripción de ${formatMoneyFromCents(checkoutPreview.enrollmentFeeCents, 'mxn')} podría ir por cuenta de ARES.`
+                    : `Inscripción única de ${formatMoneyFromCents(checkoutPreview.enrollmentFeeCents, 'mxn')}. Se paga únicamente al comenzar tu membresía.`}
+                </Text>
+              </View>
+            ) : null}
+
             {plans.map((plan, i) => (
               <PlanCard
                 key={plan.id}
