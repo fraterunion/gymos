@@ -5,13 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppState,
   Linking,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { AuthRequiredModal } from '@/components/AuthRequiredModal';
@@ -890,6 +891,258 @@ function DayPassRow({
 }
 
 // ---------------------------------------------------------------------------
+// Checkout breakdown — receipt-style row
+// ---------------------------------------------------------------------------
+
+function BreakdownRow({
+  label,
+  value,
+  bold = false,
+  dimValue = false,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  bold?: boolean;
+  dimValue?: boolean;
+  valueColor?: string;
+}) {
+  const C = getColors();
+  const color = valueColor ?? (dimValue ? C.textMute : C.text);
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 13,
+      }}
+    >
+      <Text
+        style={{
+          flex: 1,
+          fontSize: bold ? 16 : 15,
+          fontWeight: bold ? '700' : '400',
+          letterSpacing: -0.2,
+          color: bold ? C.text : C.textSub,
+          marginRight: 12,
+        }}
+      >
+        {label}
+      </Text>
+      <Text
+        style={{
+          fontSize: bold ? 16 : 15,
+          fontWeight: bold ? '700' : '500',
+          letterSpacing: -0.3,
+          color,
+        }}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Checkout breakdown modal — slides up before opening Stripe
+// ---------------------------------------------------------------------------
+
+function CheckoutBreakdownModal({
+  visible,
+  plan,
+  preview,
+  primaryColor,
+  confirmBusy,
+  onConfirm,
+  onCancel,
+}: {
+  visible: boolean;
+  plan: MembershipPlanDto;
+  preview: CheckoutPreviewDto;
+  primaryColor: string;
+  confirmBusy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const C = getColors();
+  const insets = useSafeAreaInsets();
+
+  const isPromo = preview.promoLikelySlotsAvailable;
+  const intervalLabel = billingIntervalLabel(plan.billingInterval);
+  const planPriceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
+  const feeStr = formatMoneyFromCents(preview.enrollmentFeeCents, preview.currency);
+  const totalCents = isPromo
+    ? plan.priceCents
+    : plan.priceCents + preview.enrollmentFeeCents;
+  const totalStr = formatMoneyFromCents(totalCents, plan.currency);
+  const campaignLabel = preview.campaignName ?? 'Fundadores';
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onCancel}
+      statusBarTranslucent
+    >
+      {/* Backdrop — tap to dismiss */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Cerrar resumen"
+        onPress={onCancel}
+        style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.72)' }}
+      >
+        {/* Card — absorbs inner taps so backdrop dismiss doesn't fire */}
+        <Pressable
+          onPress={() => {}}
+          style={{
+            backgroundColor: '#141416',
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            borderWidth: 1,
+            borderBottomWidth: 0,
+            borderColor: 'rgba(255,255,255,0.10)',
+            paddingHorizontal: 24,
+            paddingTop: 12,
+            paddingBottom: Math.max(insets.bottom + 8, 28),
+          }}
+        >
+          {/* Drag handle */}
+          <View style={{ alignItems: 'center', marginBottom: 24 }}>
+            <View
+              style={{
+                width: 36,
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: 'rgba(255,255,255,0.15)',
+              }}
+            />
+          </View>
+
+          {/* Title */}
+          <Text
+            style={{
+              fontSize: 22,
+              fontWeight: '800',
+              letterSpacing: -0.6,
+              color: C.text,
+              marginBottom: 24,
+            }}
+          >
+            Resumen de membresía
+          </Text>
+
+          {/* ── Line items ── */}
+          <BreakdownRow
+            label={`Membresía ${plan.name}`}
+            value={`${planPriceStr}${intervalLabel}`}
+          />
+          <BreakdownRow
+            label="Inscripción"
+            value={feeStr}
+            dimValue={isPromo}
+          />
+          {isPromo ? (
+            <BreakdownRow
+              label={`Promoción ${campaignLabel}`}
+              value={`-${feeStr}`}
+              valueColor="#FCD34D"
+            />
+          ) : null}
+
+          {/* Divider */}
+          <View
+            style={{
+              height: 1,
+              backgroundColor: 'rgba(255,255,255,0.09)',
+              marginTop: 4,
+              marginBottom: 16,
+            }}
+          />
+
+          {/* Totals */}
+          <BreakdownRow label="Total hoy" value={totalStr} bold />
+          <BreakdownRow
+            label="Después"
+            value={`${planPriceStr}${intervalLabel}`}
+            dimValue
+          />
+
+          {/* ── Message block ── */}
+          <View
+            style={{
+              marginTop: 8,
+              marginBottom: 4,
+              borderRadius: 14,
+              borderWidth: 1,
+              backgroundColor: isPromo ? 'rgba(251,191,36,0.05)' : 'rgba(255,255,255,0.03)',
+              borderColor: isPromo ? 'rgba(251,191,36,0.22)' : 'rgba(255,255,255,0.08)',
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: '700',
+                letterSpacing: -0.2,
+                color: isPromo ? '#FCD34D' : C.textSub,
+                marginBottom: 4,
+              }}
+            >
+              {isPromo ? '🎉 ¡Felicidades!' : 'Inscripción única'}
+            </Text>
+            <Text
+              style={{
+                fontSize: 13,
+                lineHeight: 19,
+                letterSpacing: -0.1,
+                color: C.textSub,
+              }}
+            >
+              {isPromo
+                ? `Tu inscripción de ${feeStr} va por cuenta de ARES si completas tu pago ahora.`
+                : 'Se paga únicamente al comenzar tu membresía.'}
+            </Text>
+          </View>
+
+          {/* ── CTAs ── */}
+          <View style={{ marginTop: 20 }}>
+            <BrandButton
+              label="Continuar al pago"
+              variant="white"
+              accentColor={primaryColor}
+              loading={confirmBusy}
+              disabled={confirmBusy}
+              onPress={onConfirm}
+            />
+            <Pressable
+              accessibilityRole="button"
+              onPress={onCancel}
+              disabled={confirmBusy}
+              hitSlop={8}
+              style={{ alignItems: 'center', paddingVertical: 18 }}
+            >
+              <Text
+                style={{
+                  fontSize: 15,
+                  fontWeight: '500',
+                  letterSpacing: -0.1,
+                  color: confirmBusy ? C.textMute : C.textSub,
+                }}
+              >
+                Cancelar
+              </Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
 
@@ -931,6 +1184,8 @@ export default function MembershipScreen() {
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
   const [dayPasses, setDayPasses] = useState<DayPassDto[]>([]);
   const [checkoutPreview, setCheckoutPreview] = useState<CheckoutPreviewDto | null>(null);
+  const [breakdownPlan, setBreakdownPlan] = useState<MembershipPlanDto | null>(null);
+  const [confirmingCheckout, setConfirmingCheckout] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1061,6 +1316,14 @@ export default function MembershipScreen() {
   async function openCheckout(planId: string) {
     if (isGuest) { openAuthModal('membership'); return; }
     if (!studioId) return;
+
+    // If enrollment fee applies, show the breakdown modal first.
+    if (checkoutPreview?.enrollmentFeeApplies) {
+      const plan = plans.find((p) => p.id === planId);
+      if (plan) { setBreakdownPlan(plan); return; }
+    }
+
+    // No enrollment fee — proceed directly to Stripe.
     setCheckoutPlanId(planId);
     try {
       const { url } = await createMembershipCheckoutSession(studioId, planId);
@@ -1071,6 +1334,23 @@ export default function MembershipScreen() {
       setError(userFacingApiMessage(e, 'No se pudo iniciar el pago. Inténtalo de nuevo.'));
     } finally {
       setCheckoutPlanId(null);
+    }
+  }
+
+  async function confirmCheckout() {
+    if (!studioId || !breakdownPlan) return;
+    setConfirmingCheckout(true);
+    try {
+      const { url } = await createMembershipCheckoutSession(studioId, breakdownPlan.id);
+      setBreakdownPlan(null);
+      expectReturnFromBrowser.current = true;
+      await Linking.openURL(url);
+    } catch (e) {
+      expectReturnFromBrowser.current = false;
+      setBreakdownPlan(null);
+      setError(userFacingApiMessage(e, 'No se pudo iniciar el pago. Inténtalo de nuevo.'));
+    } finally {
+      setConfirmingCheckout(false);
     }
   }
 
@@ -1480,6 +1760,18 @@ export default function MembershipScreen() {
           ) : null}
         </View>
       </ScrollView>
+
+      {breakdownPlan && checkoutPreview ? (
+        <CheckoutBreakdownModal
+          visible
+          plan={breakdownPlan}
+          preview={checkoutPreview}
+          primaryColor={primaryColor}
+          confirmBusy={confirmingCheckout}
+          onConfirm={() => void confirmCheckout()}
+          onCancel={() => { if (!confirmingCheckout) setBreakdownPlan(null); }}
+        />
+      ) : null}
 
       <AuthRequiredModal
         visible={authModalVisible}
