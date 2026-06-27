@@ -10,7 +10,9 @@ import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import {
-  fetchTodayClasses,
+  loadStaffTodayClasses,
+} from '@/lib/staffTodaySchedule';
+import {
   type TodayClassSummaryDto,
 } from '@/lib/api/scheduleApi';
 import { formatClassTime } from '@/lib/datetime';
@@ -268,11 +270,8 @@ export default function StaffTodayScreen() {
       }
       setError(null);
       try {
-        const data = await fetchTodayClasses(studioId);
-        const sorted = [...data].sort(
-          (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-        );
-        setClasses(sorted);
+        const data = await loadStaffTodayClasses(studioId, timeZone);
+        setClasses(data);
       } catch (e) {
         setError(
           userFacingApiMessage(e, 'No pudimos cargar las clases de hoy. Desliza hacia abajo para actualizar e inténtalo de nuevo.'),
@@ -286,7 +285,7 @@ export default function StaffTodayScreen() {
         setLoadedOnce(true);
       }
     },
-    [studioId],
+    [studioId, timeZone],
   );
 
   useFocusEffect(

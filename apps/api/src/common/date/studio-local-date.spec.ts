@@ -1,4 +1,5 @@
 import {
+  addDaysToDateKey,
   getDayOfWeekFromDateKey,
   getStudioLocalDateKey,
   studioLocalDateKeyToUtcAnchor,
@@ -87,6 +88,12 @@ describe('studioLocalDateKeyToUtcAnchor', () => {
     expect(dateKey).toBe('2026-06-08'); // still June 8 local
     const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, 'America/Mexico_City');
     expect(validForDate.toISOString()).toBe('2026-06-08T06:00:00.000Z');
+  });
+});
+
+describe('addDaysToDateKey', () => {
+  it('adds one calendar day in YYYY-MM-DD space', () => {
+    expect(addDaysToDateKey('2026-06-27', 1)).toBe('2026-06-28');
   });
 });
 

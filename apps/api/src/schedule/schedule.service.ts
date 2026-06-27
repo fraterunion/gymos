@@ -7,6 +7,7 @@ import type { Prisma, ScheduledClass } from '@prisma/client';
 import { BookingStatus, ClassStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  addDaysToDateKey,
   getStudioLocalDateKey,
   studioLocalDateKeyToUtcAnchor,
 } from '../common/date/studio-local-date';
@@ -242,16 +243,13 @@ export class ScheduleService {
     // independently, so a 23- or 25-hour DST day is handled correctly.
     const dayKey = getStudioLocalDateKey(now, studio.timezone);
     const dayStart = studioLocalDateKeyToUtcAnchor(dayKey, studio.timezone);
-
-    const [y, m, d] = dayKey.split('-').map(Number);
-    // JS Date.UTC handles month/year rollover when day overflows (e.g. Jan 32 → Feb 1).
-    const nextDayUtcMidnight = new Date(Date.UTC(y!, m! - 1, d! + 1));
-    const nextDayKey = getStudioLocalDateKey(nextDayUtcMidnight, studio.timezone);
+    const nextDayKey = addDaysToDateKey(dayKey, 1);
     const dayEnd = studioLocalDateKeyToUtcAnchor(nextDayKey, studio.timezone);
 
     const rows = await this.prisma.scheduledClass.findMany({
       where: {
         studioId,
+        status: ClassStatus.SCHEDULED,
         startsAt: { lt: dayEnd },
         endsAt:   { gt: dayStart },
         classTemplate: { deletedAt: null },

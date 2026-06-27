@@ -84,6 +84,13 @@ export function getDayOfWeekFromDateKey(dateKey: string): number {
   return new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
 }
 
+/** Add calendar days to a YYYY-MM-DD key (timezone-independent date arithmetic). */
+export function addDaysToDateKey(dateKey: string, deltaDays: number): string {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d! + deltaDays));
+  return dt.toISOString().slice(0, 10);
+}
+
 /**
  * Converts a studio-local 'YYYY-MM-DD' + 'HH:MM' pair to a UTC Date.
  *
