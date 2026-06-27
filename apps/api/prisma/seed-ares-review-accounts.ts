@@ -251,7 +251,7 @@ async function main(): Promise<void> {
   await upsertStudioMembership({
     studioId: studio.id,
     userId: staffUserId,
-    role: Role.STAFF,
+    role: Role.FRONT_DESK,
   });
   await upsertStaffProfile({
     studioId: studio.id,

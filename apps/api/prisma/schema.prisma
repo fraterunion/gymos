@@ -15,6 +15,7 @@ enum Role {
   MEMBER
   INSTRUCTOR
   STAFF
+  FRONT_DESK
   ADMIN
   OWNER
 }

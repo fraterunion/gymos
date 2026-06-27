@@ -3,7 +3,7 @@ import { apiRequest } from "@/lib/api/client";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type StaffType = "COACH" | "FRONT_DESK" | "MANAGER" | "OPERATIONS" | "OTHER";
-export type StaffRole = "OWNER" | "ADMIN" | "STAFF" | "INSTRUCTOR";
+export type StaffRole = "OWNER" | "ADMIN" | "STAFF" | "INSTRUCTOR" | "FRONT_DESK";
 
 export type StaffProfile = {
   id: string;
@@ -59,7 +59,7 @@ export type AddStaffInput = {
   email: string;
   firstName?: string;
   lastName?: string;
-  role: "ADMIN" | "STAFF" | "INSTRUCTOR";
+  role: "ADMIN" | "STAFF" | "INSTRUCTOR" | "FRONT_DESK";
   staffType: StaffType;
   phone?: string;
   bio?: string;
@@ -70,7 +70,7 @@ export type AddStaffInput = {
 };
 
 export type UpdateStaffInput = {
-  role?: "ADMIN" | "STAFF";
+  role?: "ADMIN" | "STAFF" | "FRONT_DESK";
   staffType?: StaffType;
   phone?: string;
   bio?: string;

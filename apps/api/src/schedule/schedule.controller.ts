@@ -24,6 +24,7 @@ import {
   UpdateScheduledClassDto,
 } from './dto/scheduled-class.dto';
 import { ScheduleService } from './schedule.service';
+import { DESK_SCHEDULE_READ_ROLES } from '../auth/desk-roles';
 
 @Controller('studios/:studioId/schedule')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
@@ -37,7 +38,7 @@ export class ScheduleController {
 
   @Get('today-summary')
   @UseGuards(RolesGuard)
-  @Roles(Role.STAFF, Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
+  @Roles(...DESK_SCHEDULE_READ_ROLES)
   todaySummary(@Param('studioId') studioId: string) {
     return this.scheduleService.getTodaySummaryForStaff(studioId);
   }

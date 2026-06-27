@@ -11,7 +11,7 @@ import {
 
 export class UpdateStaffDto {
   @IsOptional()
-  @IsIn([Role.ADMIN, Role.STAFF])
+  @IsIn([Role.ADMIN, Role.STAFF, Role.FRONT_DESK])
   role?: Role;
 
   @IsOptional()

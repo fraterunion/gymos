@@ -11,7 +11,7 @@ import type { AddStaffDto } from './dto/add-staff.dto';
 import type { ListStaffQueryDto } from './dto/list-staff-query.dto';
 import type { UpdateStaffDto } from './dto/update-staff.dto';
 
-const STAFF_ROLES: Role[] = [Role.OWNER, Role.ADMIN, Role.STAFF, Role.INSTRUCTOR];
+const STAFF_ROLES: Role[] = [Role.OWNER, Role.ADMIN, Role.STAFF, Role.INSTRUCTOR, Role.FRONT_DESK];
 
 const userSelect = {
   id: true,

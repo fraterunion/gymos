@@ -1,49 +1,62 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import { useEffect } from "react";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
+import {
+  canManageStudioSettings,
+  isFrontDeskAllowedPath,
+  isFrontDeskRole,
+} from "@/lib/deskRoles";
 import { isPlatformAdmin } from "@/lib/platformAccess";
 
 export function DeskShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, logout } = useAuth();
   const { studios, selectedStudioId, setStudioId, selected, loading } = useDeskStudio();
 
-  const canManageStudioSettings =
-    selected?.role === "OWNER" || selected?.role === "ADMIN";
+  const frontDesk = isFrontDeskRole(selected?.role);
+  const canManage = canManageStudioSettings(selected?.role);
 
-  const navItems = [
-    { href: "/check-in", label: "Today" },
-    { href: "/schedule", label: "Schedule" },
-    { href: "/classes", label: "Class types" },
-    ...(canManageStudioSettings
-      ? ([{ href: "/schedule-generator", label: "Generator" }] as const)
-      : []),
-    { href: "/members", label: "Members" },
-    ...(canManageStudioSettings
-      ? ([{ href: "/staff", label: "Staff" }] as const)
-      : []),
-    ...(canManageStudioSettings
-      ? ([{ href: "/memberships", label: "Memberships" }] as const)
-      : []),
-    { href: "/analytics", label: "Analytics" },
-    ...(canManageStudioSettings
-      ? ([
-          { href: "/builds", label: "Builds" },
-          { href: "/settings", label: "Settings" },
-        ] as const)
-      : []),
-  ];
+  useEffect(() => {
+    if (loading || !selected || !frontDesk) return;
+    if (!isFrontDeskAllowedPath(pathname)) {
+      router.replace("/check-in");
+    }
+  }, [loading, selected, frontDesk, pathname, router]);
+
+  const navItems = frontDesk
+    ? [
+        { href: "/check-in", label: "Today's Classes" },
+        { href: "/scan", label: "QR Scanner" },
+      ]
+    : [
+        { href: "/check-in", label: "Today" },
+        { href: "/schedule", label: "Schedule" },
+        { href: "/classes", label: "Class types" },
+        ...(canManage ? ([{ href: "/schedule-generator", label: "Generator" }] as const) : []),
+        { href: "/members", label: "Members" },
+        ...(canManage ? ([{ href: "/staff", label: "Staff" }] as const) : []),
+        ...(canManage ? ([{ href: "/memberships", label: "Memberships" }] as const) : []),
+        { href: "/analytics", label: "Analytics" },
+        ...(canManage
+          ? ([
+              { href: "/builds", label: "Builds" },
+              { href: "/settings", label: "Settings" },
+            ] as const)
+          : []),
+      ];
 
   return (
     <div className="flex min-h-full flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <header className="sticky top-0 z-10 border-b border-zinc-200/80 bg-white/90 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-4 py-3 sm:px-6">
           <Link href="/check-in" className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Check-in desk
+            {frontDesk ? "ARES Recepción" : "Check-in desk"}
           </Link>
           <nav className="flex flex-1 flex-wrap items-center gap-1 text-sm">
             {navItems.map(({ href, label }) => (
@@ -79,7 +92,7 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
                 </select>
               </label>
             ) : null}
-            {user && isPlatformAdmin(user.platformRole) ? (
+            {user && isPlatformAdmin(user.platformRole) && !frontDesk ? (
               <Link
                 href="/platform"
                 className={`hidden rounded-lg border px-2 py-1 text-[11px] font-semibold sm:inline ${

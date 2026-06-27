@@ -40,6 +40,7 @@ const ROLE_LABELS: Record<StaffRole, string> = {
   ADMIN: "Admin",
   STAFF: "Staff",
   INSTRUCTOR: "Instructor",
+  FRONT_DESK: "Front desk",
 };
 
 const ROLE_COLORS: Record<StaffRole, string> = {
@@ -47,6 +48,7 @@ const ROLE_COLORS: Record<StaffRole, string> = {
   ADMIN: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
   STAFF: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
   INSTRUCTOR: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  FRONT_DESK: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -278,12 +280,18 @@ function AddStaffModal({
                   setForm((f) => ({
                     ...f,
                     role,
-                    staffType: role === "INSTRUCTOR" ? "COACH" : f.staffType,
+                    staffType:
+                      role === "INSTRUCTOR"
+                        ? "COACH"
+                        : role === "FRONT_DESK"
+                          ? "FRONT_DESK"
+                          : f.staffType,
                   }));
                 }}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
               >
                 <option value="STAFF">Staff</option>
+                <option value="FRONT_DESK">Front desk</option>
                 <option value="INSTRUCTOR">Coach / Instructor</option>
                 {canCreateAdmin ? <option value="ADMIN">Admin</option> : null}
               </select>
@@ -920,6 +928,7 @@ export default function StaffPage() {
             <option value="OWNER">Owner</option>
             <option value="ADMIN">Admin</option>
             <option value="STAFF">Staff</option>
+            <option value="FRONT_DESK">Front desk</option>
             <option value="INSTRUCTOR">Instructor</option>
           </select>
           <select

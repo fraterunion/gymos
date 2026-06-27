@@ -1,10 +1,10 @@
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
-import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import { CheckInsService } from './check-ins.service';
+import { DESK_SCHEDULE_READ_ROLES } from '../auth/desk-roles';
 
 @Controller('studios/:studioId/classes/:classId')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
@@ -13,7 +13,7 @@ export class ClassAttendanceController {
 
   @Get('attendance')
   @UseGuards(RolesGuard)
-  @Roles(Role.STAFF, Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
+  @Roles(...DESK_SCHEDULE_READ_ROLES)
   list(@Param('studioId') studioId: string, @Param('classId') classId: string) {
     return this.checkInsService.listClassAttendance(studioId, classId);
   }

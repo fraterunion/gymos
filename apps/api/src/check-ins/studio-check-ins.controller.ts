@@ -6,6 +6,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CheckInsService } from './check-ins.service';
+import { DESK_CHECK_IN_ROLES } from '../auth/desk-roles';
 import { ManualCheckInDto } from './dto/manual-check-in.dto';
 import { QrCheckInDto } from './dto/qr-check-in.dto';
 
@@ -16,7 +17,7 @@ export class StudioCheckInsController {
 
   @Post('qr')
   @UseGuards(RolesGuard)
-  @Roles(Role.STAFF, Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
+  @Roles(...DESK_CHECK_IN_ROLES)
   @HttpCode(HttpStatus.CREATED)
   async checkInQr(
     @Param('studioId') studioId: string,
@@ -28,7 +29,7 @@ export class StudioCheckInsController {
 
   @Post('manual')
   @UseGuards(RolesGuard)
-  @Roles(Role.STAFF, Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
+  @Roles(Role.FRONT_DESK, Role.STAFF, Role.ADMIN, Role.OWNER)
   @HttpCode(HttpStatus.CREATED)
   async checkInManual(
     @Param('studioId') studioId: string,

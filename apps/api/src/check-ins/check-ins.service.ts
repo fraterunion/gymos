@@ -30,6 +30,7 @@ const attendanceUserSelect = {
 } satisfies Prisma.UserSelect;
 
 const staffCheckInRoles: ReadonlySet<Role> = new Set([
+  Role.FRONT_DESK,
   Role.STAFF,
   Role.INSTRUCTOR,
   Role.ADMIN,
