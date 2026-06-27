@@ -57,7 +57,7 @@ function MemberShell() {
     return <MembershipRequiredScreen onRetry={() => void ms.refetch()} />;
   }
 
-  // Staff/instructor/admin/owner accounts get the staff shell instead of member tabs.
+  // Staff, front desk, instructor, admin, and owner accounts get the staff shell instead of member tabs.
   // Computed only after ms.status === 'ready' (gated above), so there is no flicker.
   const staff = isStaffRole(ms.matched?.role);
 

@@ -2,7 +2,7 @@ import { Tabs } from 'expo-router';
 
 import { FloatingTabBar } from '@/components/FloatingTabBar';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
-import { canAccessStaffScan, canAccessTeamTab } from '@/lib/staffRole';
+import { canAccessStaffScan, canAccessTeamTab, staffTabsInitialRoute } from '@/lib/staffRole';
 
 export default function StaffTabsLayout() {
   const { matched } = useMemberStudio();
@@ -12,7 +12,7 @@ export default function StaffTabsLayout() {
 
   return (
     <Tabs
-      initialRouteName={showScan ? 'scan' : 'today'}
+      initialRouteName={staffTabsInitialRoute(role)}
       tabBar={(props) => <FloatingTabBar {...props} />}
       screenOptions={{
         headerShown: false,

@@ -17,6 +17,7 @@ function roleLabel(role: string | null | undefined): string {
     ADMIN: 'Administrador',
     STAFF: 'Staff',
     INSTRUCTOR: 'Coach',
+    FRONT_DESK: 'Recepción',
   };
   return labels[role.toUpperCase()] ?? role;
 }
