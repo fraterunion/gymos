@@ -7,8 +7,14 @@ export type DeskStudioRole =
   | "MEMBER"
   | string;
 
+export function normalizeStudioRole(role: string | undefined | null): string | null {
+  if (role == null) return null;
+  const trimmed = String(role).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export function isFrontDeskRole(role: string | undefined | null): boolean {
-  return role === "FRONT_DESK";
+  return normalizeStudioRole(role) === "FRONT_DESK";
 }
 
 /** Routes reception staff may access in the admin desk app. */
@@ -17,5 +23,6 @@ export function isFrontDeskAllowedPath(pathname: string): boolean {
 }
 
 export function canManageStudioSettings(role: string | undefined | null): boolean {
-  return role === "OWNER" || role === "ADMIN";
+  const normalized = normalizeStudioRole(role);
+  return normalized === "OWNER" || normalized === "ADMIN";
 }

@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import { PlatformShell } from "@/components/PlatformShell";
-import { DeskStudioProvider } from "@/contexts/DeskStudioContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { isPlatformAdmin } from "@/lib/platformAccess";
 
@@ -39,9 +38,5 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
     );
   }
 
-  return (
-    <DeskStudioProvider>
-      <PlatformShell>{children}</PlatformShell>
-    </DeskStudioProvider>
-  );
+  return <PlatformShell>{children}</PlatformShell>;
 }

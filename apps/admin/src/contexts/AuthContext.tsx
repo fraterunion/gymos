@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { loginRequest, logoutRequest, meRequest, type AuthUser } from "@/lib/api/auth";
+import { clearStoredStudioId } from "@/lib/studioStorage";
 import { userFacingApiMessage } from "@/lib/userFacingApiMessage";
 import { getApiV1Base } from "@/lib/env";
 import {
@@ -102,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } finally {
       clearSession();
+      clearStoredStudioId();
       setUser(null);
     }
   }, []);
