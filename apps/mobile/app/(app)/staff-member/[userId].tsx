@@ -1,4 +1,4 @@
-import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -6,24 +6,11 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
-import { fetchStaffMember, type StaffMemberDto, type StaffRole } from '@/lib/api/staffApi';
+import { fetchStaffMember, type StaffMemberDto } from '@/lib/api/staffApi';
+import { formatStaffRoleLabel, formatStaffType } from '@/lib/staffLabels';
+import { canAccessTeamTab } from '@/lib/staffRole';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
-
-const ROLE_LABELS: Record<StaffRole, string> = {
-  OWNER: 'Propietario',
-  ADMIN: 'Administrador',
-  STAFF: 'Staff',
-  INSTRUCTOR: 'Coach',
-};
-
-const STAFF_TYPE_LABELS: Record<string, string> = {
-  COACH: 'Coach',
-  FRONT_DESK: 'Recepción',
-  MANAGER: 'Gerente',
-  OPERATIONS: 'Operaciones',
-  OTHER: 'Otro',
-};
 
 function searchParam(value: string | string[] | undefined): string | undefined {
   return typeof value === 'string' ? value : value?.[0];
@@ -68,15 +55,12 @@ function formatDate(iso: string): string {
   });
 }
 
-function formatStaffType(staffType: string | undefined): string {
-  if (!staffType) return '—';
-  return STAFF_TYPE_LABELS[staffType] ?? staffType;
-}
-
 export default function StaffMemberDetailScreen() {
   const C = getColors();
+  const router = useRouter();
   const { matched } = useMemberStudio();
   const studioId = matched?.studio.id;
+  const actorRole = matched?.role;
   const { userId } = useLocalSearchParams<{ userId?: string | string[] }>();
   const targetUserId = searchParam(userId);
 
@@ -85,6 +69,7 @@ export default function StaffMemberDetailScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!canAccessTeamTab(actorRole)) return;
     if (!studioId || !targetUserId) {
       setLoading(false);
       setError('Falta el miembro del equipo.');
@@ -101,12 +86,16 @@ export default function StaffMemberDetailScreen() {
     } finally {
       setLoading(false);
     }
-  }, [studioId, targetUserId]);
+  }, [studioId, targetUserId, actorRole]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!canAccessTeamTab(actorRole)) {
+        router.replace('/(app)/(staff-tabs)/today' as Href);
+        return;
+      }
       void load();
-    }, [load]),
+    }, [actorRole, load, router]),
   );
 
   const fullName = member
@@ -163,7 +152,7 @@ export default function StaffMemberDetailScreen() {
                         color: '#FFFFFF',
                       }}
                     >
-                      {ROLE_LABELS[member.role]}
+                      {formatStaffRoleLabel(member.role)}
                     </Text>
                   </View>
                   {member.staffProfile ? (

@@ -1,6 +1,6 @@
 import { apiRequest } from '@/lib/api/client';
 
-export type StaffRole = 'OWNER' | 'ADMIN' | 'STAFF' | 'INSTRUCTOR';
+export type StaffRole = 'OWNER' | 'ADMIN' | 'STAFF' | 'INSTRUCTOR' | 'FRONT_DESK';
 
 export type StaffMemberDto = {
   membershipId: string;

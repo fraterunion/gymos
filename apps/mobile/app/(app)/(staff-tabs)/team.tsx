@@ -19,6 +19,11 @@ import {
   type StaffMemberDto,
   type StaffRole,
 } from '@/lib/api/staffApi';
+import {
+  formatStaffRoleLabel,
+  formatStaffType,
+  getStaffRoleChipStyle,
+} from '@/lib/staffLabels';
 import { canAccessTeamTab } from '@/lib/staffRole';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -31,29 +36,12 @@ const ROLE_FILTERS: { id: RoleFilter; label: string }[] = [
   { id: 'ADMIN', label: 'Administradores' },
   { id: 'STAFF', label: 'Staff' },
   { id: 'INSTRUCTOR', label: 'Entrenadores' },
+  { id: 'FRONT_DESK', label: 'Recepción' },
 ];
 
-const ROLE_LABELS: Record<StaffRole, string> = {
-  OWNER: 'Propietario',
-  ADMIN: 'Administrador',
-  STAFF: 'Staff',
-  INSTRUCTOR: 'Coach',
-};
-
-const ROLE_COLORS: Record<StaffRole, { bg: string; text: string }> = {
-  OWNER: { bg: 'rgba(245,158,11,0.18)', text: '#FCD34D' },
-  ADMIN: { bg: 'rgba(139,92,246,0.18)', text: '#C4B5FD' },
-  STAFF: { bg: 'rgba(20,184,166,0.18)', text: '#5EEAD4' },
-  INSTRUCTOR: { bg: 'rgba(56,189,248,0.18)', text: '#7DD3FC' },
-};
-
-const STAFF_TYPE_LABELS: Record<string, string> = {
-  COACH: 'Coach',
-  FRONT_DESK: 'Recepción',
-  MANAGER: 'Gerente',
-  OPERATIONS: 'Operaciones',
-  OTHER: 'Otro',
-};
+function memberInitials(firstName: string, lastName: string): string {
+  return `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase() || '?';
+}
 
 function cardStyle(C: ThemeColors) {
   return {
@@ -63,15 +51,6 @@ function cardStyle(C: ThemeColors) {
     borderColor: C.separator,
     padding: 20,
   } as const;
-}
-
-function memberInitials(firstName: string, lastName: string): string {
-  return `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase() || '?';
-}
-
-function formatStaffType(staffType: string | undefined): string {
-  if (!staffType) return '—';
-  return STAFF_TYPE_LABELS[staffType] ?? staffType;
 }
 
 function RoleChip({
@@ -124,7 +103,7 @@ function StaffCard({
   const C = getColors();
   const { user, staffProfile, role } = member;
   const isActive = staffProfile ? staffProfile.isActive : true;
-  const roleStyle = ROLE_COLORS[role];
+  const roleStyle = getStaffRoleChipStyle(role);
 
   return (
     <Animated.View entering={FadeInDown.delay(Math.min(index * 40, 200)).duration(420)}>
@@ -190,7 +169,7 @@ function StaffCard({
                     color: roleStyle.text,
                   }}
                 >
-                  {ROLE_LABELS[role]}
+                  {formatStaffRoleLabel(role)}
                 </Text>
               </View>
               {staffProfile ? (
@@ -300,8 +279,8 @@ export default function StaffTeamScreen() {
           ...(debouncedSearch ? { search: debouncedSearch } : {}),
           ...(roleFilter !== 'ALL' ? { role: roleFilter } : {}),
         });
-        setStaff(res.data);
-        setTotal(res.total);
+        setStaff(Array.isArray(res.data) ? res.data : []);
+        setTotal(typeof res.total === 'number' ? res.total : 0);
       } catch (e) {
         setError(userFacingApiMessage(e, 'No pudimos cargar tu equipo. Desliza hacia abajo para actualizar e inténtalo de nuevo.'));
         if (!isRefresh) {
@@ -405,7 +384,7 @@ export default function StaffTeamScreen() {
               letterSpacing: -0.1,
             }}
           >
-            Administra tu equipo de coaching y operaciones.
+            Consulta tu equipo de coaching y operaciones (solo lectura).
           </Text>
         </Animated.View>
 
