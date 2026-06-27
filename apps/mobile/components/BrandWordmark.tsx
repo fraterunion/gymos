@@ -5,7 +5,7 @@ import { PixelRatio, Text, View } from 'react-native';
 import { getWhitelabelBuildProfile } from '@/lib/env';
 
 /** Logical display width on boot surfaces. Asset is 1800px+ for @3x sharpness. */
-const BOOT_LOGO_WIDTH = 300;
+const BOOT_LOGO_WIDTH = 228;
 
 type ImageSource = number | { uri: string };
 

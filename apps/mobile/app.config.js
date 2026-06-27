@@ -22,7 +22,7 @@ const ARES_PROFILE_DEFAULTS = {
   // Native launcher name (iOS home screen / Android drawer). Intentionally short.
   APP_LAUNCHER_NAME: 'ARES',
   APP_ICON_PATH: './assets/branding/ares/icon.png',
-  APP_SPLASH_PATH: './assets/branding/ares/splash-logo.png',
+  APP_SPLASH_PATH: './assets/branding/ares/splash-screen.png',
   APP_ADAPTIVE_ICON_PATH: './assets/branding/ares/adaptive-icon.png',
   APP_SPLASH_BG_COLOR: '#000000',
   APP_ADAPTIVE_ICON_BG_COLOR: '#000000',
