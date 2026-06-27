@@ -9,7 +9,7 @@ export type TeamDirectoryRole =
   | string;
 
 const ROLE_LABELS: Record<string, string> = {
-  OWNER: 'Propietario',
+  OWNER: 'Dueño',
   ADMIN: 'Administrador',
   STAFF: 'Staff',
   INSTRUCTOR: 'Coach',

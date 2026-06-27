@@ -2,16 +2,33 @@ import { Role, StaffType } from '@prisma/client';
 import {
   IsArray,
   IsBoolean,
+  IsEmail,
   IsEnum,
   IsIn,
   IsOptional,
   IsString,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 
 export class UpdateStaffDto {
   @IsOptional()
-  @IsIn([Role.ADMIN, Role.STAFF, Role.FRONT_DESK])
+  @IsEmail()
+  @MaxLength(320)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lastName?: string;
+
+  @IsOptional()
+  @IsIn([Role.OWNER, Role.ADMIN, Role.STAFF, Role.INSTRUCTOR, Role.FRONT_DESK])
   role?: Role;
 
   @IsOptional()
@@ -41,4 +58,11 @@ export class UpdateStaffDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /** Sets a new login password (hashed server-side). */
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  temporaryPassword?: string;
 }

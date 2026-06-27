@@ -135,6 +135,17 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="staff-member/add"
+          options={{
+            headerShown: true,
+            title: 'Agregar staff',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: headerBg },
+            headerTintColor: '#FAFAFA',
+            headerBackTitle: 'Atrás',
+          }}
+        />
+        <Stack.Screen
           name="staff-member/[userId]"
           options={{
             headerShown: true,

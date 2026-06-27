@@ -1,5 +1,6 @@
 import { apiRequest } from '@/lib/api/client';
 
+export type StaffType = 'COACH' | 'FRONT_DESK' | 'MANAGER' | 'OPERATIONS' | 'OTHER';
 export type StaffRole = 'OWNER' | 'ADMIN' | 'STAFF' | 'INSTRUCTOR' | 'FRONT_DESK';
 
 export type StaffMemberDto = {
@@ -37,10 +38,43 @@ export type StaffListResponseDto = {
 export type StaffListQuery = {
   search?: string;
   role?: StaffRole;
-  staffType?: string;
+  staffType?: StaffType;
   isActive?: boolean;
   page?: number;
   limit?: number;
+};
+
+export type AddStaffInput = {
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  role: StaffRole;
+  staffType: StaffType;
+  phone?: string;
+  bio?: string;
+  specialties?: string[];
+  photoUrl?: string;
+  isActive?: boolean;
+  temporaryPassword: string;
+};
+
+export type UpdateStaffInput = {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  role?: StaffRole;
+  staffType?: StaffType;
+  phone?: string;
+  bio?: string;
+  specialties?: string[];
+  photoUrl?: string;
+  isActive?: boolean;
+  temporaryPassword?: string;
+};
+
+export type StaffActivationResult = {
+  isActive: boolean;
+  futureClassesCount?: number;
 };
 
 export async function fetchStaff(
@@ -68,4 +102,45 @@ export async function fetchStaffMember(
   return apiRequest<StaffMemberDto>(`/studios/${studioId}/staff/${userId}`, {
     method: 'GET',
   });
+}
+
+export async function addStaffMember(
+  studioId: string,
+  input: AddStaffInput,
+): Promise<StaffMemberDto> {
+  return apiRequest<StaffMemberDto>(`/studios/${studioId}/staff`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateStaffMember(
+  studioId: string,
+  userId: string,
+  input: UpdateStaffInput,
+): Promise<StaffMemberDto> {
+  return apiRequest<StaffMemberDto>(`/studios/${studioId}/staff/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function activateStaffMember(
+  studioId: string,
+  userId: string,
+): Promise<StaffActivationResult> {
+  return apiRequest<StaffActivationResult>(
+    `/studios/${studioId}/staff/${userId}/activate`,
+    { method: 'PATCH' },
+  );
+}
+
+export async function deactivateStaffMember(
+  studioId: string,
+  userId: string,
+): Promise<StaffActivationResult> {
+  return apiRequest<StaffActivationResult>(
+    `/studios/${studioId}/staff/${userId}/deactivate`,
+    { method: 'PATCH' },
+  );
 }

@@ -1,3 +1,4 @@
+import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -11,7 +12,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+import { BrandButton } from '@/components/BrandButton';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
+import { StaffAvatar } from '@/components/StaffAvatar';
+import { useBranding } from '@/contexts/BrandingContext';
 import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import {
@@ -21,10 +25,9 @@ import {
 } from '@/lib/api/staffApi';
 import {
   formatStaffRoleLabel,
-  formatStaffType,
   getStaffRoleChipStyle,
 } from '@/lib/staffLabels';
-import { canAccessTeamTab } from '@/lib/staffRole';
+import { canAccessTeamTab, canManageTeam } from '@/lib/staffRole';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
@@ -32,16 +35,12 @@ type RoleFilter = 'ALL' | StaffRole;
 
 const ROLE_FILTERS: { id: RoleFilter; label: string }[] = [
   { id: 'ALL', label: 'Todos' },
-  { id: 'OWNER', label: 'Propietarios' },
+  { id: 'OWNER', label: 'Dueños' },
   { id: 'ADMIN', label: 'Administradores' },
   { id: 'STAFF', label: 'Staff' },
   { id: 'INSTRUCTOR', label: 'Entrenadores' },
   { id: 'FRONT_DESK', label: 'Recepción' },
 ];
-
-function memberInitials(firstName: string, lastName: string): string {
-  return `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase() || '?';
-}
 
 function cardStyle(C: ThemeColors) {
   return {
@@ -91,6 +90,32 @@ function RoleChip({
   );
 }
 
+function ActiveBadge({ active }: { active: boolean }) {
+  const C = getColors();
+  return (
+    <View
+      style={{
+        backgroundColor: active ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)',
+        borderRadius: 100,
+        paddingVertical: 4,
+        paddingHorizontal: 8,
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 10,
+          fontWeight: '700',
+          letterSpacing: 0.5,
+          textTransform: 'uppercase',
+          color: active ? '#6EE7B7' : C.textMute,
+        }}
+      >
+        {active ? 'Activo' : 'Inactivo'}
+      </Text>
+    </View>
+  );
+}
+
 function StaffCard({
   member,
   index,
@@ -112,117 +137,59 @@ function StaffCard({
         onPress={onPress}
         style={({ pressed }) => [
           cardStyle(C),
-          { marginBottom: 12, opacity: pressed ? 0.92 : 1 },
+          {
+            marginBottom: 12,
+            opacity: pressed ? 0.92 : 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+          },
         ]}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-          <View
+        <StaffAvatar
+          userId={user.id}
+          firstName={user.firstName}
+          lastName={user.lastName}
+          photoUrl={staffProfile?.photoUrl}
+          size={52}
+          style={{ marginRight: 14 }}
+        />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
             style={{
-              width: 48,
-              height: 48,
-              borderRadius: 24,
-              backgroundColor: '#1E1E22',
-              borderWidth: 1,
-              borderColor: C.separator,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginRight: 14,
+              fontSize: 17,
+              fontWeight: '700',
+              letterSpacing: -0.3,
+              color: C.text,
             }}
+            numberOfLines={1}
           >
-            <Text style={{ fontSize: 16, fontWeight: '800', color: C.text }}>
-              {memberInitials(user.firstName, user.lastName)}
-            </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text
+            {user.firstName} {user.lastName}
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <View
               style={{
-                fontSize: 17,
-                fontWeight: '700',
-                letterSpacing: -0.3,
-                color: C.text,
+                backgroundColor: roleStyle.bg,
+                borderRadius: 100,
+                paddingVertical: 4,
+                paddingHorizontal: 8,
               }}
-              numberOfLines={1}
             >
-              {user.firstName} {user.lastName}
-            </Text>
-            <Text
-              style={{ fontSize: 13, color: C.textMute, marginTop: 3 }}
-              numberOfLines={1}
-            >
-              {user.email}
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-              <View
+              <Text
                 style={{
-                  backgroundColor: roleStyle.bg,
-                  borderRadius: 100,
-                  paddingVertical: 4,
-                  paddingHorizontal: 8,
+                  fontSize: 10,
+                  fontWeight: '700',
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase',
+                  color: roleStyle.text,
                 }}
               >
-                <Text
-                  style={{
-                    fontSize: 10,
-                    fontWeight: '700',
-                    letterSpacing: 0.5,
-                    textTransform: 'uppercase',
-                    color: roleStyle.text,
-                  }}
-                >
-                  {formatStaffRoleLabel(role)}
-                </Text>
-              </View>
-              {staffProfile ? (
-                <View
-                  style={{
-                    backgroundColor: 'rgba(255,255,255,0.08)',
-                    borderRadius: 100,
-                    paddingVertical: 4,
-                    paddingHorizontal: 8,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 10,
-                      fontWeight: '700',
-                      letterSpacing: 0.5,
-                      textTransform: 'uppercase',
-                      color: C.textSub,
-                    }}
-                  >
-                    {formatStaffType(staffProfile.staffType)}
-                  </Text>
-                </View>
-              ) : null}
-              <View
-                style={{
-                  backgroundColor: isActive ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)',
-                  borderRadius: 100,
-                  paddingVertical: 4,
-                  paddingHorizontal: 8,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 10,
-                    fontWeight: '700',
-                    letterSpacing: 0.5,
-                    textTransform: 'uppercase',
-                    color: isActive ? '#6EE7B7' : C.textMute,
-                  }}
-                >
-                  {isActive ? 'Activo' : 'Inactivo'}
-                </Text>
-              </View>
-            </View>
-            {member.assignedClassesCount > 0 ? (
-              <Text style={{ fontSize: 12, color: C.textMute, marginTop: 10 }}>
-                {member.assignedClassesCount}{' '}
-                {member.assignedClassesCount === 1 ? 'clase próxima' : 'clases próximas'}
+                {formatStaffRoleLabel(role)}
               </Text>
-            ) : null}
+            </View>
+            <ActiveBadge active={isActive} />
           </View>
         </View>
+        <FontAwesome name="chevron-right" size={14} color="rgba(255,255,255,0.28)" />
       </Pressable>
     </Animated.View>
   );
@@ -231,9 +198,11 @@ function StaffCard({
 export default function StaffTeamScreen() {
   const router = useRouter();
   const C = getColors();
+  const { primaryColor } = useBranding();
   const { matched, refetch } = useMemberStudio();
   const studioId = matched?.studio.id;
   const role = matched?.role;
+  const canManage = canManageTeam(role);
 
   const [staff, setStaff] = useState<StaffMemberDto[]>([]);
   const [total, setTotal] = useState(0);
@@ -384,9 +353,21 @@ export default function StaffTeamScreen() {
               letterSpacing: -0.1,
             }}
           >
-            Consulta tu equipo de coaching y operaciones (solo lectura).
+            {canManage
+              ? 'Administra tu equipo de coaching y operaciones.'
+              : 'Consulta tu equipo de coaching y operaciones (solo lectura).'}
           </Text>
         </Animated.View>
+
+        {canManage ? (
+          <View style={{ marginBottom: 20 }}>
+            <BrandButton
+              label="Agregar staff"
+              accentColor={primaryColor}
+              onPress={() => router.push('/(app)/staff-member/add' as Href)}
+            />
+          </View>
+        ) : null}
 
         <TextInput
           value={search}
@@ -463,18 +444,20 @@ export default function StaffTeamScreen() {
           ))
         )}
 
-        <Text
-          style={{
-            fontSize: 12,
-            color: C.textMute,
-            textAlign: 'center',
-            lineHeight: 18,
-            marginTop: 24,
-            paddingHorizontal: 12,
-          }}
-        >
-          Crea y edita miembros del equipo desde el panel de administración web.
-        </Text>
+        {canManage ? null : (
+          <Text
+            style={{
+              fontSize: 12,
+              color: C.textMute,
+              textAlign: 'center',
+              lineHeight: 18,
+              marginTop: 24,
+              paddingHorizontal: 12,
+            }}
+          >
+            Los cambios del equipo los administran OWNER y ADMIN.
+          </Text>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

@@ -39,8 +39,15 @@ export function canAccessStaffScan(role: string | null | undefined): boolean {
   return Boolean(role && MANUAL_CHECK_IN_ROLES.has(role));
 }
 
-/** Team directory tab — read-only list (GET /studios/:id/staff). */
+/** Read-only team directory tab (GET /studios/:id/staff). */
 const TEAM_TAB_ROLES = new Set<string>(['ADMIN', 'OWNER', 'STAFF']);
+
+/** Create/edit/deactivate staff — OWNER and ADMIN only. */
+const TEAM_MANAGE_ROLES = new Set<string>(['ADMIN', 'OWNER']);
+
+export function canManageTeam(role: string | null | undefined): boolean {
+  return Boolean(role && TEAM_MANAGE_ROLES.has(role));
+}
 
 export function canAccessTeamTab(role: string | null | undefined): boolean {
   return Boolean(role && TEAM_TAB_ROLES.has(role));

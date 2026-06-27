@@ -71,6 +71,28 @@ export class StaffController {
 
   // ── Update staff ───────────────────────────────────────────────────────────
 
+  @Patch(':userId/activate')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  activateStaff(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @CurrentUser('sub') actorUserId: string,
+  ) {
+    return this.staffService.activateStaff(studioId, actorUserId, userId);
+  }
+
+  @Patch(':userId/deactivate')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  deactivateStaffExplicit(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @CurrentUser('sub') actorUserId: string,
+  ) {
+    return this.staffService.deactivateStaff(studioId, actorUserId, userId);
+  }
+
   @Patch(':userId')
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN)

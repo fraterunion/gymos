@@ -84,12 +84,35 @@ export class StaffService {
   private assertCanManageRole(actorRole: Role, targetRole: Role): void {
     if (actorRole === Role.OWNER) return;
     if (actorRole === Role.ADMIN) {
-      if (targetRole === Role.OWNER || targetRole === Role.ADMIN) {
+      if (targetRole === Role.OWNER) {
         throw new ForbiddenException('Insufficient permissions to manage this role');
       }
       return;
     }
     throw new ForbiddenException('Insufficient permissions');
+  }
+
+  private async countStudioOwners(studioId: string): Promise<number> {
+    return this.prisma.studioMembership.count({
+      where: {
+        studioId,
+        deletedAt: null,
+        role: Role.OWNER,
+        user: { deletedAt: null },
+      },
+    });
+  }
+
+  private async assertCanModifyOwner(
+    studioId: string,
+    targetUserId: string,
+    targetRole: Role,
+  ): Promise<void> {
+    if (targetRole !== Role.OWNER) return;
+    const ownerCount = await this.countStudioOwners(studioId);
+    if (ownerCount <= 1) {
+      throw new BadRequestException('Cannot modify the last studio owner');
+    }
   }
 
   private async buildStaffRecord(studioId: string, membershipId: string) {
@@ -407,6 +430,15 @@ export class StaffService {
 
     this.assertCanManageRole(actorMembership.role, targetMembership.role);
 
+    if (targetMembership.role === Role.OWNER) {
+      const demotingOwner =
+        (dto.role !== undefined && dto.role !== Role.OWNER) ||
+        dto.isActive === false;
+      if (demotingOwner) {
+        await this.assertCanModifyOwner(studioId, targetUserId, Role.OWNER);
+      }
+    }
+
     if (dto.role !== undefined) {
       if (actorUserId === targetUserId) {
         throw new BadRequestException('You cannot change your own role');
@@ -415,6 +447,31 @@ export class StaffService {
       await this.prisma.studioMembership.update({
         where: { id: targetMembership.id },
         data: { role: dto.role },
+      });
+    }
+
+    const userUpdate: Prisma.UserUpdateInput = {};
+    if (dto.firstName !== undefined) userUpdate.firstName = dto.firstName.trim();
+    if (dto.lastName !== undefined) userUpdate.lastName = dto.lastName.trim();
+    if (dto.phone !== undefined) userUpdate.phone = dto.phone.trim() || null;
+    if (dto.email !== undefined) {
+      const email = dto.email.toLowerCase().trim();
+      const taken = await this.prisma.user.findFirst({
+        where: { email, deletedAt: null, NOT: { id: targetUserId } },
+        select: { id: true },
+      });
+      if (taken) {
+        throw new BadRequestException('Email is already in use');
+      }
+      userUpdate.email = email;
+    }
+    if (dto.temporaryPassword !== undefined) {
+      userUpdate.passwordHash = await this.authService.hashPassword(dto.temporaryPassword.trim());
+    }
+    if (Object.keys(userUpdate).length > 0) {
+      await this.prisma.user.update({
+        where: { id: targetUserId },
+        data: userUpdate,
       });
     }
 
@@ -448,6 +505,32 @@ export class StaffService {
 
   // ── Deactivate staff ───────────────────────────────────────────────────────
 
+  async activateStaff(studioId: string, actorUserId: string, targetUserId: string) {
+    const actorMembership = await this.getActorMembership(studioId, actorUserId);
+
+    const targetMembership = await this.prisma.studioMembership.findFirst({
+      where: { studioId, userId: targetUserId, deletedAt: null },
+    });
+    if (!targetMembership || !STAFF_ROLES.includes(targetMembership.role)) {
+      throw new NotFoundException('Staff member not found');
+    }
+
+    this.assertCanManageRole(actorMembership.role, targetMembership.role);
+
+    await this.prisma.studioStaffProfile.upsert({
+      where: { studioId_userId: { studioId, userId: targetUserId } },
+      create: {
+        studioId,
+        userId: targetUserId,
+        staffType: StaffType.OTHER,
+        isActive: true,
+      },
+      update: { isActive: true },
+    });
+
+    return { isActive: true };
+  }
+
   async deactivateStaff(studioId: string, actorUserId: string, targetUserId: string) {
     if (actorUserId === targetUserId) {
       throw new BadRequestException('You cannot deactivate yourself');
@@ -463,6 +546,10 @@ export class StaffService {
     }
 
     this.assertCanManageRole(actorMembership.role, targetMembership.role);
+
+    if (targetMembership.role === Role.OWNER) {
+      await this.assertCanModifyOwner(studioId, targetUserId, Role.OWNER);
+    }
 
     const futureClassesCount = await this.prisma.scheduledClass.count({
       where: {
@@ -484,6 +571,6 @@ export class StaffService {
       update: { isActive: false },
     });
 
-    return { deactivated: true, futureClassesCount };
+    return { isActive: false, futureClassesCount };
   }
 }
