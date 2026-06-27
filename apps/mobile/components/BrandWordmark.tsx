@@ -13,6 +13,11 @@ const LOCAL_BRAND_LOGOS: Record<string, ImageSource> = {
   ares: require('../assets/branding/ares/splash-wordmark.png'),
 };
 
+/** Full-frame splash — must match app.config.js `splash.image` for seamless handoff. */
+const LOCAL_FULL_SPLASH: Record<string, ImageSource> = {
+  ares: require('../assets/branding/ares/splash-screen.png'),
+};
+
 /** Intrinsic size of the bundled Ares splash wordmark (1800 × 461). */
 const ARES_WORDMARK_ASPECT = 461 / 1800;
 
@@ -25,6 +30,10 @@ type Props = {
 
 export function getBootWordmarkSource(): ImageSource | null {
   return LOCAL_BRAND_LOGOS[getWhitelabelBuildProfile()] ?? null;
+}
+
+export function getBootSplashScreenSource(): ImageSource | null {
+  return LOCAL_FULL_SPLASH[getWhitelabelBuildProfile()] ?? null;
 }
 
 export function getBootWordmarkSize(width = BOOT_LOGO_WIDTH): { width: number; height: number } {

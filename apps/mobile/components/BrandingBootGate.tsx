@@ -1,12 +1,20 @@
 import type { ReactNode } from 'react';
+import { useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PremiumBootScreen } from '@/components/PremiumBootScreen';
 import { useBranding } from '@/contexts/BrandingContext';
+import { hideNativeSplashWhenReady } from '@/lib/nativeSplash';
 
 export function BrandingBootGate({ children }: { children: ReactNode }) {
   const { status, error, retry, logoUrl } = useBranding();
+
+  useEffect(() => {
+    if (status === 'ready') {
+      hideNativeSplashWhenReady();
+    }
+  }, [status]);
 
   if (status === 'loading') {
     return <PremiumBootScreen logoUrl={logoUrl} />;
@@ -14,7 +22,10 @@ export function BrandingBootGate({ children }: { children: ReactNode }) {
 
   if (status === 'error') {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }}>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: '#000000' }}
+        onLayout={() => hideNativeSplashWhenReady()}
+      >
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 32 }}>
           <Text
             style={{
