@@ -28,6 +28,8 @@ import {
   getStaffRoleChipStyle,
 } from '@/lib/staffLabels';
 import { canAccessTeamTab, canManageTeam } from '@/lib/staffRole';
+import { canAccessMembersDirectory } from '@/lib/memberProfilePermissions';
+import { membersDirectoryHref } from '@/lib/memberProfileRoutes';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
@@ -367,6 +369,44 @@ export default function StaffTeamScreen() {
               onPress={() => router.push('/(app)/staff-member/add' as Href)}
             />
           </View>
+        ) : null}
+
+        {canAccessMembersDirectory(role) && role === 'STAFF' ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push(membersDirectoryHref())}
+            style={[
+              cardStyle(C),
+              {
+                marginBottom: 20,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 14,
+              },
+            ]}
+          >
+            <View
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 14,
+                backgroundColor: 'rgba(255,255,255,0.06)',
+                borderWidth: 1,
+                borderColor: C.separator,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <FontAwesome name="users" size={18} color={C.textSub} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: C.text }}>Directorio de miembros</Text>
+              <Text style={{ fontSize: 13, color: C.textSub, marginTop: 4, lineHeight: 18 }}>
+                Busca clientes del estudio (solo lectura).
+              </Text>
+            </View>
+            <FontAwesome name="chevron-right" size={14} color="rgba(255,255,255,0.28)" />
+          </Pressable>
         ) : null}
 
         <TextInput

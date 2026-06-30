@@ -2,7 +2,7 @@ import type { Href } from 'expo-router';
 
 export function memberProfileHref(
   userId: string,
-  options?: { from?: 'sales' | 'dashboard' | 'search'; email?: string },
+  options?: { from?: 'sales' | 'dashboard' | 'search' | 'directory'; email?: string },
 ): Href {
   const q = new URLSearchParams();
   if (options?.from) q.set('from', options.from);
@@ -22,4 +22,8 @@ export function staffSalesHref(options?: {
   if (options?.from) q.set('from', options.from);
   const query = q.toString();
   return `/(app)/staff-sales/index${query ? `?${query}` : ''}` as Href;
+}
+
+export function membersDirectoryHref(): Href {
+  return '/(app)/members-directory' as Href;
 }

@@ -7,3 +7,6 @@ export const MEMBER_PROFILE_READ_ROLES = new Set(['OWNER', 'ADMIN', 'FRONT_DESK'
 export function canAccessMemberProfile(role: string | null | undefined): boolean {
   return Boolean(role && MEMBER_PROFILE_READ_ROLES.has(role));
 }
+
+/** Members directory uses the same read roles as member profile. */
+export const canAccessMembersDirectory = canAccessMemberProfile;

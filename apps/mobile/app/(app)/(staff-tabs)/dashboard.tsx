@@ -20,6 +20,7 @@ import {
 } from '@/lib/api/analyticsApi';
 import { type TodayClassSummaryDto } from '@/lib/api/scheduleApi';
 import { canAccessExecutiveDashboard } from '@/lib/executivePermissions';
+import { membersDirectoryHref } from '@/lib/memberProfileRoutes';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import { formatClassTime } from '@/lib/datetime';
 import { loadStaffTodayClasses } from '@/lib/staffTodaySchedule';
@@ -705,6 +706,7 @@ export default function ExecutiveDashboardScreen() {
 
         <SectionLabel>Acciones rápidas</SectionLabel>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+          <QuickActionChip label="Miembros" onPress={() => router.push(membersDirectoryHref())} />
           <QuickActionChip label="Ventas" onPress={() => router.push('/(app)/staff-sales' as Href)} />
           <QuickActionChip
             label="Operaciones"

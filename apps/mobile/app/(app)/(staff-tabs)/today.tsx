@@ -17,6 +17,9 @@ import {
 } from '@/lib/api/scheduleApi';
 import { formatClassTime } from '@/lib/datetime';
 import { todayScreenSubtitle } from '@/lib/staffRole';
+import { canAccessExecutiveDashboard } from '@/lib/executivePermissions';
+import { canAccessMembersDirectory } from '@/lib/memberProfilePermissions';
+import { membersDirectoryHref } from '@/lib/memberProfileRoutes';
 import { canAccessSales } from '@/lib/salesPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -308,7 +311,13 @@ export default function StaffTodayScreen() {
     router.push('/(app)/staff-sales' as Href);
   }, [router]);
 
+  const openMembersDirectory = useCallback(() => {
+    router.push(membersDirectoryHref());
+  }, [router]);
+
   const showSalesEntry = canAccessSales(matched?.role);
+  const showMembersEntry =
+    canAccessMembersDirectory(matched?.role) && !canAccessExecutiveDashboard(matched?.role);
 
   const showInitialLoader = loading && !loadedOnce;
 
@@ -428,6 +437,57 @@ export default function StaffTodayScreen() {
                 </Text>
                 <Text style={{ fontSize: 14, lineHeight: 20, color: C.textSub }}>
                   Registra walk-ins, vende membresías y cobra con Stripe o efectivo.
+                </Text>
+              </View>
+              <Text style={{ fontSize: 20, color: C.textMute }}>›</Text>
+            </Pressable>
+          </Animated.View>
+        ) : null}
+
+        {showMembersEntry ? (
+          <Animated.View entering={FadeInDown.delay(showSalesEntry ? 120 : 90).duration(420)}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={openMembersDirectory}
+              style={[
+                cardStyle(C),
+                {
+                  marginTop: showSalesEntry ? 12 : 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 16,
+                  paddingVertical: 22,
+                },
+              ]}
+            >
+              <View
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 16,
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  borderWidth: 1,
+                  borderColor: C.separator,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 22 }}>👥</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontWeight: '800',
+                    letterSpacing: -0.4,
+                    color: C.text,
+                    marginBottom: 4,
+                  }}
+                >
+                  Miembros
+                </Text>
+                <Text style={{ fontSize: 14, lineHeight: 20, color: C.textSub }}>
+                  Busca clientes y abre su perfil, membresía y carta responsiva.
                 </Text>
               </View>
               <Text style={{ fontSize: 20, color: C.textMute }}>›</Text>

@@ -36,12 +36,20 @@ export type MemberListResponse = {
 
 export async function fetchMembers(
   studioId: string,
-  query: { search?: string; limit?: number; page?: number } = {},
+  query: {
+    search?: string;
+    limit?: number;
+    page?: number;
+    sortBy?: 'joinDate' | 'lastAttendance' | 'totalBookings' | 'name';
+    sortDir?: 'asc' | 'desc';
+  } = {},
 ): Promise<MemberListResponse> {
   const params = new URLSearchParams();
   if (query.search) params.set('search', query.search);
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.page != null) params.set('page', String(query.page));
+  if (query.sortBy) params.set('sortBy', query.sortBy);
+  if (query.sortDir) params.set('sortDir', query.sortDir);
   const qs = params.toString();
   return apiRequest<MemberListResponse>(
     `/studios/${studioId}/members${qs ? `?${qs}` : ''}`,

@@ -176,6 +176,12 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="members-directory/index"
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
           name="billing"
           options={{
             headerShown: false,
