@@ -19,7 +19,6 @@
 import {
   BillingInterval,
   ClassCategory,
-  ClassStatus,
   IntensityLevel,
   PrismaClient,
   Role,
@@ -99,7 +98,7 @@ const COACH_DEFS = [
     firstName: 'Yayo',
     lastName: 'Rodríguez',
     bio: 'Especialista en fuerza y calistenia. Certif. NSCA-CSCS.',
-    specialties: ['Upper Push', 'Street Bars', 'Full Body'] as string[],
+    specialties: ['Push', 'Street Bars', 'Full Body'] as string[],
     photoUrl: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400',
   },
   {
@@ -115,7 +114,7 @@ const COACH_DEFS = [
     firstName: 'Karen',
     lastName: 'López',
     bio: 'Entrenadora de fuerza con enfoque en piernas y cadena posterior.',
-    specialties: ['Power Legs', 'Full Body', 'Upper Pull'] as string[],
+    specialties: ['Legs Strength', 'Full Body', 'Pull'] as string[],
     photoUrl: 'https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=400',
   },
   {
@@ -123,7 +122,7 @@ const COACH_DEFS = [
     firstName: 'Fer',
     lastName: 'Gutiérrez',
     bio: 'Apasionado del Street Workout y movimiento natural.',
-    specialties: ['Street Bars', 'Upper Push', 'Calirox'] as string[],
+    specialties: ['Street Bars', 'Push', 'Calirox'] as string[],
     photoUrl: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=400',
   },
   {
@@ -131,7 +130,7 @@ const COACH_DEFS = [
     firstName: 'Estefy',
     lastName: 'Morales',
     bio: 'Especialista en upper body y programación de fuerza.',
-    specialties: ['Upper Push', 'Upper Pull', 'Power Legs'] as string[],
+    specialties: ['Push', 'Pull', 'Legs Strength'] as string[],
     photoUrl: 'https://images.unsplash.com/photo-1579758629938-03607ccdbaba?w=400',
   },
   {
@@ -148,7 +147,7 @@ const PLAN_DEFS = [
   {
     name: 'Full Access',
     description:
-      'Clases ilimitadas + Open Gym · 11:00 a.m. – 5:00 p.m. + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
+      'Clases ilimitadas + Open Gym · 10:00 a.m. – 5:00 p.m. + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
     priceCents: 195000,
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
@@ -158,7 +157,7 @@ const PLAN_DEFS = [
   {
     name: 'Basic Access',
     description:
-      '12 clases al mes + Open Gym · 11:00 a.m. – 5:00 p.m. + 3 guest passes. Créditos no acumulables.',
+      '12 clases al mes + Open Gym · 10:00 a.m. – 5:00 p.m. + 3 guest passes. Créditos no acumulables.',
     priceCents: 130000,
     currency: 'mxn',
     billingInterval: BillingInterval.MONTHLY,
@@ -189,16 +188,16 @@ const PLAN_DEFS = [
 
 const TEMPLATE_DEFS = [
   {
-    name: 'Upper Push',
-    description: 'Rutina enfocada al grupo muscular seleccionado por día. ARES Method.',
+    name: 'Legs + HIIT',
+    description: 'Piernas e intervalos de alta intensidad. Fuerza de tren inferior combinada con bloques HIIT.',
     duration: 60,
-    color: '#c9a227',
+    color: '#7c3aed',
     category: ClassCategory.STRENGTH,
     intensity: IntensityLevel.HIGH,
-    heroImageUrl: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=800',
+    heroImageUrl: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=800',
   },
   {
-    name: 'Upper Pull',
+    name: 'Pull',
     description: 'Rutina enfocada al grupo muscular seleccionado por día. ARES Method.',
     duration: 60,
     color: '#0f172a',
@@ -207,8 +206,17 @@ const TEMPLATE_DEFS = [
     heroImageUrl: 'https://images.unsplash.com/photo-1530822847156-5df684ec5933?w=800',
   },
   {
-    name: 'Full Body',
-    description: 'Trabajo completo de tren superior e inferior en circuito. Alta densidad, descanso guiado.',
+    name: 'Push',
+    description: 'Rutina enfocada al grupo muscular seleccionado por día. ARES Method.',
+    duration: 60,
+    color: '#c9a227',
+    category: ClassCategory.STRENGTH,
+    intensity: IntensityLevel.HIGH,
+    heroImageUrl: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=800',
+  },
+  {
+    name: 'Full Body + Core',
+    description: 'Trabajo completo de tren superior e inferior con énfasis en core y estabilidad.',
     duration: 60,
     color: '#ef4444',
     category: ClassCategory.STRENGTH,
@@ -216,13 +224,40 @@ const TEMPLATE_DEFS = [
     heroImageUrl: 'https://images.unsplash.com/photo-1534258936925-c58bed479fcb?w=800',
   },
   {
-    name: 'Power Legs',
+    name: 'Legs Strength',
     description: 'Sentadillas, peso muerto, Bulgarian split y variantes. Fuerza de pierna y glúteo con técnica.',
     duration: 60,
     color: '#8b5cf6',
     category: ClassCategory.STRENGTH,
     intensity: IntensityLevel.HIGH,
     heroImageUrl: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=800',
+  },
+  {
+    name: 'Full Body',
+    description: 'Trabajo completo de tren superior e inferior en circuito. Alta densidad, descanso guiado.',
+    duration: 60,
+    color: '#dc2626',
+    category: ClassCategory.STRENGTH,
+    intensity: IntensityLevel.HIGH,
+    heroImageUrl: 'https://images.unsplash.com/photo-1534258936925-c58bed479fcb?w=800',
+  },
+  {
+    name: 'Upperbody',
+    description: 'Rutina enfocada en tren superior. ARES Method.',
+    duration: 60,
+    color: '#d97706',
+    category: ClassCategory.STRENGTH,
+    intensity: IntensityLevel.HIGH,
+    heroImageUrl: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=800',
+  },
+  {
+    name: 'Street Bars',
+    description: 'Clase 100% enfocada en técnica y mejora de tu fuerza y control corporal. Aprenderás a controlar tu cuerpo y su fuerza.',
+    duration: 60,
+    color: '#10b981',
+    category: ClassCategory.STRENGTH,
+    intensity: IntensityLevel.HIGH,
+    heroImageUrl: 'https://images.unsplash.com/photo-1598971861713-54ad16a7e72e?w=800',
   },
   {
     name: 'Calirox',
@@ -241,15 +276,6 @@ const TEMPLATE_DEFS = [
     category: ClassCategory.HYROX,
     intensity: IntensityLevel.EXTREME,
     heroImageUrl: 'https://images.unsplash.com/photo-1549576490-b0b4831ef60a?w=800',
-  },
-  {
-    name: 'Street Bars',
-    description: 'Clase 100% enfocada en técnica y mejora de tu fuerza y control corporal. Aprenderás a controlar tu cuerpo y su fuerza.',
-    duration: 60,
-    color: '#10b981',
-    category: ClassCategory.STRENGTH,
-    intensity: IntensityLevel.HIGH,
-    heroImageUrl: 'https://images.unsplash.com/photo-1598971861713-54ad16a7e72e?w=800',
   },
 ];
 
@@ -478,67 +504,13 @@ async function main(): Promise<void> {
     throw new Error('No class templates resolved. Cannot build schedule.');
   }
 
-  // ── 6. Create future scheduled classes (idempotent, no duplicates) ────────
+  // ── 6. Schedule — use migrate:ares-1.3-schedule for weekly templates + generation ─
   console.log('');
-  const now = new Date();
-  let classesCreated = 0;
-  let classesSkipped = 0;
-  let slotIndex = 0;
-
-  // Anchor on today's CDMX calendar date — host-timezone-agnostic.
-  const { year: y0, month: m0, day: d0 } = cdmxDateParts(now);
-  // CDMX midnight = UTC 06:00 (UTC-6, fixed since 2023 DST abolition).
-  const cdmxMidnightDay0 = new Date(Date.UTC(y0, m0 - 1, d0, 6, 0));
-
-  for (let d = 0; d < 14; d++) {
-    // Adding d × 24 h is safe: no DST transitions in Mexico City since 2023.
-    const cdmxMidnight = new Date(cdmxMidnightDay0.getTime() + d * 24 * 60 * 60 * 1000);
-    const { year, month, day, dow } = cdmxDateParts(cdmxMidnight);
-    const hours = scheduleHoursForDay(dow);
-
-    for (const hour of hours) {
-      const startsAt = cdmxToUtc(year, month, day, hour, 0);
-
-      // Never create classes in the past or at this exact moment
-      if (startsAt <= now) {
-        slotIndex++;
-        continue;
-      }
-
-      const tpl = resolvedTemplates[slotIndex % resolvedTemplates.length];
-      const instructorId = coachIds[slotIndex % coachIds.length];
-      const endsAt = new Date(startsAt.getTime() + tpl.duration * 60 * 1000);
-
-      // Existence check: same studio + template + instructor + start time = duplicate
-      const duplicate = await prisma.scheduledClass.findFirst({
-        where: { studioId: studio.id, classTemplateId: tpl.id, instructorId, startsAt },
-        select: { id: true },
-      });
-
-      if (duplicate) {
-        log('SKIP', 'ScheduledClass', `${startsAt.toISOString().slice(0, 16)} (already exists)`);
-        classesSkipped++;
-      } else {
-        log('CREATE', 'ScheduledClass', `${startsAt.toISOString().slice(0, 16)}`);
-        if (!DRY_RUN) {
-          await prisma.scheduledClass.create({
-            data: {
-              studioId: studio.id,
-              classTemplateId: tpl.id,
-              instructorId,
-              startsAt,
-              endsAt,
-              capacity: 25,
-              status: ClassStatus.SCHEDULED,
-            },
-          });
-        }
-        classesCreated++;
-      }
-
-      slotIndex++;
-    }
-  }
+  log(
+    'SKIP',
+    'ScheduledClass',
+    'Use pnpm migrate:ares-1.3-schedule for weekly ScheduleTemplates + generation',
+  );
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log('');
@@ -551,8 +523,9 @@ async function main(): Promise<void> {
         coaches_upserted: COACH_DEFS.length,
         plans_processed: PLAN_DEFS.length,
         templates_processed: TEMPLATE_DEFS.length,
-        classes_created: classesCreated,
-        classes_skipped_existing: classesSkipped,
+        classes_created: 0,
+        classes_skipped_existing: 0,
+        schedule_note: 'Run migrate:ares-1.3-schedule for weekly pattern',
         data_never_touched: [
           'Studio (delete)',
           'User (delete)',

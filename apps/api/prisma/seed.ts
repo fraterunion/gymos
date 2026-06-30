@@ -14,7 +14,7 @@
  *   at the booking layer today. The description communicates it; enforcement requires a
  *   membership-plan-to-class-template mapping feature (future phase).
  *
- *   Open Gym (11 am–10 pm) is an unstructured facility access benefit, not a bookable class.
+ *   Open Gym (10 am–5 pm) is an unstructured facility access benefit, not a bookable class.
  *   It is included in plan descriptions only; no ScheduledClass is created for it.
  */
 import {
@@ -247,7 +247,7 @@ async function main(): Promise<void> {
       studioId: ares.id,
       name: 'Full Access',
       description:
-        'Clases ilimitadas + Open Gym · 11:00 a.m. – 5:00 p.m. + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
+        'Clases ilimitadas + Open Gym · 10:00 a.m. – 5:00 p.m. + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
       priceCents: 195000, // $1,950 MXN
       currency: 'mxn',
       billingInterval: BillingInterval.MONTHLY,
@@ -263,7 +263,7 @@ async function main(): Promise<void> {
       studioId: ares.id,
       name: 'Basic Access',
       description:
-        '12 clases al mes + Open Gym · 11:00 a.m. – 5:00 p.m. + 3 guest passes. Créditos no acumulables.',
+        '12 clases al mes + Open Gym · 10:00 a.m. – 5:00 p.m. + 3 guest passes. Créditos no acumulables.',
       priceCents: 130000, // $1,300 MXN
       currency: 'mxn',
       billingInterval: BillingInterval.MONTHLY,

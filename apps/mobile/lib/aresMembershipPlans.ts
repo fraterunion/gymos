@@ -1,7 +1,7 @@
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 
 /** ARES Open Gym hours — member-facing copy. */
-export const OPEN_GYM_HOURS_LABEL = 'Open Gym · 11:00 a.m. – 5:00 p.m.';
+export const OPEN_GYM_HOURS_LABEL = 'Open Gym · 10:00 a.m. – 5:00 p.m.';
 
 /** Assumed monthly class load for unlimited plans (marketing price-per-class). */
 const UNLIMITED_CLASSES_PER_MONTH = 30;

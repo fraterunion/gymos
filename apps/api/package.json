@@ -31,6 +31,7 @@
     "seed:ares-review": "ts-node --project tsconfig.seed.json prisma/seed-ares-review-accounts.ts",
     "seed:ares-front-desk": "ts-node --project tsconfig.seed.json prisma/seed-ares-front-desk.ts",
     "seed:ares-waiver": "ts-node --project tsconfig.seed.json prisma/seed-ares-waiver.ts",
+    "migrate:ares-1.3-schedule": "ts-node --project tsconfig.seed.json prisma/migrate-ares-1.3-schedule.ts",
     "diagnose:ares-demo": "ts-node --project tsconfig.seed.json prisma/diagnose-ares-demo.ts",
     "cleanup:ares-demo": "ts-node --project tsconfig.seed.json prisma/cleanup-ares-demo.ts"
   },
