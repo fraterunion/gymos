@@ -27,6 +27,7 @@ import { StaffModule } from './staff/staff.module';
 import { StudioSettingsModule } from './studio-settings/studio-settings.module';
 import { StudiosModule } from './studios/studios.module';
 import { WaiverModule } from './waiver/waiver.module';
+import { SalesModule } from './sales/sales.module';
 import { WaitlistModule } from './waitlist/waitlist.module';
 
 function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
@@ -78,6 +79,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     DayPassesModule,
     EnrollmentModule,
     WaiverModule,
+    SalesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

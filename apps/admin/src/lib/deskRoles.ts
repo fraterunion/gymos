@@ -19,7 +19,31 @@ export function isFrontDeskRole(role: string | undefined | null): boolean {
 
 /** Routes reception staff may access in the admin desk app. */
 export function isFrontDeskAllowedPath(pathname: string): boolean {
-  return pathname === "/scan" || pathname === "/check-in" || pathname.startsWith("/check-in/");
+  return (
+    pathname === "/scan" ||
+    pathname === "/check-in" ||
+    pathname === "/sales" ||
+    pathname.startsWith("/check-in/")
+  );
+}
+
+export function canAccessWalkInSales(role: string | undefined | null): boolean {
+  const normalized = normalizeStudioRole(role);
+  return (
+    normalized === "OWNER" ||
+    normalized === "ADMIN" ||
+    normalized === "FRONT_DESK"
+  );
+}
+
+export function canRecordCashSales(
+  role: string | undefined | null,
+  settings?: { frontDeskCanRecordCash?: boolean },
+): boolean {
+  const normalized = normalizeStudioRole(role);
+  if (normalized === "OWNER" || normalized === "ADMIN") return true;
+  if (normalized === "FRONT_DESK") return settings?.frontDeskCanRecordCash === true;
+  return false;
 }
 
 export function canManageStudioSettings(role: string | undefined | null): boolean {

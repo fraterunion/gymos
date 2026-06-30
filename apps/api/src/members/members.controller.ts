@@ -55,7 +55,7 @@ export class MembersController {
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   list(
     @Param('studioId') studioId: string,
     @Query() query: ListMembersQueryDto,

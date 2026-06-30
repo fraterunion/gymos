@@ -174,6 +174,18 @@ enum WaiverAcceptanceMethod {
   STAFF_ATTESTED
 }
 
+enum SubscriptionSource {
+  STRIPE
+  CASH
+  MANUAL
+}
+
+enum PaymentMethod {
+  STRIPE
+  CASH
+  TERMINAL
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -240,6 +252,8 @@ model Studio {
   memberEnrollments          MemberEnrollment[]
   waiverDocuments            StudioWaiverDocument[]
   waiverAcceptances          WaiverAcceptance[]
+  auditLogs                  AuditLog[]
+  salesSettings              StudioSalesSettings?
 
   @@map("studios")
 }
@@ -278,6 +292,9 @@ model User {
   waiverAcceptances           WaiverAcceptance[]
   waiverAttestations          WaiverAcceptance[]      @relation("WaiverAttestedBy")
   waiverDocumentsCreated      StudioWaiverDocument[]  @relation("WaiverDocumentCreatedBy")
+  auditLogs                   AuditLog[]              @relation("AuditLogActor")
+  paymentsRecorded            Payment[]               @relation("PaymentRecordedBy")
+  subscriptionsCreated        Subscription[]          @relation("SubscriptionCreatedBy")
 
   @@map("users")
 }
@@ -338,16 +355,20 @@ model Subscription {
   userId               String               @map("user_id")
   membershipPlanId     String               @map("membership_plan_id")
   status               SubscriptionStatus
+  source               SubscriptionSource   @default(STRIPE)
   stripeSubscriptionId String?              @unique @map("stripe_subscription_id")
   currentPeriodStart   DateTime?            @map("current_period_start")
   currentPeriodEnd     DateTime?            @map("current_period_end")
   cancelAtPeriodEnd    Boolean              @default(false) @map("cancel_at_period_end")
+  createdByUserId      String?              @map("created_by_user_id")
+  notes                String?
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
 
   studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
   user           User           @relation("SubscriptionMember", fields: [userId], references: [id], onDelete: Restrict)
   membershipPlan MembershipPlan @relation(fields: [membershipPlanId], references: [id], onDelete: Restrict)
+  createdBy      User?          @relation("SubscriptionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   payments       Payment[]
 
   @@index([studioId])
@@ -535,24 +556,28 @@ model RefreshToken {
 }
 
 model Payment {
-  id                     String        @id @default(cuid())
-  studioId               String        @map("studio_id")
-  userId                 String        @map("user_id")
-  subscriptionId         String?       @map("subscription_id")
-  membershipPlanId       String?       @map("membership_plan_id")
-  amountCents            Int           @map("amount_cents")
-  currency               String        @default("usd")
+  id                     String         @id @default(cuid())
+  studioId               String         @map("studio_id")
+  userId                 String         @map("user_id")
+  subscriptionId         String?        @map("subscription_id")
+  membershipPlanId       String?        @map("membership_plan_id")
+  amountCents            Int            @map("amount_cents")
+  currency               String         @default("usd")
   status                 PaymentStatus
-  stripePaymentIntentId  String?       @unique @map("stripe_payment_intent_id")
-  stripeInvoiceId        String?       @unique @map("stripe_invoice_id")
-  paidAt                 DateTime?     @map("paid_at")
-  createdAt              DateTime      @default(now()) @map("created_at")
-  updatedAt              DateTime      @updatedAt @map("updated_at")
+  paymentMethod          PaymentMethod  @default(STRIPE) @map("payment_method")
+  stripePaymentIntentId  String?        @unique @map("stripe_payment_intent_id")
+  stripeInvoiceId        String?        @unique @map("stripe_invoice_id")
+  recordedByUserId       String?        @map("recorded_by_user_id")
+  notes                  String?
+  paidAt                 DateTime?      @map("paid_at")
+  createdAt              DateTime       @default(now()) @map("created_at")
+  updatedAt              DateTime       @updatedAt @map("updated_at")
 
   studio         Studio          @relation(fields: [studioId], references: [id], onDelete: Restrict)
   user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
   subscription   Subscription?   @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   membershipPlan MembershipPlan? @relation(fields: [membershipPlanId], references: [id], onDelete: SetNull)
+  recordedBy     User?           @relation("PaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
 
   @@index([studioId])
   @@index([studioId, userId])
@@ -864,4 +889,35 @@ model WaiverAcceptance {
   @@index([studioId, userId])
   @@index([waiverDocumentId])
   @@map("waiver_acceptances")
+}
+
+model StudioSalesSettings {
+  studioId                  String  @id @map("studio_id")
+  frontDeskCanCreateMember  Boolean @default(true) @map("front_desk_can_create_member")
+  frontDeskCanIssueCheckout Boolean @default(true) @map("front_desk_can_issue_checkout")
+  frontDeskCanRecordCash    Boolean @default(false) @map("front_desk_can_record_cash")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+
+  @@map("studio_sales_settings")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  studioId     String   @map("studio_id")
+  actorUserId  String   @map("actor_user_id")
+  action       String
+  targetUserId String?  @map("target_user_id")
+  entityType   String?  @map("entity_type")
+  entityId     String?  @map("entity_id")
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  actor  User   @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([studioId, createdAt])
+  @@index([studioId, action])
+  @@index([targetUserId])
+  @@map("audit_logs")
 }

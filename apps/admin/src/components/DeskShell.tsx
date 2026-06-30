@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import {
   canManageStudioSettings,
+  canAccessWalkInSales,
   isFrontDeskAllowedPath,
   isFrontDeskRole,
   normalizeStudioRole,
@@ -23,6 +24,7 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
   const resolvedRole = normalizeStudioRole(studioRole);
   const frontDesk = ready && isFrontDeskRole(resolvedRole);
   const canManage = ready && canManageStudioSettings(resolvedRole);
+  const canSales = ready && canAccessWalkInSales(resolvedRole);
   const rolePending = !ready || loading;
 
   useEffect(() => {
@@ -37,10 +39,12 @@ export function DeskShell({ children }: { children: React.ReactNode }) {
     : frontDesk
       ? [
           { href: "/check-in", label: "Today's Classes" },
+          { href: "/sales", label: "Ventas" },
           { href: "/scan", label: "QR Scanner" },
         ]
       : [
           { href: "/check-in", label: "Today" },
+          ...(canSales ? ([{ href: "/sales", label: "Ventas" }] as const) : []),
           { href: "/schedule", label: "Schedule" },
           { href: "/classes", label: "Class types" },
           ...(canManage ? ([{ href: "/schedule-generator", label: "Generator" }] as const) : []),

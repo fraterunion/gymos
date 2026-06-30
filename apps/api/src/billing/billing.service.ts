@@ -29,9 +29,36 @@ export class BillingService {
     planId: string;
   }): Promise<{ url: string }> {
     await this.waiverService.assertMemberWaiverAccepted(params.studioId, params.userId);
+    const { checkoutUrl } = await this.buildMemberCheckoutSession({
+      targetUserId: params.userId,
+      studioId: params.studioId,
+      planId: params.planId,
+    });
+    return { url: checkoutUrl };
+  }
 
+  async createStaffInitiatedCheckoutSession(params: {
+    actorUserId: string;
+    targetUserId: string;
+    studioId: string;
+    planId: string;
+  }): Promise<{ checkoutUrl: string }> {
+    return this.buildMemberCheckoutSession({
+      targetUserId: params.targetUserId,
+      studioId: params.studioId,
+      planId: params.planId,
+      initiatedByUserId: params.actorUserId,
+    });
+  }
+
+  private async buildMemberCheckoutSession(params: {
+    targetUserId: string;
+    studioId: string;
+    planId: string;
+    initiatedByUserId?: string;
+  }): Promise<{ checkoutUrl: string }> {
     const membership = await this.prisma.studioMembership.findUnique({
-      where: { userId_studioId: { userId: params.userId, studioId: params.studioId } },
+      where: { userId_studioId: { userId: params.targetUserId, studioId: params.studioId } },
       include: { user: true },
     });
     if (!membership || membership.deletedAt) {
@@ -77,9 +104,8 @@ export class BillingService {
     const successUrl = this.config.getOrThrow<string>('STRIPE_SUCCESS_URL');
     const cancelUrl  = this.config.getOrThrow<string>('STRIPE_CANCEL_URL');
 
-    // Enrollment fee logic
     const quote = await this.enrollment.calculateCheckoutQuote(
-      params.userId,
+      params.targetUserId,
       params.studioId,
       params.planId,
     );
@@ -92,12 +118,23 @@ export class BillingService {
       enrollmentMeta['enrollmentCandidate']  = quote.isPromoCandidate ? 'true' : 'false';
 
       if (!quote.isPromoCandidate) {
-        // Non-promo path: charge enrollment fee on the first invoice
         const feePriceId = await this.enrollment.ensureEnrollmentFeeStripePrice(quote.settingsId);
         addInvoiceItems = [{ price: feePriceId, quantity: 1 }];
       }
-      // Promo candidate path: omit fee — finalized as WAIVED by webhook
     }
+
+    const initiatedMeta: Record<string, string> =
+      params.initiatedByUserId != null
+        ? { initiatedByUserId: params.initiatedByUserId }
+        : {};
+
+    const sessionMetadata: Record<string, string> = {
+      userId: user.id,
+      studioId: params.studioId,
+      planId: plan.id,
+      ...enrollmentMeta,
+      ...initiatedMeta,
+    };
 
     const session = await this.stripe.createCheckoutSession({
       mode: 'subscription',
@@ -105,27 +142,23 @@ export class BillingService {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: successUrl,
       cancel_url:  cancelUrl,
-      metadata: {
-        userId:   user.id,
-        studioId: params.studioId,
-        planId:   plan.id,
-        ...enrollmentMeta,
-      },
+      metadata: sessionMetadata,
       subscription_data: {
         metadata: {
-          userId:   user.id,
+          userId: user.id,
           studioId: params.studioId,
-          planId:   plan.id,
+          planId: plan.id,
+          ...initiatedMeta,
         },
         ...(addInvoiceItems.length > 0 ? { add_invoice_items: addInvoiceItems } : {}),
       },
     });
 
-    const url = session.url;
-    if (!url) {
+    const checkoutUrl = session.url;
+    if (!checkoutUrl) {
       throw new BadRequestException('Stripe Checkout session did not return a URL');
     }
-    return { url };
+    return { checkoutUrl };
   }
 
   async createBillingPortalSessionForUser(params: {
