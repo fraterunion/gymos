@@ -12,8 +12,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
 import { Field } from '@/components/Field';
+import { WaiverRegisterSection } from '@/components/WaiverGate';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
+import { fetchPublicWaiver, type PublicWaiverDto } from '@/lib/api/waiverApi';
 import { getStudioSlug } from '@/lib/env';
 import { getColors, Space } from '@/constants/Theme';
 
@@ -47,6 +49,25 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const [confirmTouched, setConfirmTouched] = useState(false);
+  const [waiver, setWaiver] = useState<PublicWaiverDto | null>(null);
+  const [waiverLoading, setWaiverLoading] = useState(false);
+  const [waiverAccepted, setWaiverAccepted] = useState(false);
+
+  const studioSlug = getStudioSlug();
+
+  useEffect(() => {
+    if (!studioSlug) {
+      setWaiver(null);
+      return;
+    }
+    setWaiverLoading(true);
+    void fetchPublicWaiver(studioSlug)
+      .then((doc) => setWaiver(doc))
+      .catch(() => setWaiver(null))
+      .finally(() => setWaiverLoading(false));
+  }, [studioSlug]);
+
+  const waiverRequired = Boolean(studioSlug && waiver);
 
   const passwordsMismatch = useMemo(
     () => confirmPassword.length > 0 && password !== confirmPassword,
@@ -66,7 +87,8 @@ export default function RegisterScreen() {
     email.trim().length > 0 &&
     password.length >= 8 &&
     confirmPassword.length > 0 &&
-    !passwordsMismatch;
+    !passwordsMismatch &&
+    (!waiverRequired || waiverAccepted);
 
   useEffect(() => {
     if (hydrated && user) {
@@ -104,15 +126,21 @@ export default function RegisterScreen() {
       setLocalError(PASSWORDS_MISMATCH);
       return;
     }
+    if (waiverRequired && (!waiverAccepted || !waiver)) {
+      setLocalError('Debes aceptar la Carta Responsiva para crear tu cuenta.');
+      return;
+    }
 
     try {
-      const studioSlug = getStudioSlug();
       await register({
         email: email.trim(),
         password,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         ...(studioSlug ? { studioSlug } : {}),
+        ...(waiverRequired && waiver
+          ? { waiverAccepted: true, waiverDocumentId: waiver.id }
+          : {}),
       });
     } catch {
       // error in context
@@ -224,6 +252,13 @@ export default function RegisterScreen() {
               onBlur={() => setConfirmTouched(true)}
               placeholder="Vuelve a ingresar tu contraseña"
               error={confirmPasswordError}
+            />
+
+            <WaiverRegisterSection
+              waiver={waiver}
+              checked={waiverAccepted}
+              onCheckedChange={setWaiverAccepted}
+              loading={waiverLoading}
             />
 
             {combinedError ? (

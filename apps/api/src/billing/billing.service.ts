@@ -10,6 +10,7 @@ import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
+import { WaiverService } from '../waiver/waiver.service';
 import { billingIntervalToStripeRecurring, stripeIntervalToBillingInterval } from './stripe-plan-interval';
 
 @Injectable()
@@ -19,6 +20,7 @@ export class BillingService {
     private readonly stripe: StripeService,
     private readonly config: ConfigService,
     private readonly enrollment: EnrollmentService,
+    private readonly waiverService: WaiverService,
   ) {}
 
   async createMemberCheckoutSession(params: {
@@ -26,6 +28,8 @@ export class BillingService {
     studioId: string;
     planId: string;
   }): Promise<{ url: string }> {
+    await this.waiverService.assertMemberWaiverAccepted(params.studioId, params.userId);
+
     const membership = await this.prisma.studioMembership.findUnique({
       where: { userId_studioId: { userId: params.userId, studioId: params.studioId } },
       include: { user: true },

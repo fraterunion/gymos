@@ -10,6 +10,7 @@ import { PlatformRole, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { WaiverService } from '../waiver/waiver.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RefreshTokenDto } from './dto/refresh-token.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -37,9 +38,13 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly waiverService: WaiverService,
   ) {}
 
-  async register(dto: RegisterDto): Promise<AuthBundle> {
+  async register(
+    dto: RegisterDto,
+    clientMeta?: { ipAddress?: string; userAgent?: string },
+  ): Promise<AuthBundle> {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) {
       throw new ConflictException('Email already registered');
@@ -54,6 +59,12 @@ export class AuthService {
       if (!studio) {
         throw new BadRequestException('Studio not found');
       }
+
+      const waiver = await this.waiverService.validateRegistrationWaiver({
+        studioId: studio.id,
+        waiverDocumentId: dto.waiverDocumentId,
+        waiverAccepted: dto.waiverAccepted,
+      });
 
       const user = await this.prisma.$transaction(async (tx) => {
         const created = await tx.user.create({
@@ -71,6 +82,17 @@ export class AuthService {
         });
         return created;
       });
+
+      if (waiver) {
+        await this.waiverService.createSelfAcceptance({
+          studioId: studio.id,
+          userId: user.id,
+          waiverDocumentId: waiver.waiverDocumentId,
+          ipAddress: clientMeta?.ipAddress,
+          userAgent: clientMeta?.userAgent,
+        });
+      }
+
       return this.issueAuthBundle(user.id, user.email);
     }
 

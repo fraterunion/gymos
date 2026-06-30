@@ -8,11 +8,13 @@ import { BrandButton } from '@/components/BrandButton';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { MembershipStatusPill } from '@/components/MembershipStatusPill';
 import { ProgressSummaryCard } from '@/components/ProgressSummaryCard';
+import { formatWaiverMethod } from '@/components/WaiverGate';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { fetchMyMemberProfile, type MyMemberProfileDto } from '@/lib/api/membershipApi';
 import { fetchMyProgress, type MemberProgressDto } from '@/lib/api/progressApi';
+import { fetchMyWaiverStatus, type WaiverStatusDto } from '@/lib/api/waiverApi';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
 const CARD_BG = '#141416';
@@ -194,6 +196,7 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
   const [profileError, setProfileError] = useState(false);
   const [progress, setProgress] = useState<MemberProgressDto | null>(null);
+  const [waiverStatus, setWaiverStatus] = useState<WaiverStatusDto | null>(null);
 
   const loadProfile = useCallback(async () => {
     if (!studioId || !user) return;
@@ -204,6 +207,12 @@ export default function ProfileScreen() {
     } catch {
       // Keep profile usable if membership status cannot be loaded
       setProfileError(true);
+    }
+    try {
+      const waiver = await fetchMyWaiverStatus(studioId);
+      setWaiverStatus(waiver);
+    } catch {
+      setWaiverStatus(null);
     }
     try {
       const prog = await fetchMyProgress(studioId);
@@ -333,6 +342,32 @@ export default function ProfileScreen() {
               progress={progress}
               onViewProgress={() => router.push('/(app)/progress' as Href)}
             />
+          </Animated.View>
+        ) : null}
+
+        {waiverStatus?.required && waiverStatus.accepted ? (
+          <Animated.View entering={FadeInDown.delay(120).duration(420)}>
+            <SectionLabel>Carta Responsiva</SectionLabel>
+            <View style={[premiumCardStyle(C), { padding: 24 }]}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, marginBottom: 8 }}>
+                Carta Responsiva aceptada
+              </Text>
+              <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 4 }}>
+                Versión: {waiverStatus.acceptedVersion ?? waiverStatus.activeVersion ?? '—'}
+              </Text>
+              <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 4 }}>
+                {formatWaiverMethod(waiverStatus.method)}
+              </Text>
+              {waiverStatus.acceptedAt ? (
+                <Text style={{ fontSize: 13, color: C.textMute }}>
+                  {new Intl.DateTimeFormat(undefined, {
+                    timeZone,
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  }).format(new Date(waiverStatus.acceptedAt))}
+                </Text>
+              ) : null}
+            </View>
           </Animated.View>
         ) : null}
 

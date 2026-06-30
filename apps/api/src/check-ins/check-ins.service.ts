@@ -18,6 +18,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { JwtPayload } from 'jsonwebtoken';
 import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
+import { WaiverService } from '../waiver/waiver.service';
 
 const QR_TTL_SECONDS = 5 * 60;
 
@@ -96,6 +97,7 @@ export class CheckInsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly waiverService: WaiverService,
   ) {}
 
   async generateQrForBooking(
@@ -103,6 +105,8 @@ export class CheckInsService {
     bookingId: string,
     actorUserId: string,
   ): Promise<QrTokenResponse> {
+    await this.waiverService.assertMemberWaiverAccepted(studioId, actorUserId);
+
     const booking = await this.prisma.booking.findFirst({
       where: { id: bookingId, studioId },
       include: {

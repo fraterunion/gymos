@@ -29,6 +29,12 @@ import {
   type UpsertCrmProfileInput,
 } from "@/lib/api/members";
 import { ApiError } from "@/lib/api/errors";
+import {
+  attestMemberWaiver,
+  fetchMemberWaiverStatus,
+  waiverStatusLabel,
+  type MemberWaiverStatus,
+} from "@/lib/api/waiver";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1021,6 +1027,111 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
+// ── Waiver status ───────────────────────────────────────────────────────────
+
+function WaiverStatusCard({
+  studioId,
+  userId,
+}: {
+  studioId: string;
+  userId: string;
+}) {
+  const [status, setStatus] = useState<MemberWaiverStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setStatus(await fetchMemberWaiverStatus(studioId, userId));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load waiver status");
+    } finally {
+      setLoading(false);
+    }
+  }, [studioId, userId]);
+
+  useEffect(() => {
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  async function handleAttest() {
+    if (!status?.activeWaiverDocumentId) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await attestMemberWaiver(studioId, userId, {
+        waiverDocumentId: status.activeWaiverDocumentId,
+        attestationNote: note.trim() || undefined,
+      });
+      setNote("");
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to record waiver attestation");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading && !status) {
+    return <CardSkeleton lines={2} />;
+  }
+
+  if (!status?.required) return null;
+
+  const pending = !status.accepted;
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Carta Responsiva</h2>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Estado: <span className="font-medium text-zinc-800 dark:text-zinc-200">{waiverStatusLabel(status)}</span>
+          </p>
+          {status.accepted && status.acceptedVersion ? (
+            <p className="mt-1 text-xs text-zinc-400">
+              Versión {status.acceptedVersion}
+              {status.acceptedAt ? ` · ${fmtDateTime(status.acceptedAt)}` : ""}
+            </p>
+          ) : status.activeVersion ? (
+            <p className="mt-1 text-xs text-zinc-400">Versión activa: {status.activeVersion}</p>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+
+      {pending ? (
+        <div className="mt-4 space-y-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            Marca como firmada presencialmente solo si el cliente firmó la carta en recepción.
+          </p>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Nota opcional (referencia, folio, etc.)"
+            rows={2}
+            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+          />
+          <button
+            type="button"
+            onClick={() => void handleAttest()}
+            disabled={submitting || !status.activeWaiverDocumentId}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          >
+            {submitting ? "Guardando…" : "Marcar como firmado presencialmente"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MemberProfilePage() {
@@ -1110,6 +1221,8 @@ export default function MemberProfilePage() {
               </div>
             </div>
           </div>
+
+          <WaiverStatusCard studioId={selectedStudioId} userId={userId!} />
 
           {/* ── KPI stats ── */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

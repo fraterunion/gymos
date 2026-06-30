@@ -5,9 +5,12 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
+import { extractRequestClientMeta } from '../waiver/request-client-meta';
 import { AuthThrottlerGuard } from './guards/auth-throttler.guard';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -24,8 +27,9 @@ export class AuthController {
   @UseGuards(AuthThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  register(@Body() dto: RegisterDto, @Req() req: Request) {
+    const meta = extractRequestClientMeta(req);
+    return this.authService.register(dto, meta);
   }
 
   @Post('login')

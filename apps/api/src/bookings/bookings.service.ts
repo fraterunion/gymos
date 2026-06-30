@@ -18,6 +18,7 @@ import {
   WaitlistService,
 } from '../waitlist/waitlist.service';
 import { BookingAccessService } from './booking-access.service';
+import { WaiverService } from '../waiver/waiver.service';
 
 const rosterUserSelect = {
   id: true,
@@ -40,9 +41,12 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly waitlistService: WaitlistService,
     private readonly bookingAccess: BookingAccessService,
+    private readonly waiverService: WaiverService,
   ) {}
 
   async createBooking(studioId: string, scheduledClassId: string, actorUserId: string) {
+    await this.waiverService.assertMemberWaiverAccepted(studioId, actorUserId);
+
     return this.prisma.$transaction(
       async (tx) => {
         await acquireBookingClassAdvisoryLock(tx, scheduledClassId);

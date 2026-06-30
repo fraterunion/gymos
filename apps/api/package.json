@@ -30,6 +30,7 @@
     "seed:ares": "ts-node --project tsconfig.seed.json prisma/seed-ares-production.ts",
     "seed:ares-review": "ts-node --project tsconfig.seed.json prisma/seed-ares-review-accounts.ts",
     "seed:ares-front-desk": "ts-node --project tsconfig.seed.json prisma/seed-ares-front-desk.ts",
+    "seed:ares-waiver": "ts-node --project tsconfig.seed.json prisma/seed-ares-waiver.ts",
     "diagnose:ares-demo": "ts-node --project tsconfig.seed.json prisma/diagnose-ares-demo.ts",
     "cleanup:ares-demo": "ts-node --project tsconfig.seed.json prisma/cleanup-ares-demo.ts"
   },

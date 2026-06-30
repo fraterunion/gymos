@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { WaiverService } from '../waiver/waiver.service';
 import { AuthService } from './auth.service';
 
 function sha256(plain: string): string {
@@ -55,6 +56,13 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: { signAsync: jwtSignAsync } },
         { provide: ConfigService, useValue: { get: configGet } },
+        {
+          provide: WaiverService,
+          useValue: {
+            validateRegistrationWaiver: jest.fn().mockResolvedValue(null),
+            createSelfAcceptance: jest.fn(),
+          },
+        },
       ],
     }).compile();
 

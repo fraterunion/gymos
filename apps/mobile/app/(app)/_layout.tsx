@@ -4,10 +4,12 @@ import { Stack } from 'expo-router/stack';
 import { BrandButton } from '@/components/BrandButton';
 import { MembershipRequiredScreen } from '@/components/MembershipRequiredScreen';
 import { ScreenLoader } from '@/components/StudioScreenChrome';
+import { WaiverGate } from '@/components/WaiverGate';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { MemberStudioProvider, useMemberStudio } from '@/contexts/MemberStudioContext';
 import { StudioActivityProvider } from '@/contexts/StudioActivityContext';
+import { getStudioSlug } from '@/lib/env';
 import { isStaffRole } from '@/lib/staffRole';
 
 export default function AppGroupLayout() {
@@ -60,10 +62,10 @@ function MemberShell() {
   // Staff, front desk, instructor, admin, and owner accounts get the staff shell instead of member tabs.
   // Computed only after ms.status === 'ready' (gated above), so there is no flicker.
   const staff = isStaffRole(ms.matched?.role);
+  const studioSlug = getStudioSlug() ?? ms.matched?.studio.slug ?? '';
+  const memberNeedsWaiver = Boolean(user && ms.matched?.role === 'MEMBER' && studioSlug);
 
-  // Always mount StudioActivityProvider to keep the tree stable through login/logout.
-  // Guests receive studioId = '' which causes the context to skip all authenticated fetches.
-  return (
+  const appShell = (
     <StudioActivityProvider studioId={ms.matched?.studio.id ?? ''}>
       <Stack
         screenOptions={{
@@ -165,4 +167,14 @@ function MemberShell() {
       </Stack>
     </StudioActivityProvider>
   );
+
+  if (memberNeedsWaiver && ms.matched) {
+    return (
+      <WaiverGate studioId={ms.matched.studio.id} studioSlug={studioSlug}>
+        {appShell}
+      </WaiverGate>
+    );
+  }
+
+  return appShell;
 }

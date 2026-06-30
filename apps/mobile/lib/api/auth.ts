@@ -15,6 +15,8 @@ export type RegisterBody = {
   firstName: string;
   lastName: string;
   studioSlug?: string;
+  waiverAccepted?: boolean;
+  waiverDocumentId?: string;
 };
 
 export async function registerRequest(body: RegisterBody): Promise<AuthBundle> {

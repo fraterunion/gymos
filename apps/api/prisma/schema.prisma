@@ -169,6 +169,11 @@ enum ScheduleGenerationTrigger {
   AUTOMATIC
 }
 
+enum WaiverAcceptanceMethod {
+  SELF
+  STAFF_ATTESTED
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -233,6 +238,8 @@ model Studio {
   scheduleAutomationSettings ScheduleAutomationSettings?
   enrollmentSettings         StudioEnrollmentSettings?
   memberEnrollments          MemberEnrollment[]
+  waiverDocuments            StudioWaiverDocument[]
+  waiverAcceptances          WaiverAcceptance[]
 
   @@map("studios")
 }
@@ -268,6 +275,9 @@ model User {
   instructedScheduleTemplates ScheduleTemplate[]      @relation("ScheduleTemplateInstructor")
   scheduleGenerationRuns      ScheduleGenerationRun[] @relation("ScheduleGenerationRunUser")
   enrollments                 MemberEnrollment[]
+  waiverAcceptances           WaiverAcceptance[]
+  waiverAttestations          WaiverAcceptance[]      @relation("WaiverAttestedBy")
+  waiverDocumentsCreated      StudioWaiverDocument[]  @relation("WaiverDocumentCreatedBy")
 
   @@map("users")
 }
@@ -809,4 +819,49 @@ model MemberEnrollment {
   @@index([studioId])
   @@index([userId])
   @@map("member_enrollments")
+}
+
+model StudioWaiverDocument {
+  id              String   @id @default(cuid())
+  studioId        String   @map("studio_id")
+  version         String
+  title           String
+  bodyMarkdown    String   @map("body_markdown")
+  effectiveAt     DateTime @map("effective_at")
+  isActive        Boolean  @default(false) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  createdByUserId String?  @map("created_by_user_id")
+
+  studio      Studio             @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  createdBy   User?              @relation("WaiverDocumentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  acceptances WaiverAcceptance[]
+
+  @@unique([studioId, version])
+  @@index([studioId, isActive])
+  @@map("studio_waiver_documents")
+}
+
+model WaiverAcceptance {
+  id               String                  @id @default(cuid())
+  studioId         String                  @map("studio_id")
+  userId           String                  @map("user_id")
+  waiverDocumentId String                  @map("waiver_document_id")
+  waiverVersion    String                  @map("waiver_version")
+  acceptedAt       DateTime                @default(now()) @map("accepted_at")
+  method           WaiverAcceptanceMethod
+  ipAddress        String?                 @map("ip_address")
+  userAgent        String?                 @map("user_agent")
+  attestedByUserId String?                 @map("attested_by_user_id")
+  attestationNote  String?                 @map("attestation_note")
+  createdAt        DateTime                @default(now()) @map("created_at")
+
+  studio         Studio               @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  waiverDocument StudioWaiverDocument @relation(fields: [waiverDocumentId], references: [id], onDelete: Restrict)
+  attestedBy     User?                @relation("WaiverAttestedBy", fields: [attestedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([studioId, userId, waiverDocumentId])
+  @@index([studioId, userId])
+  @@index([waiverDocumentId])
+  @@map("waiver_acceptances")
 }
