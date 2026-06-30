@@ -170,6 +170,12 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="member-profile/[userId]"
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
           name="billing"
           options={{
             headerShown: false,

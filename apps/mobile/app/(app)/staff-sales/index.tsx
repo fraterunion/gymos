@@ -1,5 +1,5 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -28,6 +28,7 @@ import {
   memberDisplayName,
   type MemberListItem,
 } from '@/lib/api/membersDirectoryApi';
+import { fetchMemberProfile } from '@/lib/api/memberProfileApi';
 import {
   fetchMembershipPlans,
   type BillingInterval,
@@ -55,6 +56,7 @@ import {
   canRecordCashSales,
 } from '@/lib/salesPermissions';
 import { copyTextToClipboard } from '@/lib/copyToClipboard';
+import { memberProfileHref } from '@/lib/memberProfileRoutes';
 import { canAttestMemberWaiver } from '@/lib/waiverPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -227,50 +229,73 @@ function ModeToggle({
 function MemberResultRow({
   member,
   onSelect,
+  onViewProfile,
 }: {
   member: MemberListItem;
   onSelect: () => void;
+  onViewProfile: () => void;
 }) {
   const C = getColors();
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onSelect}
+    <View
       style={{
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 16,
         borderBottomWidth: 1,
         borderBottomColor: C.separator,
-        gap: 14,
       }}
     >
-      <View
+      <Pressable
+        accessibilityRole="button"
+        onPress={onSelect}
         style={{
-          width: 44,
-          height: 44,
-          borderRadius: 22,
-          backgroundColor: 'rgba(255,255,255,0.08)',
+          flex: 1,
+          flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'center',
+          paddingVertical: 16,
+          gap: 14,
         }}
       >
-        <Text style={{ fontSize: 16, fontWeight: '800', color: C.text }}>
-          {member.user.firstName.charAt(0)}
-          {member.user.lastName.charAt(0)}
-        </Text>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 }}>
-          {memberDisplayName(member)}
-        </Text>
-        <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>{member.user.email}</Text>
-        {member.user.phone ? (
-          <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>{member.user.phone}</Text>
-        ) : null}
-      </View>
-      <FontAwesome name="chevron-right" size={14} color={C.textMute} />
-    </Pressable>
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            backgroundColor: 'rgba(255,255,255,0.08)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '800', color: C.text }}>
+            {member.user.firstName.charAt(0)}
+            {member.user.lastName.charAt(0)}
+          </Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, letterSpacing: -0.2 }}>
+            {memberDisplayName(member)}
+          </Text>
+          <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>{member.user.email}</Text>
+          {member.user.phone ? (
+            <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>{member.user.phone}</Text>
+          ) : null}
+        </View>
+        <FontAwesome name="chevron-right" size={14} color={C.textMute} />
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Ver perfil"
+        onPress={onViewProfile}
+        hitSlop={10}
+        style={{
+          paddingVertical: 16,
+          paddingHorizontal: 12,
+          marginRight: 4,
+        }}
+      >
+        <FontAwesome name="user-circle-o" size={22} color={C.textSub} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -437,6 +462,11 @@ function PaymentMethodChip({
 
 export default function StaffSalesScreen() {
   const router = useRouter();
+  const salesParams = useLocalSearchParams<{
+    memberUserId?: string;
+    initialStep?: string;
+    from?: string;
+  }>();
   const C = getColors();
   const { primaryColor } = useBranding();
   const { user } = useAuth();
@@ -489,6 +519,7 @@ export default function StaffSalesScreen() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
 
   const allowed = canAccessSales(role);
   const canCreate = canCreateWalkInMember(role, salesSettings);
@@ -544,7 +575,6 @@ export default function StaffSalesScreen() {
     setPeriodEnd(defaultPeriodEnd(periodStart, selectedPlan.billingInterval));
   }, [selectedPlan, periodStart]);
 
-
   const loadWaiver = useCallback(async (userId: string) => {
     if (!studioId) return;
     setWaiverLoading(true);
@@ -583,6 +613,51 @@ export default function StaffSalesScreen() {
     },
     [loadWaiver],
   );
+
+  useEffect(() => {
+    if (!studioId || !allowed || deepLinkHandled) return;
+    const uid =
+      typeof salesParams.memberUserId === 'string' ? salesParams.memberUserId.trim() : '';
+    if (!uid) return;
+
+    setDeepLinkHandled(true);
+    fetchMemberProfile(studioId, uid)
+      .then((p) => {
+        const pseudo: MemberListItem = {
+          membershipId: p.membership.id,
+          role: 'MEMBER',
+          joinedAt: p.membership.createdAt,
+          user: p.user,
+          totalBookings: p.bookingStats.totalBookings,
+          noShowCount: p.bookingStats.noShowCount,
+          lastAttendanceAt: null,
+          subscription: p.activeSubscription
+            ? {
+                id: p.activeSubscription.id,
+                status: p.activeSubscription.status,
+                planName: p.activeSubscription.plan.name,
+                planId: p.activeSubscription.plan.id,
+                currentPeriodEnd: p.activeSubscription.currentPeriodEnd,
+                cancelAtPeriodEnd: p.activeSubscription.cancelAtPeriodEnd,
+              }
+            : null,
+        };
+        setSelectedMember(pseudo);
+        void loadWaiver(uid);
+        const stepNum = salesParams.initialStep
+          ? parseInt(String(salesParams.initialStep), 10)
+          : 2;
+        if (stepNum >= 1 && stepNum <= 5) setStep(stepNum as Step);
+      })
+      .catch((e) => setError(userFacingApiMessage(e, 'No se pudo cargar el cliente')));
+  }, [
+    allowed,
+    deepLinkHandled,
+    loadWaiver,
+    salesParams.initialStep,
+    salesParams.memberUserId,
+    studioId,
+  ]);
 
   async function handleCreateMember() {
     if (!studioId) return;
@@ -853,6 +928,9 @@ export default function StaffSalesScreen() {
                       key={m.user.id}
                       member={m}
                       onSelect={() => selectExistingMember(m)}
+                      onViewProfile={() =>
+                        router.push(memberProfileHref(m.user.id, { from: 'sales' }))
+                      }
                     />
                   ))}
                 </View>
@@ -1305,6 +1383,14 @@ export default function StaffSalesScreen() {
               ) : null}
 
               <View style={{ gap: 12 }}>
+                <BrandButton
+                  label="Ver perfil del miembro"
+                  accentColor={primaryColor}
+                  variant="ghost"
+                  onPress={() =>
+                    router.push(memberProfileHref(selectedMember.user.id, { from: 'sales' }))
+                  }
+                />
                 <BrandButton label="Nueva venta" accentColor={primaryColor} onPress={resetFlow} />
                 <BrandButton
                   label="Listo"

@@ -98,7 +98,7 @@ export class MembersController {
 
   @Get(':userId')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getOne(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
@@ -110,7 +110,7 @@ export class MembersController {
 
   @Get(':userId/bookings')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getMemberBookings(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
@@ -175,7 +175,7 @@ export class MembersController {
 
   @Get(':userId/attendance')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getMemberAttendance(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
@@ -211,7 +211,7 @@ export class MembersController {
 
   @Get(':userId/payments')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getMemberPayments(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
@@ -230,7 +230,7 @@ export class MembersController {
 
   @Get(':userId/subscriptions')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getMemberSubscriptions(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
@@ -283,7 +283,7 @@ export class MembersController {
 
   @Get(':userId/timeline')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getMemberTimeline(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
