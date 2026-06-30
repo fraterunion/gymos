@@ -27,6 +27,7 @@ const ROUTE_ICONS: Record<string, IconName> = {
   // Staff tabs
   scan: 'qrcode',
   today: 'calendar-check-o',
+  dashboard: 'line-chart',
   team: 'users',
 };
 
@@ -39,6 +40,7 @@ const ROUTE_LABELS: Record<string, string> = {
   // Staff tabs
   scan: 'Escanear',
   today: 'Hoy',
+  dashboard: 'Panel',
   team: 'Equipo',
 };
 

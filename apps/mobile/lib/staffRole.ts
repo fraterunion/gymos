@@ -1,3 +1,5 @@
+import { canAccessExecutiveDashboard } from '@/lib/executivePermissions';
+
 /**
  * Staff Mode role gating — mirrors API desk roles.
  * POST /studios/:studioId/check-ins/qr: FRONT_DESK | STAFF | INSTRUCTOR | ADMIN | OWNER
@@ -53,7 +55,10 @@ export function canAccessTeamTab(role: string | null | undefined): boolean {
   return Boolean(role && TEAM_TAB_ROLES.has(role));
 }
 
-export function staffTabsInitialRoute(role: string | null | undefined): 'today' | 'scan' {
+export function staffTabsInitialRoute(
+  role: string | null | undefined,
+): 'dashboard' | 'today' | 'scan' {
+  if (canAccessExecutiveDashboard(role)) return 'dashboard';
   if (isFrontDeskRole(role)) return 'today';
   return canAccessStaffScan(role) ? 'scan' : 'today';
 }
