@@ -12,9 +12,7 @@
 
 import {
   BookingStatus,
-  ClassCategory,
   ClassStatus,
-  IntensityLevel,
   PrismaClient,
 } from '@prisma/client';
 import {
@@ -35,7 +33,9 @@ import {
   OPEN_GYM_BENEFIT_PREFIX,
   expectedClassesPerWeek,
   totalWeeklyTemplateSlots,
+  type NewTemplateDef,
 } from '../src/schedule-generator/ares-1.3-schedule-pattern';
+import { buildClonedClassTemplateData } from '../src/schedule-generator/ares-1.3-class-template-clone';
 
 const prisma = new PrismaClient();
 const DRY_RUN = process.env.LIVE_RUN !== 'true';
@@ -76,14 +76,17 @@ async function renameTemplateIfSafe(
   from: string,
   to: string,
   templateMap: TemplateMap,
-): Promise<'RENAMED' | 'SKIP_EXISTS' | 'SKIP_MISSING'> {
+): Promise<'RENAMED' | 'SKIP_EXISTS' | 'SKIP_MISSING' | 'ALREADY_RENAMED'> {
   if (templateMap.has(to)) {
-    log('SKIP', 'ClassTemplate', `"${from}" → "${to}" (target name already exists)`);
-    return 'SKIP_EXISTS';
+    const detail = templateMap.has(from)
+      ? `"${from}" → "${to}" (target name already exists)`
+      : `"${from}" → "${to}" (already renamed)`;
+    log('SKIP', 'ClassTemplate', detail);
+    return templateMap.has(from) ? 'SKIP_EXISTS' : 'ALREADY_RENAMED';
   }
   const id = templateMap.get(from);
   if (!id) {
-    log('SKIP', 'ClassTemplate', `"${from}" not found for rename`);
+    log('SKIP', 'ClassTemplate', `"${from}" not found — rename not needed`);
     return 'SKIP_MISSING';
   }
   log('RENAME', 'ClassTemplate', `"${from}" → "${to}"`);
@@ -95,51 +98,96 @@ async function renameTemplateIfSafe(
   return 'RENAMED';
 }
 
+async function resolveCloneSource(
+  studioId: string,
+  cloneFrom: string | undefined,
+  templateMap: TemplateMap,
+) {
+  if (!cloneFrom) return null;
+
+  const direct = await prisma.classTemplate.findFirst({
+    where: { studioId, name: cloneFrom, deletedAt: null },
+  });
+  if (direct) return direct;
+
+  const renamedTarget =
+    ARES_TEMPLATE_RENAMES.find((r) => r.from === cloneFrom)?.to ?? cloneFrom;
+  const renamedId = templateMap.get(renamedTarget);
+  if (renamedId) {
+    return prisma.classTemplate.findFirst({ where: { id: renamedId, deletedAt: null } });
+  }
+
+  return null;
+}
+
 async function createTemplateIfMissing(
   studioId: string,
-  def: (typeof ARES_NEW_TEMPLATES)[number],
+  def: NewTemplateDef,
   templateMap: TemplateMap,
 ): Promise<'CREATED' | 'EXISTS'> {
-  if (templateMap.has(def.name)) {
+  const existingId = templateMap.get(def.name);
+  if (existingId) {
     log('SKIP', 'ClassTemplate', `"${def.name}" already exists`);
     return 'EXISTS';
   }
 
-  let base = def.cloneFrom
-    ? await prisma.classTemplate.findFirst({
-        where: { studioId, name: def.cloneFrom, deletedAt: null },
-      })
-    : null;
-
-  if (!base && def.cloneFrom) {
-    const renamedId = templateMap.get(
-      ARES_TEMPLATE_RENAMES.find((r) => r.from === def.cloneFrom)?.to ?? def.cloneFrom,
-    );
-    if (renamedId) {
-      base = await prisma.classTemplate.findFirst({ where: { id: renamedId } });
-    }
+  const existingRow = await prisma.classTemplate.findFirst({
+    where: { studioId, name: def.name, deletedAt: null },
+    select: { id: true },
+  });
+  if (existingRow) {
+    templateMap.set(def.name, existingRow.id);
+    log('SKIP', 'ClassTemplate', `"${def.name}" already exists in DB`);
+    return 'EXISTS';
   }
+
+  const base = await resolveCloneSource(studioId, def.cloneFrom, templateMap);
 
   log('CREATE', 'ClassTemplate', `"${def.name}"${def.cloneFrom ? ` (clone from ${def.cloneFrom})` : ''}`);
   if (!DRY_RUN) {
     const created = await prisma.classTemplate.create({
-      data: {
-        studioId,
-        name: def.name,
-        description: def.description,
-        durationMinutes: def.durationMinutes,
-        defaultCapacity: base?.defaultCapacity ?? 25,
-        color: def.color,
-        category: base?.category ?? ClassCategory.STRENGTH,
-        intensityLevel: base?.intensityLevel ?? IntensityLevel.HIGH,
-        heroImageUrl: base?.heroImageUrl ?? null,
-        defaultInstructorId: base?.defaultInstructorId ?? null,
-      },
+      data: buildClonedClassTemplateData(studioId, def, base),
       select: { id: true },
     });
     templateMap.set(def.name, created.id);
   } else {
     templateMap.set(def.name, `dry-run-${def.name}`);
+  }
+  return 'CREATED';
+}
+
+async function ensureScheduleTemplate(
+  studioId: string,
+  row: { dayOfWeek: number; startTime: string; classTemplateName: string },
+  templateId: string,
+): Promise<'CREATED' | 'EXISTS'> {
+  const existing = await prisma.scheduleTemplate.findFirst({
+    where: {
+      studioId,
+      classTemplateId: templateId,
+      dayOfWeek: row.dayOfWeek,
+      startTime: row.startTime,
+      deletedAt: null,
+      active: true,
+    },
+    select: { id: true },
+  });
+  if (existing) {
+    log('SKIP', 'ScheduleTemplate', `${row.classTemplateName} dow=${row.dayOfWeek} ${row.startTime} (already active)`);
+    return 'EXISTS';
+  }
+
+  log('CREATE', 'ScheduleTemplate', `${row.classTemplateName} dow=${row.dayOfWeek} ${row.startTime}`);
+  if (!DRY_RUN) {
+    await prisma.scheduleTemplate.create({
+      data: {
+        studioId,
+        classTemplateId: templateId,
+        dayOfWeek: row.dayOfWeek,
+        startTime: row.startTime,
+        active: true,
+      },
+    });
   }
   return 'CREATED';
 }
@@ -243,6 +291,13 @@ async function main(): Promise<void> {
   console.log(`  Weekly pattern slots         : ${totalWeeklyTemplateSlots()} (Mon–Sun)`);
   console.log(`  Expected per week            : ${JSON.stringify(expectedClassesPerWeek())}`);
 
+  const classTemplateNames = await prisma.classTemplate.findMany({
+    where: { studioId: studio.id, deletedAt: null },
+    select: { name: true },
+    orderBy: { name: 'asc' },
+  });
+  console.log(`  Class templates in DB        : ${classTemplateNames.map((t) => t.name).join(', ')}`);
+
   // ── 1. Class templates ───────────────────────────────────────────────────
   section('CLASS TEMPLATES — rename + create');
   const templateMap = await resolveTemplateMap(studio.id);
@@ -292,29 +347,20 @@ async function main(): Promise<void> {
   }
 
   console.log(`  New schedule template rows   : ${toInsert.length}`);
+  let scheduleTemplatesInserted = 0;
+  let scheduleTemplatesSkipped = 0;
   for (const row of toInsert) {
     const templateId = resolvedMap.get(row.classTemplateName);
     if (!templateId) {
       console.log(`  !! MISSING template "${row.classTemplateName}" — cannot insert slot dow=${row.dayOfWeek} ${row.startTime}`);
       continue;
     }
-    log(
-      'CREATE',
-      'ScheduleTemplate',
-      `${row.classTemplateName} dow=${row.dayOfWeek} ${row.startTime}`,
-    );
-    if (!DRY_RUN) {
-      await prisma.scheduleTemplate.create({
-        data: {
-          studioId: studio.id,
-          classTemplateId: templateId,
-          dayOfWeek: row.dayOfWeek,
-          startTime: row.startTime,
-          active: true,
-        },
-      });
-    }
+    const result = await ensureScheduleTemplate(studio.id, row, templateId);
+    if (result === 'CREATED') scheduleTemplatesInserted++;
+    else scheduleTemplatesSkipped++;
   }
+  console.log(`  Schedule templates inserted  : ${scheduleTemplatesInserted}`);
+  console.log(`  Schedule templates skipped   : ${scheduleTemplatesSkipped}`);
 
   // ── 4. Future class analysis ─────────────────────────────────────────────
   section('FUTURE CLASS ANALYSIS');
@@ -510,7 +556,8 @@ async function main(): Promise<void> {
     templatesCreated: createResults,
     adhocTemplatesPreserved: ARES_ADHOC_TEMPLATE_NAMES,
     scheduleTemplatesRetired: existingActive.length,
-    scheduleTemplatesInserted: toInsert.length,
+    scheduleTemplatesInserted,
+    scheduleTemplatesSkipped,
     openGymPlansUpdated: plansUpdated,
     futureAnalysis: {
       futureScheduledTotal: futureClasses.length,

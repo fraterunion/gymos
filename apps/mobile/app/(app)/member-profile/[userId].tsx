@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BrandButton } from '@/components/BrandButton';
 import { Field } from '@/components/Field';
 import { MemberBillingCenter } from '@/components/member/MemberBillingCenter';
+import { MemberOperationalNotesSection } from '@/components/member/MemberOperationalNotesSection';
 import { LoadRetryPanel, Skeleton } from '@/components/StudioScreenChrome';
 import { StaffAvatar } from '@/components/StaffAvatar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -31,7 +32,10 @@ import {
   type MemberSubscriptionDto,
   type MemberTimelineEventDto,
 } from '@/lib/api/memberProfileApi';
-import { fetchSalesSettings, type SalesSettings } from '@/lib/api/salesApi';
+import {
+  fetchMemberOperationalNotes,
+  type MemberOperationalNoteDto,
+} from '@/lib/api/memberOperationalNotesApi';
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -44,7 +48,9 @@ import {
   formatProfileDateTime,
 } from '@/lib/memberProfileHelpers';
 import { canViewMemberBilling, canPerformBillingActions } from '@/lib/memberBillingHelpers';
+import { canCreateMemberNotes, canViewMemberNotes } from '@/lib/memberNotesPermissions';
 import { canAccessMemberProfile } from '@/lib/memberProfilePermissions';
+import { fetchSalesSettings, type SalesSettings } from '@/lib/api/salesApi';
 import { canAttestMemberWaiver } from '@/lib/waiverPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -172,6 +178,8 @@ export default function MemberProfileScreen() {
 
   const allowed = canAccessMemberProfile(role);
   const showBilling = canViewMemberBilling(role);
+  const showNotes = canViewMemberNotes(role);
+  const canCreateNotes = canCreateMemberNotes(role);
   const loadSalesSettings = canPerformBillingActions(role);
   const canAttestWaiver = canAttestMemberWaiver(role);
 
@@ -185,6 +193,10 @@ export default function MemberProfileScreen() {
   const [paymentsError, setPaymentsError] = useState(false);
   const [attendanceCount, setAttendanceCount] = useState<number | null>(null);
   const [attendanceError, setAttendanceError] = useState(false);
+
+  const [notes, setNotes] = useState<MemberOperationalNoteDto[] | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -205,6 +217,10 @@ export default function MemberProfileScreen() {
     setTimelineError(false);
     setPaymentsError(false);
     setAttendanceError(false);
+    if (showNotes) {
+      setNotesLoading(true);
+      setNotesError(null);
+    }
 
     try {
       const [profileRes, subsRes, waiverRes] = await Promise.all([
@@ -216,6 +232,16 @@ export default function MemberProfileScreen() {
       setProfile(profileRes);
       setSubscriptions(subsRes);
       setWaiver(waiverRes);
+
+      if (showNotes) {
+        void fetchMemberOperationalNotes(studioId, userId)
+          .then(setNotes)
+          .catch((e) => {
+            setNotes(null);
+            setNotesError(userFacingApiMessage(e, 'No se pudieron cargar las notas'));
+          })
+          .finally(() => setNotesLoading(false));
+      }
 
       void fetchMemberTimeline(studioId, userId)
         .then((rows) => setTimeline(rows.slice(0, 8)))
@@ -247,7 +273,22 @@ export default function MemberProfileScreen() {
       }
       setProfile(null);
     }
-  }, [allowed, studioId, userId]);
+  }, [allowed, showNotes, studioId, userId]);
+
+  const reloadNotes = useCallback(async () => {
+    if (!studioId || !userId || !showNotes) return;
+    setNotesLoading(true);
+    setNotesError(null);
+    try {
+      const rows = await fetchMemberOperationalNotes(studioId, userId);
+      setNotes(rows);
+    } catch (e) {
+      setNotes(null);
+      setNotesError(userFacingApiMessage(e, 'No se pudieron cargar las notas'));
+    } finally {
+      setNotesLoading(false);
+    }
+  }, [showNotes, studioId, userId]);
 
   useEffect(() => {
     if (!studioId || !allowed || !loadSalesSettings) return;
@@ -506,6 +547,19 @@ export default function MemberProfileScreen() {
               </Text>
             )}
           </Animated.View>
+
+          {showNotes ? (
+            <MemberOperationalNotesSection
+              studioId={studioId}
+              memberUserId={userId}
+              notes={notes}
+              notesLoading={notesLoading}
+              notesError={notesError}
+              canCreate={canCreateNotes}
+              onNotesChanged={setNotes}
+              onRetry={() => void reloadNotes()}
+            />
+          ) : null}
 
           <SectionLabel>Actividad reciente</SectionLabel>
           <Animated.View entering={FadeInDown.delay(140).duration(380)} style={cardStyle(C)}>

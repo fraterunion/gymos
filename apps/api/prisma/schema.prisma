@@ -254,6 +254,7 @@ model Studio {
   waiverAcceptances          WaiverAcceptance[]
   auditLogs                  AuditLog[]
   salesSettings              StudioSalesSettings?
+  memberOperationalNotes     MemberOperationalNote[]
 
   @@map("studios")
 }
@@ -295,6 +296,8 @@ model User {
   auditLogs                   AuditLog[]              @relation("AuditLogActor")
   paymentsRecorded            Payment[]               @relation("PaymentRecordedBy")
   subscriptionsCreated        Subscription[]          @relation("SubscriptionCreatedBy")
+  operationalNotesAuthored    MemberOperationalNote[] @relation("OperationalNoteAuthor")
+  operationalNotesAbout       MemberOperationalNote[] @relation("OperationalNoteMember")
 
   @@map("users")
 }
@@ -695,6 +698,24 @@ model StudioMemberProfile {
   @@unique([studioId, userId])
   @@index([studioId])
   @@map("studio_member_profiles")
+}
+
+/// Internal staff-only notes on a member (not visible to the member).
+model MemberOperationalNote {
+  id           String   @id @default(cuid())
+  studioId     String   @map("studio_id")
+  memberUserId String   @map("member_user_id")
+  authorUserId String   @map("author_user_id")
+  body         String
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  member User   @relation("OperationalNoteMember", fields: [memberUserId], references: [id], onDelete: Cascade)
+  author User   @relation("OperationalNoteAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([studioId, memberUserId])
+  @@map("member_operational_notes")
 }
 
 /// Phase 25 — one-time day access pass (non-subscription).
