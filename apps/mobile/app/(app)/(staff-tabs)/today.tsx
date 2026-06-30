@@ -17,6 +17,7 @@ import {
 } from '@/lib/api/scheduleApi';
 import { formatClassTime } from '@/lib/datetime';
 import { todayScreenSubtitle } from '@/lib/staffRole';
+import { canAccessSales } from '@/lib/salesPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
@@ -303,6 +304,12 @@ export default function StaffTodayScreen() {
     [router],
   );
 
+  const openSales = useCallback(() => {
+    router.push('/(app)/staff-sales' as Href);
+  }, [router]);
+
+  const showSalesEntry = canAccessSales(matched?.role);
+
   const showInitialLoader = loading && !loadedOnce;
 
   if (!studioId) {
@@ -376,6 +383,57 @@ export default function StaffTodayScreen() {
         <Animated.View entering={FadeInDown.delay(60).duration(420)}>
           <TodaySummaryCard classes={classes} />
         </Animated.View>
+
+        {showSalesEntry ? (
+          <Animated.View entering={FadeInDown.delay(90).duration(420)}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={openSales}
+              style={[
+                cardStyle(C),
+                {
+                  marginTop: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 16,
+                  paddingVertical: 22,
+                },
+              ]}
+            >
+              <View
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 16,
+                  backgroundColor: `${primaryColor}22`,
+                  borderWidth: 1,
+                  borderColor: `${primaryColor}44`,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 22 }}>💳</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontWeight: '800',
+                    letterSpacing: -0.4,
+                    color: C.text,
+                    marginBottom: 4,
+                  }}
+                >
+                  Ventas / Checkout
+                </Text>
+                <Text style={{ fontSize: 14, lineHeight: 20, color: C.textSub }}>
+                  Registra walk-ins, vende membresías y cobra con Stripe o efectivo.
+                </Text>
+              </View>
+              <Text style={{ fontSize: 20, color: C.textMute }}>›</Text>
+            </Pressable>
+          </Animated.View>
+        ) : null}
 
         {classes.length === 0 ? (
           <Animated.View entering={FadeInDown.delay(120).duration(420)}>

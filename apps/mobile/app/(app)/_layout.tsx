@@ -159,6 +159,17 @@ function MemberShell() {
           }}
         />
         <Stack.Screen
+          name="staff-sales/index"
+          options={{
+            headerShown: true,
+            title: 'Ventas',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: headerBg },
+            headerTintColor: '#FAFAFA',
+            headerBackTitle: 'Atrás',
+          }}
+        />
+        <Stack.Screen
           name="billing"
           options={{
             headerShown: false,

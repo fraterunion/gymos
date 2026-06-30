@@ -41,3 +41,42 @@ export async function acceptWaiver(
     body: JSON.stringify({ waiverDocumentId, accepted: true }),
   });
 }
+
+export type MemberWaiverStatusDto = {
+  userId: string;
+  required: boolean;
+  accepted: boolean;
+  activeVersion: string | null;
+  activeWaiverDocumentId: string | null;
+  acceptedVersion: string | null;
+  acceptedAt: string | null;
+  method: 'SELF' | 'STAFF_ATTESTED' | null;
+};
+
+export async function fetchMemberWaiverStatus(
+  studioId: string,
+  userId: string,
+): Promise<MemberWaiverStatusDto> {
+  return apiRequest<MemberWaiverStatusDto>(
+    `/studios/${studioId}/members/${userId}/waiver-status`,
+    { method: 'GET' },
+  );
+}
+
+export async function attestMemberWaiver(
+  studioId: string,
+  userId: string,
+  input: { waiverDocumentId: string; attestationNote?: string },
+): Promise<void> {
+  await apiRequest(`/studios/${studioId}/members/${userId}/waiver-attestation`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function waiverStatusLabel(status: MemberWaiverStatusDto): string {
+  if (!status.required) return 'No requerida';
+  if (!status.accepted) return 'Pendiente';
+  if (status.method === 'STAFF_ATTESTED') return 'Firmada presencialmente';
+  return 'Aceptada';
+}

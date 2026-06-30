@@ -1,0 +1,54 @@
+import { apiRequest } from '@/lib/api/client';
+
+export type MemberSubscriptionSummary = {
+  id: string;
+  status: string;
+  planName: string;
+  planId: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+};
+
+export type MemberListItem = {
+  membershipId: string;
+  role: string;
+  joinedAt: string;
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone: string | null;
+    createdAt: string;
+  };
+  totalBookings: number;
+  noShowCount: number;
+  lastAttendanceAt: string | null;
+  subscription: MemberSubscriptionSummary | null;
+};
+
+export type MemberListResponse = {
+  data: MemberListItem[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export async function fetchMembers(
+  studioId: string,
+  query: { search?: string; limit?: number; page?: number } = {},
+): Promise<MemberListResponse> {
+  const params = new URLSearchParams();
+  if (query.search) params.set('search', query.search);
+  if (query.limit != null) params.set('limit', String(query.limit));
+  if (query.page != null) params.set('page', String(query.page));
+  const qs = params.toString();
+  return apiRequest<MemberListResponse>(
+    `/studios/${studioId}/members${qs ? `?${qs}` : ''}`,
+    { method: 'GET' },
+  );
+}
+
+export function memberDisplayName(member: Pick<MemberListItem, 'user'>): string {
+  return `${member.user.firstName} ${member.user.lastName}`.trim();
+}
