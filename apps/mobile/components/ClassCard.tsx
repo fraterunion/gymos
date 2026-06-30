@@ -12,7 +12,7 @@ import { Space } from '@/constants/Theme';
 import { bookingStatusColors, type BookingStatusPillConfig } from '@/lib/bookingStatus';
 import { formatClassTime } from '@/lib/datetime';
 import { resolveCoachDisplayName } from '@/lib/coachDisplay';
-import { lowSpotsLabel } from '@/lib/spotsRemaining';
+import { lowSpotsLabel, spotsAvailableLabel } from '@/lib/spotsRemaining';
 import { LowSpotsBadge } from '@/components/LowSpotsBadge';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
@@ -26,6 +26,8 @@ type Props = {
   imageUri?: string;
   /** Optional reservation status pill (e.g. My Bookings). */
   statusPill?: BookingStatusPillConfig;
+  /** When true, show general spots-remaining copy below metadata. */
+  showSpotsLabel?: boolean;
   /** Optional footer rendered below the card (e.g. check-in CTA). */
   footer?: ReactNode;
 };
@@ -40,12 +42,14 @@ export function ClassCard({
   index = 0,
   imageUri,
   statusPill,
+  showSpotsLabel = false,
   footer,
 }: Props) {
   const ins = item.instructor
     ? resolveCoachDisplayName(item.instructor.firstName, item.instructor.lastName)
     : null;
   const spotsWarning = lowSpotsLabel(item);
+  const spotsLabel = showSpotsLabel ? spotsAvailableLabel(item) : null;
   const duration = item.classTemplate.durationMinutes;
   const time = formatClassTime(item.startsAt, timeZone);
 
@@ -107,7 +111,7 @@ export function ClassCard({
             ) : null}
 
             <Text
-              numberOfLines={1}
+              numberOfLines={2}
               style={{
                 fontSize: 22,
                 fontWeight: '800',
@@ -149,6 +153,11 @@ export function ClassCard({
           ) : null}
 
           {spotsWarning ? <LowSpotsBadge label={spotsWarning} /> : null}
+          {!spotsWarning && spotsLabel ? (
+            <Text style={{ marginTop: 8, fontSize: 12, color: 'rgba(255,255,255,0.38)' }}>
+              {spotsLabel}
+            </Text>
+          ) : null}
         </View>
 
         {/* Right image thumbnail */}

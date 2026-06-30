@@ -451,6 +451,7 @@ export default function ClassDetailScreen() {
             >
               {/* Class name */}
               <Text
+                numberOfLines={3}
                 style={{
                   fontSize: 40,
                   fontWeight: '800',

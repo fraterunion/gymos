@@ -15,3 +15,11 @@ export function lowSpotsLabel(item: ScheduledClassDto): string | null {
   const remaining = spotsRemaining(item)!;
   return remaining === 1 ? 'Último lugar' : 'Últimos lugares';
 }
+
+/** General availability label for schedule cards (e.g. "12 lugares"). */
+export function spotsAvailableLabel(item: ScheduledClassDto): string | null {
+  const remaining = spotsRemaining(item);
+  if (remaining === null) return null;
+  if (remaining === 0) return 'Clase llena';
+  return remaining === 1 ? '1 lugar disponible' : `${remaining} lugares disponibles`;
+}

@@ -9,6 +9,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
+import { OpenGymBenefitCard } from '@/components/OpenGymBenefitCard';
 import { BrandButton } from '@/components/BrandButton';
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
@@ -35,7 +36,7 @@ import {
 import {
   resolveScheduledClassImageUri,
   resolveCoachPortraitUri,
-  CATEGORY_MODULES,
+  ARES_EXPLORE_MODULES,
   FitnessImages,
   type CategoryModule,
 } from '@/lib/imagery';
@@ -113,7 +114,7 @@ function CategoryTile({ category, delay }: { category: CategoryModule; delay: nu
   return (
     <Animated.View
       entering={FadeInDown.delay(delay).duration(480)}
-      style={[{ width: 118, height: 162, borderRadius: 16, overflow: 'hidden' }, animStyle]}
+      style={[{ width: 128, minHeight: 168, borderRadius: 16, overflow: 'hidden' }, animStyle]}
     >
       <Pressable
         accessibilityRole="button"
@@ -144,12 +145,13 @@ function CategoryTile({ category, delay }: { category: CategoryModule; delay: nu
         {/* Category label */}
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 14 }}>
           <Text
+            numberOfLines={2}
             style={{
               fontSize: 14,
               fontWeight: '800',
               letterSpacing: -0.4,
               color: '#FFFFFF',
-              lineHeight: 16,
+              lineHeight: 17,
             }}
           >
             {category.label}
@@ -181,7 +183,7 @@ function CategoryStrip() {
         style={{ marginHorizontal: -Space.screenH }}
         contentContainerStyle={{ paddingHorizontal: Space.screenH, gap: 10 }}
       >
-        {CATEGORY_MODULES.map((cat, i) => (
+        {ARES_EXPLORE_MODULES.map((cat, i) => (
           <CategoryTile key={`${cat.id}-${cat.label}`} category={cat} delay={100 + i * 45} />
         ))}
       </ScrollView>
@@ -554,6 +556,7 @@ function GuestLanding({
 
         {/* Category strip */}
         <CategoryStrip />
+        <OpenGymBenefitCard compact delay={120} />
 
         {/* Value proposition + CTAs */}
         <Animated.View entering={FadeInDown.delay(80).duration(460)} style={{ marginBottom: Space.sectionGap }}>
@@ -824,8 +827,9 @@ export default function HomeScreen() {
           />
         ) : null}
 
-        {/* ── Category strip — always visible (static editorial content) ── */}
+        {/* ── Category strip — official ARES Method themes ── */}
         <CategoryStrip />
+        <OpenGymBenefitCard compact delay={100} />
 
         {error ? (
           <View style={{ marginBottom: 16 }}>

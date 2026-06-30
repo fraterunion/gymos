@@ -38,13 +38,16 @@ export type FitnessCategory = keyof typeof FitnessImages;
 const KEYWORD_MAP: Array<[FitnessCategory, readonly string[]]> = [
   ['yoga',        ['yoga', 'yin', 'flow', 'vinyasa', 'meditation', 'mindful']],
   ['boxing',      ['box', 'kickbox', 'muay', 'combat', 'punch', 'mma', 'fight']],
-  ['running',     ['run', 'cardio', 'sprint', 'jog', 'endurance', 'track']],
+  ['running',     ['run', 'cardio', 'sprint', 'jog', 'endurance', 'track', 'hyrox']],
   ['cycling',     ['cycle', 'spin', 'bike', 'indoor cycl']],
   ['pilates',     ['pilates', 'reformer', 'barre', 'ballet']],
-  ['hiit',        ['hiit', 'circuit', 'crossfit', 'interval', 'tabata', 'bootcamp', 'boot camp']],
+  ['hiit',        ['hiit', 'circuit', 'crossfit', 'interval', 'tabata', 'bootcamp', 'boot camp', 'legs + hiit']],
   ['recovery',    ['recover', 'stretch', 'foam roll', 'restore', 'relax', 'sauna']],
-  ['mobility',    ['mobility', 'flex', 'movement', 'range of motion', 'dynamic']],
-  ['strength',    ['strength', 'weight', 'lift', 'deadlift', 'squat', 'press', 'barbell', 'dumbbell', 'powerl']],
+  ['mobility',    ['mobility', 'flex', 'movement', 'range of motion', 'dynamic', 'street bars', 'calirox', 'calistenia']],
+  ['strength',    [
+    'strength', 'weight', 'lift', 'deadlift', 'squat', 'press', 'barbell', 'dumbbell', 'powerl',
+    'pull', 'push', 'upperbody', 'legs strength', 'full body', 'full body + core', 'fuerza',
+  ]],
 ];
 
 export type ClassImageTemplate = {
@@ -110,14 +113,21 @@ export function resolveCoachPortraitUri(firstName: string, lastName = ''): strin
 }
 
 export type CategoryModule = {
-  id: FitnessCategory;
+  id: string;
   label: string;
   imageUri: string;
   accent: string;
 };
 
-export const CATEGORY_MODULES: CategoryModule[] = [
-  { id: 'mobility', label: 'Calistenia', imageUri: FitnessImages.mobility, accent: '#10B981' },
-  { id: 'strength', label: 'Fuerza', imageUri: FitnessImages.strength, accent: '#E87B35' },
-  { id: 'running', label: 'Hyrox', imageUri: FitnessImages.running, accent: '#06B6D4' },
+/** ARES Method — official weekly themes for Home "Explorar". */
+export const ARES_EXPLORE_MODULES: CategoryModule[] = [
+  { id: 'legs-hiit', label: 'Legs + HIIT', imageUri: FitnessImages.hiit, accent: '#7c3aed' },
+  { id: 'pull', label: 'Pull', imageUri: FitnessImages.strength, accent: '#0f172a' },
+  { id: 'push', label: 'Push', imageUri: FitnessImages.performance, accent: '#c9a227' },
+  { id: 'full-body-core', label: 'Full Body + Core', imageUri: FitnessImages.strength, accent: '#ef4444' },
+  { id: 'street-bars', label: 'Street Bars', imageUri: FitnessImages.mobility, accent: '#10b981' },
+  { id: 'upperbody', label: 'Upperbody', imageUri: FitnessImages.strength, accent: '#d97706' },
 ];
+
+/** @deprecated Use ARES_EXPLORE_MODULES */
+export const CATEGORY_MODULES = ARES_EXPLORE_MODULES;

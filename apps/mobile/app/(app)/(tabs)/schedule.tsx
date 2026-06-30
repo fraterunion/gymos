@@ -6,7 +6,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
+import { OpenGymBenefitCard } from '@/components/OpenGymBenefitCard';
+import { ScheduleFilterBar } from '@/components/ScheduleFilterBar';
 import { resolveScheduledClassImageUri } from '@/lib/imagery';
+import {
+  ARES_CLASS_FILTER_ALL,
+  matchesAresClassFilter,
+} from '@/lib/aresScheduleFilters';
 import {
   EmptyHint,
   ErrorBanner,
@@ -193,6 +199,7 @@ export default function ScheduleScreen() {
   const { timezone, loading: studioLoading } = usePublicStudio();
   const { classes, loading: scheduleLoading, error, refresh } = usePublicSchedule();
   const [weekOffset, setWeekOffset] = useState(0);
+  const [classFilterId, setClassFilterId] = useState(ARES_CLASS_FILTER_ALL);
 
   const timeZone = timezone;
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
@@ -206,7 +213,8 @@ export default function ScheduleScreen() {
     const fut = classes.filter(
       (c) =>
         c.status === 'SCHEDULED' &&
-        new Date(c.startsAt).getTime() > now,
+        new Date(c.startsAt).getTime() > now &&
+        matchesAresClassFilter(c.classTemplate.name, classFilterId),
     );
     const map = new Map<string, ScheduledClassDto[]>();
     for (const c of fut) {
@@ -225,7 +233,7 @@ export default function ScheduleScreen() {
         data: map.get(k)!,
       };
     });
-  }, [classes, timeZone, todayKey, weekBounds.startKey, weekBounds.endKey]);
+  }, [classes, timeZone, todayKey, weekBounds.startKey, weekBounds.endKey, classFilterId]);
 
   if (studioLoading) return <ScreenLoader />;
   if (error && classes.length === 0) return <LoadRetryPanel message={error} onRetry={refresh} />;
@@ -270,13 +278,27 @@ export default function ScheduleScreen() {
                   <ErrorBanner message={error} onRetry={refresh} />
                 </View>
               ) : null}
+              <OpenGymBenefitCard compact delay={40} />
+              <ScheduleFilterBar
+                selectedId={classFilterId}
+                onSelect={setClassFilterId}
+                accentColor={primaryColor}
+              />
             </>
           }
           ListEmptyComponent={
             <View style={{ marginTop: 80 }}>
               <EmptyHint
-                title="Próximamente habrá clases."
-                body="Estamos preparando el horario. Vuelve pronto."
+                title={
+                  classFilterId === ARES_CLASS_FILTER_ALL
+                    ? 'Próximamente habrá clases.'
+                    : 'Sin clases para este filtro.'
+                }
+                body={
+                  classFilterId === ARES_CLASS_FILTER_ALL
+                    ? 'Estamos preparando el horario. Vuelve pronto.'
+                    : 'Prueba otro tipo de clase o cambia de semana.'
+                }
               />
             </View>
           }
@@ -288,20 +310,26 @@ export default function ScheduleScreen() {
             />
           )}
           renderItem={({ item, index, section }) => {
-            // First class of each day gets the editorial FeaturedClassTile treatment.
-            // Subsequent classes in the same day use the compact ClassCard.
+            const bookFooter = (
+              <Text style={{ fontSize: 13, fontWeight: '700', color: primaryColor }}>
+                Reservar →
+              </Text>
+            );
+
             if (index === 0) {
               return (
-                <FeaturedClassTile
-                  item={item}
-                  timeZone={timeZone}
-                  accentColor={item.classTemplate.color ?? primaryColor}
-                  imageUri={resolveScheduledClassImageUri(item.classTemplate, 'hero')}
-                  height={section.isToday ? 240 : 210}
-                  label={section.isToday ? 'Hoy' : undefined}
-                  delay={0}
-                  onPress={() => router.push(`/(app)/class/${item.id}`)}
-                />
+                <View style={{ marginBottom: Space.cardGap }}>
+                  <FeaturedClassTile
+                    item={item}
+                    timeZone={timeZone}
+                    accentColor={item.classTemplate.color ?? primaryColor}
+                    imageUri={resolveScheduledClassImageUri(item.classTemplate, 'hero')}
+                    height={section.isToday ? 240 : 210}
+                    label={section.isToday ? 'Hoy · Reservar' : 'Reservar'}
+                    delay={0}
+                    onPress={() => router.push(`/(app)/class/${item.id}`)}
+                  />
+                </View>
               );
             }
             return (
@@ -312,6 +340,8 @@ export default function ScheduleScreen() {
                   accentColor={item.classTemplate.color ?? primaryColor}
                   imageUri={resolveScheduledClassImageUri(item.classTemplate, 'thumbnail')}
                   index={index}
+                  showSpotsLabel
+                  footer={bookFooter}
                   onPress={() => router.push(`/(app)/class/${item.id}`)}
                 />
               </View>

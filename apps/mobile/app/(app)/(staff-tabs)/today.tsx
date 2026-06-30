@@ -173,7 +173,6 @@ function TodayClassCard({
                 fontWeight: '800',
                 letterSpacing: -0.4,
                 color: C.text,
-                textTransform: 'uppercase',
                 lineHeight: 24,
                 marginRight: 12,
               }}
