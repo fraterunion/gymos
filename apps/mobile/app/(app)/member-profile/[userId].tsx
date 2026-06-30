@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
 import { Field } from '@/components/Field';
+import { MemberBillingCenter } from '@/components/member/MemberBillingCenter';
 import { LoadRetryPanel, Skeleton } from '@/components/StudioScreenChrome';
 import { StaffAvatar } from '@/components/StaffAvatar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,20 +38,13 @@ import {
   waiverStatusLabel,
   type MemberWaiverStatusDto,
 } from '@/lib/api/waiverApi';
-import { formatMoneyFromCents } from '@/lib/formatMoney';
 import {
   deriveMemberOverviewStatus,
   formatProfileDate,
   formatProfileDateTime,
-  subscriptionSourceLabel,
 } from '@/lib/memberProfileHelpers';
+import { canViewMemberBilling, canPerformBillingActions } from '@/lib/memberBillingHelpers';
 import { canAccessMemberProfile } from '@/lib/memberProfilePermissions';
-import { staffSalesHref } from '@/lib/memberProfileRoutes';
-import { statusConfig } from '@/lib/membershipStatus';
-import {
-  canAccessSales,
-  canIssueStaffCheckout,
-} from '@/lib/salesPermissions';
 import { canAttestMemberWaiver } from '@/lib/waiverPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -98,27 +92,6 @@ function StatusPill({ label, bg, textColor }: { label: string; bg: string; textC
       }}
     >
       <Text style={{ fontSize: 13, fontWeight: '700', color: textColor }}>{label}</Text>
-    </View>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  const C = getColors();
-  return (
-    <View style={{ marginBottom: 14 }}>
-      <Text
-        style={{
-          fontSize: 11,
-          fontWeight: '700',
-          letterSpacing: 0.8,
-          textTransform: 'uppercase',
-          color: C.textMute,
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </Text>
-      <Text style={{ fontSize: 16, fontWeight: '600', color: C.text, lineHeight: 22 }}>{value}</Text>
     </View>
   );
 }
@@ -177,18 +150,11 @@ function ProfileSkeleton() {
           <Skeleton width={120} height={28} radius={14} />
         </View>
       </View>
+      <Skeleton height={220} radius={28} />
       <Skeleton height={180} radius={28} />
-      <Skeleton height={140} radius={28} />
       <Skeleton height={200} radius={28} />
     </View>
   );
-}
-
-function paymentActivityTitle(p: MemberPaymentDto): string {
-  const amount = formatMoneyFromCents(p.amountCents, p.currency);
-  if (p.status === 'SUCCEEDED') return `Pago ${amount}`;
-  if (p.status === 'FAILED') return `Pago fallido ${amount}`;
-  return `Pago ${amount} · ${p.status}`;
 }
 
 export default function MemberProfileScreen() {
@@ -205,7 +171,8 @@ export default function MemberProfileScreen() {
   const from = typeof params.from === 'string' ? params.from : undefined;
 
   const allowed = canAccessMemberProfile(role);
-  const canSales = canAccessSales(role);
+  const showBilling = canViewMemberBilling(role);
+  const loadSalesSettings = canPerformBillingActions(role);
   const canAttestWaiver = canAttestMemberWaiver(role);
 
   const [salesSettings, setSalesSettings] = useState<SalesSettings | null>(null);
@@ -228,8 +195,6 @@ export default function MemberProfileScreen() {
   const [attestNote, setAttestNote] = useState('');
   const [attesting, setAttesting] = useState(false);
   const [attestError, setAttestError] = useState<string | null>(null);
-
-  const canCheckout = canIssueStaffCheckout(role, salesSettings);
 
   const loadAll = useCallback(async () => {
     if (!studioId || !userId || !allowed) return;
@@ -259,7 +224,7 @@ export default function MemberProfileScreen() {
           setTimelineError(true);
         });
 
-      void fetchMemberPayments(studioId, userId, 5)
+      void fetchMemberPayments(studioId, userId, 8)
         .then((res) => setPayments(res.data))
         .catch(() => {
           setPayments(null);
@@ -285,7 +250,7 @@ export default function MemberProfileScreen() {
   }, [allowed, studioId, userId]);
 
   useEffect(() => {
-    if (!studioId || !allowed || !canSales) return;
+    if (!studioId || !allowed || !loadSalesSettings) return;
     fetchSalesSettings(studioId)
       .then(setSalesSettings)
       .catch(() =>
@@ -295,7 +260,7 @@ export default function MemberProfileScreen() {
           frontDeskCanRecordCash: false,
         }),
       );
-  }, [studioId, allowed, canSales]);
+  }, [studioId, allowed, loadSalesSettings]);
 
   useEffect(() => {
     if (!allowed || !userId) {
@@ -321,20 +286,6 @@ export default function MemberProfileScreen() {
       }),
     [profile?.activeSubscription?.status, waiver?.accepted, waiver?.required],
   );
-
-  const activeSubWithSource = useMemo(() => {
-    if (!subscriptions?.length) return null;
-    return (
-      subscriptions.find((s) => s.status === 'ACTIVE' || s.status === 'TRIALING') ?? subscriptions[0]
-    );
-  }, [subscriptions]);
-
-  const membershipCfg = profile?.activeSubscription
-    ? statusConfig(
-        profile.activeSubscription.status,
-        profile.activeSubscription.cancelAtPeriodEnd,
-      )
-    : null;
 
   const waiverPending = Boolean(waiver?.required && !waiver.accepted);
 
@@ -362,26 +313,15 @@ export default function MemberProfileScreen() {
     : '';
 
   const activityItems = useMemo(() => {
-    if (timeline?.length) {
-      return timeline.map((ev, i) => ({
-        key: `${ev.type}-${ev.occurredAt}-${i}`,
-        title: ev.title,
-        subtitle: ev.description,
-        when: formatProfileDateTime(ev.occurredAt),
-        index: i,
-      }));
-    }
-    if (payments?.length) {
-      return payments.map((p, i) => ({
-        key: p.id,
-        title: paymentActivityTitle(p),
-        subtitle: subscriptionSourceLabel(p.paymentMethod) ?? undefined,
-        when: formatProfileDateTime(p.paidAt ?? p.createdAt),
-        index: i,
-      }));
-    }
-    return [];
-  }, [payments, timeline]);
+    if (!timeline?.length) return [];
+    return timeline.map((ev, i) => ({
+      key: `${ev.type}-${ev.occurredAt}-${i}`,
+      title: ev.title,
+      subtitle: ev.description,
+      when: formatProfileDateTime(ev.occurredAt),
+      index: i,
+    }));
+  }, [timeline]);
 
   if (!allowed) {
     return (
@@ -497,75 +437,17 @@ export default function MemberProfileScreen() {
             </View>
           </Animated.View>
 
-          <SectionLabel>Membresía</SectionLabel>
-          <Animated.View entering={FadeInDown.delay(60).duration(380)} style={cardStyle(C)}>
-            {profile.activeSubscription ? (
-              <>
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    letterSpacing: 1,
-                    textTransform: 'uppercase',
-                    color: primaryColor,
-                    marginBottom: 10,
-                  }}
-                >
-                  Plan actual
-                </Text>
-                <Text
-                  style={{
-                    fontSize: 24,
-                    fontWeight: '800',
-                    letterSpacing: -0.6,
-                    color: C.text,
-                    marginBottom: 16,
-                  }}
-                >
-                  {profile.activeSubscription.plan.name}
-                </Text>
-                {membershipCfg ? (
-                  <StatusPill
-                    label={membershipCfg.label}
-                    bg={membershipCfg.bg}
-                    textColor={membershipCfg.textColor}
-                  />
-                ) : null}
-                <View style={{ marginTop: 20 }}>
-                  <InfoRow
-                    label="Periodo termina"
-                    value={formatProfileDate(profile.activeSubscription.currentPeriodEnd)}
-                  />
-                  {profile.activeSubscription.cancelAtPeriodEnd ? (
-                    <InfoRow label="Renovación" value="Cancelada al final del periodo" />
-                  ) : profile.activeSubscription.status === 'ACTIVE' ? (
-                    <InfoRow label="Renovación" value="Renovación automática" />
-                  ) : null}
-                  {activeSubWithSource?.source ? (
-                    <InfoRow
-                      label="Origen"
-                      value={subscriptionSourceLabel(activeSubWithSource.source) ?? activeSubWithSource.source}
-                    />
-                  ) : null}
-                  {profile.activeSubscription.creditsRemaining != null ? (
-                    <InfoRow
-                      label="Créditos"
-                      value={`${profile.activeSubscription.creditsRemaining} restantes`}
-                    />
-                  ) : null}
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={{ fontSize: 18, fontWeight: '700', color: C.text, marginBottom: 8 }}>
-                  Sin membresía activa
-                </Text>
-                <Text style={{ fontSize: 14, lineHeight: 21, color: C.textSub }}>
-                  Este miembro no tiene una suscripción activa en este momento.
-                </Text>
-              </>
-            )}
-          </Animated.View>
+          {showBilling ? (
+            <MemberBillingCenter
+              userId={userId}
+              role={role}
+              profile={profile}
+              subscriptions={subscriptions}
+              payments={payments}
+              paymentsError={paymentsError}
+              salesSettings={salesSettings}
+            />
+          ) : null}
 
           <SectionLabel>Carta responsiva</SectionLabel>
           <Animated.View entering={FadeInDown.delay(100).duration(380)} style={cardStyle(C)}>
@@ -637,7 +519,7 @@ export default function MemberProfileScreen() {
                   index={item.index}
                 />
               ))
-            ) : timelineError && paymentsError ? (
+            ) : timelineError ? (
               <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 20 }}>
                 Actividad reciente no disponible por ahora.
               </Text>
@@ -660,41 +542,21 @@ export default function MemberProfileScreen() {
             ) : null}
           </Animated.View>
 
-          <SectionLabel>Acciones</SectionLabel>
+          {(from === 'sales' || from === 'directory') ? (
+            <SectionLabel>Navegación</SectionLabel>
+          ) : null}
           <Animated.View entering={FadeInDown.delay(180).duration(380)} style={{ gap: 12 }}>
-            {canSales ? (
-              <>
-                <BrandButton
-                  label="Iniciar venta / renovar"
-                  accentColor={primaryColor}
-                  onPress={() =>
-                    router.push(
-                      staffSalesHref({ memberUserId: userId, initialStep: 2, from: 'profile' }),
-                    )
-                  }
-                />
-                {canCheckout ? (
-                  <BrandButton
-                    label="Generar link de pago"
-                    accentColor={primaryColor}
-                    variant="ghost"
-                    onPress={() =>
-                      router.push(
-                        staffSalesHref({ memberUserId: userId, initialStep: 3, from: 'profile' }),
-                      )
-                    }
-                  />
-                ) : null}
-              </>
-            ) : (
-              <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 20, marginBottom: 4 }}>
-                Acciones de venta disponibles solo para recepción y administración.
-              </Text>
-            )}
-
             {from === 'sales' ? (
               <BrandButton
                 label="Volver a ventas"
+                accentColor={primaryColor}
+                variant="ghost"
+                onPress={() => router.back()}
+              />
+            ) : null}
+            {from === 'directory' ? (
+              <BrandButton
+                label="Volver al directorio"
                 accentColor={primaryColor}
                 variant="ghost"
                 onPress={() => router.back()}
