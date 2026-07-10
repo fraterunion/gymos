@@ -11,6 +11,12 @@ import {
   WaitlistStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  dayWindows,
+  monthComparisonWindows,
+  pctChange as briefingPctChange,
+  pickDelightSentence,
+} from './owner-briefing.utils';
 
 function monthlyEquivalentCents(priceCents: number, interval: BillingInterval): number {
   switch (interval) {
@@ -365,6 +371,7 @@ export class AnalyticsService {
       attendances30Row,
       failedPayments30Row,
       coachUtilizationRow,
+      memberSignupTrendRows,
     ] = await Promise.all([
       this.prisma.subscription.groupBy({
         by: ['status'],
@@ -713,6 +720,17 @@ export class AnalyticsService {
           AND starts_at >= ${thirtyDaysAgo}
           AND status != 'CANCELLED'
       `,
+
+      this.prisma.$queryRaw<{ d: Date; count: bigint }[]>`
+        SELECT date_trunc('day', created_at) AS d, COUNT(*)::bigint AS count
+        FROM studio_memberships
+        WHERE studio_id = ${studioId}
+          AND role = 'MEMBER'
+          AND deleted_at IS NULL
+          AND created_at >= ${thirtyDaysAgo}
+        GROUP BY 1
+        ORDER BY 1
+      `,
     ]);
 
     const statusCounts = Object.fromEntries(
@@ -830,6 +848,22 @@ export class AnalyticsService {
     const averageVisitsPerMember30d =
       memberCount > 0 ? Math.round((attendancesLast30Days / memberCount) * 10) / 10 : 0;
 
+    const signupDateMap = new Map<string, number>();
+    for (let d = 0; d < 30; d++) {
+      const day = new Date(thirtyDaysAgo.getTime() + d * 24 * 60 * 60 * 1000);
+      const key = day.toISOString().split('T')[0]!;
+      signupDateMap.set(key, 0);
+    }
+    for (const row of memberSignupTrendRows) {
+      const key = new Date(row.d).toISOString().split('T')[0]!;
+      if (signupDateMap.has(key)) {
+        signupDateMap.set(key, Number(row.count));
+      }
+    }
+    const memberSignupsTrend = [...signupDateMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, count]) => ({ date, count }));
+
     return {
       period: {
         days: 30,
@@ -889,6 +923,323 @@ export class AnalyticsService {
       averageVisitsPerMember30d,
       failedPaymentsLast30Days: failedPayments30Row,
       coachUtilizationPercent,
+      memberSignupsTrend,
+      generatedAt: now.toISOString(),
+    };
+  }
+
+  /**
+   * Owner briefing pulse metrics. See owner-briefing.utils.ts for metric definitions.
+   */
+  async getOwnerBriefing(studioId: string) {
+    const now = new Date();
+    const studio = await this.prisma.studio.findUnique({
+      where: { id: studioId },
+      select: { timezone: true },
+    });
+    const timezone = studio?.timezone ?? 'UTC';
+
+    const { monthStart, prevMonthStart, prevPeriodEnd } = monthComparisonWindows(now, timezone);
+    const { todayStart, tomorrowStart, yesterdayStart, weekAgo, weekAhead } = dayWindows(
+      now,
+      timezone,
+    );
+
+    const memberMembershipWhere = {
+      studioId,
+      role: Role.MEMBER,
+      deletedAt: null,
+      user: { deletedAt: null },
+    } as const;
+
+    const [
+      mtdRow,
+      prevMtdRow,
+      revenueTodayRow,
+      revenueYesterdayRow,
+      pastDueRow,
+      failedPaymentsCount,
+      expiringThisWeekRow,
+      waiversPendingRow,
+      newMembersSinceYesterday,
+      checkInsSinceYesterday,
+      paymentsCollectedSinceYesterdayRow,
+      payingMembersRow,
+      newMembersThisWeek,
+      newPayingThisWeekRow,
+    ] = await Promise.all([
+      this.prisma.$queryRaw<{ total_cents: bigint; payment_count: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents,
+               COUNT(*)::bigint AS payment_count
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${monthStart}
+          AND COALESCE(paid_at, created_at) <= ${now}
+      `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${prevMonthStart}
+          AND COALESCE(paid_at, created_at) < ${prevPeriodEnd}
+      `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${todayStart}
+          AND COALESCE(paid_at, created_at) < ${tomorrowStart}
+      `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${yesterdayStart}
+          AND COALESCE(paid_at, created_at) < ${todayStart}
+      `,
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(DISTINCT user_id)::bigint AS c
+        FROM subscriptions
+        WHERE studio_id = ${studioId}
+          AND status = 'PAST_DUE'
+      `,
+
+      this.prisma.payment.count({
+        where: {
+          studioId,
+          status: PaymentStatus.FAILED,
+          createdAt: { gte: weekAgo },
+        },
+      }),
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(DISTINCT user_id)::bigint AS c
+        FROM subscriptions
+        WHERE studio_id = ${studioId}
+          AND status IN ('ACTIVE', 'TRIALING')
+          AND current_period_end > ${now}
+          AND current_period_end <= ${weekAhead}
+      `,
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(*)::bigint AS c
+        FROM studio_memberships sm
+        WHERE sm.studio_id = ${studioId}
+          AND sm.role = 'MEMBER'
+          AND sm.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM studio_waiver_documents swd
+            WHERE swd.studio_id = sm.studio_id
+              AND swd.is_active = true
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM waiver_acceptances wa
+            INNER JOIN studio_waiver_documents swd
+              ON swd.id = wa.waiver_document_id
+             AND swd.studio_id = wa.studio_id
+             AND swd.is_active = true
+            WHERE wa.studio_id = sm.studio_id
+              AND wa.user_id = sm.user_id
+          )
+      `,
+
+      this.prisma.studioMembership.count({
+        where: {
+          ...memberMembershipWhere,
+          createdAt: { gte: yesterdayStart },
+        },
+      }),
+
+      this.prisma.attendance.count({
+        where: { studioId, checkedInAt: { gte: yesterdayStart } },
+      }),
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(*)::bigint AS c
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${yesterdayStart}
+      `,
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(DISTINCT user_id)::bigint AS c
+        FROM subscriptions
+        WHERE studio_id = ${studioId}
+          AND status IN ('ACTIVE', 'TRIALING')
+      `,
+
+      this.prisma.studioMembership.count({
+        where: {
+          ...memberMembershipWhere,
+          createdAt: { gte: weekAgo },
+        },
+      }),
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(DISTINCT user_id)::bigint AS c
+        FROM subscriptions
+        WHERE studio_id = ${studioId}
+          AND status IN ('ACTIVE', 'TRIALING')
+          AND created_at >= ${weekAgo}
+      `,
+    ]);
+
+    const monthCollectedCents = Number(mtdRow[0]?.total_cents ?? 0n);
+    const prevMonthCollectedCents = Number(prevMtdRow[0]?.total_cents ?? 0n);
+    const monthPaymentCount = Number(mtdRow[0]?.payment_count ?? 0n);
+    const monthComparisonPercent =
+      prevMonthCollectedCents > 0
+        ? briefingPctChange(monthCollectedCents, prevMonthCollectedCents)
+        : null;
+
+    const grossRevenueTodayCents = Number(revenueTodayRow[0]?.total_cents ?? 0n);
+    const grossRevenueYesterdayCents = Number(revenueYesterdayRow[0]?.total_cents ?? 0n);
+    const revenueVsYesterdayPercent =
+      grossRevenueYesterdayCents > 0
+        ? briefingPctChange(grossRevenueTodayCents, grossRevenueYesterdayCents)
+        : null;
+
+    const pastDueCount = Number(pastDueRow[0]?.c ?? 0n);
+    const expiringThisWeek = Number(expiringThisWeekRow[0]?.c ?? 0n);
+    const waiversPendingCount = Number(waiversPendingRow[0]?.c ?? 0n);
+    const payingMembersCount = Number(payingMembersRow[0]?.c ?? 0n);
+    const newPayingSubscriptionsThisWeek = Number(newPayingThisWeekRow[0]?.c ?? 0n);
+    const paymentsCollectedSinceYesterday = Number(
+      paymentsCollectedSinceYesterdayRow[0]?.c ?? 0n,
+    );
+
+    type AttentionItem = {
+      id: string;
+      label: string;
+      action: string;
+      href: string;
+    };
+
+    const attentionCandidates: AttentionItem[] = [];
+
+    if (pastDueCount > 0) {
+      attentionCandidates.push({
+        id: 'overdue',
+        label: `${pastDueCount} overdue payment${pastDueCount === 1 ? '' : 's'}`,
+        action: 'Review',
+        href: '/memberships',
+      });
+    }
+
+    if (failedPaymentsCount > 0) {
+      attentionCandidates.push({
+        id: 'failed',
+        label: `${failedPaymentsCount} failed payment${failedPaymentsCount === 1 ? '' : 's'}`,
+        action: 'Review',
+        href: '/memberships',
+      });
+    }
+
+    if (expiringThisWeek > 0) {
+      attentionCandidates.push({
+        id: 'expiring',
+        label: `${expiringThisWeek} membership${expiringThisWeek === 1 ? '' : 's'} expiring`,
+        action: 'Renew',
+        href: '/memberships',
+      });
+    }
+
+    if (waiversPendingCount > 0) {
+      attentionCandidates.push({
+        id: 'waivers',
+        label: `${waiversPendingCount} waiver${waiversPendingCount === 1 ? '' : 's'} pending`,
+        action: 'Collect',
+        href: '/members',
+      });
+    }
+
+    if (
+      monthComparisonPercent != null &&
+      monthComparisonPercent <= -10 &&
+      prevMonthCollectedCents > 0
+    ) {
+      attentionCandidates.push({
+        id: 'revenue-behind',
+        label: `Revenue ${Math.abs(monthComparisonPercent)}% behind vs last month`,
+        action: 'Review',
+        href: '/analytics#analytics-charts',
+      });
+    }
+
+    const attention = attentionCandidates.slice(0, 5);
+
+    type ChangeRow = { id: string; label: string };
+    const whatChanged: ChangeRow[] = [];
+
+    if (newMembersSinceYesterday > 0) {
+      whatChanged.push({
+        id: 'new-memberships',
+        label: `+${newMembersSinceYesterday} new membership${newMembersSinceYesterday === 1 ? '' : 's'}`,
+      });
+    }
+
+    if (checkInsSinceYesterday > 0) {
+      whatChanged.push({
+        id: 'check-ins',
+        label: `+${checkInsSinceYesterday} check-in${checkInsSinceYesterday === 1 ? '' : 's'}`,
+      });
+    }
+
+    if (
+      revenueVsYesterdayPercent != null &&
+      grossRevenueYesterdayCents > 0 &&
+      grossRevenueTodayCents !== grossRevenueYesterdayCents
+    ) {
+      const sign = revenueVsYesterdayPercent >= 0 ? '+' : '';
+      whatChanged.push({
+        id: 'revenue-vs-yesterday',
+        label: `Revenue ${sign}${revenueVsYesterdayPercent}% vs yesterday`,
+      });
+    }
+
+    if (paymentsCollectedSinceYesterday > 0) {
+      whatChanged.push({
+        id: 'payments-collected',
+        label: `+${paymentsCollectedSinceYesterday} payment${paymentsCollectedSinceYesterday === 1 ? '' : 's'} collected`,
+      });
+    }
+
+    const delight = pickDelightSentence({
+      monthComparisonPercent,
+      attentionItemCount: attention.length,
+      newMembershipsThisWeek: newMembersThisWeek,
+      monthCollectedCents,
+      prevMonthCollectedCents,
+    });
+
+    return {
+      hero: {
+        monthCollectedCents,
+        monthPaymentCount,
+        monthComparisonPercent,
+        delight,
+      },
+      attention,
+      whatChanged: whatChanged.slice(0, 4),
+      payingMembers: {
+        count: payingMembersCount,
+        newThisWeek:
+          newPayingSubscriptionsThisWeek > 0 ? newPayingSubscriptionsThisWeek : null,
+        renewalsDueThisWeek: expiringThisWeek > 0 ? expiringThisWeek : null,
+      },
+      comparisonWindow: 'since_yesterday' as const,
+      timeBasis: { timezone },
       generatedAt: now.toISOString(),
     };
   }

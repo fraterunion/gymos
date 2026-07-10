@@ -87,6 +87,31 @@ export type BusinessAnalyticsDto = {
   averageVisitsPerMember30d: number;
   failedPaymentsLast30Days: number;
   coachUtilizationPercent: number;
+  memberSignupsTrend: { date: string; count: number }[];
+  generatedAt: string;
+};
+
+export type OwnerBriefingDto = {
+  hero: {
+    monthCollectedCents: number;
+    monthPaymentCount: number;
+    monthComparisonPercent: number | null;
+    delight: string | null;
+  };
+  attention: {
+    id: string;
+    label: string;
+    action: string;
+    href: string;
+  }[];
+  whatChanged: { id: string; label: string }[];
+  payingMembers: {
+    count: number;
+    newThisWeek: number | null;
+    renewalsDueThisWeek: number | null;
+  };
+  comparisonWindow: "since_yesterday";
+  timeBasis: { timezone: string };
   generatedAt: string;
 };
 
@@ -115,6 +140,12 @@ export async function fetchAnalyticsClassBreakdown(
 
 export async function fetchAnalyticsBusiness(studioId: string): Promise<BusinessAnalyticsDto> {
   return apiRequest<BusinessAnalyticsDto>(`/studios/${studioId}/analytics/business`, {
+    method: "GET",
+  });
+}
+
+export async function fetchAnalyticsBriefing(studioId: string): Promise<OwnerBriefingDto> {
+  return apiRequest<OwnerBriefingDto>(`/studios/${studioId}/analytics/briefing`, {
     method: "GET",
   });
 }
