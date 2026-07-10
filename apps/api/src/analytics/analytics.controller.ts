@@ -43,4 +43,9 @@ export class AnalyticsController {
   getBusiness(@Param('studioId') studioId: string) {
     return this.analyticsService.getBusinessAnalytics(studioId);
   }
+
+  @Get('briefing')
+  getBriefing(@Param('studioId') studioId: string) {
+    return this.analyticsService.getOwnerBriefing(studioId);
+  }
 }
