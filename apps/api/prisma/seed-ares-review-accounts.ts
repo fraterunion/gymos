@@ -2,8 +2,8 @@
  * Ares Training Club — Apple App Review demo accounts (production-safe upsert).
  *
  * Creates or updates ONLY these two emails:
- *   apple.review@fraterunion.com   — MEMBER + active internal subscription
- *   staff.review@fraterunion.com   — STAFF + FRONT_DESK profile
+ *   apple.review@fraterunion.com   — MEMBER + active internal subscription (excludeFromAnalytics)
+ *   staff.review@fraterunion.com   — STAFF + FRONT_DESK profile (excludeFromAnalytics)
  *
  * Never deletes data. Never creates Payment rows. Never calls Stripe.
  * Safe to re-run (idempotent upserts).
@@ -90,8 +90,14 @@ async function upsertStudioMembership(params: {
   studioId: string;
   userId: string;
   role: Role;
+  excludeFromAnalytics?: boolean;
 }): Promise<void> {
-  log('UPSERT', 'StudioMembership', `${params.userId.slice(0, 8)}… → ${params.role}`);
+  const exclude = params.excludeFromAnalytics ?? false;
+  log(
+    'UPSERT',
+    'StudioMembership',
+    `${params.userId.slice(0, 8)}… → ${params.role} excludeFromAnalytics=${exclude}`,
+  );
   if (DRY_RUN) return;
 
   await prisma.studioMembership.upsert({
@@ -100,10 +106,12 @@ async function upsertStudioMembership(params: {
       studioId: params.studioId,
       userId: params.userId,
       role: params.role,
+      excludeFromAnalytics: exclude,
     },
     update: {
       role: params.role,
       deletedAt: null,
+      excludeFromAnalytics: exclude,
     },
   });
 }
@@ -232,6 +240,7 @@ async function main(): Promise<void> {
     studioId: studio.id,
     userId: memberUserId,
     role: Role.MEMBER,
+    excludeFromAnalytics: true,
   });
   await upsertMemberSubscription({
     studioId: studio.id,
@@ -252,6 +261,7 @@ async function main(): Promise<void> {
     studioId: studio.id,
     userId: staffUserId,
     role: Role.FRONT_DESK,
+    excludeFromAnalytics: true,
   });
   await upsertStaffProfile({
     studioId: studio.id,

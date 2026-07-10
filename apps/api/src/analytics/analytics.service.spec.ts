@@ -313,7 +313,16 @@ describe('AnalyticsService.getBusinessAnalytics', () => {
     await service.getBusinessAnalytics(STUDIO_A);
 
     expect(prisma.subscription.groupBy).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { studioId: STUDIO_A } }),
+      expect.objectContaining({
+        where: expect.objectContaining({
+          studioId: STUDIO_A,
+          user: {
+            studioMemberships: {
+              some: { studioId: STUDIO_A, excludeFromAnalytics: false },
+            },
+          },
+        }),
+      }),
     );
     expect(prisma.subscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ studioId: STUDIO_A }) }),
@@ -332,7 +341,16 @@ describe('AnalyticsService.getBusinessAnalytics', () => {
     await service.getBusinessAnalytics(STUDIO_B);
 
     expect(prisma.subscription.groupBy).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { studioId: STUDIO_B } }),
+      expect.objectContaining({
+        where: expect.objectContaining({
+          studioId: STUDIO_B,
+          user: {
+            studioMemberships: {
+              some: { studioId: STUDIO_B, excludeFromAnalytics: false },
+            },
+          },
+        }),
+      }),
     );
     for (const call of queryRaw.mock.calls) {
       const values = call.slice(1);
@@ -349,6 +367,7 @@ describe('AnalyticsService.getBusinessAnalytics', () => {
       where: {
         studioId: STUDIO_A,
         deletedAt: null,
+        excludeFromAnalytics: false,
         role: Role.MEMBER,
         user: { deletedAt: null },
       },

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
@@ -20,6 +21,15 @@ import { SectionHeader } from "@/components/shell/SectionHeader";
 import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { translateSubscriptionStatus } from "@/lib/analyticsCopy";
+import {
+  CHART_AXIS,
+  CHART_COLORS,
+  CHART_GRID,
+  CHART_TOOLTIP_STYLE,
+  planBarColor,
+  stripeVsCashColor,
+  stripeVsCashLabel,
+} from "@/lib/analyticsChartColors";
 import { ApiError } from "@/lib/api/errors";
 import {
   fetchAnalyticsBusiness,
@@ -36,15 +46,10 @@ import {
 } from "@/lib/api/analytics";
 import { formatMoneyAxis, formatMoneyFromCents } from "@/lib/formatMoney";
 
-const CHART_GRID = "#e4e4e7";
-const CHART_TEXT = "#a1a1aa";
-const TOOLTIP_STYLE = {
-  background: "#ffffff",
-  border: "1px solid #e4e4e7",
-  borderRadius: 8,
-  fontSize: 12,
-  color: "#18181b",
-};
+function periodLabel(days: number): string {
+  if (days >= 365) return "este año";
+  return `últimos ${days} días`;
+}
 
 function periodToDays(period: PeriodKey): number {
   if (period !== "year") return period;
@@ -105,8 +110,9 @@ function StripeVsCashChart({
   currency: string;
 }) {
   const data = rows.map((r) => ({
-    name: r.method === "stripe" ? "Stripe" : "Efectivo",
+    name: stripeVsCashLabel(r.method),
     Monto: r.amountCents / 100,
+    fill: stripeVsCashColor(r.method),
   }));
   if (data.every((d) => d.Monto === 0)) {
     return (
@@ -117,21 +123,25 @@ function StripeVsCashChart({
     <ResponsiveContainer width="100%" height={200}>
       <BarChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-        <XAxis dataKey="name" tick={{ fill: CHART_TEXT, fontSize: 11 }} tickLine={false} axisLine={false} />
+        <XAxis dataKey="name" tick={{ fill: CHART_AXIS, fontSize: 11 }} tickLine={false} axisLine={false} />
         <YAxis
-          tick={{ fill: CHART_TEXT, fontSize: 11 }}
+          tick={{ fill: CHART_AXIS, fontSize: 11 }}
           tickLine={false}
           axisLine={false}
           tickFormatter={(v) => formatMoneyAxis(Math.round(Number(v) * 100), currency)}
         />
         <Tooltip
-          contentStyle={TOOLTIP_STYLE}
+          contentStyle={CHART_TOOLTIP_STYLE}
           formatter={(value) => [
             formatMoneyFromCents(Math.round(Number(value ?? 0) * 100), currency),
             "Cobrado",
           ]}
         />
-        <Bar dataKey="Monto" fill="#52525b" radius={[6, 6, 0, 0]} maxBarSize={72} />
+        <Bar dataKey="Monto" radius={[8, 8, 0, 0]} maxBarSize={72}>
+          {data.map((entry, i) => (
+            <Cell key={i} fill={entry.fill} />
+          ))}
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -153,10 +163,10 @@ function PaymentCountTrendChart({
     <ResponsiveContainer width="100%" height={200}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
-        <XAxis dataKey="date" tick={{ fill: CHART_TEXT, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-        <YAxis tick={{ fill: CHART_TEXT, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
-        <Tooltip contentStyle={TOOLTIP_STYLE} />
-        <Line type="monotone" dataKey="Pagos" stroke="#71717a" strokeWidth={2} dot={false} />
+        <XAxis dataKey="date" tick={{ fill: CHART_AXIS, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+        <YAxis tick={{ fill: CHART_AXIS, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+        <Line type="monotone" dataKey="Pagos" stroke={CHART_COLORS.membership} strokeWidth={2.5} dot={false} activeDot={{ r: 4, fill: CHART_COLORS.membership }} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -174,7 +184,7 @@ function RevenueTrend30Chart({
     Ingresos: Math.round(r.amountCents) / 100,
   }));
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   if (data.every((d) => d.Ingresos === 0)) {
     return (
       <p className="py-10 text-center text-sm text-zinc-500">Sin pagos cobrados en este periodo.</p>
@@ -183,7 +193,13 @@ function RevenueTrend30Chart({
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+        <defs>
+          <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={CHART_COLORS.revenue} stopOpacity={0.2} />
+            <stop offset="100%" stopColor={CHART_COLORS.revenue} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
         <XAxis
           dataKey="date"
           tick={{ fill: textColor, fontSize: 10 }}
@@ -198,19 +214,20 @@ function RevenueTrend30Chart({
           tickFormatter={(v) => formatMoneyAxis(Math.round(Number(v) * 100), currency)}
         />
         <Tooltip
-          contentStyle={TOOLTIP_STYLE}
+          contentStyle={CHART_TOOLTIP_STYLE}
           formatter={(value) => [
             formatMoneyFromCents(Math.round(Number(value ?? 0) * 100), currency),
             "Cobrado",
           ]}
         />
+        <Area type="monotone" dataKey="Ingresos" fill="url(#revenueGradient)" stroke="none" />
         <Line
           type="monotone"
           dataKey="Ingresos"
-          stroke="#18181b"
-          strokeWidth={2}
+          stroke={CHART_COLORS.revenue}
+          strokeWidth={2.5}
           dot={false}
-          activeDot={{ r: 4, fill: "#18181b" }}
+          activeDot={{ r: 4, fill: CHART_COLORS.revenue }}
         />
       </LineChart>
     </ResponsiveContainer>
@@ -227,16 +244,16 @@ function MembershipActivityChart({
     Miembros: r.count,
   }));
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   if (data.every((d) => d.Miembros === 0)) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">Sin membresías nuevas en los últimos 30 días.</p>
+      <p className="py-10 text-center text-sm text-zinc-500">Sin membresías nuevas en este periodo.</p>
     );
   }
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
         <XAxis
           dataKey="date"
           tick={{ fill: textColor, fontSize: 10 }}
@@ -250,16 +267,14 @@ function MembershipActivityChart({
           axisLine={false}
           allowDecimals={false}
         />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-        />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
         <Line
           type="monotone"
           dataKey="Miembros"
-          stroke="#52525b"
-          strokeWidth={2}
+          stroke={CHART_COLORS.membership}
+          strokeWidth={2.5}
           dot={false}
-          activeDot={{ r: 4, fill: "#52525b" }}
+          activeDot={{ r: 4, fill: CHART_COLORS.membership }}
         />
       </LineChart>
     </ResponsiveContainer>
@@ -276,14 +291,14 @@ function AttendanceTrendChart({
     Asistencia: a.count,
   }));
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   if (data.every((d) => d.Asistencia === 0)) {
     return <p className="py-10 text-center text-sm text-zinc-500">Sin check-ins en este periodo.</p>;
   }
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
         <XAxis
           dataKey="date"
           tick={{ fill: textColor, fontSize: 10 }}
@@ -297,16 +312,14 @@ function AttendanceTrendChart({
           axisLine={false}
           allowDecimals={false}
         />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-        />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
         <Line
           type="monotone"
           dataKey="Asistencia"
-          stroke="#71717a"
-          strokeWidth={2}
+          stroke={CHART_COLORS.attendance}
+          strokeWidth={2.5}
           dot={false}
-          activeDot={{ r: 4, fill: "#71717a" }}
+          activeDot={{ r: 4, fill: CHART_COLORS.attendance }}
         />
       </LineChart>
     </ResponsiveContainer>
@@ -324,12 +337,12 @@ function BookingsAttendanceChart({
     Asistencia: trends.attendances[i]?.count ?? 0,
   }));
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
 
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
         <XAxis
           dataKey="date"
           tick={{ fill: textColor, fontSize: 11 }}
@@ -343,22 +356,20 @@ function BookingsAttendanceChart({
           axisLine={false}
           allowDecimals={false}
         />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-        />
-        <Line type="monotone" dataKey="Reservas" stroke="#a1a1aa" strokeWidth={2} dot={false} />
-        <Line type="monotone" dataKey="Asistencia" stroke="#52525b" strokeWidth={2} dot={false} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+        <Line type="monotone" dataKey="Reservas" stroke={CHART_COLORS.bookings} strokeWidth={2.5} dot={false} />
+        <Line type="monotone" dataKey="Asistencia" stroke={CHART_COLORS.attendance} strokeWidth={2.5} dot={false} />
       </LineChart>
     </ResponsiveContainer>
   );
 }
 
 const SUBSCRIPTION_CHART_COLORS: Record<string, string> = {
-  ACTIVE: "#52525b",
-  TRIALING: "#a1a1aa",
-  PAST_DUE: "#d4d4d8",
-  PAUSED: "#e4e4e7",
-  CANCELED: "#f4f4f5",
+  ACTIVE: CHART_COLORS.revenue,
+  TRIALING: CHART_COLORS.membership,
+  PAST_DUE: CHART_COLORS.warning,
+  PAUSED: CHART_COLORS.neutral,
+  CANCELED: CHART_COLORS.negative,
 };
 
 function formatSubscriptionStatus(status: string): string {
@@ -375,13 +386,13 @@ function SubscriptionStatusChart({
     .map((b) => ({
       name: formatSubscriptionStatus(b.status),
       count: b.count,
-      fill: SUBSCRIPTION_CHART_COLORS[b.status] ?? "#71717a",
+      fill: SUBSCRIPTION_CHART_COLORS[b.status] ?? CHART_COLORS.neutral,
     }));
   if (data.length === 0) {
     return <p className="py-10 text-center text-sm text-zinc-500">Sin suscripciones aún.</p>;
   }
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart
@@ -400,9 +411,7 @@ function SubscriptionStatusChart({
           tickLine={false}
           axisLine={false}
         />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-        />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
         <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={28}>
           {data.map((entry, i) => (
             <Cell key={i} fill={entry.fill} />
@@ -424,11 +433,11 @@ function BookingFrequencyChart({
   const total = buckets.reduce((s, b) => s + b.memberCount, 0);
   if (total === 0) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">Sin reservas de miembros en los últimos 30 días.</p>
+      <p className="py-10 text-center text-sm text-zinc-500">Sin reservas de miembros en este periodo.</p>
     );
   }
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   return (
     <div>
       <p className="mb-2 text-xs text-zinc-600">
@@ -439,10 +448,8 @@ function BookingFrequencyChart({
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
           <XAxis dataKey="name" tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} />
           <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
-          <Tooltip
-            contentStyle={TOOLTIP_STYLE}
-          />
-          <Bar dataKey="Members" fill="#a1a1aa" radius={[6, 6, 0, 0]} maxBarSize={56} />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+          <Bar dataKey="Miembros" fill={CHART_COLORS.retention} radius={[8, 8, 0, 0]} maxBarSize={56} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -453,20 +460,21 @@ function RevenueByPlanChart({
   rows,
   currency,
 }: {
-  rows: BusinessAnalyticsDto["revenueByPlan"];
+  rows: { planId: string | null; planName: string; revenueCents: number }[];
   currency: string;
 }) {
   if (rows.length === 0) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">Sin ingresos por plan en los últimos 30 días.</p>
+      <p className="py-10 text-center text-sm text-zinc-500">Sin ingresos por plan en este periodo.</p>
     );
   }
-  const data = rows.map((r) => ({
+  const data = rows.map((r, i) => ({
     name: r.planName.length > 16 ? r.planName.slice(0, 15) + "…" : r.planName,
     Ingresos: Math.round(r.revenueCents) / 100,
+    fill: planBarColor(i, r.planName === "Sin atribuir"),
   }));
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
@@ -479,13 +487,17 @@ function RevenueByPlanChart({
           tickFormatter={(v) => formatMoneyAxis(Math.round(Number(v) * 100), currency)}
         />
         <Tooltip
-          contentStyle={TOOLTIP_STYLE}
+          contentStyle={CHART_TOOLTIP_STYLE}
           formatter={(value) => [
             formatMoneyFromCents(Math.round(Number(value ?? 0) * 100), currency),
             "Cobrado",
           ]}
         />
-        <Bar dataKey="Ingresos" fill="#71717a" radius={[4, 4, 0, 0]} maxBarSize={44} />
+        <Bar dataKey="Ingresos" radius={[6, 6, 0, 0]} maxBarSize={44}>
+          {data.map((entry, i) => (
+            <Cell key={i} fill={entry.fill} />
+          ))}
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -504,17 +516,15 @@ function TopClassesChart({
     return <p className="py-10 text-center text-sm text-zinc-500">Sin datos aún.</p>;
   }
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
         <XAxis dataKey="name" tick={{ fill: textColor, fontSize: 10 }} tickLine={false} axisLine={false} />
         <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-        />
-        <Bar dataKey="Reservas" fill="#a1a1aa" radius={[4, 4, 0, 0]} maxBarSize={48} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+        <Bar dataKey="Reservas" fill={CHART_COLORS.bookings} radius={[6, 6, 0, 0]} maxBarSize={48} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -529,22 +539,26 @@ function PeakHoursChart({
     return <p className="py-10 text-center text-sm text-zinc-500">Sin datos aún.</p>;
   }
   const hourMap = new Map(breakdown.peakHours.map((h) => [h.hour, h.count]));
+  const maxCount = Math.max(...breakdown.peakHours.map((h) => h.count), 1);
   const data = Array.from({ length: 24 }, (_, h) => ({
     hour: fmtHour(h),
     Clases: hourMap.get(h) ?? 0,
+    fill: `rgba(20, 184, 166, ${0.25 + (0.75 * (hourMap.get(h) ?? 0)) / maxCount})`,
   }));
   const gridColor = CHART_GRID;
-  const textColor = CHART_TEXT;
+  const textColor = CHART_AXIS;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
         <XAxis dataKey="hour" tick={{ fill: textColor, fontSize: 9 }} tickLine={false} axisLine={false} interval={2} />
         <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-        />
-        <Bar dataKey="Clases" fill="#d4d4d8" radius={[3, 3, 0, 0]} maxBarSize={24} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+        <Bar dataKey="Clases" radius={[4, 4, 0, 0]} maxBarSize={24}>
+          {data.map((entry, i) => (
+            <Cell key={i} fill={entry.fill} />
+          ))}
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -629,13 +643,14 @@ export default function AnalyticsPage() {
     }
     setLoadingOverview(true);
     try {
-      setOverview(await fetchAnalyticsOverview(selectedStudioId));
+      const days = periodToDays(period);
+      setOverview(await fetchAnalyticsOverview(selectedStudioId, days));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load overview");
     } finally {
       setLoadingOverview(false);
     }
-  }, [selectedStudioId]);
+  }, [selectedStudioId, period]);
 
   const loadCharts = useCallback(async () => {
     if (!selectedStudioId) {
@@ -668,13 +683,14 @@ export default function AnalyticsPage() {
     }
     setLoadingBusiness(true);
     try {
-      setBusiness(await fetchAnalyticsBusiness(selectedStudioId));
+      const days = periodToDays(period);
+      setBusiness(await fetchAnalyticsBusiness(selectedStudioId, days));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load business analytics");
     } finally {
       setLoadingBusiness(false);
     }
-  }, [selectedStudioId]);
+  }, [selectedStudioId, period]);
 
   const refreshAll = useCallback(() => {
     void loadFinancial();
@@ -859,7 +875,7 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <ChartShell title="Horarios pico" loading={loadingCharts}>
+          <ChartShell title="Horarios pico (clases programadas)" loading={loadingCharts}>
             {breakdown ? <PeakHoursChart breakdown={breakdown} /> : null}
           </ChartShell>
           <ChartShell title="Clases más populares" loading={loadingCharts}>
@@ -887,7 +903,8 @@ export default function AnalyticsPage() {
                   {overview.mostActiveCoach.firstName} {overview.mostActiveCoach.lastName}
                 </p>
                 <p className="text-xs text-zinc-500">
-                  {fmt(overview.mostActiveCoach.classCount)} clases
+                  {fmt(overview.mostActiveCoach.classCount)} clases ·{" "}
+                  {periodLabel(overview.periodDays ?? periodToDays(period))}
                 </p>
               </SurfaceCard>
             ) : null}

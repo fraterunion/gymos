@@ -6,11 +6,24 @@ import {
   EnrollmentFeeStatus,
   PaymentMethod,
   PaymentStatus,
-  Role,
   SubscriptionStatus,
   WaitlistStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  analyticsExcludedSubscriptionFilter,
+  analyticsIncludedUserFilter,
+  analyticsMemberMembershipWhere,
+  analyticsMembershipWhere,
+  SQL_ATTENDANCE_EXCLUDE,
+  SQL_BOOKING_EXCLUDE,
+  SQL_MEMBERSHIP_ROW_INCLUDE,
+  SQL_SUBSCRIPTION_USER_EXCLUDE,
+} from './analytics-exclusion.utils';
+import {
+  assertStudioTimezone,
+  fillStudioLocalTrendDays,
+} from './analytics-timezone.utils';
 import {
   financialPeriodWindows,
   type FinancialPeriodKey,
@@ -51,16 +64,15 @@ function pctChange(current: number, previous: number): number | null {
 export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOverview(studioId: string) {
+  async getOverview(studioId: string, days = 30) {
     const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     const todayStart = new Date(now);
     todayStart.setUTCHours(0, 0, 0, 0);
     const tomorrowStart = new Date(todayStart);
     tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
-
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     const [
       activeMembers,
@@ -75,11 +87,15 @@ export class AnalyticsService {
       activeCoachResult,
     ] = await Promise.all([
       this.prisma.studioMembership.count({
-        where: { studioId, deletedAt: null, user: { deletedAt: null } },
+        where: analyticsMembershipWhere(studioId),
       }),
 
       this.prisma.attendance.count({
-        where: { studioId, checkedInAt: { gte: todayStart, lt: tomorrowStart } },
+        where: {
+          studioId,
+          checkedInAt: { gte: todayStart, lt: tomorrowStart },
+          user: analyticsIncludedUserFilter(studioId),
+        },
       }),
 
       this.prisma.scheduledClass.count({
@@ -99,6 +115,7 @@ export class AnalyticsService {
           studioId,
           createdAt: { gte: sevenDaysAgo },
           status: { not: BookingStatus.CANCELLED },
+          user: analyticsIncludedUserFilter(studioId),
         },
       }),
 
@@ -111,6 +128,7 @@ export class AnalyticsService {
         WHERE b.studio_id = ${studioId}
           AND sc.starts_at < ${now}
           AND sc.starts_at >= ${thirtyDaysAgo}
+          ${SQL_BOOKING_EXCLUDE}
       `,
 
       this.prisma.$queryRaw<{ avg_fill: number | null }[]>`
@@ -121,13 +139,15 @@ export class AnalyticsService {
         ) AS avg_fill
         FROM scheduled_classes sc
         LEFT JOIN (
-          SELECT scheduled_class_id, COUNT(*) AS confirmed_count
-          FROM bookings
-          WHERE status IN ('CONFIRMED','COMPLETED','NO_SHOW')
-          GROUP BY scheduled_class_id
+          SELECT b.scheduled_class_id, COUNT(*) AS confirmed_count
+          FROM bookings b
+          WHERE b.status IN ('CONFIRMED','COMPLETED','NO_SHOW')
+            ${SQL_BOOKING_EXCLUDE}
+          GROUP BY b.scheduled_class_id
         ) b ON b.scheduled_class_id = sc.id
         WHERE sc.studio_id = ${studioId}
           AND sc.starts_at >= ${thirtyDaysAgo}
+          AND sc.starts_at <= ${now}
           AND sc.status != 'CANCELLED'
       `,
 
@@ -139,10 +159,11 @@ export class AnalyticsService {
         ) AS occupancy
         FROM scheduled_classes sc
         LEFT JOIN (
-          SELECT scheduled_class_id, COUNT(*) AS confirmed_count
-          FROM bookings
-          WHERE status IN ('CONFIRMED','COMPLETED','NO_SHOW')
-          GROUP BY scheduled_class_id
+          SELECT b.scheduled_class_id, COUNT(*) AS confirmed_count
+          FROM bookings b
+          WHERE b.status IN ('CONFIRMED','COMPLETED','NO_SHOW')
+            ${SQL_BOOKING_EXCLUDE}
+          GROUP BY b.scheduled_class_id
         ) b ON b.scheduled_class_id = sc.id
         WHERE sc.studio_id = ${studioId}
           AND sc.starts_at >= ${todayStart}
@@ -160,6 +181,7 @@ export class AnalyticsService {
         WHERE ct.studio_id = ${studioId}
           AND b.created_at >= ${thirtyDaysAgo}
           AND b.status NOT IN ('CANCELLED')
+          ${SQL_BOOKING_EXCLUDE}
         GROUP BY ct.id, ct.name, ct.color
         ORDER BY booking_count DESC
         LIMIT 1
@@ -168,12 +190,13 @@ export class AnalyticsService {
       this.prisma.$queryRaw<
         { id: string; first_name: string; last_name: string; class_count: bigint }[]
       >`
-        SELECT u.id, u.first_name, u.last_name, COUNT(sc.id) AS class_count
+        SELECT u.id, u.first_name, u.last_name, COUNT(DISTINCT sc.id) AS class_count
         FROM users u
         JOIN scheduled_classes sc ON sc.instructor_id = u.id
         WHERE sc.studio_id = ${studioId}
           AND sc.starts_at >= ${thirtyDaysAgo}
-          AND sc.status != 'CANCELLED'
+          AND sc.starts_at <= ${now}
+          AND sc.status NOT IN ('CANCELLED')
         GROUP BY u.id, u.first_name, u.last_name
         ORDER BY class_count DESC
         LIMIT 1
@@ -221,29 +244,32 @@ export class AnalyticsService {
       bookingsLast7d,
       mostPopularTemplate,
       mostActiveCoach,
+      periodDays: days,
       generatedAt: now.toISOString(),
     };
   }
 
   async getTrends(studioId: string, days: number) {
     const now = new Date();
-    const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
     const [bookingRows, attendanceRows] = await Promise.all([
       this.prisma.$queryRaw<{ date: Date; count: bigint }[]>`
-        SELECT date_trunc('day', created_at) AS date, COUNT(*) AS count
-        FROM bookings
-        WHERE studio_id = ${studioId}
-          AND created_at >= ${since}
-          AND status NOT IN ('CANCELLED')
+        SELECT date_trunc('day', b.created_at) AS date, COUNT(*) AS count
+        FROM bookings b
+        WHERE b.studio_id = ${studioId}
+          AND b.created_at >= ${thirtyDaysAgo}
+          AND b.status NOT IN ('CANCELLED')
+          ${SQL_BOOKING_EXCLUDE}
         GROUP BY 1
         ORDER BY 1
       `,
       this.prisma.$queryRaw<{ date: Date; count: bigint }[]>`
-        SELECT date_trunc('day', checked_in_at) AS date, COUNT(*) AS count
-        FROM attendances
-        WHERE studio_id = ${studioId}
-          AND checked_in_at >= ${since}
+        SELECT date_trunc('day', a.checked_in_at) AS date, COUNT(*) AS count
+        FROM attendances a
+        WHERE a.studio_id = ${studioId}
+          AND a.checked_in_at >= ${thirtyDaysAgo}
+          ${SQL_ATTENDANCE_EXCLUDE}
         GROUP BY 1
         ORDER BY 1
       `,
@@ -252,7 +278,7 @@ export class AnalyticsService {
     // Build a complete day map, filling gaps with 0
     const dateMap = new Map<string, { bookings: number; attendances: number }>();
     for (let d = 0; d < days; d++) {
-      const day = new Date(since.getTime() + d * 24 * 60 * 60 * 1000);
+      const day = new Date(thirtyDaysAgo.getTime() + d * 24 * 60 * 60 * 1000);
       const key = day.toISOString().split('T')[0]!;
       dateMap.set(key, { bookings: 0, attendances: 0 });
     }
@@ -271,7 +297,7 @@ export class AnalyticsService {
     const sorted = [...dateMap.entries()].sort(([a], [b]) => a.localeCompare(b));
 
     return {
-      period: { from: since.toISOString(), to: now.toISOString(), days },
+      period: { from: thirtyDaysAgo.toISOString(), to: now.toISOString(), days },
       bookings: sorted.map(([date, v]) => ({ date, count: v.bookings })),
       attendances: sorted.map(([date, v]) => ({ date, count: v.attendances })),
     };
@@ -279,7 +305,12 @@ export class AnalyticsService {
 
   async getClassBreakdown(studioId: string, days: number) {
     const now = new Date();
-    const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const studio = await this.prisma.studio.findUnique({
+      where: { id: studioId },
+      select: { timezone: true },
+    });
+    const timezone = assertStudioTimezone(studio?.timezone ?? 'UTC');
 
     const [topTemplates, peakHours] = await Promise.all([
       this.prisma.$queryRaw<
@@ -292,29 +323,37 @@ export class AnalyticsService {
         LEFT JOIN bookings b
           ON b.scheduled_class_id = sc.id
          AND b.status NOT IN ('CANCELLED')
+         AND NOT EXISTS (
+           SELECT 1 FROM studio_memberships sm_ex
+           WHERE sm_ex.studio_id = b.studio_id
+             AND sm_ex.user_id = b.user_id
+             AND sm_ex.exclude_from_analytics = true
+         )
         WHERE ct.studio_id = ${studioId}
           AND ct.deleted_at IS NULL
-          AND sc.starts_at >= ${since}
+          AND sc.starts_at >= ${thirtyDaysAgo}
+          AND sc.starts_at <= ${now}
+          AND sc.status NOT IN ('CANCELLED')
         GROUP BY ct.id, ct.name, ct.color
         ORDER BY booking_count DESC
         LIMIT 8
       `,
       this.prisma.$queryRaw<{ hour: number; count: bigint }[]>`
-        SELECT EXTRACT(HOUR FROM sc.starts_at)::int AS hour,
-               COUNT(b.id) AS count
+        SELECT EXTRACT(HOUR FROM (sc.starts_at AT TIME ZONE ${timezone}))::int AS hour,
+               COUNT(DISTINCT sc.id) AS count
         FROM scheduled_classes sc
-        LEFT JOIN bookings b
-          ON b.scheduled_class_id = sc.id
-         AND b.status NOT IN ('CANCELLED')
         WHERE sc.studio_id = ${studioId}
-          AND sc.starts_at >= ${since}
-          AND sc.status != 'CANCELLED'
+          AND sc.starts_at >= ${thirtyDaysAgo}
+          AND sc.starts_at <= ${now}
+          AND sc.status NOT IN ('CANCELLED')
         GROUP BY 1
         ORDER BY 1
       `,
     ]);
 
     return {
+      periodDays: days,
+      timezone,
       topTemplates: topTemplates.map((r) => ({
         templateId: r.template_id,
         name: r.name,
@@ -331,10 +370,10 @@ export class AnalyticsService {
   /**
    * Revenue & retention (Phase 10B). All queries are scoped by `studioId`.
    */
-  async getBusinessAnalytics(studioId: string) {
+  async getBusinessAnalytics(studioId: string, days = 30) {
     const now = new Date();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const prevSince = new Date(now.getTime() - days * 2 * 24 * 60 * 60 * 1000);
     const tomorrowStart = new Date(now);
     tomorrowStart.setUTCHours(0, 0, 0, 0);
     tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
@@ -380,13 +419,13 @@ export class AnalyticsService {
     ] = await Promise.all([
       this.prisma.subscription.groupBy({
         by: ['status'],
-        where: { studioId },
+        where: analyticsExcludedSubscriptionFilter(studioId),
         _count: { _all: true },
       }),
 
       this.prisma.subscription.findMany({
         where: {
-          studioId,
+          ...analyticsExcludedSubscriptionFilter(studioId),
           status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
         },
         select: {
@@ -395,12 +434,7 @@ export class AnalyticsService {
       }),
 
       this.prisma.studioMembership.count({
-        where: {
-          studioId,
-          deletedAt: null,
-          role: Role.MEMBER,
-          user: { deletedAt: null },
-        },
+        where: analyticsMemberMembershipWhere(studioId),
       }),
 
       this.prisma.payment.findMany({
@@ -442,6 +476,7 @@ export class AnalyticsService {
           WHERE b.studio_id = ${studioId}
             AND b.created_at >= ${thirtyDaysAgo}
             AND b.status NOT IN ('CANCELLED')
+            ${SQL_BOOKING_EXCLUDE}
           GROUP BY b.user_id
           HAVING COUNT(*) >= 2
         ) t
@@ -453,10 +488,14 @@ export class AnalyticsService {
         WHERE s.studio_id = ${studioId}
           AND s.status = 'CANCELED'
           AND s.updated_at >= ${thirtyDaysAgo}
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}
       `,
 
       this.prisma.subscription.count({
-        where: { studioId, status: SubscriptionStatus.CANCELED },
+        where: {
+          ...analyticsExcludedSubscriptionFilter(studioId),
+          status: SubscriptionStatus.CANCELED,
+        },
       }),
 
       this.prisma.$queryRaw<{ bucket: string; member_count: bigint }[]>`
@@ -474,9 +513,11 @@ export class AnalyticsService {
            AND sm.studio_id = b.studio_id
            AND sm.deleted_at IS NULL
            AND sm.role = 'MEMBER'
+           ${SQL_MEMBERSHIP_ROW_INCLUDE}
           WHERE b.studio_id = ${studioId}
             AND b.created_at >= ${thirtyDaysAgo}
             AND b.status NOT IN ('CANCELLED')
+            ${SQL_BOOKING_EXCLUDE}
           GROUP BY b.user_id
         ) v
         GROUP BY v.bucket
@@ -600,34 +641,28 @@ export class AnalyticsService {
 
       this.prisma.studioMembership.count({
         where: {
-          studioId,
-          role: Role.MEMBER,
-          deletedAt: null,
+          ...analyticsMemberMembershipWhere(studioId),
           createdAt: { gte: thirtyDaysAgo },
-          user: { deletedAt: null },
         },
       }),
 
       this.prisma.studioMembership.count({
         where: {
-          studioId,
-          role: Role.MEMBER,
-          deletedAt: null,
-          createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo },
-          user: { deletedAt: null },
+          ...analyticsMemberMembershipWhere(studioId),
+          createdAt: { gte: prevSince, lt: thirtyDaysAgo },
         },
       }),
 
       this.prisma.subscription.count({
         where: {
-          studioId,
+          ...analyticsExcludedSubscriptionFilter(studioId),
           createdAt: { gte: todayStart, lt: tomorrowStart },
         },
       }),
 
       this.prisma.subscription.count({
         where: {
-          studioId,
+          ...analyticsExcludedSubscriptionFilter(studioId),
           createdAt: { gte: thirtyDaysAgo },
         },
       }),
@@ -663,6 +698,7 @@ export class AnalyticsService {
         WHERE sm.studio_id = ${studioId}
           AND sm.role = 'MEMBER'
           AND sm.deleted_at IS NULL
+          ${SQL_MEMBERSHIP_ROW_INCLUDE}
           AND NOT EXISTS (
             SELECT 1
             FROM attendances a
@@ -678,6 +714,7 @@ export class AnalyticsService {
         WHERE sm.studio_id = ${studioId}
           AND sm.role = 'MEMBER'
           AND sm.deleted_at IS NULL
+          ${SQL_MEMBERSHIP_ROW_INCLUDE}
           AND EXISTS (
             SELECT 1
             FROM studio_waiver_documents swd
@@ -698,14 +735,18 @@ export class AnalyticsService {
 
       this.prisma.subscription.count({
         where: {
-          studioId,
+          ...analyticsExcludedSubscriptionFilter(studioId),
           status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
           currentPeriodEnd: { gte: now, lte: expiringBy },
         },
       }),
 
       this.prisma.attendance.count({
-        where: { studioId, checkedInAt: { gte: thirtyDaysAgo } },
+        where: {
+          studioId,
+          checkedInAt: { gte: thirtyDaysAgo },
+          user: analyticsIncludedUserFilter(studioId),
+        },
       }),
 
       this.prisma.payment.count({
@@ -732,6 +773,7 @@ export class AnalyticsService {
         WHERE studio_id = ${studioId}
           AND role = 'MEMBER'
           AND deleted_at IS NULL
+          AND exclude_from_analytics = false
           AND created_at >= ${thirtyDaysAgo}
         GROUP BY 1
         ORDER BY 1
@@ -766,7 +808,7 @@ export class AnalyticsService {
     const canceledSubscriptionsTotal = canceledTotalRow;
 
     const dateMap = new Map<string, number>();
-    for (let d = 0; d < 30; d++) {
+    for (let d = 0; d < days; d++) {
       const day = new Date(thirtyDaysAgo.getTime() + d * 24 * 60 * 60 * 1000);
       const key = day.toISOString().split('T')[0]!;
       dateMap.set(key, 0);
@@ -854,7 +896,7 @@ export class AnalyticsService {
       memberCount > 0 ? Math.round((attendancesLast30Days / memberCount) * 10) / 10 : 0;
 
     const signupDateMap = new Map<string, number>();
-    for (let d = 0; d < 30; d++) {
+    for (let d = 0; d < days; d++) {
       const day = new Date(thirtyDaysAgo.getTime() + d * 24 * 60 * 60 * 1000);
       const key = day.toISOString().split('T')[0]!;
       signupDateMap.set(key, 0);
@@ -871,7 +913,7 @@ export class AnalyticsService {
 
     return {
       period: {
-        days: 30,
+        days,
         from: thirtyDaysAgo.toISOString(),
         to: now.toISOString(),
       },
@@ -945,17 +987,12 @@ export class AnalyticsService {
     const timezone = studio?.timezone ?? 'UTC';
 
     const { monthStart, prevMonthStart, prevPeriodEnd } = monthComparisonWindows(now, timezone);
-    const { todayStart, tomorrowStart, yesterdayStart, yesterdaySamePointEnd, weekAgo, weekAhead } = dayWindows(
+    const { todayStart, yesterdayStart, yesterdaySamePointEnd, weekAgo, weekAhead } = dayWindows(
       now,
       timezone,
     );
 
-    const memberMembershipWhere = {
-      studioId,
-      role: Role.MEMBER,
-      deletedAt: null,
-      user: { deletedAt: null },
-    } as const;
+    const memberMembershipWhere = analyticsMemberMembershipWhere(studioId);
 
     const [
       mtdRow,
@@ -1011,10 +1048,11 @@ export class AnalyticsService {
       `,
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
-        SELECT COUNT(DISTINCT user_id)::bigint AS c
-        FROM subscriptions
-        WHERE studio_id = ${studioId}
-          AND status = 'PAST_DUE'
+        SELECT COUNT(DISTINCT s.user_id)::bigint AS c
+        FROM subscriptions s
+        WHERE s.studio_id = ${studioId}
+          AND s.status = 'PAST_DUE'
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}
       `,
 
       this.prisma.payment.count({
@@ -1026,12 +1064,13 @@ export class AnalyticsService {
       }),
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
-        SELECT COUNT(DISTINCT user_id)::bigint AS c
-        FROM subscriptions
-        WHERE studio_id = ${studioId}
-          AND status IN ('ACTIVE', 'TRIALING')
-          AND current_period_end > ${now}
-          AND current_period_end <= ${weekAhead}
+        SELECT COUNT(DISTINCT s.user_id)::bigint AS c
+        FROM subscriptions s
+        WHERE s.studio_id = ${studioId}
+          AND s.status IN ('ACTIVE', 'TRIALING')
+          AND s.current_period_end > ${now}
+          AND s.current_period_end <= ${weekAhead}
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}
       `,
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
@@ -1040,6 +1079,7 @@ export class AnalyticsService {
         WHERE sm.studio_id = ${studioId}
           AND sm.role = 'MEMBER'
           AND sm.deleted_at IS NULL
+          ${SQL_MEMBERSHIP_ROW_INCLUDE}
           AND EXISTS (
             SELECT 1
             FROM studio_waiver_documents swd
@@ -1066,7 +1106,11 @@ export class AnalyticsService {
       }),
 
       this.prisma.attendance.count({
-        where: { studioId, checkedInAt: { gte: yesterdayStart } },
+        where: {
+          studioId,
+          checkedInAt: { gte: yesterdayStart },
+          user: analyticsIncludedUserFilter(studioId),
+        },
       }),
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
@@ -1078,10 +1122,11 @@ export class AnalyticsService {
       `,
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
-        SELECT COUNT(DISTINCT user_id)::bigint AS c
-        FROM subscriptions
-        WHERE studio_id = ${studioId}
-          AND status IN ('ACTIVE', 'TRIALING')
+        SELECT COUNT(DISTINCT s.user_id)::bigint AS c
+        FROM subscriptions s
+        WHERE s.studio_id = ${studioId}
+          AND s.status IN ('ACTIVE', 'TRIALING')
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}
       `,
 
       this.prisma.studioMembership.count({
@@ -1092,11 +1137,12 @@ export class AnalyticsService {
       }),
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
-        SELECT COUNT(DISTINCT user_id)::bigint AS c
-        FROM subscriptions
-        WHERE studio_id = ${studioId}
-          AND status IN ('ACTIVE', 'TRIALING')
-          AND created_at >= ${weekAgo}
+        SELECT COUNT(DISTINCT s.user_id)::bigint AS c
+        FROM subscriptions s
+        WHERE s.studio_id = ${studioId}
+          AND s.status IN ('ACTIVE', 'TRIALING')
+          AND s.created_at >= ${weekAgo}
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}
       `,
     ]);
 
@@ -1261,7 +1307,7 @@ export class AnalyticsService {
       where: { id: studioId },
       select: { timezone: true },
     });
-    const timezone = studio?.timezone ?? 'UTC';
+    const timezone = assertStudioTimezone(studio?.timezone ?? 'UTC');
     const windows = financialPeriodWindows(now, timezone, period);
 
     const summarizePeriod = (
@@ -1274,6 +1320,7 @@ export class AnalyticsService {
           payment_count: bigint;
           stripe_cents: bigint;
           cash_cents: bigint;
+          other_cents: bigint;
         }[]
       >`
         SELECT
@@ -1284,7 +1331,10 @@ export class AnalyticsService {
           ), 0)::bigint AS stripe_cents,
           COALESCE(SUM(
             CASE WHEN payment_method = 'CASH' THEN amount_cents ELSE 0 END
-          ), 0)::bigint AS cash_cents
+          ), 0)::bigint AS cash_cents,
+          COALESCE(SUM(
+            CASE WHEN payment_method NOT IN ('STRIPE', 'TERMINAL', 'CASH') THEN amount_cents ELSE 0 END
+          ), 0)::bigint AS other_cents
         FROM payments
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
@@ -1299,6 +1349,8 @@ export class AnalyticsService {
       pendingCountRow,
       trendRows,
       planRows,
+      unattributedRows,
+      methodCountRows,
       currencyRow,
       enrollmentCurrencyRow,
       planCurrencyRow,
@@ -1319,7 +1371,7 @@ export class AnalyticsService {
       `,
       this.prisma.$queryRaw<{ d: Date; amount_cents: bigint; payment_count: bigint }[]>`
         SELECT
-          date_trunc('day', COALESCE(paid_at, created_at)) AS d,
+          (COALESCE(paid_at, created_at) AT TIME ZONE ${timezone})::date AS d,
           COALESCE(SUM(amount_cents), 0)::bigint AS amount_cents,
           COUNT(*)::bigint AS payment_count
         FROM payments
@@ -1364,6 +1416,44 @@ export class AnalyticsService {
         GROUP BY mp.id, mp.name
         ORDER BY revenue_cents DESC
       `,
+      this.prisma.$queryRaw<{ cents: bigint }[]>`
+        WITH pay AS (
+          SELECT user_id, SUM(amount_cents)::bigint AS cents
+          FROM payments
+          WHERE studio_id = ${studioId}
+            AND status = 'SUCCEEDED'
+            AND COALESCE(paid_at, created_at) >= ${windows.periodStart}
+            AND COALESCE(paid_at, created_at) <= ${windows.periodEnd}
+          GROUP BY user_id
+        ),
+        sub_pick AS (
+          SELECT DISTINCT ON (s.user_id)
+            s.user_id,
+            s.membership_plan_id
+          FROM subscriptions s
+          WHERE s.studio_id = ${studioId}
+          ORDER BY s.user_id,
+            CASE
+              WHEN s.status IN ('ACTIVE', 'TRIALING') THEN 0
+              WHEN s.status = 'PAST_DUE' THEN 1
+              ELSE 2
+            END,
+            s.updated_at DESC
+        )
+        SELECT COALESCE(SUM(pay.cents), 0)::bigint AS cents
+        FROM pay
+        LEFT JOIN sub_pick sp ON sp.user_id = pay.user_id
+        WHERE sp.membership_plan_id IS NULL
+      `,
+      this.prisma.$queryRaw<{ payment_method: string; payment_count: bigint }[]>`
+        SELECT payment_method, COUNT(*)::bigint AS payment_count
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${windows.periodStart}
+          AND COALESCE(paid_at, created_at) <= ${windows.periodEnd}
+        GROUP BY payment_method
+      `,
       this.prisma.payment.findFirst({
         where: { studioId, status: PaymentStatus.SUCCEEDED },
         orderBy: { createdAt: 'desc' },
@@ -1386,8 +1476,15 @@ export class AnalyticsService {
     const paymentCount = Number(cur?.payment_count ?? 0n);
     const stripeCents = Number(cur?.stripe_cents ?? 0n);
     const cashCents = Number(cur?.cash_cents ?? 0n);
+    const otherCents = Number(cur?.other_cents ?? 0n);
     const pendingCents = Number(pendingRow[0]?.total_cents ?? 0n);
     const pendingCount = Number(pendingCountRow[0]?.c ?? 0n);
+    const unattributedCents = Number(unattributedRows[0]?.cents ?? 0n);
+
+    const methodCountSum = methodCountRows.reduce(
+      (sum, r) => sum + Number(r.payment_count),
+      0,
+    );
 
     const prevTotal = Number(prev?.total_cents ?? 0n);
     const prevStripe = Number(prev?.stripe_cents ?? 0n);
@@ -1396,6 +1493,36 @@ export class AnalyticsService {
 
     const cmp = (current: number, previous: number) =>
       previous > 0 ? financialPctChange(current, previous) : null;
+
+    const collectedTrend = fillStudioLocalTrendDays(
+      trendRows,
+      windows.periodStart,
+      windows.periodEnd,
+      timezone,
+    );
+
+    const revenueByPlan = [
+      ...planRows.map((r) => ({
+        planId: r.plan_id,
+        planName: r.plan_name,
+        revenueCents: Number(r.revenue_cents),
+      })),
+      ...(unattributedCents > 0
+        ? [
+            {
+              planId: null as string | null,
+              planName: 'Sin atribuir',
+              revenueCents: unattributedCents,
+            },
+          ]
+        : []),
+    ];
+
+    const stripeVsCash = [
+      { method: 'stripe', amountCents: stripeCents },
+      { method: 'cash', amountCents: cashCents },
+      ...(otherCents > 0 ? [{ method: 'other', amountCents: otherCents }] : []),
+    ];
 
     return {
       period: {
@@ -1454,6 +1581,11 @@ export class AnalyticsService {
           comparisonPercent: cmp(cashCents, prevCash),
           available: true,
         },
+        otherCollected: {
+          cents: otherCents,
+          comparisonPercent: null,
+          available: otherCents > 0,
+        },
         paymentsCollected: {
           count: paymentCount,
           comparisonPercent: cmp(paymentCount, prevCount),
@@ -1473,21 +1605,18 @@ export class AnalyticsService {
             'Los reembolsos requieren sincronización con webhooks de Stripe.',
         },
       },
+      reconciliation: {
+        methodSplitEqualsTotal: stripeCents + cashCents + otherCents === totalCollectedCents,
+        trendAmountEqualsTotal: collectedTrend.reduce((s, r) => s + r.amountCents, 0) === totalCollectedCents,
+        trendCountEqualsTotal: collectedTrend.reduce((s, r) => s + r.paymentCount, 0) === paymentCount,
+        methodCountEqualsTotal: methodCountSum === paymentCount,
+        attributedPlusUnattributed:
+          revenueByPlan.reduce((s, r) => s + r.revenueCents, 0) === totalCollectedCents,
+      },
       charts: {
-        collectedTrend: trendRows.map((r) => ({
-          date: new Date(r.d).toISOString().split('T')[0]!,
-          amountCents: Number(r.amount_cents),
-          paymentCount: Number(r.payment_count),
-        })),
-        revenueByPlan: planRows.map((r) => ({
-          planId: r.plan_id,
-          planName: r.plan_name,
-          revenueCents: Number(r.revenue_cents),
-        })),
-        stripeVsCash: [
-          { method: 'stripe', amountCents: stripeCents },
-          { method: 'cash', amountCents: cashCents },
-        ],
+        collectedTrend,
+        revenueByPlan,
+        stripeVsCash,
       },
       generatedAt: now.toISOString(),
     };

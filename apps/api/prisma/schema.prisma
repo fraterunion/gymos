@@ -307,6 +307,8 @@ model StudioMembership {
   studioId String    @map("studio_id")
   userId   String    @map("user_id")
   role      Role
+  /// When true, user remains operational but people/activity metrics are hidden from owner Analytics.
+  excludeFromAnalytics Boolean  @default(false) @map("exclude_from_analytics")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")

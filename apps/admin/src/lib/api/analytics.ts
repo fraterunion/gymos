@@ -31,13 +31,21 @@ export type FinancialSummaryDto = {
     taxes: FinancialKpiValue;
     stripeCollected: FinancialKpiValue;
     cashCollected: FinancialKpiValue;
+    otherCollected?: FinancialKpiValue;
     paymentsCollected: FinancialKpiValue;
     pending: FinancialKpiValue;
     refunds: FinancialKpiValue;
   };
+  reconciliation?: {
+    methodSplitEqualsTotal: boolean;
+    trendAmountEqualsTotal: boolean;
+    trendCountEqualsTotal: boolean;
+    methodCountEqualsTotal: boolean;
+    attributedPlusUnattributed: boolean;
+  };
   charts: {
     collectedTrend: { date: string; amountCents: number; paymentCount: number }[];
-    revenueByPlan: { planId: string; planName: string; revenueCents: number }[];
+    revenueByPlan: { planId: string | null; planName: string; revenueCents: number }[];
     stripeVsCash: { method: string; amountCents: number }[];
   };
   generatedAt: string;
@@ -64,6 +72,7 @@ export type OverviewDto = {
     lastName: string;
     classCount: number;
   } | null;
+  periodDays?: number;
   generatedAt: string;
 };
 
@@ -74,6 +83,8 @@ export type TrendsDto = {
 };
 
 export type ClassBreakdownDto = {
+  periodDays?: number;
+  timezone?: string;
   topTemplates: {
     templateId: string;
     name: string;
@@ -168,8 +179,14 @@ export async function fetchAnalyticsFinancial(
   );
 }
 
-export async function fetchAnalyticsOverview(studioId: string): Promise<OverviewDto> {
-  return apiRequest<OverviewDto>(`/studios/${studioId}/analytics/overview`, { method: "GET" });
+export async function fetchAnalyticsOverview(
+  studioId: string,
+  days = 30,
+): Promise<OverviewDto> {
+  return apiRequest<OverviewDto>(
+    `/studios/${studioId}/analytics/overview?days=${days}`,
+    { method: "GET" },
+  );
 }
 
 export async function fetchAnalyticsTrends(studioId: string, days: number): Promise<TrendsDto> {
@@ -189,10 +206,14 @@ export async function fetchAnalyticsClassBreakdown(
   );
 }
 
-export async function fetchAnalyticsBusiness(studioId: string): Promise<BusinessAnalyticsDto> {
-  return apiRequest<BusinessAnalyticsDto>(`/studios/${studioId}/analytics/business`, {
-    method: "GET",
-  });
+export async function fetchAnalyticsBusiness(
+  studioId: string,
+  days = 30,
+): Promise<BusinessAnalyticsDto> {
+  return apiRequest<BusinessAnalyticsDto>(
+    `/studios/${studioId}/analytics/business?days=${days}`,
+    { method: "GET" },
+  );
 }
 
 export async function fetchAnalyticsBriefing(studioId: string): Promise<OwnerBriefingDto> {

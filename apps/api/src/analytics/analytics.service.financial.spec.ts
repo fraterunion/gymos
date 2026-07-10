@@ -26,6 +26,7 @@ type PeriodSummary = {
   payment_count: bigint;
   stripe_cents: bigint;
   cash_cents: bigint;
+  other_cents?: bigint;
 };
 
 function setupFinancialMock(
@@ -35,6 +36,9 @@ function setupFinancialMock(
     prev?: PeriodSummary;
     pending?: { total_cents: bigint };
     pendingCount?: { c: bigint };
+    unattributed?: { cents: bigint };
+    methodCounts?: { payment_method: string; payment_count: bigint }[];
+    trendRows?: { d: Date | string; amount_cents: bigint; payment_count: bigint }[];
   } = {},
 ) {
   const current = overrides.current ?? {
@@ -42,12 +46,14 @@ function setupFinancialMock(
     payment_count: 12n,
     stripe_cents: 120_000n,
     cash_cents: 30_000n,
+    other_cents: 0n,
   };
   const prev = overrides.prev ?? {
     total_cents: 100_000n,
     payment_count: 8n,
     stripe_cents: 80_000n,
     cash_cents: 20_000n,
+    other_cents: 0n,
   };
 
   queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -56,6 +62,7 @@ function setupFinancialMock(
     if (
       q.includes('payment_count') &&
       q.includes('stripe_cents') &&
+      q.includes('other_cents') &&
       hasDate(values, MONTH_START) &&
       hasDate(values, AS_OF)
     ) {
@@ -64,6 +71,7 @@ function setupFinancialMock(
     if (
       q.includes('payment_count') &&
       q.includes('stripe_cents') &&
+      q.includes('other_cents') &&
       hasDate(values, PREV_MONTH_START) &&
       hasDate(values, PREV_MONTH_END)
     ) {
@@ -75,8 +83,19 @@ function setupFinancialMock(
     if (q.includes("status = 'PENDING'")) {
       return Promise.resolve([overrides.pending ?? { total_cents: 5_000n }]);
     }
-    if (q.includes('date_trunc')) {
-      return Promise.resolve([]);
+    if (q.includes('AT TIME ZONE') && q.includes('::date')) {
+      return Promise.resolve(overrides.trendRows ?? []);
+    }
+    if (q.includes('membership_plan_id IS NULL')) {
+      return Promise.resolve([overrides.unattributed ?? { cents: 0n }]);
+    }
+    if (q.includes('GROUP BY payment_method')) {
+      return Promise.resolve(
+        overrides.methodCounts ?? [
+          { payment_method: 'STRIPE', payment_count: 10n },
+          { payment_method: 'CASH', payment_count: 2n },
+        ],
+      );
     }
     if (q.includes('plan_id')) {
       return Promise.resolve([]);
@@ -204,5 +223,52 @@ describe('AnalyticsService.getFinancialSummary', () => {
 
     const result = await service.getFinancialSummary(STUDIO_A, 'month');
     expect(result.currency).toBe('mxn');
+  });
+
+  it('reconciles total = stripe + cash + other', async () => {
+    setupFinancialMock(queryRaw, {
+      current: {
+        total_cents: 150_000n,
+        payment_count: 12n,
+        stripe_cents: 100_000n,
+        cash_cents: 40_000n,
+        other_cents: 10_000n,
+      },
+      trendRows: [
+        { d: '2026-07-01', amount_cents: 100_000n, payment_count: 8n },
+        { d: '2026-07-10', amount_cents: 50_000n, payment_count: 4n },
+      ],
+      methodCounts: [
+        { payment_method: 'STRIPE', payment_count: 8n },
+        { payment_method: 'CASH', payment_count: 3n },
+        { payment_method: 'TERMINAL', payment_count: 1n },
+      ],
+    });
+
+    const result = await service.getFinancialSummary(STUDIO_A, 'month');
+    expect(result.reconciliation?.methodSplitEqualsTotal).toBe(true);
+    expect(result.reconciliation?.trendAmountEqualsTotal).toBe(true);
+    expect(result.reconciliation?.trendCountEqualsTotal).toBe(true);
+    expect(result.reconciliation?.methodCountEqualsTotal).toBe(true);
+    expect(result.charts.stripeVsCash).toEqual(
+      expect.arrayContaining([
+        { method: 'stripe', amountCents: 100_000 },
+        { method: 'cash', amountCents: 40_000 },
+        { method: 'other', amountCents: 10_000 },
+      ]),
+    );
+  });
+
+  it('includes Sin atribuir when unattributed revenue exists', async () => {
+    setupFinancialMock(queryRaw, {
+      unattributed: { cents: 25_000n },
+    });
+
+    const result = await service.getFinancialSummary(STUDIO_A, 'month');
+    expect(result.charts.revenueByPlan).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ planName: 'Sin atribuir', revenueCents: 25_000 }),
+      ]),
+    );
   });
 });

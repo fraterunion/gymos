@@ -33,6 +33,8 @@
     "seed:ares-waiver": "ts-node --project tsconfig.seed.json prisma/seed-ares-waiver.ts",
     "migrate:ares-1.3-schedule": "ts-node --project tsconfig.seed.json prisma/migrate-ares-1.3-schedule.ts",
     "diagnose:ares-demo": "ts-node --project tsconfig.seed.json prisma/diagnose-ares-demo.ts",
+    "audit:ares-analytics": "ts-node --project tsconfig.seed.json prisma/audit-ares-analytics.ts",
+    "backfill:ares-review-analytics-exclusion": "ts-node --project tsconfig.seed.json prisma/backfill-ares-review-analytics-exclusion.ts",
     "cleanup:ares-demo": "ts-node --project tsconfig.seed.json prisma/cleanup-ares-demo.ts"
   },
   "prisma": {

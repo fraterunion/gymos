@@ -19,8 +19,11 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('overview')
-  getOverview(@Param('studioId') studioId: string) {
-    return this.analyticsService.getOverview(studioId);
+  getOverview(
+    @Param('studioId') studioId: string,
+    @Query('days') days?: string,
+  ) {
+    return this.analyticsService.getOverview(studioId, parseDays(days, 30));
   }
 
   @Get('trends')
@@ -40,8 +43,11 @@ export class AnalyticsController {
   }
 
   @Get('business')
-  getBusiness(@Param('studioId') studioId: string) {
-    return this.analyticsService.getBusinessAnalytics(studioId);
+  getBusiness(
+    @Param('studioId') studioId: string,
+    @Query('days') days?: string,
+  ) {
+    return this.analyticsService.getBusinessAnalytics(studioId, parseDays(days, 30));
   }
 
   @Get('financial')

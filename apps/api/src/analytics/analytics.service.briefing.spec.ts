@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PaymentStatus, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from './analytics.service';
 
@@ -13,7 +13,6 @@ const PREV_MONTH_START = new Date('2026-06-01T00:00:00.000Z');
 const PREV_PERIOD_END = new Date('2026-06-11T00:00:00.000Z');
 const YESTERDAY_START = new Date('2026-07-09T00:00:00.000Z');
 const TODAY_START = new Date('2026-07-10T00:00:00.000Z');
-const TOMORROW_START = new Date('2026-07-11T00:00:00.000Z');
 const YESTERDAY_SAME_POINT_END = new Date(
   YESTERDAY_START.getTime() + (AS_OF.getTime() - TODAY_START.getTime()),
 );
@@ -103,14 +102,14 @@ function setupQueryRawMock(queryRaw: jest.Mock, overrides: QueryResponses = {}) 
       return Promise.resolve([responses.paymentsSinceYesterday]);
     }
     if (
-      q.includes('COUNT(DISTINCT user_id)') &&
+      q.includes('COUNT(DISTINCT s.user_id)') &&
       q.includes("status IN ('ACTIVE', 'TRIALING')") &&
       q.includes('created_at >=')
     ) {
       return Promise.resolve([responses.newPayingWeek]);
     }
     if (
-      q.includes('COUNT(DISTINCT user_id)') &&
+      q.includes('COUNT(DISTINCT s.user_id)') &&
       q.includes("status IN ('ACTIVE', 'TRIALING')") &&
       !q.includes('created_at')
     ) {
@@ -214,7 +213,7 @@ describe('AnalyticsService.getOwnerBriefing', () => {
 
     const payingCall = queryRaw.mock.calls.find(
       (call) =>
-        sql(call[0]).includes('COUNT(DISTINCT user_id)') &&
+        sql(call[0]).includes('COUNT(DISTINCT s.user_id)') &&
         sql(call[0]).includes("status IN ('ACTIVE', 'TRIALING')") &&
         !sql(call[0]).includes('created_at'),
     );
@@ -231,7 +230,7 @@ describe('AnalyticsService.getOwnerBriefing', () => {
     const newWeekCall = queryRaw.mock.calls.find((call) =>
       sql(call[0]).includes('created_at >='),
     );
-    expect(sql(newWeekCall![0])).toContain('COUNT(DISTINCT user_id)');
+    expect(sql(newWeekCall![0])).toContain('COUNT(DISTINCT s.user_id)');
   });
 
   it('deduplicates renewalsDueThisWeek by distinct user_id', async () => {
@@ -244,7 +243,7 @@ describe('AnalyticsService.getOwnerBriefing', () => {
     const expiringCall = queryRaw.mock.calls.find((call) =>
       sql(call[0]).includes('current_period_end'),
     );
-    expect(sql(expiringCall![0])).toContain('COUNT(DISTINCT user_id)');
+    expect(sql(expiringCall![0])).toContain('COUNT(DISTINCT s.user_id)');
     expect(expiringCall!.slice(1)).toContainEqual(WEEK_AHEAD);
   });
 
@@ -419,10 +418,10 @@ describe('AnalyticsService.getOwnerBriefing — distinct paying members', () => 
       if (q.includes('waiver_acceptances')) {
         return Promise.resolve([{ c: 0n }]);
       }
-      if (q.includes('COUNT(DISTINCT user_id)') && q.includes('created_at')) {
+      if (q.includes('COUNT(DISTINCT s.user_id)') && q.includes('created_at')) {
         return Promise.resolve([{ c: 0n }]);
       }
-      if (q.includes('COUNT(DISTINCT user_id)')) {
+      if (q.includes('COUNT(DISTINCT s.user_id)')) {
         return Promise.resolve([{ c: 1n }]);
       }
       if (q.includes('total_cents')) {
@@ -455,7 +454,7 @@ describe('AnalyticsService.getOwnerBriefing — distinct paying members', () => 
   it('counts two distinct users twice', async () => {
     const queryRaw = jest.fn().mockImplementation((strings: TemplateStringsArray) => {
       const q = sql(strings);
-      if (q.includes('COUNT(DISTINCT user_id)') && !q.includes('created_at')) {
+      if (q.includes('COUNT(DISTINCT s.user_id)') && !q.includes('created_at')) {
         return Promise.resolve([{ c: 2n }]);
       }
       if (q.includes('payment_count')) {
@@ -506,7 +505,7 @@ describe('AnalyticsService.getOwnerBriefing — distinct paying members', () => 
 
     const payingCall = queryRaw.mock.calls.find(
       (call) =>
-        sql(call[0]).includes('COUNT(DISTINCT user_id)') &&
+        sql(call[0]).includes('COUNT(DISTINCT s.user_id)') &&
         !sql(call[0]).includes('created_at'),
     );
     expect(payingCall!.slice(1)).toContain(STUDIO_B);
@@ -534,7 +533,7 @@ describe('AnalyticsService.getOwnerBriefing — distinct paying members', () => 
 
     const payingCall = queryRaw.mock.calls.find(
       (call) =>
-        sql(call[0]).includes('COUNT(DISTINCT user_id)') &&
+        sql(call[0]).includes('COUNT(DISTINCT s.user_id)') &&
         sql(call[0]).includes("status IN ('ACTIVE', 'TRIALING')"),
     );
     expect(sql(payingCall![0])).not.toContain('PAST_DUE');
