@@ -3,6 +3,8 @@ import {
   BillingInterval,
   BookingStatus,
   ClassStatus,
+  EnrollmentFeeStatus,
+  PaymentMethod,
   PaymentStatus,
   Role,
   SubscriptionStatus,
@@ -27,6 +29,11 @@ function isDemoStripePayment(pi: string | null, inv: string | null): boolean {
   const p = (pi ?? '').toLowerCase();
   const i = (inv ?? '').toLowerCase();
   return p.includes('demo') || i.includes('demo') || (p === '' && i === '');
+}
+
+function pctChange(current: number, previous: number): number | null {
+  if (previous === 0) return current > 0 ? null : 0;
+  return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
 @Injectable()
@@ -316,6 +323,15 @@ export class AnalyticsService {
   async getBusinessAnalytics(studioId: string) {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const tomorrowStart = new Date(now);
+    tomorrowStart.setUTCHours(0, 0, 0, 0);
+    tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
+    const todayStart = new Date(tomorrowStart);
+    todayStart.setUTCDate(todayStart.getUTCDate() - 1);
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setUTCDate(yesterdayStart.getUTCDate() - 1);
+    const expiringBy = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     const [
       subscriptionStatusRows,
@@ -330,6 +346,25 @@ export class AnalyticsService {
       bookingMixRows,
       revenueByPlanRows,
       unattributedRow,
+      revenueTodayRow,
+      revenueYesterdayRow,
+      revenueByMethodRows,
+      pendingRevenueRow,
+      refundedRevenueRow,
+      dayPassRevenueRow,
+      newMembers30Row,
+      newMembersPrev30Row,
+      newSubscriptionsTodayRow,
+      newSubscriptions30Row,
+      membershipSalesTodayRow,
+      enrollmentPaid30Row,
+      foundersCountRow,
+      inactiveMembersRow,
+      waiversPendingRow,
+      expiringMembershipsRow,
+      attendances30Row,
+      failedPayments30Row,
+      coachUtilizationRow,
     ] = await Promise.all([
       this.prisma.subscription.groupBy({
         by: ['status'],
@@ -497,6 +532,187 @@ export class AnalyticsService {
         LEFT JOIN sub_pick sp ON sp.user_id = pay.user_id
         WHERE sp.membership_plan_id IS NULL
       `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND created_at >= ${todayStart}
+          AND created_at < ${tomorrowStart}
+      `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND created_at >= ${yesterdayStart}
+          AND created_at < ${todayStart}
+      `,
+
+      this.prisma.$queryRaw<{ payment_method: string; total_cents: bigint }[]>`
+        SELECT payment_method, COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND created_at >= ${thirtyDaysAgo}
+        GROUP BY payment_method
+      `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'PENDING'
+      `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status IN ('REFUNDED', 'PARTIALLY_REFUNDED')
+          AND created_at >= ${thirtyDaysAgo}
+      `,
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(p.amount_cents), 0)::bigint AS total_cents
+        FROM payments p
+        INNER JOIN day_passes dp
+          ON dp.stripe_payment_intent_id = p.stripe_payment_intent_id
+         AND dp.studio_id = p.studio_id
+        WHERE p.studio_id = ${studioId}
+          AND p.status = 'SUCCEEDED'
+          AND p.created_at >= ${thirtyDaysAgo}
+      `,
+
+      this.prisma.studioMembership.count({
+        where: {
+          studioId,
+          role: Role.MEMBER,
+          deletedAt: null,
+          createdAt: { gte: thirtyDaysAgo },
+          user: { deletedAt: null },
+        },
+      }),
+
+      this.prisma.studioMembership.count({
+        where: {
+          studioId,
+          role: Role.MEMBER,
+          deletedAt: null,
+          createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo },
+          user: { deletedAt: null },
+        },
+      }),
+
+      this.prisma.subscription.count({
+        where: {
+          studioId,
+          createdAt: { gte: todayStart, lt: tomorrowStart },
+        },
+      }),
+
+      this.prisma.subscription.count({
+        where: {
+          studioId,
+          createdAt: { gte: thirtyDaysAgo },
+        },
+      }),
+
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND membership_plan_id IS NOT NULL
+          AND created_at >= ${todayStart}
+          AND created_at < ${tomorrowStart}
+      `,
+
+      this.prisma.memberEnrollment.count({
+        where: {
+          studioId,
+          status: EnrollmentFeeStatus.PAID,
+          finalizedAt: { gte: thirtyDaysAgo },
+        },
+      }),
+
+      this.prisma.memberEnrollment.count({
+        where: {
+          studioId,
+          founderNumber: { not: null },
+        },
+      }),
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(*)::bigint AS c
+        FROM studio_memberships sm
+        WHERE sm.studio_id = ${studioId}
+          AND sm.role = 'MEMBER'
+          AND sm.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM attendances a
+            WHERE a.studio_id = sm.studio_id
+              AND a.user_id = sm.user_id
+              AND a.checked_in_at >= ${thirtyDaysAgo}
+          )
+      `,
+
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(*)::bigint AS c
+        FROM studio_memberships sm
+        WHERE sm.studio_id = ${studioId}
+          AND sm.role = 'MEMBER'
+          AND sm.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM studio_waiver_documents swd
+            WHERE swd.studio_id = sm.studio_id
+              AND swd.is_active = true
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM waiver_acceptances wa
+            INNER JOIN studio_waiver_documents swd
+              ON swd.id = wa.waiver_document_id
+             AND swd.studio_id = wa.studio_id
+             AND swd.is_active = true
+            WHERE wa.studio_id = sm.studio_id
+              AND wa.user_id = sm.user_id
+          )
+      `,
+
+      this.prisma.subscription.count({
+        where: {
+          studioId,
+          status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+          currentPeriodEnd: { gte: now, lte: expiringBy },
+        },
+      }),
+
+      this.prisma.attendance.count({
+        where: { studioId, checkedInAt: { gte: thirtyDaysAgo } },
+      }),
+
+      this.prisma.payment.count({
+        where: {
+          studioId,
+          status: PaymentStatus.FAILED,
+          createdAt: { gte: thirtyDaysAgo },
+        },
+      }),
+
+      this.prisma.$queryRaw<{ with_coach: bigint; total: bigint }[]>`
+        SELECT
+          COUNT(*) FILTER (WHERE instructor_id IS NOT NULL) AS with_coach,
+          COUNT(*) AS total
+        FROM scheduled_classes
+        WHERE studio_id = ${studioId}
+          AND starts_at >= ${thirtyDaysAgo}
+          AND status != 'CANCELLED'
+      `,
     ]);
 
     const statusCounts = Object.fromEntries(
@@ -519,6 +735,8 @@ export class AnalyticsService {
     const revenueLast30DaysCents = Number(revenueTotalRow[0]?.total_cents ?? 0n);
     const denomMembers = Math.max(1, memberCount);
     const averageRevenuePerMemberCents = Math.round(revenueLast30DaysCents / denomMembers);
+    /** Registered gym members: StudioMembership rows with role MEMBER, not deleted, user not deleted. Not subscription status. */
+    const memberCountForArpu = memberCount;
 
     const membersWithTwoPlusBookingsLast30Days = Number(repeatBookersRow[0]?.c ?? 0n);
     const cancellationsLast30Days = Number(cancellations30Row[0]?.c ?? 0n);
@@ -572,6 +790,46 @@ export class AnalyticsService {
       else dataQuality = 'mixed';
     }
 
+    const revenueByMethod = Object.fromEntries(
+      revenueByMethodRows.map((r) => [r.payment_method, Number(r.total_cents)]),
+    ) as Partial<Record<PaymentMethod, number>>;
+
+    const grossRevenueTodayCents = Number(revenueTodayRow[0]?.total_cents ?? 0n);
+    const grossRevenueYesterdayCents = Number(revenueYesterdayRow[0]?.total_cents ?? 0n);
+    const cashRevenueLast30DaysCents = revenueByMethod[PaymentMethod.CASH] ?? 0;
+    const stripeRevenueLast30DaysCents =
+      (revenueByMethod[PaymentMethod.STRIPE] ?? 0) + (revenueByMethod[PaymentMethod.TERMINAL] ?? 0);
+    const pendingRevenueCents = Number(pendingRevenueRow[0]?.total_cents ?? 0n);
+    const refundedRevenueCents = Number(refundedRevenueRow[0]?.total_cents ?? 0n);
+    const dayPassRevenueLast30DaysCents = Number(dayPassRevenueRow[0]?.total_cents ?? 0n);
+    const newMembersLast30Days = newMembers30Row;
+    const newMembersPrevious30Days = newMembersPrev30Row;
+    const membershipGrowthPercent = pctChange(newMembersLast30Days, newMembersPrevious30Days);
+    const estimatedArrCents = estimatedMrrCents * 12;
+    const averageMembershipPriceCents =
+      mrrSubscriptions.length > 0
+        ? Math.round(
+            mrrSubscriptions.reduce((sum, s) => sum + s.membershipPlan.priceCents, 0) /
+              mrrSubscriptions.length,
+          )
+        : 0;
+    const topSellingPlan =
+      revenueByPlanRows.length > 0
+        ? {
+            planId: revenueByPlanRows[0]!.plan_id,
+            planName: revenueByPlanRows[0]!.plan_name,
+            revenueCents: Number(revenueByPlanRows[0]!.revenue_cents),
+          }
+        : null;
+    const coachUtilRow = coachUtilizationRow[0];
+    const coachUtilizationPercent =
+      coachUtilRow && Number(coachUtilRow.total) > 0
+        ? Math.round((Number(coachUtilRow.with_coach) / Number(coachUtilRow.total)) * 1000) / 10
+        : 0;
+    const attendancesLast30Days = attendances30Row;
+    const averageVisitsPerMember30d =
+      memberCount > 0 ? Math.round((attendancesLast30Days / memberCount) * 10) / 10 : 0;
+
     return {
       period: {
         days: 30,
@@ -588,7 +846,7 @@ export class AnalyticsService {
       cancellationsLast30Days,
       revenueLast30DaysCents,
       averageRevenuePerMemberCents,
-      memberCountForArpu: memberCount,
+      memberCountForArpu,
       membersWithTwoPlusBookingsLast30Days,
       repeatBookingRatePercent,
       bookingFrequencyBuckets: [
@@ -603,6 +861,34 @@ export class AnalyticsService {
         revenueCents: Number(r.revenue_cents),
       })),
       unattributedRevenueCents: Number(unattributedRow[0]?.cents ?? 0n),
+      grossRevenueTodayCents,
+      grossRevenueYesterdayCents,
+      revenueTodayVsYesterdayPercent: pctChange(
+        grossRevenueTodayCents,
+        grossRevenueYesterdayCents,
+      ),
+      cashRevenueLast30DaysCents,
+      stripeRevenueLast30DaysCents,
+      pendingRevenueCents,
+      refundedRevenueCents,
+      dayPassRevenueLast30DaysCents,
+      newMembersLast30Days,
+      newMembersPrevious30Days,
+      membershipGrowthPercent,
+      estimatedArrCents,
+      averageMembershipPriceCents,
+      newSubscriptionsToday: newSubscriptionsTodayRow,
+      newSubscriptionsLast30Days: newSubscriptions30Row,
+      membershipSalesRevenueTodayCents: Number(membershipSalesTodayRow[0]?.total_cents ?? 0n),
+      enrollmentFeesPaidCount30d: enrollmentPaid30Row,
+      foundersEnrolledCount: foundersCountRow,
+      topSellingPlan,
+      membersInactive30PlusDays: Number(inactiveMembersRow[0]?.c ?? 0n),
+      waiversPendingCount: Number(waiversPendingRow[0]?.c ?? 0n),
+      expiringMembershipsNext30Days: expiringMembershipsRow,
+      averageVisitsPerMember30d,
+      failedPaymentsLast30Days: failedPayments30Row,
+      coachUtilizationPercent,
       generatedAt: now.toISOString(),
     };
   }
