@@ -57,6 +57,7 @@ export type MemberListResponse = {
 
 export type MemberListQuery = {
   search?: string;
+  role?: MemberRole;
   subStatus?: SubStatus;
   hasNoShows?: boolean;
   sortBy?: "joinDate" | "lastAttendance" | "totalBookings" | "name";
@@ -260,6 +261,7 @@ export async function fetchMembers(
 ): Promise<MemberListResponse> {
   const params = new URLSearchParams();
   if (query.search) params.set("search", query.search);
+  if (query.role) params.set("role", query.role);
   if (query.subStatus) params.set("subStatus", query.subStatus);
   if (query.hasNoShows) params.set("hasNoShows", "true");
   if (query.sortBy) params.set("sortBy", query.sortBy);

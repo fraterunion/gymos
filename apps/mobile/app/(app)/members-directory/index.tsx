@@ -229,16 +229,16 @@ export default function MembersDirectoryScreen() {
 
       try {
         const res = await fetchMembers(studioId, {
+          role: 'MEMBER',
           search: debouncedSearch || undefined,
           page: opts.page,
           limit: PAGE_SIZE,
           sortBy: debouncedSearch ? 'name' : 'joinDate',
           sortDir: debouncedSearch ? 'asc' : 'desc',
         });
-        const gymMembers = res.data.filter((m) => m.role === 'MEMBER');
         setHasMore(opts.page * PAGE_SIZE < res.total);
         setPage(opts.page);
-        setMembers((prev) => (opts.append ? [...prev, ...gymMembers] : gymMembers));
+        setMembers((prev) => (opts.append ? [...prev, ...res.data] : res.data));
       } catch (e) {
         setError(userFacingApiMessage(e, 'No pudimos cargar los miembros'));
         if (!opts.append) {

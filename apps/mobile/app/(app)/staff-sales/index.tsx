@@ -595,8 +595,12 @@ export default function StaffSalesScreen() {
     setError(null);
     setHasSearched(true);
     try {
-      const res = await fetchMembers(studioId, { search: search.trim(), limit: 20 });
-      setSearchResults(res.data.filter((m) => m.role === 'MEMBER'));
+      const res = await fetchMembers(studioId, {
+        role: 'MEMBER',
+        search: search.trim(),
+        limit: 20,
+      });
+      setSearchResults(res.data);
     } catch (e) {
       setError(userFacingApiMessage(e, 'Error al buscar clientes'));
     } finally {
@@ -783,6 +787,7 @@ export default function StaffSalesScreen() {
     setMembershipCheckHint(null);
     try {
       const res = await fetchMembers(studioId, {
+        role: 'MEMBER',
         search: selectedMember.user.email,
         limit: 5,
       });

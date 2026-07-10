@@ -88,6 +88,7 @@ export class MembersService {
       studioId,
       deletedAt: null,
       user: userFilter,
+      ...(query.role ? { role: query.role } : {}),
     };
 
     let orderBy: Prisma.StudioMembershipOrderByWithRelationInput[] = [];

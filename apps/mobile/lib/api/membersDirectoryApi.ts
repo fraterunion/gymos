@@ -34,10 +34,19 @@ export type MemberListResponse = {
   limit: number;
 };
 
+export type StudioMembershipRole =
+  | 'MEMBER'
+  | 'INSTRUCTOR'
+  | 'STAFF'
+  | 'FRONT_DESK'
+  | 'ADMIN'
+  | 'OWNER';
+
 export async function fetchMembers(
   studioId: string,
   query: {
     search?: string;
+    role?: StudioMembershipRole;
     limit?: number;
     page?: number;
     sortBy?: 'joinDate' | 'lastAttendance' | 'totalBookings' | 'name';
@@ -46,6 +55,7 @@ export async function fetchMembers(
 ): Promise<MemberListResponse> {
   const params = new URLSearchParams();
   if (query.search) params.set('search', query.search);
+  if (query.role) params.set('role', query.role);
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.page != null) params.set('page', String(query.page));
   if (query.sortBy) params.set('sortBy', query.sortBy);

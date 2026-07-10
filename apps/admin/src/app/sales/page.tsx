@@ -133,8 +133,12 @@ export default function WalkInSalesPage() {
     setSearchLoading(true);
     setError(null);
     try {
-      const res = await fetchMembers(selectedStudioId, { search: search.trim(), limit: 20 });
-      setSearchResults(res.data.filter((m) => m.role === "MEMBER"));
+      const res = await fetchMembers(selectedStudioId, {
+        role: "MEMBER",
+        search: search.trim(),
+        limit: 20,
+      });
+      setSearchResults(res.data);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Error al buscar clientes");
     } finally {

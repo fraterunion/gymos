@@ -140,6 +140,7 @@ export default function MembersPage() {
     setError(null);
     try {
       const res = await fetchMembers(selectedStudioId, {
+        role: "MEMBER",
         search: debouncedSearch || undefined,
         subStatus: (subStatus as SubStatus) || undefined,
         hasNoShows: hasNoShows || undefined,
