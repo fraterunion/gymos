@@ -940,7 +940,7 @@ export class AnalyticsService {
     const timezone = studio?.timezone ?? 'UTC';
 
     const { monthStart, prevMonthStart, prevPeriodEnd } = monthComparisonWindows(now, timezone);
-    const { todayStart, tomorrowStart, yesterdayStart, weekAgo, weekAhead } = dayWindows(
+    const { todayStart, tomorrowStart, yesterdayStart, yesterdaySamePointEnd, weekAgo, weekAhead } = dayWindows(
       now,
       timezone,
     );
@@ -993,7 +993,7 @@ export class AnalyticsService {
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
           AND COALESCE(paid_at, created_at) >= ${todayStart}
-          AND COALESCE(paid_at, created_at) < ${tomorrowStart}
+          AND COALESCE(paid_at, created_at) <= ${now}
       `,
 
       this.prisma.$queryRaw<{ total_cents: bigint }[]>`
@@ -1002,7 +1002,7 @@ export class AnalyticsService {
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
           AND COALESCE(paid_at, created_at) >= ${yesterdayStart}
-          AND COALESCE(paid_at, created_at) < ${todayStart}
+          AND COALESCE(paid_at, created_at) < ${yesterdaySamePointEnd}
       `,
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
@@ -1110,6 +1110,9 @@ export class AnalyticsService {
         ? briefingPctChange(grossRevenueTodayCents, grossRevenueYesterdayCents)
         : null;
 
+    const fairIntradayRevenueComparison =
+      grossRevenueYesterdayCents > 0 && revenueVsYesterdayPercent != null;
+
     const pastDueCount = Number(pastDueRow[0]?.c ?? 0n);
     const expiringThisWeek = Number(expiringThisWeekRow[0]?.c ?? 0n);
     const waiversPendingCount = Number(waiversPendingRow[0]?.c ?? 0n);
@@ -1197,14 +1200,13 @@ export class AnalyticsService {
     }
 
     if (
-      revenueVsYesterdayPercent != null &&
-      grossRevenueYesterdayCents > 0 &&
+      fairIntradayRevenueComparison &&
       grossRevenueTodayCents !== grossRevenueYesterdayCents
     ) {
       const sign = revenueVsYesterdayPercent >= 0 ? '+' : '';
       whatChanged.push({
         id: 'revenue-vs-yesterday',
-        label: `Revenue ${sign}${revenueVsYesterdayPercent}% vs yesterday`,
+        label: `Revenue ${sign}${revenueVsYesterdayPercent}% vs yesterday (same time)`,
       });
     }
 

@@ -53,6 +53,7 @@ describe('owner-briefing.utils', () => {
       expect(d.todayStart.toISOString()).toBe('2026-07-10T00:00:00.000Z');
       expect(d.tomorrowStart.toISOString()).toBe('2026-07-11T00:00:00.000Z');
       expect(d.yesterdayStart.toISOString()).toBe('2026-07-09T00:00:00.000Z');
+      expect(d.yesterdaySamePointEnd.toISOString()).toBe('2026-07-09T14:00:00.000Z');
     });
 
     it('builds studio-local day boundaries for America/Mexico_City', () => {

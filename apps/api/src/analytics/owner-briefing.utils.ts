@@ -10,7 +10,7 @@
  *
  * Time windows (studio-local calendar via studio.timezone IANA string):
  * - This month: local month start → now
- * - Today: local today 00:00 → local tomorrow 00:00
+ * - Today (intraday): local today 00:00 → now; yesterday comparison uses the same elapsed window
  * - Since yesterday: local yesterday 00:00 → now
  * - This week: rolling 7×24h ending at now (for new paying members)
  */
@@ -62,7 +62,10 @@ export function dayWindows(now: Date, timezone: string) {
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const weekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  return { todayStart, tomorrowStart, yesterdayStart, weekAgo, weekAhead };
+  const elapsedTodayMs = now.getTime() - todayStart.getTime();
+  const yesterdaySamePointEnd = new Date(yesterdayStart.getTime() + elapsedTodayMs);
+
+  return { todayStart, tomorrowStart, yesterdayStart, yesterdaySamePointEnd, weekAgo, weekAhead };
 }
 
 export type BriefingDelight =

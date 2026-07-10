@@ -249,15 +249,15 @@ function ScheduleModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
+        className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+          <h2 className="text-lg font-semibold text-zinc-900">
             {modal.type === "edit" ? "Edit class" : "Schedule a class"}
           </h2>
           {isCancelled ? (
-            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700 dark:bg-red-900/50 dark:text-red-300">
+            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">
               Cancelled
             </span>
           ) : null}
@@ -265,11 +265,11 @@ function ScheduleModal({
 
         {showCancelConfirm ? (
           <div className="mt-5 space-y-4">
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            <p className="text-sm text-zinc-600">
               Cancel this scheduled class? This cannot be undone. Bookings will be affected.
             </p>
             <div>
-              <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              <label className="block text-xs font-medium text-zinc-700">
                 Reason (optional)
               </label>
               <input
@@ -278,11 +278,11 @@ function ScheduleModal({
                 value={cancelReason}
                 onChange={(e) => setCancelReason(e.target.value)}
                 placeholder="e.g. Instructor unavailable"
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
               />
             </div>
             {error ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                 {error}
               </p>
             ) : null}
@@ -290,7 +290,7 @@ function ScheduleModal({
               <button
                 type="button"
                 onClick={() => setShowCancelConfirm(false)}
-                className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
               >
                 Back
               </button>
@@ -305,11 +305,11 @@ function ScheduleModal({
             </div>
           </div>
         ) : modal.type === "create" && !hasTemplates ? (
-          <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/50 dark:bg-amber-950/30">
-            <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+          <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-medium text-amber-900">
               No class types yet
             </p>
-            <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+            <p className="mt-1 text-sm text-amber-700">
               You need at least one class type before you can schedule a class.
             </p>
             <div className="mt-3 flex gap-3">
@@ -323,7 +323,7 @@ function ScheduleModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                className="rounded-lg border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
               >
                 Close
               </button>
@@ -334,14 +334,14 @@ function ScheduleModal({
             {modal.type === "create" ? (
               <div className="space-y-2">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  <label className="block text-xs font-medium text-zinc-700">
                     Class type
                   </label>
                   <select
                     required
                     value={form.templateId}
                     onChange={(e) => handleTemplateChange(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
                   >
                     {!form.templateId && (
                       <option value="" disabled>
@@ -356,7 +356,7 @@ function ScheduleModal({
                   </select>
                 </div>
                 {selectedTemplate && (selectedTemplate.description || selectedTemplate.category || selectedTemplate.intensityLevel || selectedTemplate.thumbnailImageUrl) ? (
-                  <div className="flex gap-3 rounded-xl border border-zinc-100 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-800/50">
+                  <div className="flex gap-3 rounded-xl border border-zinc-100 bg-zinc-50 p-3">
                     {selectedTemplate.thumbnailImageUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -368,28 +368,28 @@ function ScheduleModal({
                     <div className="min-w-0">
                       <div className="flex flex-wrap gap-1">
                         {selectedTemplate.category ? (
-                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
                             {selectedTemplate.category}
                           </span>
                         ) : null}
                         {selectedTemplate.intensityLevel ? (
-                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
                             {selectedTemplate.intensityLevel}
                           </span>
                         ) : null}
                         {selectedTemplate.difficultyLabel ? (
-                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
                             {selectedTemplate.difficultyLabel}
                           </span>
                         ) : null}
                       </div>
                       {selectedTemplate.description ? (
-                        <p className="mt-1 line-clamp-2 text-xs text-zinc-500 dark:text-zinc-400">
+                        <p className="mt-1 line-clamp-2 text-xs text-zinc-500">
                           {selectedTemplate.description}
                         </p>
                       ) : null}
                       {(selectedTemplate.caloriesEstimateMin !== null || selectedTemplate.caloriesEstimateMax !== null) ? (
-                        <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                        <p className="mt-1 text-[11px] text-zinc-400">
                           {selectedTemplate.caloriesEstimateMin ?? "?"}–{selectedTemplate.caloriesEstimateMax ?? "?"} kcal
                         </p>
                       ) : null}
@@ -399,15 +399,15 @@ function ScheduleModal({
               </div>
             ) : (
               <div>
-                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Class type</p>
-                <p className="mt-0.5 text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                <p className="text-xs font-medium text-zinc-500">Class type</p>
+                <p className="mt-0.5 text-sm font-medium text-zinc-900">
                   {modal.cls.classTemplate.name}
                 </p>
               </div>
             )}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                <label className="block text-xs font-medium text-zinc-700">
                   Start
                 </label>
                 <input
@@ -415,11 +415,11 @@ function ScheduleModal({
                   required
                   value={form.startTime}
                   onChange={(e) => handleStartChange(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                <label className="block text-xs font-medium text-zinc-700">
                   End
                 </label>
                 <input
@@ -427,13 +427,13 @@ function ScheduleModal({
                   required
                   value={form.endTime}
                   onChange={(e) => setForm((prev) => ({ ...prev, endTime: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                <label className="block text-xs font-medium text-zinc-700">
                   Capacity
                 </label>
                 <input
@@ -443,17 +443,17 @@ function ScheduleModal({
                   max={10000}
                   value={form.capacity}
                   onChange={(e) => setForm((prev) => ({ ...prev, capacity: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                <label className="block text-xs font-medium text-zinc-700">
                   Instructor <span className="font-normal text-zinc-400">(optional)</span>
                 </label>
                 <select
                   value={form.instructorId}
                   onChange={(e) => setForm((prev) => ({ ...prev, instructorId: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
                 >
                   <option value="">— None —</option>
                   {safeMembers.map((m) => (
@@ -465,7 +465,7 @@ function ScheduleModal({
               </div>
             </div>
             {error ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                 {error}
               </p>
             ) : null}
@@ -475,7 +475,7 @@ function ScheduleModal({
                   <button
                     type="button"
                     onClick={() => setShowCancelConfirm(true)}
-                    className="rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                    className="rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
                   >
                     Cancel class
                   </button>
@@ -485,7 +485,7 @@ function ScheduleModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
                 >
                   Close
                 </button>
@@ -493,7 +493,7 @@ function ScheduleModal({
                   <button
                     type="submit"
                     disabled={saving || (modal.type === "create" && !form.templateId)}
-                    className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                    className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
                   >
                     {saving
                       ? "Saving…"
@@ -533,21 +533,21 @@ function ClassCard({
       onClick={onClick}
       className={`w-full rounded-xl border p-2.5 text-left transition ${
         isCancelled
-          ? "border-zinc-200 bg-zinc-50 opacity-50 dark:border-zinc-800 dark:bg-zinc-900/30"
-          : "border-zinc-200 bg-white shadow-sm hover:border-zinc-300 hover:shadow dark:border-zinc-700/80 dark:bg-zinc-800/60 dark:hover:border-zinc-600"
+          ? "border-zinc-200 bg-zinc-50 opacity-50"
+          : "border-zinc-200 bg-white shadow-sm hover:border-zinc-300 hover:shadow"
       }`}
     >
       {accentColor && !isCancelled ? (
         <div className="mb-1.5 h-0.5 w-8 rounded-full" style={{ backgroundColor: accentColor }} />
       ) : null}
-      <p className={`text-xs font-semibold leading-snug ${isCancelled ? "line-through text-zinc-400 dark:text-zinc-600" : "text-zinc-900 dark:text-zinc-50"}`}>
+      <p className={`text-xs font-semibold leading-snug ${isCancelled ? "line-through text-zinc-400" : "text-zinc-900"}`}>
         {cls.classTemplate.name}
       </p>
-      <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+      <p className="mt-0.5 text-[11px] text-zinc-500">
         {formatTime(cls.startsAt, tz)} – {formatTime(cls.endsAt, tz)}
       </p>
       {cls.instructor ? (
-        <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+        <p className="mt-0.5 text-[11px] text-zinc-400">
           {cls.instructor.firstName} {cls.instructor.lastName}
         </p>
       ) : null}
@@ -629,7 +629,7 @@ export default function SchedulePage() {
 
   if (studioError) {
     return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
         {studioError}
       </div>
     );
@@ -637,8 +637,8 @@ export default function SchedulePage() {
 
   if (!selectedStudioId) {
     return (
-      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center dark:border-zinc-800 dark:bg-zinc-900">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">No studio memberships found for this account.</p>
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
+        <p className="text-sm text-zinc-600">No studio memberships found for this account.</p>
       </div>
     );
   }
@@ -649,10 +649,10 @@ export default function SchedulePage() {
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
               Schedule
             </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="mt-1 text-sm text-zinc-500">
               {formatWeekRange(weekStart, tz)}
             </p>
           </div>
@@ -660,22 +660,22 @@ export default function SchedulePage() {
             <button
               type="button"
               onClick={() => setWeekStart(getMondayOf(new Date()))}
-              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
             >
               Today
             </button>
-            <div className="flex rounded-lg border border-zinc-200 dark:border-zinc-700">
+            <div className="flex rounded-lg border border-zinc-200">
               <button
                 type="button"
                 onClick={() => setWeekStart((w) => addDays(w, -7))}
-                className="px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800 rounded-l-lg"
+                className="px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 rounded-l-lg"
               >
                 ‹
               </button>
               <button
                 type="button"
                 onClick={() => setWeekStart((w) => addDays(w, 7))}
-                className="border-l border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800 rounded-r-lg"
+                className="border-l border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 rounded-r-lg"
               >
                 ›
               </button>
@@ -683,7 +683,7 @@ export default function SchedulePage() {
             <button
               type="button"
               onClick={() => setModal({ type: "create" })}
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700"
             >
               Schedule a class
             </button>
@@ -691,7 +691,7 @@ export default function SchedulePage() {
         </div>
 
         {error ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {error}
             <button type="button" className="ml-3 font-semibold underline" onClick={() => void load()}>
               Retry
@@ -700,10 +700,10 @@ export default function SchedulePage() {
         ) : null}
 
         {/* Week grid */}
-        <div className="overflow-x-auto rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="overflow-x-auto rounded-2xl border border-zinc-200 bg-white">
           <div className="min-w-[700px]">
             {/* Day headers */}
-            <div className="grid grid-cols-7 border-b border-zinc-100 dark:border-zinc-800">
+            <div className="grid grid-cols-7 border-b border-zinc-100">
               {weekDays.map((day) => {
                 const key = calendarDayKeyInZone(day.toISOString(), tz);
                 const { weekday, day: dayNum } = formatDayHeader(day, tz);
@@ -711,16 +711,16 @@ export default function SchedulePage() {
                 return (
                   <div
                     key={key}
-                    className="border-r border-zinc-100 px-3 py-3 text-center last:border-r-0 dark:border-zinc-800"
+                    className="border-r border-zinc-100 px-3 py-3 text-center last:border-r-0"
                   >
-                    <p className={`text-[11px] font-medium uppercase tracking-wider ${isToday ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-400 dark:text-zinc-500"}`}>
+                    <p className={`text-[11px] font-medium uppercase tracking-wider ${isToday ? "text-zinc-900" : "text-zinc-400"}`}>
                       {weekday}
                     </p>
                     <p
                       className={`mt-0.5 text-lg font-semibold leading-none ${
                         isToday
-                          ? "flex h-7 w-7 items-center justify-center rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                          : "text-zinc-700 dark:text-zinc-300"
+                          ? "flex h-7 w-7 items-center justify-center rounded-full bg-zinc-900 text-white"
+                          : "text-zinc-700"
                       }`}
                       style={isToday ? { margin: "2px auto 0" } : {}}
                     >
@@ -732,7 +732,7 @@ export default function SchedulePage() {
             </div>
 
             {/* Day columns */}
-            <div className="grid grid-cols-7 divide-x divide-zinc-100 dark:divide-zinc-800">
+            <div className="grid grid-cols-7 divide-x divide-zinc-100">
               {weekDays.map((day) => {
                 const key = calendarDayKeyInZone(day.toISOString(), tz);
                 const dayCls = (classesByDay.get(key) ?? []).sort(
@@ -742,13 +742,13 @@ export default function SchedulePage() {
                   <div key={key} className="min-h-[120px] p-2">
                     {loading ? (
                       <div className="space-y-1.5">
-                        <div className="h-14 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+                        <div className="h-14 animate-pulse rounded-lg bg-zinc-100" />
                       </div>
                     ) : dayCls.length === 0 ? (
                       <button
                         type="button"
                         onClick={() => setModal({ type: "create", prefillDate: key })}
-                        className="flex h-full w-full min-h-[80px] items-center justify-center rounded-lg text-zinc-300 hover:bg-zinc-50 hover:text-zinc-400 dark:text-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-500"
+                        className="flex h-full w-full min-h-[80px] items-center justify-center rounded-lg text-zinc-300 hover:bg-zinc-50 hover:text-zinc-400"
                       >
                         <span className="text-lg leading-none">+</span>
                       </button>
@@ -765,7 +765,7 @@ export default function SchedulePage() {
                         <button
                           type="button"
                           onClick={() => setModal({ type: "create", prefillDate: key })}
-                          className="w-full rounded-lg py-1 text-center text-xs text-zinc-300 hover:bg-zinc-50 hover:text-zinc-500 dark:text-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-400"
+                          className="w-full rounded-lg py-1 text-center text-xs text-zinc-300 hover:bg-zinc-50 hover:text-zinc-500"
                         >
                           + Add
                         </button>
@@ -781,7 +781,7 @@ export default function SchedulePage() {
         {/* Upcoming list */}
         {!loading && classes.filter((c) => c.status === "SCHEDULED").length > 0 ? (
           <div>
-            <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+            <h2 className="mb-3 text-sm font-semibold text-zinc-700">
               This week · {classes.filter((c) => c.status === "SCHEDULED").length} scheduled
             </h2>
             <ul className="space-y-2">
@@ -792,7 +792,7 @@ export default function SchedulePage() {
                     <button
                       type="button"
                       onClick={() => setModal({ type: "edit", cls: c })}
-                      className="flex w-full items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-600"
+                      className="flex w-full items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-zinc-300 hover:shadow"
                     >
                       <div className="flex min-w-0 items-center gap-3">
                         {c.classTemplate.color ? (
@@ -801,20 +801,20 @@ export default function SchedulePage() {
                             style={{ backgroundColor: c.classTemplate.color }}
                           />
                         ) : null}
-                        <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                        <span className="truncate text-sm font-semibold text-zinc-900">
                           {c.classTemplate.name}
                         </span>
                       </div>
-                      <div className="shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400">
+                      <div className="shrink-0 text-right text-xs text-zinc-500">
                         <p>{calendarDayKeyInZone(c.startsAt, tz)}</p>
                         <p>{formatTime(c.startsAt, tz)} – {formatTime(c.endsAt, tz)}</p>
                       </div>
                       {c.instructor ? (
-                        <span className="hidden shrink-0 text-xs text-zinc-400 dark:text-zinc-500 sm:block">
+                        <span className="hidden shrink-0 text-xs text-zinc-400 sm:block">
                           {c.instructor.firstName} {c.instructor.lastName}
                         </span>
                       ) : null}
-                      <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
+                      <span className="shrink-0 text-xs text-zinc-400">
                         Cap {c.capacity}
                       </span>
                     </button>

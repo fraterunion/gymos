@@ -275,7 +275,7 @@ export default function WalkInSalesPage() {
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Ventas / Walk-ins</h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-zinc-600">
           Registra clientes nuevos y vende membresías en recepción.
         </p>
       </header>
@@ -296,10 +296,10 @@ export default function WalkInSalesPage() {
               key={label}
               className={`rounded-full px-3 py-1 ${
                 active
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                  ? "bg-zinc-900 text-white"
                   : done
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                    : "bg-zinc-100 dark:bg-zinc-800"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-zinc-100"
               }`}
             >
               {n}. {label}
@@ -309,21 +309,21 @@ export default function WalkInSalesPage() {
       </ol>
 
       {error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
         </div>
       ) : null}
 
       {step === 1 ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setMemberMode("search")}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
                 memberMode === "search"
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "bg-zinc-100 dark:bg-zinc-800"
+                  ? "bg-zinc-900 text-white"
+                  : "bg-zinc-100"
               }`}
             >
               Buscar cliente
@@ -333,8 +333,8 @@ export default function WalkInSalesPage() {
               onClick={() => setMemberMode("create")}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
                 memberMode === "create"
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "bg-zinc-100 dark:bg-zinc-800"
+                  ? "bg-zinc-900 text-white"
+                  : "bg-zinc-100"
               }`}
             >
               Nuevo cliente
@@ -350,24 +350,24 @@ export default function WalkInSalesPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void runSearch()}
-                  className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                  className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm"
                 />
                 <button
                   type="button"
                   onClick={() => void runSearch()}
                   disabled={searchLoading}
-                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
                   {searchLoading ? "Buscando…" : "Buscar"}
                 </button>
               </div>
-              <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <ul className="divide-y divide-zinc-100">
                 {searchResults.map((m) => (
                   <li key={m.user.id}>
                     <button
                       type="button"
                       onClick={() => selectExistingMember(m)}
-                      className="flex w-full items-center justify-between py-3 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                      className="flex w-full items-center justify-between py-3 text-left text-sm hover:bg-zinc-50"
                     >
                       <span>
                         <span className="font-medium">{memberDisplayName(m)}</span>
@@ -391,12 +391,12 @@ export default function WalkInSalesPage() {
                 ] as const
               ).map(([key, label]) => (
                 <label key={key} className="block text-sm sm:col-span-1">
-                  <span className="mb-1 block text-zinc-600 dark:text-zinc-400">{label}</span>
+                  <span className="mb-1 block text-zinc-600">{label}</span>
                   <input
                     type={key === "temporaryPassword" ? "password" : key === "email" ? "email" : "text"}
                     value={createForm[key]}
                     onChange={(e) => setCreateForm((f) => ({ ...f, [key]: e.target.value }))}
-                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
+                    className="w-full rounded-lg border border-zinc-300 px-3 py-2"
                   />
                 </label>
               ))}
@@ -405,7 +405,7 @@ export default function WalkInSalesPage() {
                   type="button"
                   onClick={() => void handleCreateMember()}
                   disabled={busy}
-                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
                   {busy ? "Creando…" : "Crear cliente"}
                 </button>
@@ -416,9 +416,9 @@ export default function WalkInSalesPage() {
       ) : null}
 
       {step === 2 && selectedMember ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
           <h2 className="text-lg font-medium">Carta responsiva</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="text-sm text-zinc-600">
             Cliente: <strong>{memberDisplayName(selectedMember)}</strong> ({selectedMember.user.email})
           </p>
           {waiverLoading ? (
@@ -428,15 +428,15 @@ export default function WalkInSalesPage() {
               <p
                 className={`inline-flex rounded-full px-3 py-1 text-sm font-medium ${
                   waiverOk
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                    : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-amber-100 text-amber-900"
                 }`}
               >
                 {waiverStatusLabel(waiverStatus)}
               </p>
               {!waiverOk && waiverStatus.activeWaiverDocumentId ? (
-                <div className="space-y-2 rounded-lg border border-zinc-200 p-4 dark:border-zinc-700">
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                <div className="space-y-2 rounded-lg border border-zinc-200 p-4">
+                  <p className="text-sm text-zinc-600">
                     Puedes continuar con link de pago Stripe. Para efectivo, firma presencial requerida.
                   </p>
                   <textarea
@@ -444,13 +444,13 @@ export default function WalkInSalesPage() {
                     value={attestNote}
                     onChange={(e) => setAttestNote(e.target.value)}
                     rows={2}
-                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
                   />
                   <button
                     type="button"
                     onClick={() => void handleAttest()}
                     disabled={attesting}
-                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium dark:border-zinc-600"
+                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium"
                   >
                     {attesting ? "Registrando…" : "Registrar firma presencial"}
                   </button>
@@ -465,7 +465,7 @@ export default function WalkInSalesPage() {
             <button
               type="button"
               onClick={() => setStep(3)}
-              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white"
             >
               Continuar
             </button>
@@ -474,12 +474,12 @@ export default function WalkInSalesPage() {
       ) : null}
 
       {step === 3 && selectedMember ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
           <h2 className="text-lg font-medium">Seleccionar membresía</h2>
           <ul className="space-y-2">
             {plans.map((plan) => (
               <li key={plan.id}>
-                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-200 p-3">
                   <input
                     type="radio"
                     name="plan"
@@ -504,7 +504,7 @@ export default function WalkInSalesPage() {
               type="button"
               disabled={!selectedPlanId}
               onClick={() => setStep(4)}
-              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
               Continuar
             </button>
@@ -513,7 +513,7 @@ export default function WalkInSalesPage() {
       ) : null}
 
       {step === 4 && selectedMember && selectedPlan ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
           <h2 className="text-lg font-medium">Método de pago</h2>
           <div className="flex flex-wrap gap-2">
             <button
@@ -521,8 +521,8 @@ export default function WalkInSalesPage() {
               onClick={() => setPaymentMethod("stripe")}
               className={`rounded-lg px-4 py-2 text-sm font-medium ${
                 paymentMethod === "stripe"
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "bg-zinc-100 dark:bg-zinc-800"
+                  ? "bg-zinc-900 text-white"
+                  : "bg-zinc-100"
               }`}
             >
               Generar link de pago / QR Stripe
@@ -533,8 +533,8 @@ export default function WalkInSalesPage() {
                 onClick={() => setPaymentMethod("cash")}
                 className={`rounded-lg px-4 py-2 text-sm font-medium ${
                   paymentMethod === "cash"
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "bg-zinc-100 dark:bg-zinc-800"
+                    ? "bg-zinc-900 text-white"
+                    : "bg-zinc-100"
                 }`}
               >
                 Registrar pago en efectivo
@@ -543,7 +543,7 @@ export default function WalkInSalesPage() {
           </div>
 
           {paymentMethod === "stripe" ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            <p className="text-sm text-zinc-600">
               El cliente escanea el QR y paga en su teléfono. La membresía se activa vía webhook de Stripe.
             </p>
           ) : (
@@ -554,7 +554,7 @@ export default function WalkInSalesPage() {
                   type="date"
                   value={periodStart}
                   onChange={(e) => setPeriodStart(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
+                  className="w-full rounded-lg border border-zinc-300 px-3 py-2"
                 />
               </label>
               <label className="text-sm">
@@ -563,7 +563,7 @@ export default function WalkInSalesPage() {
                   type="date"
                   value={periodEnd}
                   onChange={(e) => setPeriodEnd(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
+                  className="w-full rounded-lg border border-zinc-300 px-3 py-2"
                 />
               </label>
               <label className="text-sm sm:col-span-2">
@@ -571,7 +571,7 @@ export default function WalkInSalesPage() {
                 <input
                   readOnly
                   value={formatMoney(selectedPlan.priceCents, selectedPlan.currency)}
-                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
+                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2"
                 />
               </label>
               {isOwner ? (
@@ -580,7 +580,7 @@ export default function WalkInSalesPage() {
                   <input
                     value={priceOverrideNote}
                     onChange={(e) => setPriceOverrideNote(e.target.value)}
-                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
+                    className="w-full rounded-lg border border-zinc-300 px-3 py-2"
                   />
                 </label>
               ) : null}
@@ -590,11 +590,11 @@ export default function WalkInSalesPage() {
                   value={cashNotes}
                   onChange={(e) => setCashNotes(e.target.value)}
                   rows={2}
-                  className="w-full rounded-lg border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
+                  className="w-full rounded-lg border border-zinc-300 px-3 py-2"
                 />
               </label>
               {cashBlockedByWaiver ? (
-                <p className="text-sm text-amber-700 dark:text-amber-300 sm:col-span-2">
+                <p className="text-sm text-amber-700 sm:col-span-2">
                   Se requiere carta responsiva aceptada o firmada presencialmente para registrar efectivo.
                 </p>
               ) : null}
@@ -611,7 +611,7 @@ export default function WalkInSalesPage() {
               onClick={() =>
                 void (paymentMethod === "stripe" ? handleGenerateCheckout() : handleRecordCash())
               }
-              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
               {busy
                 ? "Procesando…"
@@ -624,7 +624,7 @@ export default function WalkInSalesPage() {
       ) : null}
 
       {step === 5 ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
           <h2 className="text-lg font-medium">Confirmación</h2>
           {checkoutUrl ? (
             <div className="space-y-4">
@@ -636,19 +636,19 @@ export default function WalkInSalesPage() {
                   alt="QR de pago Stripe"
                   width={240}
                   height={240}
-                  className="rounded-lg border border-zinc-200 dark:border-zinc-700"
+                  className="rounded-lg border border-zinc-200"
                 />
                 <div className="min-w-0 flex-1 space-y-2">
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400">Link de pago</p>
+                  <p className="text-sm text-zinc-600">Link de pago</p>
                   <input
                     readOnly
                     value={checkoutUrl}
-                    className="w-full truncate rounded-lg border border-zinc-300 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                    className="w-full truncate rounded-lg border border-zinc-300 px-3 py-2 text-xs"
                   />
                   <button
                     type="button"
                     onClick={() => void navigator.clipboard.writeText(checkoutUrl)}
-                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-600"
+                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm"
                   >
                     Copiar link
                   </button>
@@ -671,7 +671,7 @@ export default function WalkInSalesPage() {
           <button
             type="button"
             onClick={resetFlow}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white"
           >
             Nueva venta
           </button>

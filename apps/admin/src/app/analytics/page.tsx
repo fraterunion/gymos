@@ -15,6 +15,9 @@ import {
 } from "recharts";
 
 import { OwnerBriefing } from "@/components/analytics/OwnerBriefing";
+import { PageHeader } from "@/components/shell/PageHeader";
+import { SectionHeader } from "@/components/shell/SectionHeader";
+import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import {
@@ -30,20 +33,24 @@ import {
   type TrendsDto,
 } from "@/lib/api/analytics";
 
-function useColorScheme() {
-  const [dark, setDark] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e: MediaQueryListEvent) => setDark(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return dark;
+const CHART_GRID = "#e4e4e7";
+const CHART_TEXT = "#a1a1aa";
+const TOOLTIP_STYLE = {
+  background: "#ffffff",
+  border: "1px solid #e4e4e7",
+  borderRadius: 8,
+  fontSize: 12,
+  color: "#18181b",
+};
+
+function periodToDays(period: PeriodKey): number {
+  if (period !== "year") return period;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 1);
+  return Math.min(365, Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 86_400_000)));
 }
+
+type PeriodKey = 7 | 30 | 90 | "year";
 
 function fmt(n: number, digits = 0): string {
   return new Intl.NumberFormat(undefined, {
@@ -82,34 +89,30 @@ function ChartShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <p className="mb-4 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        {title}
-      </p>
+    <SurfaceCard>
+      <p className="mb-4 text-sm font-medium text-zinc-700">{title}</p>
       {loading ? (
         <div className="flex h-48 items-center justify-center">
-          <p className="text-sm text-zinc-400">Loading…</p>
+          <p className="text-sm text-zinc-400">Cargando…</p>
         </div>
       ) : (
         children
       )}
-    </div>
+    </SurfaceCard>
   );
 }
 
 function RevenueTrend30Chart({
   rows,
-  dark,
 }: {
   rows: BusinessAnalyticsDto["revenueTrend"];
-  dark: boolean;
 }) {
   const data = rows.map((r) => ({
     date: fmtDate(r.date),
     Revenue: Math.round(r.amountCents) / 100,
   }));
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   if (data.every((d) => d.Revenue === 0)) {
     return (
       <p className="py-10 text-center text-sm text-zinc-500">No collected payments in the last 30 days.</p>
@@ -133,12 +136,7 @@ function RevenueTrend30Chart({
           tickFormatter={(v) => `$${v}`}
         />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
           formatter={(value) => [
             fmtMoney(Math.round(Number(value ?? 0) * 100)),
             "Collected",
@@ -159,17 +157,15 @@ function RevenueTrend30Chart({
 
 function MembershipActivityChart({
   rows,
-  dark,
 }: {
   rows: BusinessAnalyticsDto["memberSignupsTrend"];
-  dark: boolean;
 }) {
   const data = rows.map((r) => ({
     date: fmtDate(r.date),
     Members: r.count,
   }));
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   if (data.every((d) => d.Members === 0)) {
     return (
       <p className="py-10 text-center text-sm text-zinc-500">No new memberships in the last 30 days.</p>
@@ -193,12 +189,7 @@ function MembershipActivityChart({
           allowDecimals={false}
         />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
         />
         <Line
           type="monotone"
@@ -215,17 +206,15 @@ function MembershipActivityChart({
 
 function AttendanceTrendChart({
   trends,
-  dark,
 }: {
   trends: TrendsDto;
-  dark: boolean;
 }) {
   const data = trends.attendances.map((a) => ({
     date: fmtDate(a.date),
     Attendance: a.count,
   }));
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   if (data.every((d) => d.Attendance === 0)) {
     return <p className="py-10 text-center text-sm text-zinc-500">No check-ins in this period.</p>;
   }
@@ -247,12 +236,7 @@ function AttendanceTrendChart({
           allowDecimals={false}
         />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
         />
         <Line
           type="monotone"
@@ -269,18 +253,16 @@ function AttendanceTrendChart({
 
 function BookingsAttendanceChart({
   trends,
-  dark,
 }: {
   trends: TrendsDto;
-  dark: boolean;
 }) {
   const data = trends.bookings.map((b, i) => ({
     date: fmtDate(b.date),
     Bookings: b.count,
     Attendance: trends.attendances[i]?.count ?? 0,
   }));
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
 
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -300,12 +282,7 @@ function BookingsAttendanceChart({
           allowDecimals={false}
         />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
         />
         <Line type="monotone" dataKey="Bookings" stroke="#a1a1aa" strokeWidth={2} dot={false} />
         <Line type="monotone" dataKey="Attendance" stroke="#52525b" strokeWidth={2} dot={false} />
@@ -328,10 +305,8 @@ function formatSubscriptionStatus(status: string): string {
 
 function SubscriptionStatusChart({
   breakdown,
-  dark,
 }: {
   breakdown: BusinessAnalyticsDto["subscriptionStatusBreakdown"];
-  dark: boolean;
 }) {
   const data = breakdown
     .filter((b) => b.count > 0)
@@ -343,8 +318,8 @@ function SubscriptionStatusChart({
   if (data.length === 0) {
     return <p className="py-10 text-center text-sm text-zinc-500">No subscriptions yet</p>;
   }
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart
@@ -364,12 +339,7 @@ function SubscriptionStatusChart({
           axisLine={false}
         />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
         />
         <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={28}>
           {data.map((entry, i) => (
@@ -384,11 +354,9 @@ function SubscriptionStatusChart({
 function BookingFrequencyChart({
   buckets,
   ratePercent,
-  dark,
 }: {
   buckets: BusinessAnalyticsDto["bookingFrequencyBuckets"];
   ratePercent: number;
-  dark: boolean;
 }) {
   const data = buckets.map((b) => ({ name: b.label, Members: b.memberCount }));
   const total = buckets.reduce((s, b) => s + b.memberCount, 0);
@@ -397,8 +365,8 @@ function BookingFrequencyChart({
       <p className="py-10 text-center text-sm text-zinc-500">No member bookings in the last 30 days.</p>
     );
   }
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   return (
     <div>
       <p className="mb-2 text-xs text-zinc-500">
@@ -410,12 +378,7 @@ function BookingFrequencyChart({
           <XAxis dataKey="name" tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} />
           <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
           <Tooltip
-            contentStyle={{
-              background: dark ? "#18181b" : "#ffffff",
-              border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-              borderRadius: 8,
-              fontSize: 12,
-            }}
+            contentStyle={TOOLTIP_STYLE}
           />
           <Bar dataKey="Members" fill="#a1a1aa" radius={[6, 6, 0, 0]} maxBarSize={56} />
         </BarChart>
@@ -426,10 +389,8 @@ function BookingFrequencyChart({
 
 function RevenueByPlanChart({
   rows,
-  dark,
 }: {
   rows: BusinessAnalyticsDto["revenueByPlan"];
-  dark: boolean;
 }) {
   if (rows.length === 0) {
     return (
@@ -440,8 +401,8 @@ function RevenueByPlanChart({
     name: r.planName.length > 16 ? r.planName.slice(0, 15) + "…" : r.planName,
     Revenue: Math.round(r.revenueCents) / 100,
   }));
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
@@ -449,12 +410,7 @@ function RevenueByPlanChart({
         <XAxis dataKey="name" tick={{ fill: textColor, fontSize: 10 }} tickLine={false} axisLine={false} />
         <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
           formatter={(value) => [fmtMoney(Math.round(Number(value ?? 0) * 100)), "Collected"]}
         />
         <Bar dataKey="Revenue" fill="#71717a" radius={[4, 4, 0, 0]} maxBarSize={44} />
@@ -465,10 +421,8 @@ function RevenueByPlanChart({
 
 function TopClassesChart({
   breakdown,
-  dark,
 }: {
   breakdown: ClassBreakdownDto;
-  dark: boolean;
 }) {
   const data = breakdown.topTemplates.map((t) => ({
     name: t.name.length > 14 ? t.name.slice(0, 13) + "…" : t.name,
@@ -477,8 +431,8 @@ function TopClassesChart({
   if (data.length === 0) {
     return <p className="py-10 text-center text-sm text-zinc-500">No data yet</p>;
   }
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
@@ -486,12 +440,7 @@ function TopClassesChart({
         <XAxis dataKey="name" tick={{ fill: textColor, fontSize: 10 }} tickLine={false} axisLine={false} />
         <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
         />
         <Bar dataKey="Bookings" fill="#a1a1aa" radius={[4, 4, 0, 0]} maxBarSize={48} />
       </BarChart>
@@ -501,10 +450,8 @@ function TopClassesChart({
 
 function PeakHoursChart({
   breakdown,
-  dark,
 }: {
   breakdown: ClassBreakdownDto;
-  dark: boolean;
 }) {
   if (breakdown.peakHours.length === 0) {
     return <p className="py-10 text-center text-sm text-zinc-500">No data yet</p>;
@@ -514,8 +461,8 @@ function PeakHoursChart({
     hour: fmtHour(h),
     Classes: hourMap.get(h) ?? 0,
   }));
-  const gridColor = dark ? "#3f3f46" : "#e4e4e7";
-  const textColor = dark ? "#71717a" : "#a1a1aa";
+  const gridColor = CHART_GRID;
+  const textColor = CHART_TEXT;
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
@@ -523,12 +470,7 @@ function PeakHoursChart({
         <XAxis dataKey="hour" tick={{ fill: textColor, fontSize: 9 }} tickLine={false} axisLine={false} interval={2} />
         <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
         <Tooltip
-          contentStyle={{
-            background: dark ? "#18181b" : "#ffffff",
-            border: `1px solid ${dark ? "#3f3f46" : "#e4e4e7"}`,
-            borderRadius: 8,
-            fontSize: 12,
-          }}
+          contentStyle={TOOLTIP_STYLE}
         />
         <Bar dataKey="Classes" fill="#d4d4d8" radius={[3, 3, 0, 0]} maxBarSize={24} />
       </BarChart>
@@ -536,18 +478,46 @@ function PeakHoursChart({
   );
 }
 
-const PERIOD_OPTIONS = [
-  { label: "7 days", days: 7 },
-  { label: "30 days", days: 30 },
-] as const;
+const PERIOD_OPTIONS: { label: string; value: PeriodKey }[] = [
+  { label: "7 días", value: 7 },
+  { label: "30 días", value: 30 },
+  { label: "90 días", value: 90 },
+  { label: "Este año", value: "year" },
+];
+
+function PeriodSegment({
+  value,
+  onChange,
+}: {
+  value: PeriodKey;
+  onChange: (v: PeriodKey) => void;
+}) {
+  return (
+    <div className="inline-flex overflow-x-auto rounded-xl bg-zinc-100 p-1">
+      {PERIOD_OPTIONS.map(({ label, value: v }) => (
+        <button
+          key={String(v)}
+          type="button"
+          onClick={() => onChange(v)}
+          className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition sm:px-4 sm:text-sm ${
+            value === v
+              ? "bg-zinc-900 text-white shadow-sm"
+              : "text-zinc-600 hover:text-zinc-900"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function AnalyticsPage() {
-  const { selectedStudioId, selected, loading: studioLoading, error: studioError } =
+  const { selectedStudioId, loading: studioLoading, error: studioError } =
     useDeskStudio();
-  const dark = useColorScheme();
   const chartsRef = useRef<HTMLElement>(null);
 
-  const [period, setPeriod] = useState<7 | 30>(30);
+  const [period, setPeriod] = useState<PeriodKey>(30);
   const [briefing, setBriefing] = useState<OwnerBriefingDto | null>(null);
   const [overview, setOverview] = useState<OverviewDto | null>(null);
   const [trends, setTrends] = useState<TrendsDto | null>(null);
@@ -559,8 +529,6 @@ export default function AnalyticsPage() {
   const [loadingCharts, setLoadingCharts] = useState(true);
   const [loadingBusiness, setLoadingBusiness] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const studioName = selected?.studio.name ?? null;
 
   const loadBriefing = useCallback(async () => {
     if (!selectedStudioId) {
@@ -603,9 +571,10 @@ export default function AnalyticsPage() {
     }
     setLoadingCharts(true);
     try {
+      const days = periodToDays(period);
       const [t, b] = await Promise.all([
-        fetchAnalyticsTrends(selectedStudioId, period),
-        fetchAnalyticsClassBreakdown(selectedStudioId, period),
+        fetchAnalyticsTrends(selectedStudioId, days),
+        fetchAnalyticsClassBreakdown(selectedStudioId, days),
       ]);
       setTrends(t);
       setBreakdown(b);
@@ -665,13 +634,6 @@ export default function AnalyticsPage() {
       )
     : null;
 
-  const scrollToAnalytics = () => {
-    chartsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (typeof window !== "undefined") {
-      window.history.replaceState(null, "", "#analytics-charts");
-    }
-  };
-
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.location.hash !== "#analytics-charts") return;
@@ -684,7 +646,7 @@ export default function AnalyticsPage() {
 
   if (studioError) {
     return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
         {studioError}
       </div>
     );
@@ -692,8 +654,8 @@ export default function AnalyticsPage() {
 
   if (!selectedStudioId) {
     return (
-      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center dark:border-zinc-800 dark:bg-zinc-900">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
+        <p className="text-sm text-zinc-600">
           No studio memberships found for this account.
         </p>
       </div>
@@ -701,19 +663,28 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="space-y-16">
-      <div className="flex flex-wrap items-start justify-end gap-3">
-        <button
-          type="button"
-          onClick={refreshAll}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-        >
-          Refresh
-        </button>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Analytics"
+        subtitle="Resumen del negocio y rendimiento de ARES."
+        actions={
+          <>
+            {lastUpdated ? (
+              <span className="text-xs text-zinc-500">Actualizado {lastUpdated}</span>
+            ) : null}
+            <button
+              type="button"
+              onClick={refreshAll}
+              className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition hover:bg-zinc-50"
+            >
+              Actualizar
+            </button>
+          </>
+        }
+      />
 
       {error ? (
-        <div className="mx-auto max-w-[840px] rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {error}
           <button
             type="button"
@@ -723,120 +694,98 @@ export default function AnalyticsPage() {
               refreshAll();
             }}
           >
-            Retry
+            Reintentar
           </button>
         </div>
       ) : null}
 
       <OwnerBriefing
         briefing={briefing}
-        studioName={studioName}
-        lastUpdated={lastUpdated}
         loading={loadingBriefing}
-        onScrollToAnalytics={scrollToAnalytics}
+        revenueTrend={business?.revenueTrend}
       />
 
       <section
         id="analytics-charts"
         ref={chartsRef}
-        className="mx-auto w-full max-w-[900px] scroll-mt-8 space-y-8 border-t border-zinc-200 pt-12 dark:border-zinc-800"
+        className="scroll-mt-8 space-y-6 border-t border-zinc-200 pt-10"
       >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">Reports</p>
-          <div className="flex rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-700">
-            {PERIOD_OPTIONS.map(({ label, days }) => (
-              <button
-                key={days}
-                type="button"
-                onClick={() => setPeriod(days)}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  period === days
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <SectionHeader
+          title="Rendimiento"
+          actions={<PeriodSegment value={period} onChange={setPeriod} />}
+        />
 
-        <ChartShell title="Revenue trend · 30d (collected)" loading={loadingBusiness}>
-          {business ? <RevenueTrend30Chart rows={business.revenueTrend} dark={dark} /> : null}
+        <ChartShell title="Tendencia de ingresos" loading={loadingBusiness}>
+          {business ? <RevenueTrend30Chart rows={business.revenueTrend} /> : null}
         </ChartShell>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <ChartShell title="Membership activity · 30d" loading={loadingBusiness}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartShell title="Actividad de membresías" loading={loadingBusiness}>
             {business ? (
-              <MembershipActivityChart rows={business.memberSignupsTrend} dark={dark} />
+              <MembershipActivityChart rows={business.memberSignupsTrend} />
             ) : null}
           </ChartShell>
-          <ChartShell title={`Attendance trend · ${period}d`} loading={loadingCharts}>
-            {trends ? <AttendanceTrendChart trends={trends} dark={dark} /> : null}
+          <ChartShell title="Tendencia de asistencia" loading={loadingCharts}>
+            {trends ? <AttendanceTrendChart trends={trends} /> : null}
           </ChartShell>
         </div>
 
-        <ChartShell title={`Bookings & attendance · ${period}d`} loading={loadingCharts}>
-          {trends ? <BookingsAttendanceChart trends={trends} dark={dark} /> : null}
+        <ChartShell title="Reservas y asistencia" loading={loadingCharts}>
+          {trends ? <BookingsAttendanceChart trends={trends} /> : null}
         </ChartShell>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <ChartShell title="Revenue by membership · 30d" loading={loadingBusiness}>
-            {business ? <RevenueByPlanChart rows={business.revenueByPlan} dark={dark} /> : null}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartShell title="Ingresos por membresía" loading={loadingBusiness}>
+            {business ? <RevenueByPlanChart rows={business.revenueByPlan} /> : null}
           </ChartShell>
-          <ChartShell title="Subscription mix" loading={loadingBusiness}>
+          <ChartShell title="Distribución de membresías" loading={loadingBusiness}>
             {business ? (
-              <SubscriptionStatusChart breakdown={business.subscriptionStatusBreakdown} dark={dark} />
+              <SubscriptionStatusChart breakdown={business.subscriptionStatusBreakdown} />
             ) : null}
           </ChartShell>
         </div>
 
-        <ChartShell title="Retention · booking frequency" loading={loadingBusiness}>
+        <ChartShell title="Retención" loading={loadingBusiness}>
           {business ? (
             <BookingFrequencyChart
               buckets={business.bookingFrequencyBuckets}
               ratePercent={business.repeatBookingRatePercent}
-              dark={dark}
             />
           ) : null}
         </ChartShell>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <ChartShell title={`Peak class hours · ${period}d`} loading={loadingCharts}>
-            {breakdown ? <PeakHoursChart breakdown={breakdown} dark={dark} /> : null}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartShell title="Horarios pico" loading={loadingCharts}>
+            {breakdown ? <PeakHoursChart breakdown={breakdown} /> : null}
           </ChartShell>
-          <ChartShell title={`Top class types · ${period}d`} loading={loadingCharts}>
-            {breakdown ? <TopClassesChart breakdown={breakdown} dark={dark} /> : null}
+          <ChartShell title="Clases más populares" loading={loadingCharts}>
+            {breakdown ? <TopClassesChart breakdown={breakdown} /> : null}
           </ChartShell>
         </div>
 
         {!loadingOverview && (overview?.mostPopularTemplate ?? overview?.mostActiveCoach) ? (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             {overview?.mostPopularTemplate ? (
-              <div className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-                <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                  Most popular class · 30d
-                </p>
-                <p className="mt-1 truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">
+              <SurfaceCard>
+                <p className="text-xs font-medium text-zinc-500">Clase más popular</p>
+                <p className="mt-1 truncate text-base font-semibold text-zinc-900">
                   {overview.mostPopularTemplate.name}
                 </p>
                 <p className="text-xs text-zinc-500">
-                  {fmt(overview.mostPopularTemplate.bookingCount)} bookings
+                  {fmt(overview.mostPopularTemplate.bookingCount)} reservas
                 </p>
-              </div>
+              </SurfaceCard>
             ) : null}
             {overview?.mostActiveCoach ? (
-              <div className="rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-                <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                  Most active coach · 30d
-                </p>
-                <p className="mt-1 truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">
+              <SurfaceCard>
+                <p className="text-xs font-medium text-zinc-500">Coach más activo</p>
+                <p className="mt-1 truncate text-base font-semibold text-zinc-900">
                   {overview.mostActiveCoach.firstName} {overview.mostActiveCoach.lastName}
                 </p>
                 <p className="text-xs text-zinc-500">
-                  {fmt(overview.mostActiveCoach.classCount)} classes
+                  {fmt(overview.mostActiveCoach.classCount)} clases
                 </p>
-              </div>
+              </SurfaceCard>
             ) : null}
           </div>
         ) : null}

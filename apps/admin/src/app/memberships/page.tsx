@@ -55,11 +55,11 @@ const STATUS_LABELS: Record<SubscriptionStatus, string> = {
 };
 
 const STATUS_COLORS: Record<SubscriptionStatus, string> = {
-  ACTIVE: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  TRIALING: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
-  PAST_DUE: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  PAUSED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  CANCELED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  ACTIVE: "bg-emerald-100 text-emerald-800",
+  TRIALING: "bg-sky-100 text-sky-800",
+  PAST_DUE: "bg-amber-100 text-amber-800",
+  PAUSED: "bg-zinc-100 text-zinc-600",
+  CANCELED: "bg-red-100 text-red-700",
 };
 
 // ── Overview stats bar ────────────────────────────────────────────────────────
@@ -83,10 +83,10 @@ function OverviewBar({ data }: { data: MembershipsOverview }) {
       ].map(({ label, value }) => (
         <div
           key={label}
-          className="rounded-xl border border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-900"
+          className="rounded-xl border border-zinc-200 bg-white px-5 py-4"
         >
-          <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{label}</p>
-          <p className="mt-1 text-2xl font-bold text-zinc-900 dark:text-white">{value}</p>
+          <p className="text-xs font-medium text-zinc-500">{label}</p>
+          <p className="mt-1 text-2xl font-bold text-zinc-900">{value}</p>
         </div>
       ))}
     </div>
@@ -109,21 +109,21 @@ function PlanCard({
     <div
       className={`relative rounded-xl border p-5 ${
         archived
-          ? "border-zinc-200 bg-zinc-50 opacity-60 dark:border-zinc-800 dark:bg-zinc-900/40"
-          : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
+          ? "border-zinc-200 bg-zinc-50 opacity-60"
+          : "border-zinc-200 bg-white"
       }`}
     >
       {archived && (
-        <span className="absolute right-3 top-3 rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400">
+        <span className="absolute right-3 top-3 rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600">
           Inactive
         </span>
       )}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold text-zinc-900 dark:text-white">
+          <h3 className="truncate text-base font-semibold text-zinc-900">
             {plan.name}
           </h3>
-          <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="mt-0.5 text-sm text-zinc-500">
             {formatCents(plan.priceCents, plan.currency)} /{" "}
             {INTERVAL_LABELS[plan.billingInterval].toLowerCase()}
             {plan.classCredits === null
@@ -136,7 +136,7 @@ function PlanCard({
       </div>
 
       {plan.description && (
-        <p className="mt-2 text-sm text-zinc-600 line-clamp-2 dark:text-zinc-400">
+        <p className="mt-2 text-sm text-zinc-600 line-clamp-2">
           {plan.description}
         </p>
       )}
@@ -144,13 +144,13 @@ function PlanCard({
       <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <div>
           <p className="text-xs text-zinc-400">Subscribers</p>
-          <p className="font-semibold text-zinc-900 dark:text-white">
+          <p className="font-semibold text-zinc-900">
             {plan.activeSubscriberCount}
           </p>
         </div>
         <div>
           <p className="text-xs text-zinc-400">MRR</p>
-          <p className="font-semibold text-zinc-900 dark:text-white">
+          <p className="font-semibold text-zinc-900">
             {formatCents(plan.mrrCents, plan.currency)}
           </p>
         </div>
@@ -158,11 +158,11 @@ function PlanCard({
 
       <div className="mt-3 flex items-center gap-2 text-xs text-zinc-400">
         {plan.stripeProductId ? (
-          <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300">
+          <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-600">
             Stripe synced
           </span>
         ) : (
-          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-500 dark:bg-zinc-800">
+          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-500">
             No Stripe ID
           </span>
         )}
@@ -171,14 +171,14 @@ function PlanCard({
       <div className="mt-4 flex gap-2">
         <button
           onClick={() => onEdit(plan)}
-          className="flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+          className="flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
         >
           Edit
         </button>
         {!archived && (
           <button
             onClick={() => onArchive(plan)}
-            className="flex-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-900/50 dark:bg-zinc-800 dark:text-red-400 dark:hover:bg-red-900/20"
+            className="flex-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
           >
             Archive
           </button>
@@ -292,14 +292,14 @@ function PlanModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-zinc-900">
-        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-          <h2 className="text-base font-semibold text-zinc-900 dark:text-white">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
+          <h2 className="text-base font-semibold text-zinc-900">
             {editing ? "Edit Plan" : "New Membership Plan"}
           </h2>
           <button
             onClick={onClose}
-            className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+            className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
           >
             ✕
           </button>
@@ -307,34 +307,34 @@ function PlanModal({
 
         <form onSubmit={(e) => void handleSubmit(e)} className="px-6 py-5 space-y-4 overflow-y-auto max-h-[70vh]">
           <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <label className="mb-1 block text-xs font-medium text-zinc-600">
               Plan name *
             </label>
             <input
               required
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
               placeholder="e.g. Monthly Unlimited"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <label className="mb-1 block text-xs font-medium text-zinc-600">
               Description
             </label>
             <textarea
               rows={2}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
               placeholder="What's included…"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              <label className="mb-1 block text-xs font-medium text-zinc-600">
                 Price *
               </label>
               <input
@@ -344,18 +344,18 @@ function PlanModal({
                 step="0.01"
                 value={form.priceCents}
                 onChange={(e) => set("priceCents", e.target.value)}
-                className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
                 placeholder="49.00"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              <label className="mb-1 block text-xs font-medium text-zinc-600">
                 Currency
               </label>
               <select
                 value={form.currency}
                 onChange={(e) => set("currency", e.target.value)}
-                className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
               >
                 <option value="usd">USD</option>
                 <option value="eur">EUR</option>
@@ -368,13 +368,13 @@ function PlanModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <label className="mb-1 block text-xs font-medium text-zinc-600">
               Billing interval
             </label>
             <select
               value={form.billingInterval}
               onChange={(e) => set("billingInterval", e.target.value as BillingInterval)}
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
             >
               <option value="MONTHLY">Monthly</option>
               <option value="YEARLY">Yearly</option>
@@ -383,7 +383,7 @@ function PlanModal({
           </div>
 
           <div>
-            <label className="mb-1 flex items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <label className="mb-1 flex items-center gap-2 text-xs font-medium text-zinc-600">
               <input
                 type="checkbox"
                 checked={form.unlimitedCredits}
@@ -398,14 +398,14 @@ function PlanModal({
                 min="0"
                 value={form.classCredits}
                 onChange={(e) => set("classCredits", e.target.value)}
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                className="mt-1 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
                 placeholder="Number of classes per period"
               />
             )}
           </div>
 
-          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/40 space-y-3">
-            <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-3">
+            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
               Stripe IDs (optional — automation coming soon)
             </p>
             <div>
@@ -413,7 +413,7 @@ function PlanModal({
               <input
                 value={form.stripeProductId}
                 onChange={(e) => set("stripeProductId", e.target.value)}
-                className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs font-mono dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs font-mono"
                 placeholder="prod_…"
               />
             </div>
@@ -422,14 +422,14 @@ function PlanModal({
               <input
                 value={form.stripePriceId}
                 onChange={(e) => set("stripePriceId", e.target.value)}
-                className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs font-mono dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs font-mono"
                 placeholder="price_…"
               />
             </div>
           </div>
 
           {editing && (
-            <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
               <input
                 type="checkbox"
                 checked={form.active}
@@ -441,21 +441,21 @@ function PlanModal({
           )}
 
           {error && (
-            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            <p className="text-sm text-red-600">{error}</p>
           )}
 
           <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+              className="flex-1 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-50"
             >
               {saving ? "Saving…" : editing ? "Save changes" : "Create plan"}
             </button>
@@ -481,12 +481,12 @@ function SubRow({
   const isStripeLinked = !!sub.stripeSubscriptionId;
 
   return (
-    <tr className="border-b border-zinc-100 text-sm dark:border-zinc-800">
-      <td className="px-4 py-3 font-medium text-zinc-900 dark:text-white">
+    <tr className="border-b border-zinc-100 text-sm">
+      <td className="px-4 py-3 font-medium text-zinc-900">
         {sub.user.firstName} {sub.user.lastName}
         <p className="text-xs font-normal text-zinc-400">{sub.user.email}</p>
       </td>
-      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+      <td className="px-4 py-3 text-zinc-600">
         {sub.membershipPlan.name}
         <p className="text-xs text-zinc-400">
           {formatCents(sub.membershipPlan.priceCents, sub.membershipPlan.currency)} /{" "}
@@ -501,19 +501,19 @@ function SubRow({
             {STATUS_LABELS[status]}
           </span>
           {isStripeLinked ? (
-            <span className="inline-flex w-fit items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400">
+            <span className="inline-flex w-fit items-center gap-1 text-xs text-indigo-600">
               <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
               Stripe
             </span>
           ) : (
-            <span className="inline-flex w-fit items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+            <span className="inline-flex w-fit items-center gap-1 text-xs text-amber-600">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
               Manual
             </span>
           )}
         </div>
       </td>
-      <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400">
+      <td className="px-4 py-3 text-zinc-500">
         {fmtDate(sub.currentPeriodEnd)}
         {sub.cancelAtPeriodEnd && (
           <p className="mt-0.5 text-xs font-medium text-amber-500">
@@ -529,7 +529,7 @@ function SubRow({
           {status === "ACTIVE" && !sub.cancelAtPeriodEnd && (
             <button
               onClick={() => onCancelAtPeriodEnd(sub, true)}
-              className="rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300"
+              className="rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100"
             >
               Cancel at period end
             </button>
@@ -537,7 +537,7 @@ function SubRow({
           {status === "ACTIVE" && sub.cancelAtPeriodEnd && (
             <button
               onClick={() => onCancelAtPeriodEnd(sub, false)}
-              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
+              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
             >
               Keep active
             </button>
@@ -545,7 +545,7 @@ function SubRow({
           {status === "ACTIVE" && (
             <button
               onClick={() => onAction(sub, "PAUSED")}
-              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
+              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
             >
               Pause
             </button>
@@ -553,7 +553,7 @@ function SubRow({
           {status === "ACTIVE" && (
             <button
               onClick={() => onAction(sub, "CANCELED")}
-              className="rounded px-2 py-1 text-xs bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400"
+              className="rounded px-2 py-1 text-xs bg-red-50 text-red-600 hover:bg-red-100"
             >
               Cancel now
             </button>
@@ -561,7 +561,7 @@ function SubRow({
           {(status === "PAUSED" || status === "PAST_DUE") && (
             <button
               onClick={() => onAction(sub, "ACTIVE")}
-              className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300"
+              className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
             >
               Reactivate
             </button>
@@ -569,7 +569,7 @@ function SubRow({
           {status === "CANCELED" && (
             <button
               onClick={() => onAction(sub, "ACTIVE")}
-              className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-300"
+              className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
             >
               Reactivate manually
             </button>
@@ -714,21 +714,21 @@ export default function MembershipsPage() {
       {/* Page header */}
       <div className="mb-8 flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Memberships</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          <h1 className="text-2xl font-bold text-zinc-900">Memberships</h1>
+          <p className="mt-1 text-sm text-zinc-500">
             Manage plans and member subscriptions.
           </p>
         </div>
         <button
           onClick={() => { setEditingPlan(null); setShowPlanModal(true); }}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700"
         >
           + New plan
         </button>
       </div>
 
       {error && (
-        <div className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+        <div className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
           <button onClick={() => setError(null)} className="ml-3 underline">Dismiss</button>
         </div>
@@ -740,8 +740,8 @@ export default function MembershipsPage() {
       {/* Plans section */}
       <section className="mb-10">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Plans</h2>
-          <label className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
+          <h2 className="text-lg font-semibold text-zinc-900">Plans</h2>
+          <label className="flex items-center gap-2 text-sm text-zinc-500">
             <input
               type="checkbox"
               checked={showInactive}
@@ -755,11 +755,11 @@ export default function MembershipsPage() {
         {loadingPlans ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-48 rounded-xl bg-zinc-100 animate-pulse dark:bg-zinc-800" />
+              <div key={i} className="h-48 rounded-xl bg-zinc-100 animate-pulse" />
             ))}
           </div>
         ) : visiblePlans.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-300 py-12 text-center dark:border-zinc-700">
+          <div className="rounded-xl border border-dashed border-zinc-300 py-12 text-center">
             <p className="text-sm text-zinc-500">No plans yet. Create one to get started.</p>
           </div>
         ) : (
@@ -779,7 +779,7 @@ export default function MembershipsPage() {
       {/* Subscriptions section */}
       <section>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+          <h2 className="text-lg font-semibold text-zinc-900">
             Subscriptions
             {subsTotal > 0 && (
               <span className="ml-2 text-sm font-normal text-zinc-400">
@@ -792,7 +792,7 @@ export default function MembershipsPage() {
             <select
               value={statusFilter}
               onChange={(e) => { setStatusFilter(e.target.value as SubscriptionStatus | ""); }}
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
             >
               <option value="">All statuses</option>
               {(Object.keys(STATUS_LABELS) as SubscriptionStatus[]).map((s) => (
@@ -803,7 +803,7 @@ export default function MembershipsPage() {
             <select
               value={planFilter}
               onChange={(e) => setPlanFilter(e.target.value)}
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
             >
               <option value="">All plans</option>
               {plans.map((p) => (
@@ -813,9 +813,9 @@ export default function MembershipsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <div className="overflow-x-auto rounded-xl border border-zinc-200">
           <table className="w-full min-w-[640px] text-left">
-            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold uppercase tracking-wide text-zinc-500">
               <tr>
                 <th className="px-4 py-3">Member</th>
                 <th className="px-4 py-3">Plan</th>
@@ -825,13 +825,13 @@ export default function MembershipsPage() {
                 <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800 dark:bg-zinc-900">
+            <tbody className="divide-y divide-zinc-100 bg-white">
               {loadingSubs
                 ? [...Array(5)].map((_, i) => (
-                    <tr key={i} className="border-b border-zinc-100 dark:border-zinc-800">
+                    <tr key={i} className="border-b border-zinc-100">
                       {[...Array(6)].map((__, j) => (
                         <td key={j} className="px-4 py-3">
-                          <div className="h-4 rounded bg-zinc-200 animate-pulse dark:bg-zinc-800" />
+                          <div className="h-4 rounded bg-zinc-200 animate-pulse" />
                         </td>
                       ))}
                     </tr>
@@ -865,14 +865,14 @@ export default function MembershipsPage() {
               <button
                 disabled={subsPage <= 1}
                 onClick={() => void loadSubs(subsPage - 1)}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
               >
                 ← Prev
               </button>
               <button
                 disabled={subsPage >= totalSubPages}
                 onClick={() => void loadSubs(subsPage + 1)}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
               >
                 Next →
               </button>

@@ -54,7 +54,7 @@ export default function CheckInTodayPage() {
 
   if (studioError) {
     return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
         {studioError}
       </div>
     );
@@ -62,8 +62,8 @@ export default function CheckInTodayPage() {
 
   if (!selectedStudioId) {
     return (
-      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center dark:border-zinc-800 dark:bg-zinc-900">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">No studio memberships found for this account.</p>
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
+        <p className="text-sm text-zinc-600">No studio memberships found for this account.</p>
       </div>
     );
   }
@@ -71,13 +71,13 @@ export default function CheckInTodayPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Today&apos;s classes</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Today&apos;s classes</h1>
+        <p className="mt-1 text-sm text-zinc-500">
           Select a class to scan QR codes, run manual check-ins, and view attendance.
         </p>
       </div>
       {error ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {error}
           <button type="button" className="ml-3 font-semibold underline" onClick={() => void load()}>
             Retry
@@ -87,9 +87,9 @@ export default function CheckInTodayPage() {
       {loading ? (
         <p className="text-sm text-zinc-500">Loading schedule…</p>
       ) : todaysClasses.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-zinc-300 bg-white/60 px-6 py-14 text-center dark:border-zinc-700 dark:bg-zinc-900/40">
-          <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">No scheduled classes today</p>
-          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">When classes are on the schedule, they will appear here.</p>
+        <div className="rounded-2xl border border-dashed border-zinc-300 bg-white/60 px-6 py-14 text-center">
+          <p className="text-sm font-medium text-zinc-700">No scheduled classes today</p>
+          <p className="mt-2 text-sm text-zinc-500">When classes are on the schedule, they will appear here.</p>
         </div>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
@@ -97,21 +97,21 @@ export default function CheckInTodayPage() {
             <li key={c.id}>
               <Link
                 href={`/check-in/${c.id}`}
-                className="block rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-600"
+                className="block rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-zinc-300 hover:shadow"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">{c.classTemplate.name}</h2>
-                  <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">
+                  <h2 className="text-base font-semibold text-zinc-900">{c.classTemplate.name}</h2>
+                  <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-800">
                     Scheduled
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">{formatClassRange(c.startsAt, c.endsAt, tz)}</p>
+                <p className="mt-2 text-sm text-zinc-500">{formatClassRange(c.startsAt, c.endsAt, tz)}</p>
                 {c.instructor ? (
-                  <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">
+                  <p className="mt-2 text-xs text-zinc-400">
                     {c.instructor.firstName} {c.instructor.lastName}
                   </p>
                 ) : null}
-                <p className="mt-3 text-xs font-medium text-zinc-400 dark:text-zinc-500">Capacity {c.capacity}</p>
+                <p className="mt-3 text-xs font-medium text-zinc-400">Capacity {c.capacity}</p>
               </Link>
             </li>
           ))}

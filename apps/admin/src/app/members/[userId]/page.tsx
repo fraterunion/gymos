@@ -83,27 +83,27 @@ const SUB_STATUS_LABELS: Record<SubStatus, string> = {
 };
 
 const SUB_STATUS_COLORS: Record<SubStatus, string> = {
-  ACTIVE: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  TRIALING: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
-  PAST_DUE: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  PAUSED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  CANCELED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  ACTIVE: "bg-emerald-100 text-emerald-800",
+  TRIALING: "bg-sky-100 text-sky-800",
+  PAST_DUE: "bg-amber-100 text-amber-800",
+  PAUSED: "bg-zinc-100 text-zinc-600",
+  CANCELED: "bg-red-100 text-red-700",
 };
 
 const BOOKING_STATUS_COLORS: Record<string, string> = {
-  CONFIRMED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  CANCELLED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
-  NO_SHOW: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  COMPLETED: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-  PENDING: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+  CONFIRMED: "bg-emerald-100 text-emerald-800",
+  CANCELLED: "bg-red-100 text-red-700",
+  NO_SHOW: "bg-amber-100 text-amber-800",
+  COMPLETED: "bg-blue-100 text-blue-800",
+  PENDING: "bg-zinc-100 text-zinc-600",
 };
 
 const PAYMENT_STATUS_COLORS: Record<string, string> = {
-  SUCCEEDED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  FAILED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
-  PENDING: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  REFUNDED: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-  PARTIALLY_REFUNDED: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  SUCCEEDED: "bg-emerald-100 text-emerald-800",
+  FAILED: "bg-red-100 text-red-700",
+  PENDING: "bg-zinc-100 text-zinc-600",
+  REFUNDED: "bg-blue-100 text-blue-800",
+  PARTIALLY_REFUNDED: "bg-amber-100 text-amber-800",
 };
 
 const PRESET_TAGS = [
@@ -124,25 +124,25 @@ function computeBadges(
   const memberDays = daysAgo(profile.membership.createdAt);
 
   if (sub?.status === "ACTIVE" || sub?.status === "TRIALING") {
-    badges.push({ label: "Active", color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" });
+    badges.push({ label: "Active", color: "bg-emerald-100 text-emerald-800" });
   }
   if (sub?.status === "PAST_DUE") {
-    badges.push({ label: "Past Due", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" });
+    badges.push({ label: "Past Due", color: "bg-amber-100 text-amber-800" });
   }
   if (memberDays <= 30) {
-    badges.push({ label: "New Member", color: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" });
+    badges.push({ label: "New Member", color: "bg-sky-100 text-sky-800" });
   }
   if (profile.bookingStats.noShowCount > 0) {
-    badges.push({ label: `${profile.bookingStats.noShowCount} No-show${profile.bookingStats.noShowCount > 1 ? "s" : ""}`, color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" });
+    badges.push({ label: `${profile.bookingStats.noShowCount} No-show${profile.bookingStats.noShowCount > 1 ? "s" : ""}`, color: "bg-amber-100 text-amber-800" });
   }
   if (crm?.tags.includes("VIP")) {
-    badges.push({ label: "VIP", color: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300" });
+    badges.push({ label: "VIP", color: "bg-purple-100 text-purple-800" });
   }
   if (crm?.tags.includes("At Risk")) {
-    badges.push({ label: "At Risk", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400" });
+    badges.push({ label: "At Risk", color: "bg-red-100 text-red-700" });
   }
   if (crm?.tags.includes("Injured")) {
-    badges.push({ label: "Injured", color: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300" });
+    badges.push({ label: "Injured", color: "bg-orange-100 text-orange-800" });
   }
   return badges;
 }
@@ -151,9 +151,9 @@ function computeBadges(
 
 function CardSkeleton({ lines = 3 }: { lines?: number }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 space-y-3">
+    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm space-y-3">
       {[...Array(lines)].map((_, i) => (
-        <div key={i} className="h-4 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" style={{ width: `${50 + (i * 23) % 50}%` }} />
+        <div key={i} className="h-4 rounded bg-zinc-200 animate-pulse" style={{ width: `${50 + (i * 23) % 50}%` }} />
       ))}
     </div>
   );
@@ -161,14 +161,14 @@ function CardSkeleton({ lines = 3 }: { lines?: number }) {
 
 function TableSkeleton({ cols = 4 }: { cols?: number }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <table className="min-w-full divide-y divide-zinc-100 dark:divide-zinc-800">
-        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <table className="min-w-full divide-y divide-zinc-100">
+        <tbody className="divide-y divide-zinc-100">
           {[...Array(5)].map((_, i) => (
             <tr key={i}>
               {[...Array(cols)].map((_, j) => (
                 <td key={j} className="px-4 py-3">
-                  <div className="h-4 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" style={{ width: `${40 + (j * 19) % 50}%` }} />
+                  <div className="h-4 rounded bg-zinc-200 animate-pulse" style={{ width: `${40 + (j * 19) % 50}%` }} />
                 </td>
               ))}
             </tr>
@@ -183,9 +183,9 @@ function TableSkeleton({ cols = 4 }: { cols?: number }) {
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <p className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{label}</p>
-      <p className="mt-1 text-2xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">{value}</p>
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">{label}</p>
+      <p className="mt-1 text-2xl font-bold tabular-nums text-zinc-900">{value}</p>
       {sub && <p className="mt-0.5 text-xs text-zinc-400">{sub}</p>}
     </div>
   );
@@ -213,20 +213,20 @@ function Pagination({
   const totalPages = Math.max(1, Math.ceil(total / limit));
   if (totalPages <= 1) return null;
   return (
-    <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
+    <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-3">
       <p className="text-xs text-zinc-500">Page {page} of {totalPages}</p>
       <div className="flex gap-2">
         <button
           onClick={() => onPage(Math.max(1, page - 1))}
           disabled={page === 1}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50"
         >
           Previous
         </button>
         <button
           onClick={() => onPage(Math.min(totalPages, page + 1))}
           disabled={page === totalPages}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50"
         >
           Next
         </button>
@@ -308,47 +308,47 @@ function BookingsTab({ studioId, userId }: { studioId: string; userId: string })
     <div className="space-y-3">
       {actionError && <ErrorBanner message={actionError} />}
       {error && <ErrorBanner message={error} />}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <table className="min-w-full divide-y divide-zinc-100 dark:divide-zinc-800">
-          <thead className="bg-zinc-50 dark:bg-zinc-950/60">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+        <table className="min-w-full divide-y divide-zinc-100">
+          <thead className="bg-zinc-50">
             <tr>
               {["Class", "Date", "Status", "Booked", ""].map((h) => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500">{h}</th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <tbody className="divide-y divide-zinc-100">
             {bookings.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-zinc-500">No bookings yet.</td></tr>
             ) : bookings.map((b) => (
-              <tr key={b.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+              <tr key={b.id} className="hover:bg-zinc-50 transition-colors">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     {b.scheduledClass.classTemplate.color && (
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: b.scheduledClass.classTemplate.color }} />
                     )}
-                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{b.scheduledClass.classTemplate.name}</span>
+                    <span className="text-sm font-medium text-zinc-900">{b.scheduledClass.classTemplate.name}</span>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-sm text-zinc-600 dark:text-zinc-400">{fmtDateTime(b.scheduledClass.startsAt)}</td>
+                <td className="px-4 py-3 text-sm text-zinc-600">{fmtDateTime(b.scheduledClass.startsAt)}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BOOKING_STATUS_COLORS[b.status] ?? ""}`}>{b.status}</span>
                 </td>
-                <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">{fmtDate(b.createdAt)}</td>
+                <td className="px-4 py-3 text-sm text-zinc-500">{fmtDate(b.createdAt)}</td>
                 <td className="px-4 py-3 text-right">
                   {b.status === "CONFIRMED" && (
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => void handleCheckIn(b.id)}
                         disabled={actionLoading === `ci-${b.id}`}
-                        className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                        className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
                       >
                         {actionLoading === `ci-${b.id}` ? "…" : "Check in"}
                       </button>
                       <button
                         onClick={() => void handleCancel(b.id)}
                         disabled={actionLoading === b.id}
-                        className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                        className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                       >
                         {actionLoading === b.id ? "…" : "Cancel"}
                       </button>
@@ -370,11 +370,11 @@ function BookingsTab({ studioId, userId }: { studioId: string; userId: string })
 // ── Attendance log tab ────────────────────────────────────────────────────────
 
 const ATTENDANCE_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  ATTENDED: { label: "Attended", color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
-  CANCELLED: { label: "Cancelled", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400" },
-  NO_SHOW: { label: "No Show", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" },
-  MISSED: { label: "Missed", color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
-  UPCOMING: { label: "Upcoming", color: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" },
+  ATTENDED: { label: "Attended", color: "bg-emerald-100 text-emerald-800" },
+  CANCELLED: { label: "Cancelled", color: "bg-red-100 text-red-700" },
+  NO_SHOW: { label: "No Show", color: "bg-amber-100 text-amber-800" },
+  MISSED: { label: "Missed", color: "bg-zinc-100 text-zinc-600" },
+  UPCOMING: { label: "Upcoming", color: "bg-sky-100 text-sky-800" },
 };
 
 function AttendanceTab({ studioId, userId }: { studioId: string; userId: string }) {
@@ -419,23 +419,23 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <table className="min-w-full divide-y divide-zinc-100 dark:divide-zinc-800">
-          <thead className="bg-zinc-50 dark:bg-zinc-950/60">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+        <table className="min-w-full divide-y divide-zinc-100">
+          <thead className="bg-zinc-50">
             <tr>
               {["Date", "Class", "Coach", "Status", ""].map((h) => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500">{h}</th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <tbody className="divide-y divide-zinc-100">
             {records.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-zinc-500">No booking history yet.</td></tr>
             ) : records.map((r) => {
               const cfg = ATTENDANCE_STATUS_CONFIG[r.attendanceStatus] ?? { label: r.attendanceStatus, color: "" };
               return (
-                <tr key={r.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-                  <td className="px-4 py-3 text-sm text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                <tr key={r.id} className="hover:bg-zinc-50 transition-colors">
+                  <td className="px-4 py-3 text-sm text-zinc-600 whitespace-nowrap">
                     {fmtDateTime(r.scheduledClass.startsAt)}
                   </td>
                   <td className="px-4 py-3">
@@ -443,10 +443,10 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
                       {r.scheduledClass.classTemplate.color && (
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.scheduledClass.classTemplate.color }} />
                       )}
-                      <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{r.scheduledClass.classTemplate.name}</span>
+                      <span className="text-sm font-medium text-zinc-900">{r.scheduledClass.classTemplate.name}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                  <td className="px-4 py-3 text-sm text-zinc-500">
                     {r.scheduledClass.instructor
                       ? `${r.scheduledClass.instructor.firstName} ${r.scheduledClass.instructor.lastName}`
                       : "—"}
@@ -466,7 +466,7 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
                       <button
                         onClick={() => void handleMarkNoShow(r)}
                         disabled={actionLoading === r.id}
-                        className="rounded-lg border border-amber-200 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                        className="rounded-lg border border-amber-200 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
                       >
                         {actionLoading === r.id ? "…" : "Mark No Show"}
                       </button>
@@ -522,10 +522,10 @@ function TimelineTab({ studioId, userId }: { studioId: string; userId: string })
       <div className="space-y-4 pl-6">
         {[...Array(6)].map((_, i) => (
           <div key={i} className="flex gap-3">
-            <div className="h-3 w-3 mt-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 animate-pulse shrink-0" />
+            <div className="h-3 w-3 mt-1.5 rounded-full bg-zinc-200 animate-pulse shrink-0" />
             <div className="flex-1 space-y-2">
-              <div className="h-4 w-1/3 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
-              <div className="h-3 w-1/2 rounded bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+              <div className="h-4 w-1/3 rounded bg-zinc-200 animate-pulse" />
+              <div className="h-3 w-1/2 rounded bg-zinc-100 animate-pulse" />
             </div>
           </div>
         ))}
@@ -537,7 +537,7 @@ function TimelineTab({ studioId, userId }: { studioId: string; userId: string })
 
   if (events.length === 0) {
     return (
-      <div className="rounded-xl border border-zinc-200 bg-white px-6 py-12 text-center dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="rounded-xl border border-zinc-200 bg-white px-6 py-12 text-center">
         <p className="text-sm text-zinc-500">No activity yet.</p>
       </div>
     );
@@ -552,28 +552,28 @@ function TimelineTab({ studioId, userId }: { studioId: string; userId: string })
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
       <div className="space-y-8">
         {[...groups.entries()].map(([dateKey, dayEvents]) => (
           <div key={dateKey}>
-            <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+            <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-zinc-400">
               {dateKey}
             </p>
-            <div className="relative border-l border-zinc-200 pl-6 dark:border-zinc-700 space-y-5">
+            <div className="relative border-l border-zinc-200 pl-6 space-y-5">
               {dayEvents.map((ev, i) => {
                 const cfg = TIMELINE_CONFIG[ev.type] ?? { dot: "bg-zinc-400" };
                 const time = new Date(ev.occurredAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
                 return (
                   <div key={i} className="relative">
-                    <span className={`absolute -left-[1.6rem] top-[5px] h-3 w-3 rounded-full border-2 border-white dark:border-zinc-900 ${cfg.dot}`} />
+                    <span className={`absolute -left-[1.6rem] top-[5px] h-3 w-3 rounded-full border-2 border-white ${cfg.dot}`} />
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{ev.title}</p>
+                        <p className="text-sm font-medium text-zinc-900">{ev.title}</p>
                         {ev.description && (
-                          <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">{ev.description}</p>
+                          <p className="mt-0.5 text-sm text-zinc-500">{ev.description}</p>
                         )}
                       </div>
-                      <p className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">{time}</p>
+                      <p className="shrink-0 text-xs text-zinc-400">{time}</p>
                     </div>
                   </div>
                 );
@@ -617,24 +617,24 @@ function BillingTab({ studioId, userId }: { studioId: string; userId: string }) 
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <table className="min-w-full divide-y divide-zinc-100 dark:divide-zinc-800">
-          <thead className="bg-zinc-50 dark:bg-zinc-950/60">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+        <table className="min-w-full divide-y divide-zinc-100">
+          <thead className="bg-zinc-50">
             <tr>
               {["Paid", "Amount", "Status", "Reference"].map((h) => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500">{h}</th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <tbody className="divide-y divide-zinc-100">
             {payments.length === 0 ? (
               <tr><td colSpan={4} className="px-4 py-10 text-center text-sm text-zinc-500">No payment records.</td></tr>
             ) : payments.map((p) => (
-              <tr key={p.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-                <td className="px-4 py-3 text-sm text-zinc-600 dark:text-zinc-400">
+              <tr key={p.id} className="hover:bg-zinc-50 transition-colors">
+                <td className="px-4 py-3 text-sm text-zinc-600">
                   {fmtDate(p.paidAt ?? p.createdAt)}
                 </td>
-                <td className="px-4 py-3 text-sm font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                <td className="px-4 py-3 text-sm font-medium tabular-nums text-zinc-900">
                   {fmtMoney(p.amountCents, p.currency)}
                 </td>
                 <td className="px-4 py-3">
@@ -642,7 +642,7 @@ function BillingTab({ studioId, userId }: { studioId: string; userId: string }) 
                     {p.status}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-xs font-mono text-zinc-400 dark:text-zinc-600 truncate max-w-[160px]">
+                <td className="px-4 py-3 text-xs font-mono text-zinc-400 truncate max-w-[160px]">
                   {p.stripeInvoiceId ?? p.stripePaymentIntentId ?? "—"}
                 </td>
               </tr>
@@ -701,16 +701,16 @@ function MembershipTab({ studioId, userId }: { studioId: string; userId: string 
       {error && <ErrorBanner message={error} />}
       {actionError && <ErrorBanner message={actionError} />}
       {subs.length === 0 && !loading && (
-        <div className="rounded-xl border border-zinc-200 bg-white px-6 py-10 text-center shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="rounded-xl border border-zinc-200 bg-white px-6 py-10 text-center shadow-sm">
           <p className="text-sm text-zinc-500">No subscriptions found.</p>
         </div>
       )}
       {subs.map((s) => (
-        <div key={s.id} className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <div key={s.id} className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <p className="font-semibold text-zinc-900 dark:text-zinc-100">{s.membershipPlan.name}</p>
+                <p className="font-semibold text-zinc-900">{s.membershipPlan.name}</p>
                 <SubStatusBadge status={s.status} />
               </div>
               <p className="mt-0.5 text-sm text-zinc-500">
@@ -723,18 +723,18 @@ function MembershipTab({ studioId, userId }: { studioId: string; userId: string 
               {s.status === "ACTIVE" && (
                 <>
                   <button onClick={() => void handleStatusChange(s.id, "PAUSED")} disabled={actionLoading === s.id}
-                    className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+                    className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50">
                     {actionLoading === s.id ? "…" : "Pause"}
                   </button>
                   <button onClick={() => void handleStatusChange(s.id, "CANCELED")} disabled={actionLoading === s.id}
-                    className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">
+                    className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
                     Cancel
                   </button>
                 </>
               )}
               {(s.status === "PAUSED" || s.status === "CANCELED" || s.status === "PAST_DUE") && (
                 <button onClick={() => void handleStatusChange(s.id, "ACTIVE")} disabled={actionLoading === s.id}
-                  className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30">
+                  className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
                   {actionLoading === s.id ? "…" : "Reactivate"}
                 </button>
               )}
@@ -742,26 +742,26 @@ function MembershipTab({ studioId, userId }: { studioId: string; userId: string 
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500">Period start</p>
-              <p className="text-sm text-zinc-700 dark:text-zinc-300">{fmtDate(s.currentPeriodStart)}</p>
+              <p className="text-xs text-zinc-400">Period start</p>
+              <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodStart)}</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500">Period end</p>
-              <p className="text-sm text-zinc-700 dark:text-zinc-300">{fmtDate(s.currentPeriodEnd)}</p>
+              <p className="text-xs text-zinc-400">Period end</p>
+              <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodEnd)}</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500">Credits</p>
-              <p className="text-sm text-zinc-700 dark:text-zinc-300">{s.membershipPlan.classCredits ?? "Unlimited"}</p>
+              <p className="text-xs text-zinc-400">Credits</p>
+              <p className="text-sm text-zinc-700">{s.membershipPlan.classCredits ?? "Unlimited"}</p>
             </div>
             <div>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500">Cancel at period end</p>
-              <p className="text-sm text-zinc-700 dark:text-zinc-300">{s.cancelAtPeriodEnd ? <span className="text-amber-600 dark:text-amber-400">Yes</span> : "No"}</p>
+              <p className="text-xs text-zinc-400">Cancel at period end</p>
+              <p className="text-sm text-zinc-700">{s.cancelAtPeriodEnd ? <span className="text-amber-600">Yes</span> : "No"}</p>
             </div>
           </div>
         </div>
       ))}
       {subs.length > 0 && (
-        <p className="text-xs text-zinc-400 dark:text-zinc-500">Status changes are local only — they may be overridden by the next Stripe webhook.</p>
+        <p className="text-xs text-zinc-400">Status changes are local only — they may be overridden by the next Stripe webhook.</p>
       )}
     </div>
   );
@@ -860,11 +860,11 @@ function NotesTab({
       {error && <ErrorBanner message={error} />}
 
       {/* Tags */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-3">Tags</h3>
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-zinc-900 mb-3">Tags</h3>
         <div className="flex flex-wrap gap-2 mb-3">
           {(form.tags ?? []).map((tag) => (
-            <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+            <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700">
               {tag}
               <button type="button" onClick={() => removeTag(tag)} className="text-zinc-400 hover:text-red-500 leading-none ml-0.5">×</button>
             </span>
@@ -877,7 +877,7 @@ function NotesTab({
               key={pt}
               type="button"
               onClick={() => addTag(pt)}
-              className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+              className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 hover:border-zinc-400"
             >
               + {pt}
             </button>
@@ -890,12 +890,12 @@ function NotesTab({
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(tagInput); } }}
             placeholder="Custom tag…"
             maxLength={50}
-            className="flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+            className="flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm"
           />
           <button
             type="button"
             onClick={() => addTag(tagInput)}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
           >
             Add
           </button>
@@ -903,113 +903,113 @@ function NotesTab({
       </div>
 
       {/* Notes */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 space-y-4">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Internal notes</h3>
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm space-y-4">
+        <h3 className="text-sm font-semibold text-zinc-900">Internal notes</h3>
         <div>
-          <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Notes</label>
+          <label className="block text-xs font-medium text-zinc-500 mb-1">Notes</label>
           <textarea
             rows={4}
             value={form.notes ?? ""}
             onChange={(e) => set("notes", e.target.value || null)}
             placeholder="General notes, follow-ups, preferences…"
             maxLength={5000}
-            className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+            className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
           />
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Goals</label>
+            <label className="block text-xs font-medium text-zinc-500 mb-1">Goals</label>
             <textarea
               rows={3}
               value={form.goals ?? ""}
               onChange={(e) => set("goals", e.target.value || null)}
               placeholder="Member's fitness goals…"
               maxLength={2000}
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Injuries / Health notes</label>
+            <label className="block text-xs font-medium text-zinc-500 mb-1">Injuries / Health notes</label>
             <textarea
               rows={3}
               value={form.injuries ?? ""}
               onChange={(e) => set("injuries", e.target.value || null)}
               placeholder="Known injuries, limitations…"
               maxLength={2000}
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
             />
           </div>
         </div>
       </div>
 
       {/* Personal details */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 space-y-4">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Personal details</h3>
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm space-y-4">
+        <h3 className="text-sm font-semibold text-zinc-900">Personal details</h3>
         <div>
-          <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Date of birth</label>
+          <label className="block text-xs font-medium text-zinc-500 mb-1">Date of birth</label>
           <input
             type="date"
             value={form.birthdate ?? ""}
             onChange={(e) => set("birthdate", e.target.value || null)}
-            className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+            className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
           />
         </div>
       </div>
 
       {/* Emergency contact */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 space-y-4">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Emergency contact</h3>
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm space-y-4">
+        <h3 className="text-sm font-semibold text-zinc-900">Emergency contact</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
-            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Name</label>
+            <label className="block text-xs font-medium text-zinc-500 mb-1">Name</label>
             <input
               type="text"
               maxLength={120}
               value={form.emergencyContactName ?? ""}
               onChange={(e) => set("emergencyContactName", e.target.value || null)}
               placeholder="Full name"
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Phone</label>
+            <label className="block text-xs font-medium text-zinc-500 mb-1">Phone</label>
             <input
               type="tel"
               maxLength={30}
               value={form.emergencyContactPhone ?? ""}
               onChange={(e) => set("emergencyContactPhone", e.target.value || null)}
               placeholder="+1 555 000 0000"
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Relation</label>
+            <label className="block text-xs font-medium text-zinc-500 mb-1">Relation</label>
             <input
               type="text"
               maxLength={60}
               value={form.emergencyContactRelation ?? ""}
               onChange={(e) => set("emergencyContactRelation", e.target.value || null)}
               placeholder="e.g. Spouse, Parent"
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
             />
           </div>
         </div>
       </div>
 
       <div className="flex items-center justify-between">
-        {saved && <p className="text-sm text-emerald-600 dark:text-emerald-400">Saved.</p>}
+        {saved && <p className="text-sm text-emerald-600">Saved.</p>}
         {!saved && <span />}
         <button
           type="submit"
           disabled={saving}
-          className="rounded-lg bg-zinc-900 px-5 py-2 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          className="rounded-lg bg-zinc-900 px-5 py-2 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save changes"}
         </button>
       </div>
 
       {crm && (
-        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+        <p className="text-xs text-zinc-400">
           Last updated {fmtDateTime(crm.updatedAt)} — internal only, not visible to members.
         </p>
       )}
@@ -1021,7 +1021,7 @@ function NotesTab({
 
 function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
+    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
       {message}
     </div>
   );
@@ -1086,12 +1086,12 @@ function WaiverStatusCard({
   const pending = !status.accepted;
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Carta Responsiva</h2>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Estado: <span className="font-medium text-zinc-800 dark:text-zinc-200">{waiverStatusLabel(status)}</span>
+          <h2 className="text-sm font-semibold text-zinc-900">Carta Responsiva</h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            Estado: <span className="font-medium text-zinc-800">{waiverStatusLabel(status)}</span>
           </p>
           {status.accepted && status.acceptedVersion ? (
             <p className="mt-1 text-xs text-zinc-400">
@@ -1104,11 +1104,11 @@ function WaiverStatusCard({
         </div>
       </div>
 
-      {error ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
 
       {pending ? (
-        <div className="mt-4 space-y-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+        <div className="mt-4 space-y-3 border-t border-zinc-100 pt-4">
+          <p className="text-sm text-zinc-600">
             Marca como firmada presencialmente solo si el cliente firmó la carta en recepción.
           </p>
           <textarea
@@ -1116,13 +1116,13 @@ function WaiverStatusCard({
             onChange={(e) => setNote(e.target.value)}
             placeholder="Nota opcional (referencia, folio, etc.)"
             rows={2}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900"
           />
           <button
             type="button"
             onClick={() => void handleAttest()}
             disabled={submitting || !status.activeWaiverDocumentId}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             {submitting ? "Guardando…" : "Marcar como firmado presencialmente"}
           </button>
@@ -1176,7 +1176,7 @@ export default function MemberProfilePage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/members" className="text-sm text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+        <Link href="/members" className="text-sm text-zinc-500 hover:text-zinc-800">
           ← Members
         </Link>
       </div>
@@ -1191,21 +1191,21 @@ export default function MemberProfilePage() {
       ) : profile ? (
         <>
           {/* ── Profile header ── */}
-          <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-xl font-bold text-white dark:bg-zinc-700">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-xl font-bold text-white">
                 {initials(profile.user.firstName, profile.user.lastName)}
               </div>
               <div className="flex-1 min-w-0">
-                <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+                <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
                   {profile.user.firstName} {profile.user.lastName}
                 </h1>
-                <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">{profile.user.email}</p>
+                <p className="mt-0.5 text-sm text-zinc-500">{profile.user.email}</p>
                 {profile.user.phone && (
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{profile.user.phone}</p>
+                  <p className="text-sm text-zinc-500">{profile.user.phone}</p>
                 )}
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                  <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
                     {profile.role}
                   </span>
                   {badges.map((b) => (
@@ -1215,9 +1215,9 @@ export default function MemberProfilePage() {
                   ))}
                 </div>
               </div>
-              <div className="text-right text-xs text-zinc-400 dark:text-zinc-500 shrink-0">
+              <div className="text-right text-xs text-zinc-400 shrink-0">
                 <p>Member since</p>
-                <p className="font-medium text-zinc-700 dark:text-zinc-300">{fmtDate(profile.membership.createdAt)}</p>
+                <p className="font-medium text-zinc-700">{fmtDate(profile.membership.createdAt)}</p>
               </div>
             </div>
           </div>
@@ -1241,7 +1241,7 @@ export default function MemberProfilePage() {
           </div>
 
           {/* ── Tabs ── */}
-          <div className="border-b border-zinc-200 dark:border-zinc-800">
+          <div className="border-b border-zinc-200">
             <nav className="-mb-px flex gap-1 overflow-x-auto">
               {TABS.map((t) => (
                 <button
@@ -1249,8 +1249,8 @@ export default function MemberProfilePage() {
                   onClick={() => setActiveTab(t.id)}
                   className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
                     activeTab === t.id
-                      ? "border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100"
-                      : "border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      ? "border-zinc-900 text-zinc-900"
+                      : "border-transparent text-zinc-500 hover:text-zinc-800"
                   }`}
                 >
                   {t.label}
@@ -1262,36 +1262,36 @@ export default function MemberProfilePage() {
           {/* ── Tab content ── */}
           <div>
             {activeTab === "overview" && (
-              <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
                 <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div>
-                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Email</dt>
-                    <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{profile.user.email}</dd>
+                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Email</dt>
+                    <dd className="mt-1 text-sm text-zinc-900">{profile.user.email}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Phone</dt>
-                    <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{profile.user.phone ?? "—"}</dd>
+                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Phone</dt>
+                    <dd className="mt-1 text-sm text-zinc-900">{profile.user.phone ?? "—"}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Role</dt>
-                    <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{profile.role}</dd>
+                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Role</dt>
+                    <dd className="mt-1 text-sm text-zinc-900">{profile.role}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Member since</dt>
-                    <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{fmtDateTime(profile.membership.createdAt)}</dd>
+                    <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Member since</dt>
+                    <dd className="mt-1 text-sm text-zinc-900">{fmtDateTime(profile.membership.createdAt)}</dd>
                   </div>
                   {profile.activeSubscription && (
                     <>
                       <div>
-                        <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Current plan</dt>
-                        <dd className="mt-1 flex items-center gap-2 text-sm text-zinc-900 dark:text-zinc-100">
+                        <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Current plan</dt>
+                        <dd className="mt-1 flex items-center gap-2 text-sm text-zinc-900">
                           {profile.activeSubscription.plan.name}
                           <SubStatusBadge status={profile.activeSubscription.status} />
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Renews</dt>
-                        <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">
+                        <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Renews</dt>
+                        <dd className="mt-1 text-sm text-zinc-900">
                           {fmtDate(profile.activeSubscription.currentPeriodEnd)}
                           {profile.activeSubscription.cancelAtPeriodEnd && (
                             <span className="ml-2 text-xs text-red-500">Cancels at period end</span>
@@ -1302,14 +1302,14 @@ export default function MemberProfilePage() {
                   )}
                   {crm?.birthdate && (
                     <div>
-                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Date of birth</dt>
-                      <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{fmtDate(crm.birthdate)}</dd>
+                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Date of birth</dt>
+                      <dd className="mt-1 text-sm text-zinc-900">{fmtDate(crm.birthdate)}</dd>
                     </div>
                   )}
                   {crm?.emergencyContactName && (
                     <div>
-                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Emergency contact</dt>
-                      <dd className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">
+                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Emergency contact</dt>
+                      <dd className="mt-1 text-sm text-zinc-900">
                         {crm.emergencyContactName}
                         {crm.emergencyContactRelation && <span className="ml-1 text-zinc-500">({crm.emergencyContactRelation})</span>}
                         {crm.emergencyContactPhone && <span className="block text-zinc-500">{crm.emergencyContactPhone}</span>}
@@ -1318,10 +1318,10 @@ export default function MemberProfilePage() {
                   )}
                   {crm && crm.tags.length > 0 && (
                     <div className="sm:col-span-2">
-                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Tags</dt>
+                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Tags</dt>
                       <dd className="mt-2 flex flex-wrap gap-1.5">
                         {crm.tags.map((tag) => (
-                          <span key={tag} className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                          <span key={tag} className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
                             {tag}
                           </span>
                         ))}
@@ -1330,8 +1330,8 @@ export default function MemberProfilePage() {
                   )}
                   {crm?.injuries && (
                     <div className="sm:col-span-2">
-                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Injuries / Health</dt>
-                      <dd className="mt-1 text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-line">{crm.injuries}</dd>
+                      <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Injuries / Health</dt>
+                      <dd className="mt-1 text-sm text-zinc-700 whitespace-pre-line">{crm.injuries}</dd>
                     </div>
                   )}
                 </dl>

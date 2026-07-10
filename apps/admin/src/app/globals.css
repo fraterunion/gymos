@@ -1,9 +1,11 @@
 @import "tailwindcss";
-/* Shared Tailwind preset for admin (Tailwind v4) lives in @gymos/config — wire tokens here when defined. */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafafa;
+  --foreground: #18181b;
+  --admin-header: #0a0a0a;
+  --admin-surface: #ffffff;
+  --admin-border: #e4e4e7;
 }
 
 @theme inline {
@@ -13,15 +15,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Admin desk: always light canvas below black header */
+.admin-light-surface {
+  background: var(--admin-surface);
+  border-color: var(--admin-border);
 }

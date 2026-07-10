@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
+import { adminInput } from "@/lib/adminSurface";
 import {
   fetchStudioSettings,
   updateBookingRules,
@@ -12,8 +13,7 @@ import {
   type StudioSettingsDto,
 } from "@/lib/api/settings";
 
-const INPUT =
-  "w-full rounded-xl border border-zinc-700/90 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-violet-500/70 focus:outline-none focus:ring-1 focus:ring-violet-500/40";
+const INPUT = adminInput;
 
 const COMMON_TIMEZONES = [
   "UTC",
@@ -63,9 +63,9 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-zinc-800/90 bg-zinc-900/40 p-6 shadow-sm backdrop-blur-sm dark:bg-zinc-900/60">
+    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
       <div className="mb-6">
-        <h2 className="text-lg font-semibold tracking-tight text-zinc-50">{title}</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-zinc-900">{title}</h2>
         {subtitle ? <p className="mt-1 text-sm text-zinc-500">{subtitle}</p> : null}
       </div>
       {children}
@@ -87,14 +87,14 @@ function ToggleRow({
   onChange: (next: boolean) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-start justify-between gap-4 border-b border-zinc-800/50 py-4 last:border-b-0">
+    <label className="flex cursor-pointer items-start justify-between gap-4 border-b border-zinc-100 py-4 last:border-b-0">
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-zinc-100">{label}</span>
+        <span className="block text-sm font-medium text-zinc-900">{label}</span>
         {description ? <span className="mt-1 block text-xs leading-relaxed text-zinc-500">{description}</span> : null}
       </span>
       <input
         type="checkbox"
-        className="mt-1 h-4 w-4 shrink-0 rounded border-zinc-600 bg-zinc-950 text-violet-600 focus:ring-violet-500/40"
+        className="mt-1 h-4 w-4 shrink-0 rounded border-zinc-300 text-violet-600 focus:ring-violet-500/40"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
@@ -293,7 +293,7 @@ export default function StudioSettingsPage() {
 
   if (studiosError) {
     return (
-      <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4 text-sm text-red-200">
+      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
         {studiosError}
       </div>
     );
@@ -301,8 +301,8 @@ export default function StudioSettingsPage() {
 
   if (!canManage) {
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900/50 p-8 text-center">
-        <h1 className="text-lg font-semibold text-zinc-100">Studio settings</h1>
+      <div className="mx-auto max-w-lg rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+        <h1 className="text-lg font-semibold text-zinc-900">Studio settings</h1>
         <p className="mt-2 text-sm text-zinc-500">
           Only owners and admins can open branding and operational settings. Ask a studio admin for access.
         </p>
@@ -319,15 +319,15 @@ export default function StudioSettingsPage() {
   if (loading && !data) {
     return (
       <div className="space-y-4">
-        <div className="h-8 w-48 animate-pulse rounded-lg bg-zinc-800" />
-        <div className="h-64 animate-pulse rounded-2xl bg-zinc-900/50" />
+        <div className="h-8 w-48 animate-pulse rounded-lg bg-zinc-200" />
+        <div className="h-64 animate-pulse rounded-2xl bg-zinc-100" />
       </div>
     );
   }
 
   if (loadError || !data) {
     return (
-      <div className="rounded-xl border border-red-900/40 bg-red-950/15 p-4 text-sm text-red-200">
+      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
         {loadError ?? "Settings unavailable."}
       </div>
     );
@@ -337,25 +337,25 @@ export default function StudioSettingsPage() {
     <div className="space-y-10 pb-16">
       <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">Studio settings</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Studio settings</h1>
           <p className="mt-1 max-w-2xl text-sm text-zinc-500">
             Branding and booking rules for your studio. FraterUnion manages native app identifiers in the internal
             platform console.
           </p>
         </div>
         {flash ? (
-          <span className="text-xs font-medium text-emerald-400" role="status">
+          <span className="text-xs font-medium text-emerald-700" role="status">
             {flash}
           </span>
         ) : data ? (
-          <span className="text-xs text-zinc-600">
+          <span className="text-xs text-zinc-500">
             Last updated {new Date(data.updatedAt).toLocaleString()}
           </span>
         ) : null}
       </header>
 
       {sectionError ? (
-        <div className="rounded-xl border border-amber-900/40 bg-amber-950/20 px-4 py-3 text-sm text-amber-100">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {sectionError}
         </div>
       ) : null}
@@ -366,7 +366,7 @@ export default function StudioSettingsPage() {
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Studio name</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Studio name</span>
             <input
               className={INPUT}
               value={general.name}
@@ -374,7 +374,7 @@ export default function StudioSettingsPage() {
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Timezone</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Timezone</span>
             <input
               className={INPUT}
               list="tz-list"
@@ -388,7 +388,7 @@ export default function StudioSettingsPage() {
             </datalist>
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Support email</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Support email</span>
             <input
               className={INPUT}
               type="email"
@@ -398,7 +398,7 @@ export default function StudioSettingsPage() {
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Phone</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Phone</span>
             <input
               className={INPUT}
               type="tel"
@@ -407,7 +407,7 @@ export default function StudioSettingsPage() {
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Website</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Website</span>
             <input
               className={INPUT}
               placeholder="https://"
@@ -416,18 +416,18 @@ export default function StudioSettingsPage() {
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Instagram</span>
-            <div className="flex rounded-xl border border-zinc-700/90 bg-zinc-950 focus-within:border-violet-500/70 focus-within:ring-1 focus-within:ring-violet-500/40">
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Instagram</span>
+            <div className="flex rounded-xl border border-zinc-200 bg-white shadow-sm focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200">
               <span className="flex items-center pl-3 text-sm text-zinc-500">@</span>
               <input
-                className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pr-3 text-sm text-zinc-100 outline-none"
+                className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pr-3 text-sm text-zinc-900 outline-none"
                 value={general.instagramHandle}
                 onChange={(e) => setGeneral((s) => ({ ...s, instagramHandle: e.target.value }))}
               />
             </div>
           </label>
           <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Address</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Address</span>
             <textarea
               className={`${INPUT} min-h-[88px] resize-y`}
               value={general.address}
@@ -440,7 +440,7 @@ export default function StudioSettingsPage() {
             type="button"
             disabled={saving === "general"}
             onClick={onSaveGeneral}
-            className="rounded-xl bg-zinc-100 px-4 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-wait disabled:opacity-60 dark:bg-violet-600 dark:text-white dark:hover:bg-violet-500"
+            className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
           >
             {saving === "general" ? "Saving…" : "Save changes"}
           </button>
@@ -451,7 +451,7 @@ export default function StudioSettingsPage() {
         <div className="grid gap-8 lg:grid-cols-2">
           <div className="space-y-4">
             <label className="block">
-              <span className="mb-1.5 block text-xs font-medium text-zinc-400">Logo URL</span>
+              <span className="mb-1.5 block text-xs font-medium text-zinc-600">Logo URL</span>
               <input
                 className={INPUT}
                 value={branding.logoUrl}
@@ -459,7 +459,7 @@ export default function StudioSettingsPage() {
               />
             </label>
             <label className="block">
-              <span className="mb-1.5 block text-xs font-medium text-zinc-400">Cover image URL</span>
+              <span className="mb-1.5 block text-xs font-medium text-zinc-600">Cover image URL</span>
               <input
                 className={INPUT}
                 value={branding.coverImageUrl}
@@ -468,11 +468,11 @@ export default function StudioSettingsPage() {
             </label>
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-zinc-400">Primary</span>
+                <span className="mb-1.5 block text-xs font-medium text-zinc-600">Primary</span>
                 <div className="flex gap-2">
                   <input
                     type="color"
-                    className="h-11 w-14 cursor-pointer rounded-lg border border-zinc-700 bg-zinc-950 p-1"
+                    className="h-11 w-14 cursor-pointer rounded-lg border border-zinc-200 bg-white p-1"
                     value={hexForColorInput(branding.primaryColor, "#7c3aed")}
                     onChange={(e) => setBranding((s) => ({ ...s, primaryColor: e.target.value }))}
                   />
@@ -484,11 +484,11 @@ export default function StudioSettingsPage() {
                 </div>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-zinc-400">Accent</span>
+                <span className="mb-1.5 block text-xs font-medium text-zinc-600">Accent</span>
                 <div className="flex gap-2">
                   <input
                     type="color"
-                    className="h-11 w-14 cursor-pointer rounded-lg border border-zinc-700 bg-zinc-950 p-1"
+                    className="h-11 w-14 cursor-pointer rounded-lg border border-zinc-200 bg-white p-1"
                     value={hexForColorInput(branding.accentColor, "#22c55e")}
                     onChange={(e) => setBranding((s) => ({ ...s, accentColor: e.target.value }))}
                   />
@@ -504,20 +504,20 @@ export default function StudioSettingsPage() {
 
           <div>
             <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">Live preview</p>
-            <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-xl">
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
               <div
                 className="relative h-28 bg-cover bg-center"
                 style={
                   preview.cover
                     ? { backgroundImage: `url(${preview.cover})` }
-                    : { background: `linear-gradient(135deg, ${preview.primary}, #18181b)` }
+                    : { background: `linear-gradient(135deg, ${preview.primary}, #e4e4e7)` }
                 }
               >
-                <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/90 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-t from-white/90 to-transparent" />
               </div>
               <div className="space-y-4 p-5">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
                     {preview.logo ? (
                       // eslint-disable-next-line @next/next/no-img-element -- external branding URLs
                       <img src={preview.logo} alt="" className="h-full w-full object-cover" />
@@ -526,7 +526,7 @@ export default function StudioSettingsPage() {
                     )}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-zinc-50">{preview.name}</p>
+                    <p className="truncate text-sm font-semibold text-zinc-900">{preview.name}</p>
                     <p className="text-xs text-zinc-500">Sample desk surface</p>
                   </div>
                 </div>
@@ -555,7 +555,7 @@ export default function StudioSettingsPage() {
             type="button"
             disabled={saving === "branding"}
             onClick={onSaveBranding}
-            className="rounded-xl bg-zinc-100 px-4 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-wait disabled:opacity-60 dark:bg-violet-600 dark:text-white dark:hover:bg-violet-500"
+            className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
           >
             {saving === "branding" ? "Saving…" : "Save branding"}
           </button>
@@ -584,9 +584,9 @@ export default function StudioSettingsPage() {
             onChange={(v) => setBooking((b) => ({ ...b, lateCancelPenaltyEnabled: v }))}
           />
         </div>
-        <div className="mt-6 grid gap-6 border-t border-zinc-800/60 pt-6 sm:grid-cols-2">
+        <div className="mt-6 grid gap-6 border-t border-zinc-100 pt-6 sm:grid-cols-2">
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Cancellation window (hours)</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Cancellation window (hours)</span>
             <select
               className={INPUT}
               value={booking.cancellationWindowHours}
@@ -602,7 +602,7 @@ export default function StudioSettingsPage() {
             </select>
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-zinc-400">Check-in window (minutes before)</span>
+            <span className="mb-1.5 block text-xs font-medium text-zinc-600">Check-in window (minutes before)</span>
             <select
               className={INPUT}
               value={booking.checkInWindowMinutes}
@@ -623,7 +623,7 @@ export default function StudioSettingsPage() {
             type="button"
             disabled={saving === "booking"}
             onClick={onSaveBooking}
-            className="rounded-xl bg-zinc-100 px-4 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-wait disabled:opacity-60 dark:bg-violet-600 dark:text-white dark:hover:bg-violet-500"
+            className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
           >
             {saving === "booking" ? "Saving…" : "Save booking rules"}
           </button>
@@ -635,19 +635,19 @@ export default function StudioSettingsPage() {
           <button
             type="button"
             disabled
-            className="rounded-xl border border-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-500"
+            className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-500"
           >
             Archive studio
           </button>
           <button
             type="button"
             disabled
-            className="rounded-xl border border-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-500"
+            className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-500"
           >
             Transfer ownership
           </button>
         </div>
-        <p className="mt-3 text-xs text-zinc-600">Coming soon</p>
+        <p className="mt-3 text-xs text-zinc-500">Coming soon</p>
       </SectionCard>
     </div>
   );

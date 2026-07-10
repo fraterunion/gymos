@@ -168,9 +168,9 @@ export default function ClassCheckInPage() {
 
   if (!cls) {
     return (
-      <div className="rounded-2xl border border-zinc-200 bg-white p-8 dark:border-zinc-800 dark:bg-zinc-900">
-        <p className="text-sm text-zinc-600 dark:text-zinc-300">This class is not on the current schedule window.</p>
-        <Link href="/check-in" className="mt-4 inline-block text-sm font-semibold text-zinc-900 underline dark:text-zinc-100">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8">
+        <p className="text-sm text-zinc-600">This class is not on the current schedule window.</p>
+        <Link href="/check-in" className="mt-4 inline-block text-sm font-semibold text-zinc-900 underline">
           Back to today
         </Link>
       </div>
@@ -180,16 +180,16 @@ export default function ClassCheckInPage() {
   return (
     <div className="space-y-8">
       <div>
-        <Link href="/check-in" className="text-xs font-medium uppercase tracking-wide text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+        <Link href="/check-in" className="text-xs font-medium uppercase tracking-wide text-zinc-500 hover:text-zinc-800">
           ← Today
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{cls.classTemplate.name}</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{formatClassRange(cls.startsAt, cls.endsAt, tz)}</p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900">{cls.classTemplate.name}</h1>
+        <p className="mt-1 text-sm text-zinc-500">{formatClassRange(cls.startsAt, cls.endsAt, tz)}</p>
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full bg-zinc-100 px-2.5 py-1 font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+          <span className="rounded-full bg-zinc-100 px-2.5 py-1 font-medium text-zinc-700">
             {cls.status}
           </span>
-          <span className="rounded-full bg-zinc-100 px-2.5 py-1 font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+          <span className="rounded-full bg-zinc-100 px-2.5 py-1 font-medium text-zinc-700">
             Capacity {cls.capacity}
           </span>
         </div>
@@ -199,10 +199,10 @@ export default function ClassCheckInPage() {
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${
             flash.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-100"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
               : flash.type === "warn"
-                ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100"
-                : "border-red-200 bg-red-50 text-red-900 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-100"
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : "border-red-200 bg-red-50 text-red-900"
           }`}
         >
           {flash.text}
@@ -210,13 +210,13 @@ export default function ClassCheckInPage() {
       ) : null}
 
       <div className="grid gap-8 lg:grid-cols-2">
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">QR check-in</h2>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">QR check-in</h2>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-600">
             Scan with the desk camera, or paste the member&apos;s token if the camera is unavailable.
           </p>
 
-          <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950 p-4 shadow-inner dark:border-zinc-700 dark:bg-zinc-950">
+          <div className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
             <DeskQrScanner
               key={classId}
               enabled={Boolean(studioId && cls)}
@@ -226,10 +226,10 @@ export default function ClassCheckInPage() {
 
           <div className="relative mt-6">
             <div className="absolute inset-x-0 top-0 flex items-center" aria-hidden>
-              <div className="w-full border-t border-zinc-200 dark:border-zinc-700" />
+              <div className="w-full border-t border-zinc-200" />
             </div>
             <div className="relative flex justify-center">
-              <span className="bg-white px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:bg-zinc-900 dark:text-zinc-500">
+              <span className="bg-white px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
                 Or paste token
               </span>
             </div>
@@ -243,44 +243,44 @@ export default function ClassCheckInPage() {
               rows={5}
               autoComplete="off"
               spellCheck={false}
-              className="w-full resize-y rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 font-mono text-xs leading-relaxed text-zinc-900 outline-none ring-zinc-400 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              className="w-full resize-y rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 font-mono text-xs leading-relaxed text-zinc-900 outline-none ring-zinc-400 focus:ring-2"
             />
             <button
               type="submit"
               disabled={qrBusy || !qrText.trim()}
-              className="w-full rounded-xl bg-zinc-900 py-3 text-sm font-semibold text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+              className="w-full rounded-xl bg-zinc-900 py-3 text-sm font-semibold text-white disabled:opacity-50"
             >
               {qrBusy ? "Submitting…" : "Submit token"}
             </button>
           </form>
         </section>
 
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Attendance</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Attendance</h2>
             <button
               type="button"
               onClick={() => void loadAll()}
-              className="text-xs font-semibold text-zinc-600 underline dark:text-zinc-300"
+              className="text-xs font-semibold text-zinc-600 underline"
             >
               Refresh
             </button>
           </div>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{attendance.length} checked in</p>
+          <p className="mt-2 text-sm text-zinc-600">{attendance.length} checked in</p>
           {attendance.length === 0 ? (
-            <p className="mt-6 text-center text-sm text-zinc-400 dark:text-zinc-500">No check-ins yet for this class.</p>
+            <p className="mt-6 text-center text-sm text-zinc-400">No check-ins yet for this class.</p>
           ) : (
             <ul className="mt-4 space-y-2">
               {attendance.map((a) => (
                 <li
                   key={a.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/50"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2.5"
                 >
                   <div>
-                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                    <p className="text-sm font-medium text-zinc-900">
                       {a.user.firstName} {a.user.lastName}
                     </p>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    <p className="text-xs text-zinc-500">
                       {new Intl.DateTimeFormat(undefined, { timeStyle: "short", dateStyle: "short" }).format(
                         new Date(a.checkedInAt),
                       )}
@@ -289,8 +289,8 @@ export default function ClassCheckInPage() {
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
                       a.checkInMethod === "QR"
-                        ? "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
-                        : "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200"
+                        ? "bg-violet-100 text-violet-800"
+                        : "bg-sky-100 text-sky-800"
                     }`}
                   >
                     {a.checkInMethod}
@@ -302,38 +302,38 @@ export default function ClassCheckInPage() {
         </section>
       </div>
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Confirmed roster</h2>
-        {rosterNote ? <p className="mt-3 text-sm text-amber-800 dark:text-amber-200/90">{rosterNote}</p> : null}
+      <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Confirmed roster</h2>
+        {rosterNote ? <p className="mt-3 text-sm text-amber-800">{rosterNote}</p> : null}
         {roster.length === 0 && !rosterNote ? (
-          <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">No confirmed bookings for this class.</p>
+          <p className="mt-4 text-sm text-zinc-500">No confirmed bookings for this class.</p>
         ) : roster.length === 0 ? null : (
-          <ul className="mt-4 divide-y divide-zinc-100 dark:divide-zinc-800">
+          <ul className="mt-4 divide-y divide-zinc-100">
             {roster.map((b) => {
               const checked = attendedUserIds.has(b.userId);
               return (
                 <li key={b.id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0">
                   <div>
-                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                    <p className="text-sm font-medium text-zinc-900">
                       {b.user.firstName} {b.user.lastName}
                     </p>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">{b.user.email}</p>
+                    <p className="text-xs text-zinc-500">{b.user.email}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {checked ? (
-                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
                         ✓ In
                       </span>
                     ) : (
                       <>
-                        <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                        <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
                           Booked
                         </span>
                         <button
                           type="button"
                           disabled={busyBookingId === b.id}
                           onClick={() => void onManual(b.id)}
-                          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                         >
                           {busyBookingId === b.id ? "…" : "Check in"}
                         </button>

@@ -47,21 +47,21 @@ const SUB_STATUS_LABELS: Record<SubStatus, string> = {
 };
 
 const SUB_STATUS_COLORS: Record<SubStatus, string> = {
-  ACTIVE: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  TRIALING: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
-  PAST_DUE: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  PAUSED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  CANCELED: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
+  ACTIVE: "bg-emerald-100 text-emerald-800",
+  TRIALING: "bg-sky-100 text-sky-800",
+  PAST_DUE: "bg-amber-100 text-amber-800",
+  PAUSED: "bg-zinc-100 text-zinc-600",
+  CANCELED: "bg-red-100 text-red-700",
 };
 
 // ── Skeleton ─────────────────────────────────────────────────────────────────
 
 function RowSkeleton() {
   return (
-    <tr className="border-b border-zinc-100 dark:border-zinc-800">
+    <tr className="border-b border-zinc-100">
       {[...Array(7)].map((_, i) => (
         <td key={i} className="px-4 py-3">
-          <div className="h-4 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" style={{ width: `${60 + (i * 17) % 40}%` }} />
+          <div className="h-4 rounded bg-zinc-200 animate-pulse" style={{ width: `${60 + (i * 17) % 40}%` }} />
         </td>
       ))}
     </tr>
@@ -90,15 +90,15 @@ function SortTh({
   const active = current === field;
   return (
     <th
-      className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 cursor-pointer select-none hover:text-zinc-800 dark:hover:text-zinc-200 ${className}`}
+      className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 cursor-pointer select-none hover:text-zinc-800 ${className}`}
       onClick={() => onSort(field)}
     >
       <span className="flex items-center gap-1">
         {label}
         {active ? (
-          <span className="text-zinc-800 dark:text-zinc-200">{dir === "asc" ? "↑" : "↓"}</span>
+          <span className="text-zinc-800">{dir === "asc" ? "↑" : "↓"}</span>
         ) : (
-          <span className="text-zinc-300 dark:text-zinc-700">↕</span>
+          <span className="text-zinc-300">↕</span>
         )}
       </span>
     </th>
@@ -184,7 +184,7 @@ export default function MembersPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
             Members
           </h1>
           {!loading && (
@@ -202,12 +202,12 @@ export default function MembersPage() {
           placeholder="Search name or email…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-64 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 shadow-sm focus:border-zinc-400 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-600"
+          className="w-64 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 shadow-sm focus:border-zinc-400 focus:outline-none"
         />
         <select
           value={subStatus}
           onChange={(e) => { setSubStatus(e.target.value as SubStatus | ""); setHasNoShows(false); }}
-          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none"
         >
           <option value="">All plans</option>
           {(Object.keys(SUB_STATUS_LABELS) as SubStatus[]).map((s) => (
@@ -219,8 +219,8 @@ export default function MembersPage() {
           onClick={() => { setHasNoShows((v) => !v); setSubStatus(""); }}
           className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
             hasNoShows
-              ? "border-amber-400 bg-amber-50 text-amber-800 dark:border-amber-600 dark:bg-amber-900/30 dark:text-amber-300"
-              : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              ? "border-amber-400 bg-amber-50 text-amber-800"
+              : "border-zinc-200 text-zinc-600 hover:bg-zinc-100"
           }`}
         >
           No Shows
@@ -228,7 +228,7 @@ export default function MembersPage() {
         {(search || subStatus || hasNoShows) && (
           <button
             onClick={() => { setSearch(""); setSubStatus(""); setHasNoShows(false); }}
-            className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
           >
             Clear filters
           </button>
@@ -237,27 +237,27 @@ export default function MembersPage() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-zinc-100 dark:divide-zinc-800">
-            <thead className="bg-zinc-50 dark:bg-zinc-950/60">
+          <table className="min-w-full divide-y divide-zinc-100">
+            <thead className="bg-zinc-50">
               <tr>
                 <SortTh label="Member" field="name" current={sortBy} dir={sortDir} onSort={handleSort} className="pl-4 min-w-[200px]" />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Plan</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500">Plan</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500">Status</th>
                 <SortTh label="Bookings" field="totalBookings" current={sortBy} dir={sortDir} onSort={handleSort} />
                 <SortTh label="Last visit" field="lastAttendance" current={sortBy} dir={sortDir} onSort={handleSort} />
                 <SortTh label="Joined" field="joinDate" current={sortBy} dir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            <tbody className="divide-y divide-zinc-100">
               {loading
                 ? [...Array(8)].map((_, i) => <RowSkeleton key={i} />)
                 : members.length === 0
@@ -273,26 +273,26 @@ export default function MembersPage() {
                 : members.map((m) => (
                   <tr
                     key={m.membershipId}
-                    className="group hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+                    className="group hover:bg-zinc-50 transition-colors"
                   >
                     {/* Avatar + name */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-xs font-semibold text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-xs font-semibold text-zinc-700">
                           {initials(m.user.firstName, m.user.lastName)}
                         </div>
                         <div className="min-w-0">
-                          <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">
+                          <div className="truncate font-medium text-zinc-900">
                             {m.user.firstName} {m.user.lastName}
                           </div>
-                          <div className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                          <div className="truncate text-xs text-zinc-500">
                             {m.user.email}
                           </div>
                         </div>
                       </div>
                     </td>
                     {/* Plan */}
-                    <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
+                    <td className="px-4 py-3 text-sm text-zinc-700">
                       {m.subscription?.planName ?? <span className="text-zinc-400">—</span>}
                     </td>
                     {/* Status */}
@@ -306,27 +306,27 @@ export default function MembersPage() {
                       )}
                     </td>
                     {/* Bookings + no-show badge */}
-                    <td className="px-4 py-3 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                    <td className="px-4 py-3 text-sm tabular-nums text-zinc-700">
                       <span>{m.totalBookings.toLocaleString()}</span>
                       {m.noShowCount > 0 && (
-                        <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                        <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
                           {m.noShowCount} NS
                         </span>
                       )}
                     </td>
                     {/* Last visit */}
-                    <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                    <td className="px-4 py-3 text-sm text-zinc-500">
                       {fmtRelative(m.lastAttendanceAt)}
                     </td>
                     {/* Joined */}
-                    <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                    <td className="px-4 py-3 text-sm text-zinc-500">
                       {fmtDate(m.joinedAt)}
                     </td>
                     {/* Action */}
                     <td className="px-4 py-3 text-right">
                       <Link
                         href={`/members/${m.user.id}`}
-                        className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                        className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-zinc-100"
                       >
                         View
                       </Link>
@@ -339,7 +339,7 @@ export default function MembersPage() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
+          <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-3">
             <p className="text-xs text-zinc-500">
               Page {page} of {totalPages} · {total.toLocaleString()} members
             </p>
@@ -347,14 +347,14 @@ export default function MembersPage() {
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50"
               >
                 Previous
               </button>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50"
               >
                 Next
               </button>

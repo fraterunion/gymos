@@ -14,6 +14,9 @@ const PREV_PERIOD_END = new Date('2026-06-11T00:00:00.000Z');
 const YESTERDAY_START = new Date('2026-07-09T00:00:00.000Z');
 const TODAY_START = new Date('2026-07-10T00:00:00.000Z');
 const TOMORROW_START = new Date('2026-07-11T00:00:00.000Z');
+const YESTERDAY_SAME_POINT_END = new Date(
+  YESTERDAY_START.getTime() + (AS_OF.getTime() - TODAY_START.getTime()),
+);
 const WEEK_AHEAD = new Date(AS_OF.getTime() + 7 * 24 * 60 * 60 * 1000);
 
 function sql(strings: TemplateStringsArray): string {
@@ -70,14 +73,15 @@ function setupQueryRawMock(queryRaw: jest.Mock, overrides: QueryResponses = {}) 
     if (
       q.includes('COALESCE(paid_at, created_at)') &&
       hasDate(values, TODAY_START) &&
-      hasDate(values, TOMORROW_START)
+      hasDate(values, AS_OF) &&
+      q.includes('total_cents')
     ) {
       return Promise.resolve([responses.revenueToday]);
     }
     if (
       q.includes('COALESCE(paid_at, created_at)') &&
       hasDate(values, YESTERDAY_START) &&
-      hasDate(values, TODAY_START) &&
+      hasDate(values, YESTERDAY_SAME_POINT_END) &&
       q.includes('total_cents')
     ) {
       return Promise.resolve([responses.revenueYesterday]);
@@ -306,6 +310,37 @@ describe('AnalyticsService.getOwnerBriefing', () => {
     expect(result.whatChanged.some((r) => r.id === 'new-memberships')).toBe(true);
     expect(result.comparisonWindow).toBe('since_yesterday');
     expect(result.timeBasis.timezone).toBe(TZ);
+  });
+
+  it('omits intraday revenue comparison when yesterday had no revenue in the aligned window', async () => {
+    setupQueryRawMock(queryRaw, {
+      revenueToday: { total_cents: 5_000n },
+      revenueYesterday: { total_cents: 0n },
+    });
+
+    const result = await service.getOwnerBriefing(STUDIO_A);
+
+    expect(result.whatChanged.some((r) => r.id === 'revenue-vs-yesterday')).toBe(false);
+  });
+
+  it('compares today revenue to yesterday at the same local time', async () => {
+    await service.getOwnerBriefing(STUDIO_A);
+
+    const todayCall = queryRaw.mock.calls.find(
+      (call) =>
+        sql(call[0]).includes('COALESCE(paid_at, created_at)') &&
+        hasDate(call.slice(1), TODAY_START) &&
+        hasDate(call.slice(1), AS_OF),
+    );
+    const yesterdayCall = queryRaw.mock.calls.find(
+      (call) =>
+        sql(call[0]).includes('COALESCE(paid_at, created_at)') &&
+        hasDate(call.slice(1), YESTERDAY_START) &&
+        hasDate(call.slice(1), YESTERDAY_SAME_POINT_END),
+    );
+
+    expect(todayCall).toBeDefined();
+    expect(yesterdayCall).toBeDefined();
   });
 
   it('scopes new memberships to MEMBER studio memberships', async () => {
