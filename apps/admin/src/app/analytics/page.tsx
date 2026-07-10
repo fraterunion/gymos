@@ -15,6 +15,17 @@ import {
 } from "recharts";
 
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
+import {
+  AlertsSection,
+  BusinessOverviewSection,
+  DataQualityBanners,
+  MemberHealthSection,
+  MembershipBusinessSection,
+  OperationsSection,
+  SalesSection,
+  fmt,
+  fmtMoney,
+} from "@/components/analytics/BiDashboard";
 import { ApiError } from "@/lib/api/errors";
 import {
   fetchAnalyticsBusiness,
@@ -46,12 +57,7 @@ function useColorScheme() {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(n: number, decimals = 0): string {
-  return n.toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
+// fmt / fmtMoney imported from BiDashboard for charts below
 
 function fmtDate(iso: string): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
@@ -59,64 +65,10 @@ function fmtDate(iso: string): string {
   );
 }
 
-function fmtMoney(cents: number, currency = "USD"): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
-  }).format(cents / 100);
-}
-
 function fmtHour(h: number): string {
   const d = new Date();
   d.setHours(h, 0, 0, 0);
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", hour12: true }).format(d);
-}
-
-// ── KPI card ──────────────────────────────────────────────────────────────────
-
-type KpiCardProps = {
-  label: string;
-  value: string | number;
-  sub?: string;
-  accent?: "blue" | "green" | "amber" | "violet" | "rose" | "default";
-  loading?: boolean;
-};
-
-function KpiCard({ label, value, sub, accent = "default", loading }: KpiCardProps) {
-  const accentClass: Record<string, string> = {
-    blue: "border-l-blue-500",
-    green: "border-l-emerald-500",
-    amber: "border-l-amber-500",
-    violet: "border-l-violet-500",
-    rose: "border-l-rose-500",
-    default: "border-l-zinc-300 dark:border-l-zinc-700",
-  };
-
-  return (
-    <div
-      className={`rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 border-l-4 ${accentClass[accent]}`}
-    >
-      {loading ? (
-        <div className="space-y-2">
-          <div className="h-3 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
-          <div className="h-7 w-16 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
-        </div>
-      ) : (
-        <>
-          <p className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            {label}
-          </p>
-          <p className="mt-1.5 text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
-            {typeof value === "number" ? fmt(value) : value}
-          </p>
-          {sub ? (
-            <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">{sub}</p>
-          ) : null}
-        </>
-      )}
-    </div>
-  );
 }
 
 // ── chart wrappers ────────────────────────────────────────────────────────────
@@ -131,8 +83,8 @@ function ChartShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-sm">
+      <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-zinc-500">
         {title}
       </p>
       {loading ? (
@@ -685,21 +637,24 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10 rounded-3xl border border-zinc-800/60 bg-zinc-950 p-6 sm:p-8">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+            Business intelligence
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-50">
             Analytics
           </h1>
           {lastRefreshed ? (
-            <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+            <p className="mt-1 text-xs text-zinc-500">
               Updated at {lastRefreshed} · UTC day boundaries
             </p>
           ) : null}
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-700">
+          <div className="flex rounded-lg border border-zinc-700 p-0.5">
             {PERIOD_OPTIONS.map(({ label, days }) => (
               <button
                 key={days}
@@ -707,8 +662,8 @@ export default function AnalyticsPage() {
                 onClick={() => setPeriod(days)}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
                   period === days
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                    ? "bg-zinc-100 text-zinc-900"
+                    : "text-zinc-400 hover:text-zinc-100"
                 }`}
               >
                 {label}
@@ -722,7 +677,7 @@ export default function AnalyticsPage() {
               void loadCharts();
               void loadBusiness();
             }}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-900"
           >
             Refresh
           </button>
@@ -730,7 +685,7 @@ export default function AnalyticsPage() {
       </div>
 
       {error ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="rounded-xl border border-amber-800/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
           {error}
           <button
             type="button"
@@ -747,237 +702,33 @@ export default function AnalyticsPage() {
         </div>
       ) : null}
 
-      {/* KPI grid — today */}
-      <section>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-600">
-          Today
-        </p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiCard
-            label="Active members"
-            value={overview?.activeMembers ?? 0}
-            accent="blue"
-            loading={loadingOverview}
-          />
-          <KpiCard
-            label="Check-ins today"
-            value={overview?.checkInsToday ?? 0}
-            accent="green"
-            loading={loadingOverview}
-          />
-          <KpiCard
-            label="Upcoming classes"
-            value={overview?.upcomingClassesToday ?? 0}
-            sub="remaining today"
-            accent="violet"
-            loading={loadingOverview}
-          />
-          <KpiCard
-            label="Occupancy rate"
-            value={`${fmt(overview?.occupancyRateToday ?? 0, 1)}%`}
-            sub="today's classes"
-            accent="amber"
-            loading={loadingOverview}
-          />
-        </div>
-      </section>
+      <DataQualityBanners business={business} />
 
-      {/* KPI grid — rolling period */}
-      <section>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-600">
-          Last {period} days
-        </p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiCard
-            label="Bookings"
-            value={overview?.bookingsLast7d ?? 0}
-            sub="non-cancelled"
-            accent="blue"
-            loading={loadingOverview}
-          />
-          <KpiCard
-            label="Waitlist entries"
-            value={overview?.waitlistCount ?? 0}
-            sub="currently waiting"
-            accent="amber"
-            loading={loadingOverview}
-          />
-          <KpiCard
-            label="No-show rate"
-            value={`${fmt(overview?.noShowRate ?? 0, 1)}%`}
-            sub="past 30 days"
-            accent="rose"
-            loading={loadingOverview}
-          />
-          <KpiCard
-            label="Avg class fill"
-            value={`${fmt(overview?.avgClassFill ?? 0, 1)}%`}
-            sub="past 30 days"
-            accent="green"
-            loading={loadingOverview}
-          />
-        </div>
-      </section>
+      <BusinessOverviewSection business={business} loading={loadingBusiness} />
+      <MembershipBusinessSection business={business} loading={loadingBusiness} />
+      <SalesSection business={business} loading={loadingBusiness} />
+      <OperationsSection
+        overview={overview}
+        trends={trends}
+        breakdown={breakdown}
+        business={business}
+        period={period}
+        loadingOverview={loadingOverview}
+        loadingCharts={loadingCharts}
+      />
+      <MemberHealthSection business={business} loading={loadingBusiness} />
+      <AlertsSection overview={overview} business={business} loading={loadingBusiness || loadingOverview} />
 
-      {/* Highlight cards */}
-      {!loadingOverview &&
-      (overview?.mostPopularTemplate ?? overview?.mostActiveCoach) ? (
-        <section className="grid gap-3 sm:grid-cols-2">
-          {overview?.mostPopularTemplate ? (
-            <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-              {overview.mostPopularTemplate.color ? (
-                <span
-                  className="h-10 w-10 shrink-0 rounded-xl"
-                  style={{ backgroundColor: overview.mostPopularTemplate.color }}
-                />
-              ) : (
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-lg dark:bg-violet-900/30">
-                  🏆
-                </span>
-              )}
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                  Most popular class
-                </p>
-                <p className="mt-0.5 truncate text-base font-bold text-zinc-900 dark:text-zinc-50">
-                  {overview.mostPopularTemplate.name}
-                </p>
-                <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                  {fmt(overview.mostPopularTemplate.bookingCount)} bookings · 30 days
-                </p>
-              </div>
-            </div>
-          ) : null}
-
-          {overview?.mostActiveCoach ? (
-            <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-lg dark:bg-emerald-900/30">
-                🎤
-              </span>
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                  Most active coach
-                </p>
-                <p className="mt-0.5 truncate text-base font-bold text-zinc-900 dark:text-zinc-50">
-                  {overview.mostActiveCoach.firstName} {overview.mostActiveCoach.lastName}
-                </p>
-                <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                  {fmt(overview.mostActiveCoach.classCount)} classes · 30 days
-                </p>
-              </div>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
-      {/* Business — revenue & retention (30d) */}
-      <section className="space-y-4">
+      {/* Charts — unchanged */}
+      <section className="space-y-6 border-t border-zinc-800/80 pt-8">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-600">
-            Business
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+            Trends & breakdown
           </p>
-          <h2 className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-            Revenue & retention
+          <h2 className="mt-1 text-lg font-semibold text-zinc-100">
+            Revenue, retention, and class engagement
           </h2>
-          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Rolling <strong>30 days</strong> (fixed window). MRR is an <strong>estimate</strong> from plan catalog prices, not bank settlement.
-          </p>
         </div>
-
-        {business?.dataQuality === "demo" || business?.dataQuality === "mixed" ? (
-          <div className="rounded-xl border border-amber-800/40 bg-amber-950/40 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/50 dark:bg-amber-950/50 dark:text-amber-100">
-            <strong className="font-semibold">Demo / estimated revenue.</strong>{" "}
-            {business.dataQuality === "mixed"
-              ? "Some payments look like live Stripe; others look like seed/demo rows."
-              : "Succeeded payments in this window match demo-style Stripe IDs (e.g. seed data). Treat dollars as illustrative."}
-          </div>
-        ) : null}
-
-        {business?.dataQuality === "empty" ? (
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300">
-            <strong className="font-semibold">No payment activity (30d).</strong> Revenue KPIs are zero until there are
-            succeeded <code className="rounded bg-zinc-200 px-1 text-xs dark:bg-zinc-800">payments</code> rows for this
-            studio.
-          </div>
-        ) : null}
-
-        {business?.dataQuality === "live" ? (
-          <div className="rounded-xl border border-emerald-900/30 bg-emerald-950/25 px-4 py-2.5 text-xs text-emerald-900 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:text-emerald-100">
-            Payment rows in this window do not match demo-style Stripe ID patterns.
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiCard
-            label="Est. MRR"
-            value={fmtMoney(business?.estimatedMrrCents ?? 0)}
-            sub="ACTIVE + TRIALING plans"
-            accent="amber"
-            loading={loadingBusiness}
-          />
-          <KpiCard
-            label="Active subscriptions"
-            value={business?.activeSubscriptions ?? 0}
-            sub={
-              business && business.trialingSubscriptions > 0
-                ? `${fmt(business.trialingSubscriptions)} trialing`
-                : undefined
-            }
-            accent="green"
-            loading={loadingBusiness}
-          />
-          <KpiCard
-            label="Past-due subscriptions"
-            value={business?.pastDueSubscriptions ?? 0}
-            accent="rose"
-            loading={loadingBusiness}
-          />
-          <KpiCard
-            label="Cancelled (total)"
-            value={business?.canceledSubscriptionsTotal ?? 0}
-            sub="rows with status CANCELED"
-            accent="default"
-            loading={loadingBusiness}
-          />
-          <KpiCard
-            label="Revenue (30d)"
-            value={fmtMoney(business?.revenueLast30DaysCents ?? 0)}
-            sub="succeeded payments"
-            accent="violet"
-            loading={loadingBusiness}
-          />
-          <KpiCard
-            label="Avg revenue / member"
-            value={fmtMoney(business?.averageRevenuePerMemberCents ?? 0)}
-            sub={`÷ ${fmt(business?.memberCountForArpu ?? 0)} MEMBER seats`}
-            accent="blue"
-            loading={loadingBusiness}
-          />
-          <KpiCard
-            label="Cancellations (30d)"
-            value={business?.cancellationsLast30Days ?? 0}
-            sub="CANCELED · updated in window"
-            accent="rose"
-            loading={loadingBusiness}
-          />
-          <KpiCard
-            label="Repeat bookers (30d)"
-            value={business?.membersWithTwoPlusBookingsLast30Days ?? 0}
-            sub="members with 2+ bookings"
-            accent="green"
-            loading={loadingBusiness}
-          />
-        </div>
-
-        {business && business.unattributedRevenueCents > 0 ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Unattributed to a plan:{" "}
-            <span className="font-semibold text-zinc-700 dark:text-zinc-200">
-              {fmtMoney(business.unattributedRevenueCents)}
-            </span>{" "}
-            (payers without a resolvable subscription row).
-          </p>
-        ) : null}
 
         <div className="grid gap-6 lg:grid-cols-2">
           <ChartShell title="Revenue trend · 30d (succeeded)" loading={loadingBusiness}>
@@ -1001,43 +752,93 @@ export default function AnalyticsPage() {
             {business ? <RevenueByPlanChart rows={business.revenueByPlan} dark={dark} /> : null}
           </ChartShell>
         </div>
-      </section>
 
-      <section className="space-y-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-600">
-          Engagement & classes
-        </p>
-
-      {/* Trend chart */}
-      <ChartShell title={`Bookings & attendance · ${period}d`} loading={loadingCharts}>
-        {trends ? (
-          <>
-            <TrendChart trends={trends} dark={dark} />
-            <div className="mt-3 flex gap-4 pl-2">
-              <LegendItem color="#818cf8" label="Bookings" />
-              <LegendItem color="#34d399" label="Attendance" />
-            </div>
-          </>
+        {business && business.unattributedRevenueCents > 0 ? (
+          <p className="text-xs text-zinc-500">
+            Unattributed to a plan:{" "}
+            <span className="font-semibold text-zinc-300">
+              {fmtMoney(business.unattributedRevenueCents)}
+            </span>{" "}
+            (payers without a resolvable subscription row).
+          </p>
         ) : null}
-      </ChartShell>
 
-      {/* Bottom row charts */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <ChartShell title={`Top class types · ${period}d`} loading={loadingCharts}>
-          {breakdown ? <TopClassesChart breakdown={breakdown} dark={dark} /> : null}
+        <ChartShell title={`Bookings & attendance · ${period}d`} loading={loadingCharts}>
+          {trends ? (
+            <>
+              <TrendChart trends={trends} dark={dark} />
+              <div className="mt-3 flex gap-4 pl-2">
+                <LegendItem color="#818cf8" label="Bookings" />
+                <LegendItem color="#34d399" label="Attendance" />
+              </div>
+            </>
+          ) : null}
         </ChartShell>
 
-        <ChartShell title={`Peak class hours · ${period}d (UTC)`} loading={loadingCharts}>
-          {breakdown ? <PeakHoursChart breakdown={breakdown} dark={dark} /> : null}
-        </ChartShell>
-      </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ChartShell title={`Top class types · ${period}d`} loading={loadingCharts}>
+            {breakdown ? <TopClassesChart breakdown={breakdown} dark={dark} /> : null}
+          </ChartShell>
+          <ChartShell title={`Peak class hours · ${period}d (UTC)`} loading={loadingCharts}>
+            {breakdown ? <PeakHoursChart breakdown={breakdown} dark={dark} /> : null}
+          </ChartShell>
+        </div>
+
+        {!loadingOverview && (overview?.mostPopularTemplate ?? overview?.mostActiveCoach) ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {overview?.mostPopularTemplate ? (
+              <div className="flex items-center gap-4 rounded-2xl border border-zinc-800 bg-zinc-950/80 p-5">
+                {overview.mostPopularTemplate.color ? (
+                  <span
+                    className="h-10 w-10 shrink-0 rounded-xl"
+                    style={{ backgroundColor: overview.mostPopularTemplate.color }}
+                  />
+                ) : (
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-900/30 text-lg">
+                    🏆
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Most popular class · 30d
+                  </p>
+                  <p className="mt-0.5 truncate text-base font-bold text-zinc-50">
+                    {overview.mostPopularTemplate.name}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {fmt(overview.mostPopularTemplate.bookingCount)} bookings
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {overview?.mostActiveCoach ? (
+              <div className="flex items-center gap-4 rounded-2xl border border-zinc-800 bg-zinc-950/80 p-5">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-900/30 text-lg">
+                  🎤
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Most active coach · 30d
+                  </p>
+                  <p className="mt-0.5 truncate text-base font-bold text-zinc-50">
+                    {overview.mostActiveCoach.firstName} {overview.mostActiveCoach.lastName}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {fmt(overview.mostActiveCoach.classCount)} classes
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {/* Footer note */}
-      <p className="text-center text-[11px] text-zinc-400 dark:text-zinc-600">
-        All metrics scoped to the selected studio. Date boundaries use UTC. Business revenue uses{" "}
-        <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">payments</code> (succeeded); MRR is plan-price
-        estimate from subscriptions.
+      <p className="text-center text-[11px] leading-relaxed text-zinc-600">
+        All metrics scoped to the selected studio. UTC boundaries. Gross revenue = succeeded{" "}
+        <code className="rounded bg-zinc-900 px-1 text-zinc-400">payments</code>. MRR/ARR = plan-price
+        estimate. Omitted: net revenue, Stripe fees, taxes, enrollment/founders dollar splits (not in
+        ledger), studio-scoped webhook errors.
       </p>
     </div>
   );
