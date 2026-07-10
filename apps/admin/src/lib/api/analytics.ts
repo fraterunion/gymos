@@ -2,6 +2,47 @@ import { apiRequest } from "@/lib/api/client";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export type FinancialPeriodKey = "today" | "week" | "month" | "year";
+
+export type FinancialKpiValue = {
+  cents?: number | null;
+  count?: number;
+  comparisonPercent?: number | null;
+  available: boolean;
+  unavailableReason?: string;
+  note?: string;
+};
+
+export type FinancialSummaryDto = {
+  period: {
+    key: FinancialPeriodKey;
+    timezone: string;
+    from: string;
+    to: string;
+    prevFrom: string;
+    prevTo: string;
+  };
+  currency: string;
+  kpis: {
+    totalCollected: FinancialKpiValue;
+    grossCollected: FinancialKpiValue;
+    netReceived: FinancialKpiValue;
+    stripeFees: FinancialKpiValue;
+    taxes: FinancialKpiValue;
+    stripeCollected: FinancialKpiValue;
+    cashCollected: FinancialKpiValue;
+    paymentsCollected: FinancialKpiValue;
+    pending: FinancialKpiValue;
+    refunds: FinancialKpiValue;
+  };
+  charts: {
+    collectedTrend: { date: string; amountCents: number; paymentCount: number }[];
+    revenueByPlan: { planId: string; planName: string; revenueCents: number }[];
+    stripeVsCash: { method: string; amountCents: number }[];
+  };
+  generatedAt: string;
+};
+
 export type OverviewDto = {
   activeMembers: number;
   checkInsToday: number;
@@ -116,6 +157,16 @@ export type OwnerBriefingDto = {
 };
 
 // ── Fetchers ────────────────────────────────────────────────────────────────
+
+export async function fetchAnalyticsFinancial(
+  studioId: string,
+  period: FinancialPeriodKey = "month",
+): Promise<FinancialSummaryDto> {
+  return apiRequest<FinancialSummaryDto>(
+    `/studios/${studioId}/analytics/financial?period=${period}`,
+    { method: "GET" },
+  );
+}
 
 export async function fetchAnalyticsOverview(studioId: string): Promise<OverviewDto> {
   return apiRequest<OverviewDto>(`/studios/${studioId}/analytics/overview`, { method: "GET" });

@@ -2,9 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { PageHeader } from "@/components/shell/PageHeader";
+import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
+import {
+  adminInput,
+  adminPrimaryBtn,
+  adminSecondaryBtn,
+} from "@/lib/adminSurface";
 import { fetchMembers, type MemberListItem } from "@/lib/api/members";
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import {
@@ -27,6 +34,45 @@ import { canRecordCashSales, normalizeStudioRole } from "@/lib/deskRoles";
 type Step = 1 | 2 | 3 | 4 | 5;
 type MemberMode = "create" | "search";
 type PaymentMethodChoice = "stripe" | "cash";
+
+const STEPS = ["Cliente", "Carta responsiva", "Plan", "Pago", "Confirmación"] as const;
+
+function StepIndicator({ current }: { current: Step }) {
+  return (
+    <nav aria-label="Progreso de venta" className="flex items-center gap-1">
+      {STEPS.map((label, i) => {
+        const n = (i + 1) as Step;
+        const active = current === n;
+        const done = current > n;
+        return (
+          <div key={label} className="flex min-w-0 flex-1 items-center gap-1">
+            <div
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                active
+                  ? "bg-zinc-900 text-white"
+                  : done
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-zinc-100 text-zinc-500"
+              }`}
+            >
+              {done ? "✓" : n}
+            </div>
+            <span
+              className={`hidden truncate text-xs font-medium sm:block ${
+                active ? "text-zinc-900" : "text-zinc-500"
+              }`}
+            >
+              {label}
+            </span>
+            {i < STEPS.length - 1 ? (
+              <div className={`mx-1 hidden h-px flex-1 sm:block ${done ? "bg-emerald-200" : "bg-zinc-200"}`} />
+            ) : null}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
 
 function qrImageUrl(url: string): string {
   return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`;
@@ -272,41 +318,13 @@ export default function WalkInSalesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Ventas / Walk-ins</h1>
-        <p className="mt-1 text-sm text-zinc-600">
-          Registra clientes nuevos y vende membresías en recepción.
-        </p>
-      </header>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader
+        title="Ventas"
+        subtitle="Registra clientes y vende membresías en recepción."
+      />
 
-      <ol className="flex flex-wrap gap-2 text-xs font-medium text-zinc-500">
-        {[
-          "Cliente",
-          "Carta responsiva",
-          "Plan",
-          "Pago",
-          "Confirmación",
-        ].map((label, i) => {
-          const n = (i + 1) as Step;
-          const active = step === n;
-          const done = step > n;
-          return (
-            <li
-              key={label}
-              className={`rounded-full px-3 py-1 ${
-                active
-                  ? "bg-zinc-900 text-white"
-                  : done
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-zinc-100"
-              }`}
-            >
-              {n}. {label}
-            </li>
-          );
-        })}
-      </ol>
+      <StepIndicator current={step} />
 
       {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -315,7 +333,7 @@ export default function WalkInSalesPage() {
       ) : null}
 
       {step === 1 ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
+        <SurfaceCard className="space-y-4">
           <div className="flex gap-2">
             <button
               type="button"
@@ -350,13 +368,13 @@ export default function WalkInSalesPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void runSearch()}
-                  className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                  className={`${adminInput} flex-1`}
                 />
                 <button
                   type="button"
                   onClick={() => void runSearch()}
                   disabled={searchLoading}
-                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  className={adminPrimaryBtn}
                 >
                   {searchLoading ? "Buscando…" : "Buscar"}
                 </button>
@@ -396,7 +414,7 @@ export default function WalkInSalesPage() {
                     type={key === "temporaryPassword" ? "password" : key === "email" ? "email" : "text"}
                     value={createForm[key]}
                     onChange={(e) => setCreateForm((f) => ({ ...f, [key]: e.target.value }))}
-                    className="w-full rounded-lg border border-zinc-300 px-3 py-2"
+                    className={adminInput}
                   />
                 </label>
               ))}
@@ -405,18 +423,18 @@ export default function WalkInSalesPage() {
                   type="button"
                   onClick={() => void handleCreateMember()}
                   disabled={busy}
-                  className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  className={adminPrimaryBtn}
                 >
                   {busy ? "Creando…" : "Crear cliente"}
                 </button>
               </div>
             </div>
           )}
-        </section>
+        </SurfaceCard>
       ) : null}
 
       {step === 2 && selectedMember ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
+        <SurfaceCard className="space-y-4">
           <h2 className="text-lg font-medium">Carta responsiva</h2>
           <p className="text-sm text-zinc-600">
             Cliente: <strong>{memberDisplayName(selectedMember)}</strong> ({selectedMember.user.email})
@@ -444,13 +462,13 @@ export default function WalkInSalesPage() {
                     value={attestNote}
                     onChange={(e) => setAttestNote(e.target.value)}
                     rows={2}
-                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                    className={`${adminInput} text-sm`}
                   />
                   <button
                     type="button"
                     onClick={() => void handleAttest()}
                     disabled={attesting}
-                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium"
+                    className={adminSecondaryBtn}
                   >
                     {attesting ? "Registrando…" : "Registrar firma presencial"}
                   </button>
@@ -462,24 +480,20 @@ export default function WalkInSalesPage() {
             <button type="button" onClick={() => setStep(1)} className="text-sm text-zinc-500">
               ← Atrás
             </button>
-            <button
-              type="button"
-              onClick={() => setStep(3)}
-              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white"
-            >
+            <button type="button" onClick={() => setStep(3)} className={adminPrimaryBtn}>
               Continuar
             </button>
           </div>
-        </section>
+        </SurfaceCard>
       ) : null}
 
       {step === 3 && selectedMember ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
+        <SurfaceCard className="space-y-4">
           <h2 className="text-lg font-medium">Seleccionar membresía</h2>
           <ul className="space-y-2">
             {plans.map((plan) => (
               <li key={plan.id}>
-                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-200 p-3">
+                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-zinc-200 p-4 transition hover:border-zinc-300 hover:bg-zinc-50/50">
                   <input
                     type="radio"
                     name="plan"
@@ -500,20 +514,15 @@ export default function WalkInSalesPage() {
             <button type="button" onClick={() => setStep(2)} className="text-sm text-zinc-500">
               ← Atrás
             </button>
-            <button
-              type="button"
-              disabled={!selectedPlanId}
-              onClick={() => setStep(4)}
-              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
+            <button type="button" disabled={!selectedPlanId} onClick={() => setStep(4)} className={adminPrimaryBtn}>
               Continuar
             </button>
           </div>
-        </section>
+        </SurfaceCard>
       ) : null}
 
       {step === 4 && selectedMember && selectedPlan ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
+        <SurfaceCard className="space-y-4">
           <h2 className="text-lg font-medium">Método de pago</h2>
           <div className="flex flex-wrap gap-2">
             <button
@@ -554,7 +563,7 @@ export default function WalkInSalesPage() {
                   type="date"
                   value={periodStart}
                   onChange={(e) => setPeriodStart(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-300 px-3 py-2"
+                  className={adminInput}
                 />
               </label>
               <label className="text-sm">
@@ -563,7 +572,7 @@ export default function WalkInSalesPage() {
                   type="date"
                   value={periodEnd}
                   onChange={(e) => setPeriodEnd(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-300 px-3 py-2"
+                  className={adminInput}
                 />
               </label>
               <label className="text-sm sm:col-span-2">
@@ -580,7 +589,7 @@ export default function WalkInSalesPage() {
                   <input
                     value={priceOverrideNote}
                     onChange={(e) => setPriceOverrideNote(e.target.value)}
-                    className="w-full rounded-lg border border-zinc-300 px-3 py-2"
+                    className={adminInput}
                   />
                 </label>
               ) : null}
@@ -590,7 +599,7 @@ export default function WalkInSalesPage() {
                   value={cashNotes}
                   onChange={(e) => setCashNotes(e.target.value)}
                   rows={2}
-                  className="w-full rounded-lg border border-zinc-300 px-3 py-2"
+                  className={adminInput}
                 />
               </label>
               {cashBlockedByWaiver ? (
@@ -611,7 +620,7 @@ export default function WalkInSalesPage() {
               onClick={() =>
                 void (paymentMethod === "stripe" ? handleGenerateCheckout() : handleRecordCash())
               }
-              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className={adminPrimaryBtn}
             >
               {busy
                 ? "Procesando…"
@@ -620,11 +629,11 @@ export default function WalkInSalesPage() {
                   : "Registrar pago en efectivo"}
             </button>
           </div>
-        </section>
+        </SurfaceCard>
       ) : null}
 
       {step === 5 ? (
-        <section className="space-y-4 rounded-xl border border-zinc-200 bg-white p-6">
+        <SurfaceCard className="space-y-4">
           <h2 className="text-lg font-medium">Confirmación</h2>
           {checkoutUrl ? (
             <div className="space-y-4">
@@ -643,7 +652,7 @@ export default function WalkInSalesPage() {
                   <input
                     readOnly
                     value={checkoutUrl}
-                    className="w-full truncate rounded-lg border border-zinc-300 px-3 py-2 text-xs"
+                    className={`${adminInput} truncate text-xs`}
                   />
                   <button
                     type="button"
@@ -671,11 +680,11 @@ export default function WalkInSalesPage() {
           <button
             type="button"
             onClick={resetFlow}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white"
+            className={adminPrimaryBtn}
           >
             Nueva venta
           </button>
-        </section>
+        </SurfaceCard>
       ) : null}
 
       {authUser ? (

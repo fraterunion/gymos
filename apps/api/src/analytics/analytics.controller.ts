@@ -44,6 +44,19 @@ export class AnalyticsController {
     return this.analyticsService.getBusinessAnalytics(studioId);
   }
 
+  @Get('financial')
+  getFinancial(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+  ) {
+    const key = (['today', 'week', 'month', 'year'] as const).includes(
+      period as 'today' | 'week' | 'month' | 'year',
+    )
+      ? (period as 'today' | 'week' | 'month' | 'year')
+      : 'month';
+    return this.analyticsService.getFinancialSummary(studioId, key);
+  }
+
   @Get('briefing')
   getBriefing(@Param('studioId') studioId: string) {
     return this.analyticsService.getOwnerBriefing(studioId);

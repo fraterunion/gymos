@@ -3,8 +3,18 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { PageHeader } from "@/components/shell/PageHeader";
+import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
+import {
+  adminInput,
+  adminModalOverlay,
+  adminModalPanel,
+  adminPrimaryBtn,
+  adminSecondaryBtn,
+  adminSelect,
+} from "@/lib/adminSurface";
 import {
   cancelScheduledClass,
   createScheduledClass,
@@ -244,21 +254,15 @@ function ScheduleModal({
   const isCancelled = modal.type === "edit" && modal.cls.status === "CANCELLED";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className={adminModalOverlay} onClick={onClose}>
+      <div className={adminModalPanel} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-zinc-900">
-            {modal.type === "edit" ? "Edit class" : "Schedule a class"}
+            {modal.type === "edit" ? "Editar clase" : "Programar clase"}
           </h2>
           {isCancelled ? (
             <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">
-              Cancelled
+              Cancelada
             </span>
           ) : null}
         </div>
@@ -547,10 +551,11 @@ function ClassCard({
         {formatTime(cls.startsAt, tz)} – {formatTime(cls.endsAt, tz)}
       </p>
       {cls.instructor ? (
-        <p className="mt-0.5 text-[11px] text-zinc-400">
+        <p className="mt-0.5 text-[11px] text-zinc-500">
           {cls.instructor.firstName} {cls.instructor.lastName}
         </p>
       ) : null}
+      <p className="mt-1 text-[10px] text-zinc-400">Cap. {cls.capacity}</p>
     </button>
   );
 }
@@ -624,7 +629,7 @@ export default function SchedulePage() {
   };
 
   if (studioLoading) {
-    return <p className="text-sm text-zinc-500">Loading studios…</p>;
+    return <p className="text-sm text-zinc-500">Cargando estudios…</p>;
   }
 
   if (studioError) {
@@ -638,7 +643,7 @@ export default function SchedulePage() {
   if (!selectedStudioId) {
     return (
       <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
-        <p className="text-sm text-zinc-600">No studio memberships found for this account.</p>
+        <p className="text-sm text-zinc-600">No se encontraron membresías de estudio para esta cuenta.</p>
       </div>
     );
   }
@@ -646,63 +651,57 @@ export default function SchedulePage() {
   return (
     <>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
-              Schedule
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              {formatWeekRange(weekStart, tz)}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setWeekStart(getMondayOf(new Date()))}
-              className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-            >
-              Today
-            </button>
-            <div className="flex rounded-lg border border-zinc-200">
+        <PageHeader
+          title="Calendario"
+          subtitle={formatWeekRange(weekStart, tz)}
+          actions={
+            <>
               <button
                 type="button"
-                onClick={() => setWeekStart((w) => addDays(w, -7))}
-                className="px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 rounded-l-lg"
+                onClick={() => setWeekStart(getMondayOf(new Date()))}
+                className={adminSecondaryBtn}
               >
-                ‹
+                Hoy
               </button>
+              <div className="flex rounded-xl border border-zinc-200">
+                <button
+                  type="button"
+                  onClick={() => setWeekStart((w) => addDays(w, -7))}
+                  className="rounded-l-xl px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWeekStart((w) => addDays(w, 7))}
+                  className="rounded-r-xl border-l border-zinc-200 px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                >
+                  ›
+                </button>
+              </div>
               <button
                 type="button"
-                onClick={() => setWeekStart((w) => addDays(w, 7))}
-                className="border-l border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 rounded-r-lg"
+                onClick={() => setModal({ type: "create" })}
+                className={adminPrimaryBtn}
               >
-                ›
+                Programar clase
               </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setModal({ type: "create" })}
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-700"
-            >
-              Schedule a class
-            </button>
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {error ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {error}
             <button type="button" className="ml-3 font-semibold underline" onClick={() => void load()}>
-              Retry
+              Reintentar
             </button>
           </div>
         ) : null}
 
         {/* Week grid */}
-        <div className="overflow-x-auto rounded-2xl border border-zinc-200 bg-white">
+        <SurfaceCard padding="sm" className="overflow-x-auto p-0">
           <div className="min-w-[700px]">
-            {/* Day headers */}
             <div className="grid grid-cols-7 border-b border-zinc-100">
               {weekDays.map((day) => {
                 const key = calendarDayKeyInZone(day.toISOString(), tz);
@@ -767,7 +766,7 @@ export default function SchedulePage() {
                           onClick={() => setModal({ type: "create", prefillDate: key })}
                           className="w-full rounded-lg py-1 text-center text-xs text-zinc-300 hover:bg-zinc-50 hover:text-zinc-500"
                         >
-                          + Add
+                          + Agregar
                         </button>
                       </div>
                     )}
@@ -776,13 +775,12 @@ export default function SchedulePage() {
               })}
             </div>
           </div>
-        </div>
+        </SurfaceCard>
 
-        {/* Upcoming list */}
         {!loading && classes.filter((c) => c.status === "SCHEDULED").length > 0 ? (
           <div>
-            <h2 className="mb-3 text-sm font-semibold text-zinc-700">
-              This week · {classes.filter((c) => c.status === "SCHEDULED").length} scheduled
+            <h2 className="mb-3 text-sm font-semibold text-zinc-800">
+              Esta semana · {classes.filter((c) => c.status === "SCHEDULED").length} programadas
             </h2>
             <ul className="space-y-2">
               {classes

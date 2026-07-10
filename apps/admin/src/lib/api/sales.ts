@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api/client";
+import { formatMoneyFromCents } from "@/lib/formatMoney";
 import type { MemberListItem } from "@/lib/api/members";
 
 export type SalesSettings = {
@@ -110,8 +111,7 @@ export function memberDisplayName(member: Pick<MemberListItem, "user">): string 
 }
 
 export function formatMoney(cents: number, currency: string): string {
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
+  return formatMoneyFromCents(cents, currency);
 }
+
+export { formatMoneyFromCents };

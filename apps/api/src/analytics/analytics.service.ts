@@ -12,6 +12,11 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  financialPeriodWindows,
+  type FinancialPeriodKey,
+  pctChange as financialPctChange,
+} from './financial-period.utils';
+import {
   dayWindows,
   monthComparisonWindows,
   pctChange as briefingPctChange,
@@ -1242,6 +1247,248 @@ export class AnalyticsService {
       },
       comparisonWindow: 'since_yesterday' as const,
       timeBasis: { timezone },
+      generatedAt: now.toISOString(),
+    };
+  }
+
+  /**
+   * Period-aware financial KPIs for owner dashboard.
+   * Only exposes metrics backed by stored Payment data — never estimates fees/taxes/net.
+   */
+  async getFinancialSummary(studioId: string, period: FinancialPeriodKey) {
+    const now = new Date();
+    const studio = await this.prisma.studio.findUnique({
+      where: { id: studioId },
+      select: { timezone: true },
+    });
+    const timezone = studio?.timezone ?? 'UTC';
+    const windows = financialPeriodWindows(now, timezone, period);
+
+    const summarizePeriod = (
+      start: Date,
+      end: Date,
+    ) =>
+      this.prisma.$queryRaw<
+        {
+          total_cents: bigint;
+          payment_count: bigint;
+          stripe_cents: bigint;
+          cash_cents: bigint;
+        }[]
+      >`
+        SELECT
+          COALESCE(SUM(amount_cents), 0)::bigint AS total_cents,
+          COUNT(*)::bigint AS payment_count,
+          COALESCE(SUM(
+            CASE WHEN payment_method IN ('STRIPE', 'TERMINAL') THEN amount_cents ELSE 0 END
+          ), 0)::bigint AS stripe_cents,
+          COALESCE(SUM(
+            CASE WHEN payment_method = 'CASH' THEN amount_cents ELSE 0 END
+          ), 0)::bigint AS cash_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${start}
+          AND COALESCE(paid_at, created_at) <= ${end}
+      `;
+
+    const [
+      currentRow,
+      prevRow,
+      pendingRow,
+      pendingCountRow,
+      trendRows,
+      planRows,
+      currencyRow,
+      enrollmentCurrencyRow,
+      planCurrencyRow,
+    ] = await Promise.all([
+      summarizePeriod(windows.periodStart, windows.periodEnd),
+      summarizePeriod(windows.prevPeriodStart, windows.prevPeriodEnd),
+      this.prisma.$queryRaw<{ total_cents: bigint }[]>`
+        SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'PENDING'
+      `,
+      this.prisma.$queryRaw<{ c: bigint }[]>`
+        SELECT COUNT(*)::bigint AS c
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'PENDING'
+      `,
+      this.prisma.$queryRaw<{ d: Date; amount_cents: bigint; payment_count: bigint }[]>`
+        SELECT
+          date_trunc('day', COALESCE(paid_at, created_at)) AS d,
+          COALESCE(SUM(amount_cents), 0)::bigint AS amount_cents,
+          COUNT(*)::bigint AS payment_count
+        FROM payments
+        WHERE studio_id = ${studioId}
+          AND status = 'SUCCEEDED'
+          AND COALESCE(paid_at, created_at) >= ${windows.periodStart}
+          AND COALESCE(paid_at, created_at) <= ${windows.periodEnd}
+        GROUP BY 1
+        ORDER BY 1
+      `,
+      this.prisma.$queryRaw<{ plan_id: string; plan_name: string; revenue_cents: bigint }[]>`
+        WITH pay AS (
+          SELECT user_id, SUM(amount_cents)::bigint AS cents
+          FROM payments
+          WHERE studio_id = ${studioId}
+            AND status = 'SUCCEEDED'
+            AND COALESCE(paid_at, created_at) >= ${windows.periodStart}
+            AND COALESCE(paid_at, created_at) <= ${windows.periodEnd}
+          GROUP BY user_id
+        ),
+        sub_pick AS (
+          SELECT DISTINCT ON (s.user_id)
+            s.user_id,
+            s.membership_plan_id
+          FROM subscriptions s
+          WHERE s.studio_id = ${studioId}
+          ORDER BY s.user_id,
+            CASE
+              WHEN s.status IN ('ACTIVE', 'TRIALING') THEN 0
+              WHEN s.status = 'PAST_DUE' THEN 1
+              ELSE 2
+            END,
+            s.updated_at DESC
+        )
+        SELECT mp.id AS plan_id,
+               mp.name AS plan_name,
+               COALESCE(SUM(pay.cents), 0)::bigint AS revenue_cents
+        FROM pay
+        INNER JOIN sub_pick sp ON sp.user_id = pay.user_id
+        INNER JOIN membership_plans mp ON mp.id = sp.membership_plan_id
+        WHERE mp.studio_id = ${studioId}
+        GROUP BY mp.id, mp.name
+        ORDER BY revenue_cents DESC
+      `,
+      this.prisma.payment.findFirst({
+        where: { studioId, status: PaymentStatus.SUCCEEDED },
+        orderBy: { createdAt: 'desc' },
+        select: { currency: true },
+      }),
+      this.prisma.studioEnrollmentSettings.findUnique({
+        where: { studioId },
+        select: { currency: true },
+      }),
+      this.prisma.membershipPlan.findFirst({
+        where: { studioId, active: true },
+        orderBy: { updatedAt: 'desc' },
+        select: { currency: true },
+      }),
+    ]);
+
+    const cur = currentRow[0];
+    const prev = prevRow[0];
+    const totalCollectedCents = Number(cur?.total_cents ?? 0n);
+    const paymentCount = Number(cur?.payment_count ?? 0n);
+    const stripeCents = Number(cur?.stripe_cents ?? 0n);
+    const cashCents = Number(cur?.cash_cents ?? 0n);
+    const pendingCents = Number(pendingRow[0]?.total_cents ?? 0n);
+    const pendingCount = Number(pendingCountRow[0]?.c ?? 0n);
+
+    const prevTotal = Number(prev?.total_cents ?? 0n);
+    const prevStripe = Number(prev?.stripe_cents ?? 0n);
+    const prevCash = Number(prev?.cash_cents ?? 0n);
+    const prevCount = Number(prev?.payment_count ?? 0n);
+
+    const cmp = (current: number, previous: number) =>
+      previous > 0 ? financialPctChange(current, previous) : null;
+
+    return {
+      period: {
+        key: period,
+        timezone,
+        from: windows.periodStart.toISOString(),
+        to: windows.periodEnd.toISOString(),
+        prevFrom: windows.prevPeriodStart.toISOString(),
+        prevTo: windows.prevPeriodEnd.toISOString(),
+      },
+      currency:
+        enrollmentCurrencyRow?.currency ??
+        planCurrencyRow?.currency ??
+        currencyRow?.currency ??
+        'mxn',
+      kpis: {
+        totalCollected: {
+          cents: totalCollectedCents,
+          comparisonPercent: cmp(totalCollectedCents, prevTotal),
+          available: true,
+        },
+        grossCollected: {
+          cents: totalCollectedCents,
+          comparisonPercent: cmp(totalCollectedCents, prevTotal),
+          available: true,
+          note: 'Monto cobrado registrado antes de comisiones e impuestos.',
+        },
+        netReceived: {
+          cents: null,
+          comparisonPercent: null,
+          available: false,
+          unavailableReason:
+            'Disponible cuando Stripe envíe el desglose de la transacción.',
+        },
+        stripeFees: {
+          cents: null,
+          comparisonPercent: null,
+          available: false,
+          unavailableReason:
+            'Disponible cuando Stripe envíe el desglose de la transacción.',
+        },
+        taxes: {
+          cents: null,
+          comparisonPercent: null,
+          available: false,
+          unavailableReason:
+            'Disponible cuando Stripe envíe el desglose de la transacción.',
+        },
+        stripeCollected: {
+          cents: stripeCents,
+          comparisonPercent: cmp(stripeCents, prevStripe),
+          available: true,
+        },
+        cashCollected: {
+          cents: cashCents,
+          comparisonPercent: cmp(cashCents, prevCash),
+          available: true,
+        },
+        paymentsCollected: {
+          count: paymentCount,
+          comparisonPercent: cmp(paymentCount, prevCount),
+          available: true,
+        },
+        pending: {
+          cents: pendingCents,
+          count: pendingCount,
+          comparisonPercent: null,
+          available: true,
+        },
+        refunds: {
+          cents: null,
+          comparisonPercent: null,
+          available: false,
+          unavailableReason:
+            'Los reembolsos requieren sincronización con webhooks de Stripe.',
+        },
+      },
+      charts: {
+        collectedTrend: trendRows.map((r) => ({
+          date: new Date(r.d).toISOString().split('T')[0]!,
+          amountCents: Number(r.amount_cents),
+          paymentCount: Number(r.payment_count),
+        })),
+        revenueByPlan: planRows.map((r) => ({
+          planId: r.plan_id,
+          planName: r.plan_name,
+          revenueCents: Number(r.revenue_cents),
+        })),
+        stripeVsCash: [
+          { method: 'stripe', amountCents: stripeCents },
+          { method: 'cash', amountCents: cashCents },
+        ],
+      },
       generatedAt: now.toISOString(),
     };
   }

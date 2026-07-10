@@ -14,24 +14,27 @@ import {
   YAxis,
 } from "recharts";
 
-import { OwnerBriefing } from "@/components/analytics/OwnerBriefing";
+import { FinancialKpiSection } from "@/components/analytics/FinancialKpiSection";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { SectionHeader } from "@/components/shell/SectionHeader";
 import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
+import { translateSubscriptionStatus } from "@/lib/analyticsCopy";
 import { ApiError } from "@/lib/api/errors";
 import {
-  fetchAnalyticsBriefing,
   fetchAnalyticsBusiness,
   fetchAnalyticsClassBreakdown,
+  fetchAnalyticsFinancial,
   fetchAnalyticsOverview,
   fetchAnalyticsTrends,
   type BusinessAnalyticsDto,
   type ClassBreakdownDto,
-  type OwnerBriefingDto,
+  type FinancialPeriodKey,
+  type FinancialSummaryDto,
   type OverviewDto,
   type TrendsDto,
 } from "@/lib/api/analytics";
+import { formatMoneyAxis, formatMoneyFromCents } from "@/lib/formatMoney";
 
 const CHART_GRID = "#e4e4e7";
 const CHART_TEXT = "#a1a1aa";
@@ -57,14 +60,6 @@ function fmt(n: number, digits = 0): string {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   }).format(n);
-}
-
-function fmtMoney(cents: number): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
 }
 
 function fmtDate(iso: string): string {
@@ -102,20 +97,87 @@ function ChartShell({
   );
 }
 
-function RevenueTrend30Chart({
+function StripeVsCashChart({
+  rows,
+  currency,
+}: {
+  rows: { method: string; amountCents: number }[];
+  currency: string;
+}) {
+  const data = rows.map((r) => ({
+    name: r.method === "stripe" ? "Stripe" : "Efectivo",
+    Monto: r.amountCents / 100,
+  }));
+  if (data.every((d) => d.Monto === 0)) {
+    return (
+      <p className="py-10 text-center text-sm text-zinc-500">Sin pagos en este periodo.</p>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <BarChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
+        <XAxis dataKey="name" tick={{ fill: CHART_TEXT, fontSize: 11 }} tickLine={false} axisLine={false} />
+        <YAxis
+          tick={{ fill: CHART_TEXT, fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(v) => formatMoneyAxis(Math.round(Number(v) * 100), currency)}
+        />
+        <Tooltip
+          contentStyle={TOOLTIP_STYLE}
+          formatter={(value) => [
+            formatMoneyFromCents(Math.round(Number(value ?? 0) * 100), currency),
+            "Cobrado",
+          ]}
+        />
+        <Bar dataKey="Monto" fill="#52525b" radius={[6, 6, 0, 0]} maxBarSize={72} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function PaymentCountTrendChart({
   rows,
 }: {
-  rows: BusinessAnalyticsDto["revenueTrend"];
+  rows: { date: string; paymentCount: number }[];
 }) {
   const data = rows.map((r) => ({
     date: fmtDate(r.date),
-    Revenue: Math.round(r.amountCents) / 100,
+    Pagos: r.paymentCount,
+  }));
+  if (data.every((d) => d.Pagos === 0)) {
+    return <p className="py-10 text-center text-sm text-zinc-500">Sin pagos en este periodo.</p>;
+  }
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+        <XAxis dataKey="date" tick={{ fill: CHART_TEXT, fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+        <YAxis tick={{ fill: CHART_TEXT, fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
+        <Tooltip contentStyle={TOOLTIP_STYLE} />
+        <Line type="monotone" dataKey="Pagos" stroke="#71717a" strokeWidth={2} dot={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function RevenueTrend30Chart({
+  rows,
+  currency,
+}: {
+  rows: BusinessAnalyticsDto["revenueTrend"];
+  currency: string;
+}) {
+  const data = rows.map((r) => ({
+    date: fmtDate(r.date),
+    Ingresos: Math.round(r.amountCents) / 100,
   }));
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
-  if (data.every((d) => d.Revenue === 0)) {
+  if (data.every((d) => d.Ingresos === 0)) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">No collected payments in the last 30 days.</p>
+      <p className="py-10 text-center text-sm text-zinc-500">Sin pagos cobrados en este periodo.</p>
     );
   }
   return (
@@ -133,18 +195,18 @@ function RevenueTrend30Chart({
           tick={{ fill: textColor, fontSize: 11 }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v) => `$${v}`}
+          tickFormatter={(v) => formatMoneyAxis(Math.round(Number(v) * 100), currency)}
         />
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
           formatter={(value) => [
-            fmtMoney(Math.round(Number(value ?? 0) * 100)),
-            "Collected",
+            formatMoneyFromCents(Math.round(Number(value ?? 0) * 100), currency),
+            "Cobrado",
           ]}
         />
         <Line
           type="monotone"
-          dataKey="Revenue"
+          dataKey="Ingresos"
           stroke="#18181b"
           strokeWidth={2}
           dot={false}
@@ -162,13 +224,13 @@ function MembershipActivityChart({
 }) {
   const data = rows.map((r) => ({
     date: fmtDate(r.date),
-    Members: r.count,
+    Miembros: r.count,
   }));
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
-  if (data.every((d) => d.Members === 0)) {
+  if (data.every((d) => d.Miembros === 0)) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">No new memberships in the last 30 days.</p>
+      <p className="py-10 text-center text-sm text-zinc-500">Sin membresías nuevas en los últimos 30 días.</p>
     );
   }
   return (
@@ -193,7 +255,7 @@ function MembershipActivityChart({
         />
         <Line
           type="monotone"
-          dataKey="Members"
+          dataKey="Miembros"
           stroke="#52525b"
           strokeWidth={2}
           dot={false}
@@ -211,12 +273,12 @@ function AttendanceTrendChart({
 }) {
   const data = trends.attendances.map((a) => ({
     date: fmtDate(a.date),
-    Attendance: a.count,
+    Asistencia: a.count,
   }));
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
-  if (data.every((d) => d.Attendance === 0)) {
-    return <p className="py-10 text-center text-sm text-zinc-500">No check-ins in this period.</p>;
+  if (data.every((d) => d.Asistencia === 0)) {
+    return <p className="py-10 text-center text-sm text-zinc-500">Sin check-ins en este periodo.</p>;
   }
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -240,7 +302,7 @@ function AttendanceTrendChart({
         />
         <Line
           type="monotone"
-          dataKey="Attendance"
+          dataKey="Asistencia"
           stroke="#71717a"
           strokeWidth={2}
           dot={false}
@@ -258,8 +320,8 @@ function BookingsAttendanceChart({
 }) {
   const data = trends.bookings.map((b, i) => ({
     date: fmtDate(b.date),
-    Bookings: b.count,
-    Attendance: trends.attendances[i]?.count ?? 0,
+    Reservas: b.count,
+    Asistencia: trends.attendances[i]?.count ?? 0,
   }));
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
@@ -284,8 +346,8 @@ function BookingsAttendanceChart({
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
         />
-        <Line type="monotone" dataKey="Bookings" stroke="#a1a1aa" strokeWidth={2} dot={false} />
-        <Line type="monotone" dataKey="Attendance" stroke="#52525b" strokeWidth={2} dot={false} />
+        <Line type="monotone" dataKey="Reservas" stroke="#a1a1aa" strokeWidth={2} dot={false} />
+        <Line type="monotone" dataKey="Asistencia" stroke="#52525b" strokeWidth={2} dot={false} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -300,7 +362,7 @@ const SUBSCRIPTION_CHART_COLORS: Record<string, string> = {
 };
 
 function formatSubscriptionStatus(status: string): string {
-  return status.replaceAll("_", " ");
+  return translateSubscriptionStatus(status);
 }
 
 function SubscriptionStatusChart({
@@ -316,7 +378,7 @@ function SubscriptionStatusChart({
       fill: SUBSCRIPTION_CHART_COLORS[b.status] ?? "#71717a",
     }));
   if (data.length === 0) {
-    return <p className="py-10 text-center text-sm text-zinc-500">No subscriptions yet</p>;
+    return <p className="py-10 text-center text-sm text-zinc-500">Sin suscripciones aún.</p>;
   }
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
@@ -358,19 +420,19 @@ function BookingFrequencyChart({
   buckets: BusinessAnalyticsDto["bookingFrequencyBuckets"];
   ratePercent: number;
 }) {
-  const data = buckets.map((b) => ({ name: b.label, Members: b.memberCount }));
+  const data = buckets.map((b) => ({ name: b.label, Miembros: b.memberCount }));
   const total = buckets.reduce((s, b) => s + b.memberCount, 0);
   if (total === 0) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">No member bookings in the last 30 days.</p>
+      <p className="py-10 text-center text-sm text-zinc-500">Sin reservas de miembros en los últimos 30 días.</p>
     );
   }
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
   return (
     <div>
-      <p className="mb-2 text-xs text-zinc-500">
-        Members with bookings · repeat rate {fmt(ratePercent, 1)}%
+      <p className="mb-2 text-xs text-zinc-600">
+        Miembros con reservas · tasa de repetición {fmt(ratePercent, 1)}%
       </p>
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
@@ -389,17 +451,19 @@ function BookingFrequencyChart({
 
 function RevenueByPlanChart({
   rows,
+  currency,
 }: {
   rows: BusinessAnalyticsDto["revenueByPlan"];
+  currency: string;
 }) {
   if (rows.length === 0) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-500">No plan-attributed revenue in the last 30 days.</p>
+      <p className="py-10 text-center text-sm text-zinc-500">Sin ingresos por plan en los últimos 30 días.</p>
     );
   }
   const data = rows.map((r) => ({
     name: r.planName.length > 16 ? r.planName.slice(0, 15) + "…" : r.planName,
-    Revenue: Math.round(r.revenueCents) / 100,
+    Ingresos: Math.round(r.revenueCents) / 100,
   }));
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
@@ -408,12 +472,20 @@ function RevenueByPlanChart({
       <BarChart data={data} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
         <XAxis dataKey="name" tick={{ fill: textColor, fontSize: 10 }} tickLine={false} axisLine={false} />
-        <YAxis tick={{ fill: textColor, fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
+        <YAxis
+          tick={{ fill: textColor, fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(v) => formatMoneyAxis(Math.round(Number(v) * 100), currency)}
+        />
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
-          formatter={(value) => [fmtMoney(Math.round(Number(value ?? 0) * 100)), "Collected"]}
+          formatter={(value) => [
+            formatMoneyFromCents(Math.round(Number(value ?? 0) * 100), currency),
+            "Cobrado",
+          ]}
         />
-        <Bar dataKey="Revenue" fill="#71717a" radius={[4, 4, 0, 0]} maxBarSize={44} />
+        <Bar dataKey="Ingresos" fill="#71717a" radius={[4, 4, 0, 0]} maxBarSize={44} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -426,10 +498,10 @@ function TopClassesChart({
 }) {
   const data = breakdown.topTemplates.map((t) => ({
     name: t.name.length > 14 ? t.name.slice(0, 13) + "…" : t.name,
-    Bookings: t.bookingCount,
+    Reservas: t.bookingCount,
   }));
   if (data.length === 0) {
-    return <p className="py-10 text-center text-sm text-zinc-500">No data yet</p>;
+    return <p className="py-10 text-center text-sm text-zinc-500">Sin datos aún.</p>;
   }
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
@@ -442,7 +514,7 @@ function TopClassesChart({
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
         />
-        <Bar dataKey="Bookings" fill="#a1a1aa" radius={[4, 4, 0, 0]} maxBarSize={48} />
+        <Bar dataKey="Reservas" fill="#a1a1aa" radius={[4, 4, 0, 0]} maxBarSize={48} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -454,12 +526,12 @@ function PeakHoursChart({
   breakdown: ClassBreakdownDto;
 }) {
   if (breakdown.peakHours.length === 0) {
-    return <p className="py-10 text-center text-sm text-zinc-500">No data yet</p>;
+    return <p className="py-10 text-center text-sm text-zinc-500">Sin datos aún.</p>;
   }
   const hourMap = new Map(breakdown.peakHours.map((h) => [h.hour, h.count]));
   const data = Array.from({ length: 24 }, (_, h) => ({
     hour: fmtHour(h),
-    Classes: hourMap.get(h) ?? 0,
+    Clases: hourMap.get(h) ?? 0,
   }));
   const gridColor = CHART_GRID;
   const textColor = CHART_TEXT;
@@ -472,7 +544,7 @@ function PeakHoursChart({
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
         />
-        <Bar dataKey="Classes" fill="#d4d4d8" radius={[3, 3, 0, 0]} maxBarSize={24} />
+        <Bar dataKey="Clases" fill="#d4d4d8" radius={[3, 3, 0, 0]} maxBarSize={24} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -517,34 +589,37 @@ export default function AnalyticsPage() {
     useDeskStudio();
   const chartsRef = useRef<HTMLElement>(null);
 
+  const [financialPeriod, setFinancialPeriod] = useState<FinancialPeriodKey>("month");
+  const [financial, setFinancial] = useState<FinancialSummaryDto | null>(null);
   const [period, setPeriod] = useState<PeriodKey>(30);
-  const [briefing, setBriefing] = useState<OwnerBriefingDto | null>(null);
   const [overview, setOverview] = useState<OverviewDto | null>(null);
   const [trends, setTrends] = useState<TrendsDto | null>(null);
   const [breakdown, setBreakdown] = useState<ClassBreakdownDto | null>(null);
   const [business, setBusiness] = useState<BusinessAnalyticsDto | null>(null);
 
-  const [loadingBriefing, setLoadingBriefing] = useState(true);
+  const [loadingFinancial, setLoadingFinancial] = useState(true);
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingCharts, setLoadingCharts] = useState(true);
   const [loadingBusiness, setLoadingBusiness] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadBriefing = useCallback(async () => {
+  const studioCurrency = financial?.currency ?? "mxn";
+
+  const loadFinancial = useCallback(async () => {
     if (!selectedStudioId) {
-      setBriefing(null);
-      setLoadingBriefing(false);
+      setFinancial(null);
+      setLoadingFinancial(false);
       return;
     }
-    setLoadingBriefing(true);
+    setLoadingFinancial(true);
     try {
-      setBriefing(await fetchAnalyticsBriefing(selectedStudioId));
+      setFinancial(await fetchAnalyticsFinancial(selectedStudioId, financialPeriod));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not load briefing");
+      setError(e instanceof ApiError ? e.message : "No se pudo cargar el resumen financiero");
     } finally {
-      setLoadingBriefing(false);
+      setLoadingFinancial(false);
     }
-  }, [selectedStudioId]);
+  }, [selectedStudioId, financialPeriod]);
 
   const loadOverview = useCallback(async () => {
     if (!selectedStudioId) {
@@ -602,16 +677,16 @@ export default function AnalyticsPage() {
   }, [selectedStudioId]);
 
   const refreshAll = useCallback(() => {
-    void loadBriefing();
+    void loadFinancial();
     void loadOverview();
     void loadCharts();
     void loadBusiness();
-  }, [loadBriefing, loadOverview, loadCharts, loadBusiness]);
+  }, [loadFinancial, loadOverview, loadCharts, loadBusiness]);
 
   useEffect(() => {
-    const t = setTimeout(() => void loadBriefing(), 0);
+    const t = setTimeout(() => void loadFinancial(), 0);
     return () => clearTimeout(t);
-  }, [loadBriefing]);
+  }, [loadFinancial]);
 
   useEffect(() => {
     const t = setTimeout(() => void loadOverview(), 0);
@@ -628,9 +703,9 @@ export default function AnalyticsPage() {
     return () => clearTimeout(t);
   }, [loadBusiness]);
 
-  const lastUpdated = briefing?.generatedAt
-    ? new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(
-        new Date(briefing.generatedAt),
+  const lastUpdated = financial?.generatedAt
+    ? new Intl.DateTimeFormat("es-MX", { timeStyle: "short" }).format(
+        new Date(financial.generatedAt),
       )
     : null;
 
@@ -638,10 +713,10 @@ export default function AnalyticsPage() {
     if (typeof window === "undefined") return;
     if (window.location.hash !== "#analytics-charts") return;
     chartsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [briefing]);
+  }, [financial]);
 
   if (studioLoading) {
-    return <p className="text-sm text-zinc-500">Loading studios…</p>;
+    return <p className="text-sm text-zinc-500">Cargando estudios…</p>;
   }
 
   if (studioError) {
@@ -656,7 +731,7 @@ export default function AnalyticsPage() {
     return (
       <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
         <p className="text-sm text-zinc-600">
-          No studio memberships found for this account.
+          No se encontraron membresías de estudio para esta cuenta.
         </p>
       </div>
     );
@@ -666,7 +741,7 @@ export default function AnalyticsPage() {
     <div className="space-y-8">
       <PageHeader
         title="Analytics"
-        subtitle="Resumen del negocio y rendimiento de ARES."
+        subtitle="Resumen financiero y operación del estudio."
         actions={
           <>
             {lastUpdated ? (
@@ -699,11 +774,48 @@ export default function AnalyticsPage() {
         </div>
       ) : null}
 
-      <OwnerBriefing
-        briefing={briefing}
-        loading={loadingBriefing}
-        revenueTrend={business?.revenueTrend}
+      <FinancialKpiSection
+        data={financial}
+        loading={loadingFinancial}
+        period={financialPeriod}
+        onPeriodChange={setFinancialPeriod}
       />
+
+      <section className="space-y-6">
+        <SectionHeader title="Ingresos" />
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartShell title="Ingresos cobrados en el periodo" loading={loadingFinancial}>
+            {financial ? (
+              <RevenueTrend30Chart
+                rows={financial.charts.collectedTrend.map((r) => ({
+                  date: r.date,
+                  amountCents: r.amountCents,
+                }))}
+                currency={studioCurrency}
+              />
+            ) : null}
+          </ChartShell>
+          <ChartShell title="Stripe vs efectivo" loading={loadingFinancial}>
+            {financial ? (
+              <StripeVsCashChart rows={financial.charts.stripeVsCash} currency={studioCurrency} />
+            ) : null}
+          </ChartShell>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ChartShell title="Número de pagos" loading={loadingFinancial}>
+            {financial ? (
+              <PaymentCountTrendChart rows={financial.charts.collectedTrend} />
+            ) : null}
+          </ChartShell>
+          <ChartShell title="Ingresos por membresía" loading={loadingFinancial}>
+            {financial ? (
+              <RevenueByPlanChart rows={financial.charts.revenueByPlan} currency={studioCurrency} />
+            ) : null}
+          </ChartShell>
+        </div>
+      </section>
 
       <section
         id="analytics-charts"
@@ -711,13 +823,9 @@ export default function AnalyticsPage() {
         className="scroll-mt-8 space-y-6 border-t border-zinc-200 pt-10"
       >
         <SectionHeader
-          title="Rendimiento"
+          title="Operación"
           actions={<PeriodSegment value={period} onChange={setPeriod} />}
         />
-
-        <ChartShell title="Tendencia de ingresos" loading={loadingBusiness}>
-          {business ? <RevenueTrend30Chart rows={business.revenueTrend} /> : null}
-        </ChartShell>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <ChartShell title="Actividad de membresías" loading={loadingBusiness}>
@@ -735,24 +843,20 @@ export default function AnalyticsPage() {
         </ChartShell>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <ChartShell title="Ingresos por membresía" loading={loadingBusiness}>
-            {business ? <RevenueByPlanChart rows={business.revenueByPlan} /> : null}
-          </ChartShell>
           <ChartShell title="Distribución de membresías" loading={loadingBusiness}>
             {business ? (
               <SubscriptionStatusChart breakdown={business.subscriptionStatusBreakdown} />
             ) : null}
           </ChartShell>
+          <ChartShell title="Retención" loading={loadingBusiness}>
+            {business ? (
+              <BookingFrequencyChart
+                buckets={business.bookingFrequencyBuckets}
+                ratePercent={business.repeatBookingRatePercent}
+              />
+            ) : null}
+          </ChartShell>
         </div>
-
-        <ChartShell title="Retención" loading={loadingBusiness}>
-          {business ? (
-            <BookingFrequencyChart
-              buckets={business.bookingFrequencyBuckets}
-              ratePercent={business.repeatBookingRatePercent}
-            />
-          ) : null}
-        </ChartShell>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <ChartShell title="Horarios pico" loading={loadingCharts}>

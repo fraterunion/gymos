@@ -67,9 +67,9 @@ export function AdminHeader() {
             <Image
               src="/ares-logo.png"
               alt="ARES Training Club"
-              width={108}
-              height={28}
-              className="h-7 w-auto max-w-[108px] object-contain object-left"
+              width={96}
+              height={24}
+              className="h-6 w-auto max-w-[96px] object-contain object-left"
               priority
             />
           </Link>

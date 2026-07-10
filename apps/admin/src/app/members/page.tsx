@@ -3,16 +3,23 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { PageHeader } from "@/components/shell/PageHeader";
+import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
+import { ApiError } from "@/lib/api/errors";
 import {
   fetchMembers,
   type MemberListItem,
   type MemberListQuery,
   type SubStatus,
 } from "@/lib/api/members";
-import { ApiError } from "@/lib/api/errors";
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+import {
+  adminInput,
+  adminSecondaryBtn,
+  adminSelect,
+  adminStatusPill,
+  adminTableWrap,
+} from "@/lib/adminSurface";
 
 function initials(firstName: string, lastName: string) {
   return `${firstName[0] ?? ""}${lastName[0] ?? ""}`.toUpperCase();
@@ -20,7 +27,7 @@ function initials(firstName: string, lastName: string) {
 
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, {
+  return new Date(iso).toLocaleDateString("es-MX", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -31,19 +38,19 @@ function fmtRelative(iso: string | null | undefined) {
   if (!iso) return "—";
   const diff = Date.now() - new Date(iso).getTime();
   const days = Math.floor(diff / 86_400_000);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 30) return `${days}d ago`;
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
+  if (days === 0) return "Hoy";
+  if (days === 1) return "Ayer";
+  if (days < 30) return `Hace ${days}d`;
+  if (days < 365) return `Hace ${Math.floor(days / 30)}m`;
+  return `Hace ${Math.floor(days / 365)}a`;
 }
 
 const SUB_STATUS_LABELS: Record<SubStatus, string> = {
-  ACTIVE: "Active",
-  TRIALING: "Trial",
-  PAST_DUE: "Past due",
-  PAUSED: "Paused",
-  CANCELED: "Canceled",
+  ACTIVE: "Activa",
+  TRIALING: "Prueba",
+  PAST_DUE: "Vencida",
+  PAUSED: "Pausada",
+  CANCELED: "Cancelada",
 };
 
 const SUB_STATUS_COLORS: Record<SubStatus, string> = {
@@ -54,21 +61,17 @@ const SUB_STATUS_COLORS: Record<SubStatus, string> = {
   CANCELED: "bg-red-100 text-red-700",
 };
 
-// ── Skeleton ─────────────────────────────────────────────────────────────────
-
 function RowSkeleton() {
   return (
     <tr className="border-b border-zinc-100">
-      {[...Array(7)].map((_, i) => (
-        <td key={i} className="px-4 py-3">
+      {[...Array(6)].map((_, i) => (
+        <td key={i} className="px-4 py-3.5">
           <div className="h-4 rounded bg-zinc-200 animate-pulse" style={{ width: `${60 + (i * 17) % 40}%` }} />
         </td>
       ))}
     </tr>
   );
 }
-
-// ── Sort header ───────────────────────────────────────────────────────────────
 
 type SortKey = MemberListQuery["sortBy"];
 
@@ -90,13 +93,13 @@ function SortTh({
   const active = current === field;
   return (
     <th
-      className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500 cursor-pointer select-none hover:text-zinc-800 ${className}`}
+      className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600 cursor-pointer select-none hover:text-zinc-900 ${className}`}
       onClick={() => onSort(field)}
     >
       <span className="flex items-center gap-1">
         {label}
         {active ? (
-          <span className="text-zinc-800">{dir === "asc" ? "↑" : "↓"}</span>
+          <span className="text-zinc-900">{dir === "asc" ? "↑" : "↓"}</span>
         ) : (
           <span className="text-zinc-300">↕</span>
         )}
@@ -105,7 +108,46 @@ function SortTh({
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+function MemberStatusPill({ status }: { status: SubStatus }) {
+  return (
+    <span className={`${adminStatusPill} ${SUB_STATUS_COLORS[status]}`}>
+      {SUB_STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+function MemberCard({ member }: { member: MemberListItem }) {
+  return (
+    <Link
+      href={`/members/${member.user.id}`}
+      className="block rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-zinc-300 hover:shadow"
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-sm font-semibold text-zinc-700">
+          {initials(member.user.firstName, member.user.lastName)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-zinc-900">
+            {member.user.firstName} {member.user.lastName}
+          </p>
+          <p className="truncate text-sm text-zinc-600">{member.user.email}</p>
+          {member.user.phone ? (
+            <p className="mt-0.5 text-sm text-zinc-500">{member.user.phone}</p>
+          ) : null}
+        </div>
+        {member.subscription ? (
+          <MemberStatusPill status={member.subscription.status} />
+        ) : (
+          <span className="text-xs text-zinc-400">Sin plan</span>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+        <span>{member.subscription?.planName ?? "—"}</span>
+        <span>Última visita: {fmtRelative(member.lastAttendanceAt)}</span>
+      </div>
+    </Link>
+  );
+}
 
 export default function MembersPage() {
   const { selectedStudioId } = useDeskStudio();
@@ -152,7 +194,7 @@ export default function MembersPage() {
       setMembers(res.data);
       setTotal(res.total);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load members");
+      setError(e instanceof ApiError ? e.message : "No se pudieron cargar los miembros");
     } finally {
       setLoading(false);
     }
@@ -178,190 +220,220 @@ export default function MembersPage() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
+  const hasFilters = Boolean(search || subStatus || hasNoShows);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
-            Members
-          </h1>
-          {!loading && (
-            <p className="mt-0.5 text-sm text-zinc-500">
-              {total.toLocaleString()} {total === 1 ? "member" : "members"}
-            </p>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title="Miembros"
+        subtitle={
+          !loading
+            ? `${total.toLocaleString("es-MX")} ${total === 1 ? "miembro" : "miembros"}`
+            : "Directorio de miembros del estudio"
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <input
           type="search"
-          placeholder="Search name or email…"
+          placeholder="Buscar nombre, correo o teléfono…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-64 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 shadow-sm focus:border-zinc-400 focus:outline-none"
+          className={`${adminInput} w-full max-w-xs`}
         />
         <select
           value={subStatus}
-          onChange={(e) => { setSubStatus(e.target.value as SubStatus | ""); setHasNoShows(false); }}
-          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none"
+          onChange={(e) => {
+            setSubStatus(e.target.value as SubStatus | "");
+            setHasNoShows(false);
+          }}
+          className={adminSelect}
         >
-          <option value="">All plans</option>
+          <option value="">Todos los estados</option>
           {(Object.keys(SUB_STATUS_LABELS) as SubStatus[]).map((s) => (
-            <option key={s} value={s}>{SUB_STATUS_LABELS[s]}</option>
+            <option key={s} value={s}>
+              {SUB_STATUS_LABELS[s]}
+            </option>
           ))}
         </select>
-        {/* Quick filter chips */}
         <button
-          onClick={() => { setHasNoShows((v) => !v); setSubStatus(""); }}
-          className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+          type="button"
+          onClick={() => {
+            setHasNoShows((v) => !v);
+            setSubStatus("");
+          }}
+          className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
             hasNoShows
-              ? "border-amber-400 bg-amber-50 text-amber-800"
-              : "border-zinc-200 text-zinc-600 hover:bg-zinc-100"
+              ? "border-amber-300 bg-amber-50 text-amber-800"
+              : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
           }`}
         >
-          No Shows
+          No-shows
         </button>
-        {(search || subStatus || hasNoShows) && (
+        {hasFilters ? (
           <button
-            onClick={() => { setSearch(""); setSubStatus(""); setHasNoShows(false); }}
-            className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
+            type="button"
+            onClick={() => {
+              setSearch("");
+              setSubStatus("");
+              setHasNoShows(false);
+            }}
+            className={adminSecondaryBtn}
           >
-            Clear filters
+            Limpiar
           </button>
-        )}
+        ) : null}
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
         </div>
-      )}
+      ) : null}
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      {/* Mobile cards */}
+      <div className="space-y-3 md:hidden">
+        {loading
+          ? [...Array(5)].map((_, i) => (
+              <div key={i} className="h-24 animate-pulse rounded-xl bg-zinc-100" />
+            ))
+          : members.length === 0
+            ? (
+              <SurfaceCard padding="sm">
+                <p className="py-6 text-center text-sm text-zinc-600">
+                  {hasFilters
+                    ? "Ningún miembro coincide con tus filtros."
+                    : "Aún no hay miembros registrados."}
+                </p>
+              </SurfaceCard>
+            )
+            : members.map((m) => <MemberCard key={m.membershipId} member={m} />)}
+      </div>
+
+      {/* Desktop table */}
+      <div className={`hidden md:block ${adminTableWrap}`}>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-zinc-100">
-            <thead className="bg-zinc-50">
+            <thead className="bg-zinc-50/80">
               <tr>
-                <SortTh label="Member" field="name" current={sortBy} dir={sortDir} onSort={handleSort} className="pl-4 min-w-[200px]" />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500">Plan</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-500">Status</th>
-                <SortTh label="Bookings" field="totalBookings" current={sortBy} dir={sortDir} onSort={handleSort} />
-                <SortTh label="Last visit" field="lastAttendance" current={sortBy} dir={sortDir} onSort={handleSort} />
-                <SortTh label="Joined" field="joinDate" current={sortBy} dir={sortDir} onSort={handleSort} />
-                <th className="px-4 py-3" />
+                <SortTh label="Miembro" field="name" current={sortBy} dir={sortDir} onSort={handleSort} className="pl-4 min-w-[220px]" />
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Teléfono</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Plan</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Estado</th>
+                <SortTh label="Reservas" field="totalBookings" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <SortTh label="Última visita" field="lastAttendance" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <SortTh label="Alta" field="joinDate" current={sortBy} dir={sortDir} onSort={handleSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {loading
                 ? [...Array(8)].map((_, i) => <RowSkeleton key={i} />)
                 : members.length === 0
-                ? (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-zinc-500">
-                      {debouncedSearch || subStatus
-                        ? "No members match your filters."
-                        : "No members yet."}
-                    </td>
-                  </tr>
-                )
-                : members.map((m) => (
-                  <tr
-                    key={m.membershipId}
-                    className="group hover:bg-zinc-50 transition-colors"
-                  >
-                    {/* Avatar + name */}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-xs font-semibold text-zinc-700">
-                          {initials(m.user.firstName, m.user.lastName)}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-zinc-900">
-                            {m.user.firstName} {m.user.lastName}
+                  ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-12 text-center text-sm text-zinc-600">
+                        {hasFilters
+                          ? "Ningún miembro coincide con tus filtros."
+                          : "Aún no hay miembros registrados."}
+                      </td>
+                    </tr>
+                  )
+                  : members.map((m) => (
+                    <tr key={m.membershipId} className="group transition-colors hover:bg-zinc-50">
+                      <td className="px-4 py-3.5">
+                        <Link href={`/members/${m.user.id}`} className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-700">
+                            {initials(m.user.firstName, m.user.lastName)}
                           </div>
-                          <div className="truncate text-xs text-zinc-500">
-                            {m.user.email}
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-zinc-900 group-hover:underline">
+                              {m.user.firstName} {m.user.lastName}
+                            </div>
+                            <div className="truncate text-xs text-zinc-600">{m.user.email}</div>
                           </div>
-                        </div>
-                      </div>
-                    </td>
-                    {/* Plan */}
-                    <td className="px-4 py-3 text-sm text-zinc-700">
-                      {m.subscription?.planName ?? <span className="text-zinc-400">—</span>}
-                    </td>
-                    {/* Status */}
-                    <td className="px-4 py-3">
-                      {m.subscription ? (
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SUB_STATUS_COLORS[m.subscription.status]}`}>
-                          {SUB_STATUS_LABELS[m.subscription.status]}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-zinc-400">No plan</span>
-                      )}
-                    </td>
-                    {/* Bookings + no-show badge */}
-                    <td className="px-4 py-3 text-sm tabular-nums text-zinc-700">
-                      <span>{m.totalBookings.toLocaleString()}</span>
-                      {m.noShowCount > 0 && (
-                        <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                          {m.noShowCount} NS
-                        </span>
-                      )}
-                    </td>
-                    {/* Last visit */}
-                    <td className="px-4 py-3 text-sm text-zinc-500">
-                      {fmtRelative(m.lastAttendanceAt)}
-                    </td>
-                    {/* Joined */}
-                    <td className="px-4 py-3 text-sm text-zinc-500">
-                      {fmtDate(m.joinedAt)}
-                    </td>
-                    {/* Action */}
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/members/${m.user.id}`}
-                        className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-zinc-100"
-                      >
-                        View
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-600">
+                        {m.user.phone ?? <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-700">
+                        {m.subscription?.planName ?? <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {m.subscription ? (
+                          <MemberStatusPill status={m.subscription.status} />
+                        ) : (
+                          <span className="text-xs text-zinc-400">Sin plan</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5 text-sm tabular-nums text-zinc-700">
+                        <span>{m.totalBookings.toLocaleString("es-MX")}</span>
+                        {m.noShowCount > 0 ? (
+                          <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                            {m.noShowCount} NS
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-600">{fmtRelative(m.lastAttendanceAt)}</td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-600">{fmtDate(m.joinedAt)}</td>
+                    </tr>
+                  ))}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
+        {totalPages > 1 ? (
           <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-3">
-            <p className="text-xs text-zinc-500">
-              Page {page} of {totalPages} · {total.toLocaleString()} members
+            <p className="text-xs text-zinc-600">
+              Página {page} de {totalPages} · {total.toLocaleString("es-MX")} miembros
             </p>
             <div className="flex gap-2">
               <button
+                type="button"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50"
+                className={`${adminSecondaryBtn} px-3 py-1.5 text-xs disabled:opacity-40`}
               >
-                Previous
+                Anterior
               </button>
               <button
+                type="button"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40 hover:bg-zinc-50"
+                className={`${adminSecondaryBtn} px-3 py-1.5 text-xs disabled:opacity-40`}
               >
-                Next
+                Siguiente
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
+
+      {totalPages > 1 ? (
+        <div className="flex items-center justify-between md:hidden">
+          <p className="text-xs text-zinc-600">
+            Página {page} de {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className={`${adminSecondaryBtn} px-3 py-1.5 text-xs disabled:opacity-40`}
+            >
+              Anterior
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className={`${adminSecondaryBtn} px-3 py-1.5 text-xs disabled:opacity-40`}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
