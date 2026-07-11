@@ -34,3 +34,21 @@ export async function fetchTodayClasses(studioId: string): Promise<TodayClassSum
     method: 'GET',
   });
 }
+
+export type ScheduledClassDetailDto = ScheduledClassDto & {
+  bookedCount: number;
+  waitlistCount: number;
+  checkedInCount: number;
+  /** Studio booking rule — authoritative for staff check-in UI gating. */
+  checkInWindowMinutes?: number;
+};
+
+export async function fetchScheduledClassById(
+  studioId: string,
+  scheduledClassId: string,
+): Promise<ScheduledClassDetailDto> {
+  return apiRequest<ScheduledClassDetailDto>(
+    `/studios/${studioId}/schedule/${scheduledClassId}`,
+    { method: 'GET' },
+  );
+}

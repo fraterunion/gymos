@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -19,6 +18,7 @@ import type { JwtPayload } from 'jsonwebtoken';
 import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
+import { assertEligibleForCheckIn } from './check-in-eligibility';
 
 const QR_TTL_SECONDS = 5 * 60;
 
@@ -83,13 +83,6 @@ function isQrJwtPayload(v: JwtPayload | string): v is QrJwtPayload & JwtPayload 
     typeof v['studioId'] === 'string' &&
     typeof v['bookingId'] === 'string'
   );
-}
-
-function isWithinCheckInWindow(classStartsAt: Date, now: Date): boolean {
-  const startMs = classStartsAt.getTime();
-  const nowMs = now.getTime();
-  const lateMs = 30 * 60 * 1000;
-  return nowMs <= startMs + lateMs;
 }
 
 @Injectable()
@@ -229,7 +222,7 @@ export class CheckInsService {
         throw new UnauthorizedException('Invalid QR token');
       }
 
-      this.assertBookingAndClassEligibleForCheckIn(booking, booking.scheduledClass, now);
+      await this.assertBookingAndClassEligibleForCheckIn(booking, booking.scheduledClass, now);
 
       try {
         const attendance = await tx.attendance.create({
@@ -274,7 +267,7 @@ export class CheckInsService {
     }
 
     const now = new Date();
-    this.assertBookingAndClassEligibleForCheckIn(booking, booking.scheduledClass, now);
+    await this.assertBookingAndClassEligibleForCheckIn(booking, booking.scheduledClass, now);
 
     try {
       const attendance = await this.prisma.attendance.create({
@@ -373,23 +366,24 @@ export class CheckInsService {
     return membership;
   }
 
-  private assertBookingAndClassEligibleForCheckIn(
+  private async assertBookingAndClassEligibleForCheckIn(
     booking: { status: BookingStatus; studioId: string; scheduledClassId: string },
     scheduledClass: { id: string; status: ClassStatus; startsAt: Date; studioId: string },
     now: Date,
-  ): void {
-    if (scheduledClass.id !== booking.scheduledClassId || scheduledClass.studioId !== booking.studioId) {
-      throw new BadRequestException();
+  ): Promise<void> {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: booking.studioId, deletedAt: null },
+      select: { checkInWindowMinutes: true },
+    });
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
     }
-    if (booking.status !== BookingStatus.CONFIRMED) {
-      throw new ConflictException('Only confirmed bookings can be checked in');
-    }
-    if (scheduledClass.status !== ClassStatus.SCHEDULED) {
-      throw new ConflictException('Check-in is only available for scheduled classes');
-    }
-    if (!isWithinCheckInWindow(scheduledClass.startsAt, now)) {
-      throw new BadRequestException('Check-in is not available outside the allowed time window');
-    }
+    assertEligibleForCheckIn(
+      booking,
+      scheduledClass,
+      now,
+      studio.checkInWindowMinutes,
+    );
   }
 
   private toAttendanceSummary(row: AttendanceWithUser): AttendanceSummary {

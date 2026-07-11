@@ -41,7 +41,7 @@ export function staffScanErrorCopy(error: unknown): { title: string; message: st
     };
   }
 
-  if (m.includes('time window') || m.includes('not available outside')) {
+  if (m.includes('time window') || m.includes('not available outside') || m.includes('not yet available')) {
     return {
       title: 'Ventana de check-in cerrada',
       message: 'El check-in abre 15 minutos antes de la clase y cierra 30 minutos después de que inicia.',

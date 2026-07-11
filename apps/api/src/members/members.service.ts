@@ -16,6 +16,7 @@ import {
   SubscriptionStatus,
 } from '@prisma/client';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
+import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import type { ListMembersQueryDto } from './dto/list-members-query.dto';
@@ -533,12 +534,20 @@ export class MembersService {
     });
     if (!booking) throw new NotFoundException('Booking not found');
     if (booking.user.deletedAt) throw new ForbiddenException();
-    if (booking.status !== BookingStatus.CONFIRMED) {
-      throw new ConflictException('Only confirmed bookings can be checked in');
-    }
-    if (booking.scheduledClass.status !== ClassStatus.SCHEDULED) {
-      throw new ConflictException('Check-in is only available for scheduled classes');
-    }
+
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { checkInWindowMinutes: true },
+    });
+    if (!studio) throw new NotFoundException('Studio not found');
+
+    const now = new Date();
+    assertEligibleForCheckIn(
+      booking,
+      booking.scheduledClass,
+      now,
+      studio.checkInWindowMinutes,
+    );
 
     try {
       const attendance = await this.prisma.attendance.create({

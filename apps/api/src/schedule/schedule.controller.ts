@@ -43,6 +43,16 @@ export class ScheduleController {
     return this.scheduleService.getTodaySummaryForStaff(studioId);
   }
 
+  @Get(':scheduledClassId')
+  @UseGuards(RolesGuard)
+  @Roles(...DESK_SCHEDULE_READ_ROLES)
+  getById(
+    @Param('studioId') studioId: string,
+    @Param('scheduledClassId') scheduledClassId: string,
+  ) {
+    return this.scheduleService.getScheduledClassById(studioId, scheduledClassId);
+  }
+
   @Post()
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)

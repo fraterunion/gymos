@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -25,6 +26,7 @@ import {
 import { fetchClassTemplates, type ClassTemplateDto } from "@/lib/api/classTemplates";
 import { fetchStaffInstructors, type StaffInstructorDto } from "@/lib/api/staff";
 import { calendarDayKeyInZone, todayKeyInZone } from "@/lib/datetime";
+import { classRosterHref } from "@/lib/classRosterNav";
 
 // ── date helpers ──────────────────────────────────────────────────────────────
 
@@ -522,19 +524,19 @@ function ScheduleModal({
 function ClassCard({
   cls,
   tz,
-  onClick,
+  onViewRoster,
+  onEdit,
 }: {
   cls: ScheduledClassDto;
   tz: string;
-  onClick: () => void;
+  onViewRoster: () => void;
+  onEdit: () => void;
 }) {
   const isCancelled = cls.status === "CANCELLED";
   const accentColor = cls.classTemplate.color;
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       className={`w-full rounded-xl border p-2.5 text-left transition ${
         isCancelled
           ? "border-zinc-200 bg-zinc-50 opacity-50"
@@ -544,25 +546,39 @@ function ClassCard({
       {accentColor && !isCancelled ? (
         <div className="mb-1.5 h-0.5 w-8 rounded-full" style={{ backgroundColor: accentColor }} />
       ) : null}
-      <p className={`text-xs font-semibold leading-snug ${isCancelled ? "line-through text-zinc-400" : "text-zinc-900"}`}>
-        {cls.classTemplate.name}
-      </p>
-      <p className="mt-0.5 text-[11px] text-zinc-500">
-        {formatTime(cls.startsAt, tz)} – {formatTime(cls.endsAt, tz)}
-      </p>
-      {cls.instructor ? (
-        <p className="mt-0.5 text-[11px] text-zinc-500">
-          {cls.instructor.firstName} {cls.instructor.lastName}
+      <button type="button" onClick={onViewRoster} className="w-full text-left">
+        <p className={`text-xs font-semibold leading-snug ${isCancelled ? "line-through text-zinc-400" : "text-zinc-900"}`}>
+          {cls.classTemplate.name}
         </p>
-      ) : null}
-      <p className="mt-1 text-[10px] text-zinc-400">Cap. {cls.capacity}</p>
-    </button>
+        <p className="mt-0.5 text-[11px] text-zinc-500">
+          {formatTime(cls.startsAt, tz)} – {formatTime(cls.endsAt, tz)}
+        </p>
+        {cls.instructor ? (
+          <p className="mt-0.5 text-[11px] text-zinc-500">
+            {cls.instructor.firstName} {cls.instructor.lastName}
+          </p>
+        ) : null}
+        <p className="mt-1 text-[10px] text-zinc-400">
+          Cap. {cls.capacity}
+          {typeof cls.bookedCount === "number" ? ` · ${cls.bookedCount} booked` : ""}
+        </p>
+      </button>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="mt-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 underline hover:text-zinc-800"
+      >
+        Edit
+      </button>
+    </div>
   );
 }
 
 // ── page ───────────────────────────────────────────────────────────────────────
 
 export default function SchedulePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { selectedStudioId, selected, loading: studioLoading, error: studioError } = useDeskStudio();
   const tz = selected?.studio.timezone ?? "UTC";
 
@@ -604,6 +620,27 @@ export default function SchedulePage() {
     const t = setTimeout(() => void load(), 0);
     return () => clearTimeout(t);
   }, [load]);
+
+  useEffect(() => {
+    const ws = searchParams.get("weekStart");
+    if (!ws) return;
+    const parsed = new Date(ws);
+    if (!Number.isNaN(parsed.getTime())) {
+      setWeekStart(getMondayOf(parsed));
+    }
+  }, [searchParams]);
+
+  const openClassRoster = useCallback(
+    (cls: ScheduledClassDto) => {
+      router.push(
+        classRosterHref(cls.id, {
+          returnTo: "schedule",
+          weekStart: weekStart.toISOString(),
+        }),
+      );
+    },
+    [router, weekStart],
+  );
 
   const weekDays = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -758,7 +795,8 @@ export default function SchedulePage() {
                             key={cls.id}
                             cls={cls}
                             tz={tz}
-                            onClick={() => setModal({ type: "edit", cls })}
+                            onViewRoster={() => openClassRoster(cls)}
+                            onEdit={() => setModal({ type: "edit", cls })}
                           />
                         ))}
                         <button
@@ -787,12 +825,12 @@ export default function SchedulePage() {
                 .filter((c) => c.status === "SCHEDULED")
                 .map((c) => (
                   <li key={c.id}>
-                    <button
-                      type="button"
-                      onClick={() => setModal({ type: "edit", cls: c })}
-                      className="flex w-full items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-zinc-300 hover:shadow"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex w-full items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm transition hover:border-zinc-300 hover:shadow">
+                      <button
+                        type="button"
+                        onClick={() => openClassRoster(c)}
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      >
                         {c.classTemplate.color ? (
                           <span
                             className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -802,7 +840,7 @@ export default function SchedulePage() {
                         <span className="truncate text-sm font-semibold text-zinc-900">
                           {c.classTemplate.name}
                         </span>
-                      </div>
+                      </button>
                       <div className="shrink-0 text-right text-xs text-zinc-500">
                         <p>{calendarDayKeyInZone(c.startsAt, tz)}</p>
                         <p>{formatTime(c.startsAt, tz)} – {formatTime(c.endsAt, tz)}</p>
@@ -815,7 +853,14 @@ export default function SchedulePage() {
                       <span className="shrink-0 text-xs text-zinc-400">
                         Cap {c.capacity}
                       </span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setModal({ type: "edit", cls: c })}
+                        className="shrink-0 text-xs font-semibold text-zinc-600 underline"
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </li>
                 ))}
             </ul>

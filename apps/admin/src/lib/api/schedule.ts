@@ -28,7 +28,22 @@ export type ScheduledClassDto = {
   classTemplateId: string;
   classTemplate: ClassTemplateSummary;
   instructor: InstructorSummary | null;
+  bookedCount?: number;
+  waitlistCount?: number;
+  checkedInCount?: number;
+  /** Studio booking rule — authoritative for desk check-in UI gating. */
+  checkInWindowMinutes?: number;
 };
+
+export async function fetchScheduledClassById(
+  studioId: string,
+  scheduledClassId: string,
+): Promise<ScheduledClassDto> {
+  return apiRequest<ScheduledClassDto>(
+    `/studios/${studioId}/schedule/${scheduledClassId}`,
+    { method: "GET" },
+  );
+}
 
 export async function fetchStudioSchedule(
   studioId: string,

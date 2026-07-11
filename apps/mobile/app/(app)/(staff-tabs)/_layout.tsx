@@ -33,6 +33,7 @@ export default function StaffTabsLayout() {
         }}
       />
       <Tabs.Screen name="today" />
+      <Tabs.Screen name="horario" />
       <Tabs.Screen
         name="team"
         options={{

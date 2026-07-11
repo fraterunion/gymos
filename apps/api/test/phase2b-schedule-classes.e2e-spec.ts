@@ -219,4 +219,29 @@ describe('Phase 2B class templates and schedule (e2e)', () => {
     expect(updated.status).toBe(ClassStatus.CANCELLED);
     expect(updated.cancelReason).toBe('Low enrollment');
   });
+
+  it('allows FRONT_DESK to GET scheduled class by id without date gate', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { id: deskId, email, password } = await createUserWithPassword(prisma, {
+      email: 'desk-class-by-id@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, deskId, studio.id, Role.FRONT_DESK);
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, {
+      startsAt: new Date('2031-03-15T14:00:00.000Z'),
+      endsAt: new Date('2031-03-15T15:00:00.000Z'),
+    });
+    const token = await loginAccessToken(app, email, password);
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/schedule/${cls.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const body = res.body as { id: string; bookedCount: number; waitlistCount: number; checkedInCount: number };
+    expect(body.id).toBe(cls.id);
+    expect(body.bookedCount).toBe(0);
+    expect(body.waitlistCount).toBe(0);
+    expect(body.checkedInCount).toBe(0);
+  });
 });

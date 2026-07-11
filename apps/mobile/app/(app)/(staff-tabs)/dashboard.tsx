@@ -24,6 +24,7 @@ import { membersDirectoryHref } from '@/lib/memberProfileRoutes';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import { formatClassTime } from '@/lib/datetime';
 import { loadStaffTodayClasses } from '@/lib/staffTodaySchedule';
+import { staffClassRosterHref } from '@/lib/staffClassRosterRoutes';
 import { canAccessStaffScan, canManageTeam } from '@/lib/staffRole';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -486,8 +487,7 @@ export default function ExecutiveDashboardScreen() {
 
   const openRoster = useCallback(
     (classId: string, className: string) => {
-      const params = new URLSearchParams({ classId, className });
-      router.push(`/(app)/staff-class-roster?${params.toString()}` as Href);
+      router.push(staffClassRosterHref(classId, className));
     },
     [router],
   );

@@ -15,6 +15,7 @@ import {
 import {
   type TodayClassSummaryDto,
 } from '@/lib/api/scheduleApi';
+import { staffClassRosterHref } from '@/lib/staffClassRosterRoutes';
 import { formatClassTime } from '@/lib/datetime';
 import { todayScreenSubtitle } from '@/lib/staffRole';
 import { canAccessExecutiveDashboard } from '@/lib/executivePermissions';
@@ -301,8 +302,7 @@ export default function StaffTodayScreen() {
 
   const openRoster = useCallback(
     (classId: string, className: string) => {
-      const params = new URLSearchParams({ classId, className });
-      router.push(`/(app)/staff-class-roster?${params.toString()}` as Href);
+      router.push(staffClassRosterHref(classId, className));
     },
     [router],
   );

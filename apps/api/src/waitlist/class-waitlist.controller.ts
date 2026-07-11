@@ -1,10 +1,10 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
-import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { DESK_SCHEDULE_READ_ROLES } from '../auth/desk-roles';
 import { WaitlistService } from './waitlist.service';
 
 @Controller('studios/:studioId/classes/:classId')
@@ -24,7 +24,7 @@ export class ClassWaitlistController {
 
   @Get('waitlist')
   @UseGuards(RolesGuard)
-  @Roles(Role.STAFF, Role.INSTRUCTOR, Role.ADMIN, Role.OWNER)
+  @Roles(...DESK_SCHEDULE_READ_ROLES)
   async listForClass(@Param('studioId') studioId: string, @Param('classId') classId: string) {
     return this.waitlistService.listClassWaitlist(studioId, classId);
   }

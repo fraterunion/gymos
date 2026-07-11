@@ -41,6 +41,20 @@ function classTimesOutsideCheckInWindow() {
   return { start, end };
 }
 
+/** Class starts in 60 minutes — before the 15-minute pre-start check-in window. */
+function classTimesBeforeEarlyWindow() {
+  const start = new Date(Date.now() + 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { start, end };
+}
+
+/** Class starts in two days — future roster allowed, check-in rejected. */
+function futureClassTimes() {
+  const start = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { start, end };
+}
+
 describe('Check-ins (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -349,5 +363,105 @@ describe('Check-ins (e2e)', () => {
       where: { studioId: studio.id, scheduledClassId: cls.id, userId: owner.id },
     });
     expect(count).toBe(1);
+  });
+
+  it('rejects manual check-in before the early window opens', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = classTimesBeforeEarlyWindow();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const member = await createUserWithPassword(prisma, { email: 'early-mem@e2e.local' });
+    const staffUser = await createUserWithPassword(prisma, { email: 'early-staff@e2e.local' });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    await createMembership(prisma, staffUser.id, studio.id, Role.STAFF);
+    const booking = await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+    const staffToken = await loginAccessToken(app, staffUser.email, staffUser.password);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/check-ins/manual`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ bookingId: booking.id })
+      .expect(400);
+    expect(String((res.body as { message: unknown }).message)).toContain('not yet available');
+  });
+
+  it('rejects staff force check-in before the early window opens', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = classTimesBeforeEarlyWindow();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const member = await createUserWithPassword(prisma, { email: 'force-early-mem@e2e.local' });
+    const staffUser = await createUserWithPassword(prisma, { email: 'force-early-staff@e2e.local' });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    await createMembership(prisma, staffUser.id, studio.id, Role.STAFF);
+    const booking = await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+    const staffToken = await loginAccessToken(app, staffUser.email, staffUser.password);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/members/${member.id}/bookings/${booking.id}/check-in`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(400);
+  });
+
+  it('rejects staff force check-in after the late window closes', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = classTimesOutsideCheckInWindow();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const member = await createUserWithPassword(prisma, { email: 'force-late-mem@e2e.local' });
+    const staffUser = await createUserWithPassword(prisma, { email: 'force-late-staff@e2e.local' });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    await createMembership(prisma, staffUser.id, studio.id, Role.STAFF);
+    const booking = await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+    const staffToken = await loginAccessToken(app, staffUser.email, staffUser.password);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/members/${member.id}/bookings/${booking.id}/check-in`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(400);
+  });
+
+  it('allows staff force check-in inside the window', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = classTimesWithinCheckInWindow();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const member = await createUserWithPassword(prisma, { email: 'force-ok-mem@e2e.local' });
+    const staffUser = await createUserWithPassword(prisma, { email: 'force-ok-staff@e2e.local' });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    await createMembership(prisma, staffUser.id, studio.id, Role.STAFF);
+    const booking = await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+    const staffToken = await loginAccessToken(app, staffUser.email, staffUser.password);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/members/${member.id}/bookings/${booking.id}/check-in`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(201);
+    expect((res.body as { success: boolean }).success).toBe(true);
+  });
+
+  it('still allows roster viewing for a future class while check-in is rejected', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = futureClassTimes();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const member = await createUserWithPassword(prisma, { email: 'future-roster-mem@e2e.local' });
+    const staffUser = await createUserWithPassword(prisma, { email: 'future-roster-staff@e2e.local' });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    await createMembership(prisma, staffUser.id, studio.id, Role.STAFF);
+    const booking = await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+    const staffToken = await loginAccessToken(app, staffUser.email, staffUser.password);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/members/${member.id}/bookings/${booking.id}/check-in`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(400);
+
+    const roster = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/classes/${cls.id}/roster`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(200);
+    expect((roster.body as unknown[]).length).toBe(1);
+    expect((roster.body as { id: string }[])[0].id).toBe(booking.id);
   });
 });

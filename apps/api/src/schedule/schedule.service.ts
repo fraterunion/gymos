@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma, ScheduledClass } from '@prisma/client';
-import { BookingStatus, ClassStatus } from '@prisma/client';
+import { BookingStatus, ClassStatus, WaitlistStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   addDaysToDateKey,
@@ -98,6 +98,50 @@ export class ScheduleService {
       ...row,
       bookedCount: _count.bookings,
     }));
+  }
+
+  async getScheduledClassById(studioId: string, scheduledClassId: string) {
+    const row = await this.prisma.scheduledClass.findFirst({
+      where: {
+        id: scheduledClassId,
+        studioId,
+        classTemplate: { deletedAt: null },
+      },
+      include: {
+        ...scheduleInclude(studioId),
+        studio: { select: { checkInWindowMinutes: true } },
+        _count: {
+          select: {
+            bookings: {
+              where: {
+                status: BookingStatus.CONFIRMED,
+                user: { deletedAt: null },
+              },
+            },
+            attendances: {
+              where: { user: { deletedAt: null } },
+            },
+            waitlist: {
+              where: {
+                status: WaitlistStatus.WAITING,
+                user: { deletedAt: null },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!row) {
+      throw new NotFoundException('Scheduled class not found');
+    }
+    const { _count, studio, ...rest } = row;
+    return {
+      ...rest,
+      checkInWindowMinutes: studio.checkInWindowMinutes,
+      bookedCount: _count.bookings,
+      waitlistCount: _count.waitlist,
+      checkedInCount: _count.attendances,
+    };
   }
 
   async listPublicSchedule(studioId: string, query: ScheduleQueryDto) {

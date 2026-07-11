@@ -6,6 +6,7 @@ export type RosterBooking = {
   scheduledClassId: string;
   studioId: string;
   status: string;
+  createdAt?: string;
   user: {
     id: string;
     email: string;

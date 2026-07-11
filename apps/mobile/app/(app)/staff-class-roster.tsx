@@ -23,7 +23,12 @@ import {
   type AttendanceSummaryDto,
   type ClassRosterEntryDto,
 } from '@/lib/api/checkInsApi';
-import { formatClassTime } from '@/lib/datetime';
+import { fetchScheduledClassById, type ScheduledClassDetailDto } from '@/lib/api/scheduleApi';
+import {
+  DEFAULT_CHECK_IN_EARLY_MINUTES,
+  isWithinCheckInWindow,
+} from '@/lib/checkInWindow';
+import { formatClassRange, formatClassTime } from '@/lib/datetime';
 import { canManualCheckIn } from '@/lib/staffRole';
 import { staffScanErrorCopy } from '@/lib/staffScanFeedback';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
@@ -296,12 +301,26 @@ export default function StaffClassRosterScreen() {
   const isInstructor = role === 'INSTRUCTOR';
 
   const [rows, setRows] = useState<RosterRow[]>([]);
+  const [classDetail, setClassDetail] = useState<ScheduledClassDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [checkingInBookingId, setCheckingInBookingId] = useState<string | null>(null);
   const [successName, setSuccessName] = useState<string | null>(null);
+
+  const checkInWindowMinutes =
+    classDetail?.checkInWindowMinutes ?? DEFAULT_CHECK_IN_EARLY_MINUTES;
+  const showCheckInOps = classDetail
+    ? manualCheckInAllowed &&
+      isWithinCheckInWindow(classDetail.startsAt, new Date(), checkInWindowMinutes)
+    : false;
+  const isFutureClass =
+    classDetail != null &&
+    new Date(classDetail.startsAt).getTime() > Date.now();
+  const isPastClass =
+    classDetail != null &&
+    new Date(classDetail.endsAt).getTime() < Date.now();
 
   const load = useCallback(
     async (isRefresh = false) => {
@@ -313,12 +332,15 @@ export default function StaffClassRosterScreen() {
       }
       setError(null);
       try {
-        const [roster, attendance] = await Promise.all([
+        const [detail, roster, attendance] = await Promise.all([
+          fetchScheduledClassById(studioId, classId),
           fetchClassRoster(studioId, classId),
           fetchClassAttendance(studioId, classId),
         ]);
+        setClassDetail(detail);
         setRows(mergeRosterRows(roster, attendance));
       } catch (e) {
+        setClassDetail(null);
         setError(
           userFacingApiMessage(e, 'No pudimos cargar la lista de la clase. Desliza hacia abajo para actualizar e inténtalo de nuevo.'),
         );
@@ -344,13 +366,10 @@ export default function StaffClassRosterScreen() {
 
   const checkedInRows = useMemo(() => rows.filter((r) => r.checkedIn), [rows]);
   const expectedRows = useMemo(() => rows.filter((r) => !r.checkedIn), [rows]);
-  const totalBooked = rows.length;
-  const checkedInCount = checkedInRows.length;
-  const pendingCount = expectedRows.length;
 
   const handleCheckIn = useCallback(
     async (row: RosterRow) => {
-      if (!studioId || !manualCheckInAllowed) return;
+      if (!studioId || !showCheckInOps) return;
       setCheckingInBookingId(row.bookingId);
       try {
         const attendance = await staffForceCheckIn(studioId, row.userId, row.bookingId);
@@ -371,18 +390,38 @@ export default function StaffClassRosterScreen() {
       } catch (e) {
         const { title, message } = staffScanErrorCopy(e);
         Alert.alert(title, message);
-        if (e instanceof ApiError && e.message.toLowerCase().includes('already checked in')) {
+        if (
+          e instanceof ApiError &&
+          (e.message.toLowerCase().includes('already checked in') ||
+            e.message.toLowerCase().includes('time window') ||
+            e.message.toLowerCase().includes('not yet available'))
+        ) {
           void load(true);
         }
       } finally {
         setCheckingInBookingId(null);
       }
     },
-    [studioId, manualCheckInAllowed, load],
+    [studioId, showCheckInOps, load],
   );
 
-  const headerTitle = className?.trim() || 'Lista de clase';
+  const headerTitle =
+    (classDetail?.classTemplate.name ?? className?.trim()) || 'Lista de clase';
+  const totalBooked = classDetail?.bookedCount ?? rows.length;
+  const checkedInCount = classDetail?.checkedInCount ?? checkedInRows.length;
+  const pendingCount = Math.max(0, totalBooked - checkedInCount);
+  const waitlistCount = classDetail?.waitlistCount ?? 0;
   const showInitialLoader = loading && !loadedOnce;
+  const emptyTitle = isFutureClass
+    ? 'No hay reservas para esta clase.'
+    : isPastClass
+      ? 'No hay registros para esta clase.'
+      : 'Aún no hay reservaciones confirmadas.';
+  const emptyBody = isFutureClass
+    ? 'Cuando los miembros reserven, aparecerán aquí.'
+    : isPastClass
+      ? 'No hubo reservas confirmadas ni check-ins registrados.'
+      : 'Los miembros con reservaciones confirmadas aparecerán aquí.';
 
   if (!classId) {
     return (
@@ -446,8 +485,14 @@ export default function StaffClassRosterScreen() {
         }
       >
         <Animated.View entering={FadeInDown.duration(420)} style={{ paddingTop: 8, paddingBottom: 20 }}>
+          {classDetail ? (
+            <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, marginBottom: 8 }}>
+              {formatClassRange(classDetail.startsAt, classDetail.endsAt, timeZone)}
+            </Text>
+          ) : null}
           <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>
             {checkedInCount} con check-in · {totalBooked} reservados
+            {waitlistCount > 0 ? ` · ${waitlistCount} en lista de espera` : ''}
           </Text>
         </Animated.View>
 
@@ -493,10 +538,10 @@ export default function StaffClassRosterScreen() {
                   marginBottom: 8,
                 }}
               >
-                Aún no hay reservaciones confirmadas.
+                {emptyTitle}
               </Text>
               <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, textAlign: 'center' }}>
-                Los miembros con reservaciones confirmadas aparecerán aquí.
+                {emptyBody}
               </Text>
             </View>
           </Animated.View>
@@ -538,7 +583,7 @@ export default function StaffClassRosterScreen() {
                     <ExpectedRow
                       key={row.bookingId}
                       row={row}
-                      canCheckIn={manualCheckInAllowed}
+                      canCheckIn={showCheckInOps}
                       checkingIn={checkingInBookingId === row.bookingId}
                       onCheckIn={() => void handleCheckIn(row)}
                       isLast={index === expectedRows.length - 1}

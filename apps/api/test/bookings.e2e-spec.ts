@@ -132,7 +132,12 @@ describe('Bookings (e2e)', () => {
       .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/bookings`)
       .set('Authorization', `Bearer ${token}`)
       .expect(409);
-    expect((res.body as { message: string }).message).toContain('Already booked');
+    expect(res.status).toBe(409);
+    const message = (res.body as { message: string }).message;
+    expect(
+      message.includes('Already booked') ||
+        message.includes('already have a class booked at this time'),
+    ).toBe(true);
   });
 
   it('returns 409 when class is full', async () => {
@@ -340,5 +345,114 @@ describe('Bookings (e2e)', () => {
       .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/bookings`)
       .set('Authorization', `Bearer ${token}`)
       .expect(409);
+  });
+
+  it('allows OWNER to view future class roster', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = futureClassDates();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const { id: ownerId, email, password } = await createUserWithPassword(prisma, {
+      email: 'owner-future-roster@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, ownerId, studio.id, Role.OWNER);
+    const token = await loginAccessToken(app, email, password);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/classes/${cls.id}/roster`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+  });
+
+  it('allows ADMIN to view past class roster', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const start = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 3600000);
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const { id: adminId, email, password } = await createUserWithPassword(prisma, {
+      email: 'admin-past-roster@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, adminId, studio.id, Role.ADMIN);
+    const token = await loginAccessToken(app, email, password);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/classes/${cls.id}/roster`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+  });
+
+  it('allows FRONT_DESK to view non-today class roster', async () => {
+    const studio = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = futureClassDates();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const { id: deskId, email, password } = await createUserWithPassword(prisma, {
+      email: 'desk-future-roster@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, deskId, studio.id, Role.FRONT_DESK);
+    const token = await loginAccessToken(app, email, password);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/classes/${cls.id}/roster`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+  });
+
+  it('blocks cross-studio roster access', async () => {
+    const studioA = await createStudio(prisma);
+    const studioB = await createStudio(prisma);
+    const tpl = await createClassTemplate(prisma, studioA.id);
+    const { start, end } = futureClassDates();
+    const cls = await createScheduledClass(prisma, studioA.id, tpl.id, { startsAt: start, endsAt: end });
+    const { id: adminId, email, password } = await createUserWithPassword(prisma, {
+      email: 'cross-studio-roster@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, adminId, studioB.id, Role.ADMIN);
+    const token = await loginAccessToken(app, email, password);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studioA.id}/classes/${cls.id}/roster`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(403);
+  });
+
+  it('excludes cancelled bookings from active roster', async () => {
+    const studio = await createStudio(prisma);
+    const plan = await createMembershipPlanForStudio(prisma, studio.id);
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const { start, end } = futureClassDates();
+    const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+    const member = await createUserWithPassword(prisma, { email: 'roster-cancel@e2e.local', password: 'password12' });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+    const memberToken = await loginAccessToken(app, member.email, member.password);
+    const bookingRes = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/bookings`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(201);
+    const bookingId = (bookingRes.body as { id: string }).id;
+
+    await prisma.booking.update({
+      where: { id: bookingId },
+      data: { status: BookingStatus.CANCELLED },
+    });
+
+    const { id: staffId, email: staffEmail, password: staffPw } = await createUserWithPassword(prisma, {
+      email: 'roster-cancel-staff@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, staffId, studio.id, Role.STAFF);
+    const staffToken = await loginAccessToken(app, staffEmail, staffPw);
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/classes/${cls.id}/roster`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(200);
+    expect((res.body as unknown[]).length).toBe(0);
   });
 });

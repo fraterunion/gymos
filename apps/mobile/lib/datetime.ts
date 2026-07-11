@@ -46,6 +46,30 @@ export function formatClassRange(startIso: string, endIso: string, timeZone: str
   return `${d} · ${t1} – ${t2}`;
 }
 
+/** Presentation helper — mirrors API check-in window (studio default early minutes). */
+export function isWithinCheckInWindow(
+  classStartsAt: string,
+  now: Date = new Date(),
+  earlyOpenMinutes: number = 15,
+  lateGraceMinutes: number = 30,
+): boolean {
+  const startMs = new Date(classStartsAt).getTime();
+  const nowMs = now.getTime();
+  return (
+    nowMs >= startMs - earlyOpenMinutes * 60_000 &&
+    nowMs <= startMs + lateGraceMinutes * 60_000
+  );
+}
+
+/** UI-only: whether staff should expose check-in actions for this class. */
+export function canOperateClassCheckIn(
+  classStartsAt: string,
+  checkInWindowMinutes: number = 15,
+  now: Date = new Date(),
+): boolean {
+  return isWithinCheckInWindow(classStartsAt, now, checkInWindowMinutes);
+}
+
 /** Wide UTC window for schedule overlap queries (server clips by overlap). */
 export function buildScheduleQueryRange(): { from: string; to: string } {
   const from = new Date();
