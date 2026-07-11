@@ -10,6 +10,7 @@ import { LoadRetryPanel, Skeleton } from '@/components/StudioScreenChrome';
 import {
   QuickActionTile,
   SectionOverline,
+  SummaryStrip,
   TodayClassRow,
 } from '@/components/staff/StaffPrimitives';
 import { useBranding } from '@/contexts/BrandingContext';
@@ -17,9 +18,13 @@ import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { getColors, Space } from '@/constants/Theme';
 import {
   fetchAnalyticsBusiness,
-  revenueCentsMonthToDate,
+  fetchAnalyticsClassBreakdown,
+  fetchAnalyticsFinancial,
   type BusinessAnalyticsDto,
+  type ClassBreakdownDto,
+  type FinancialSummaryDto,
 } from '@/lib/api/analyticsApi';
+import { PanelAnalytics } from '@/components/staff/AnalyticsCharts';
 import { type TodayClassSummaryDto } from '@/lib/api/scheduleApi';
 import { canAccessExecutiveDashboard } from '@/lib/executivePermissions';
 import { membersDirectoryHref } from '@/lib/memberProfileRoutes';
@@ -42,24 +47,15 @@ function isClassNow(c: TodayClassSummaryDto): boolean {
   return new Date(c.startsAt).getTime() <= now && now < new Date(c.endsAt).getTime();
 }
 
-function sumTrendRange(
-  trend: BusinessAnalyticsDto['revenueTrend'],
-  startOffsetDays: number,
-  endOffsetDays: number,
-): number {
-  const now = Date.now();
-  const fromKey = new Date(now - startOffsetDays * 86_400_000).toISOString().slice(0, 10);
-  const toKey = new Date(now - endOffsetDays * 86_400_000).toISOString().slice(0, 10);
-  return trend
-    .filter((row) => row.date >= fromKey && row.date <= toKey)
-    .reduce((sum, row) => sum + row.amountCents, 0);
-}
-
 type DashboardData = {
+  financial: FinancialSummaryDto | null;
   business: BusinessAnalyticsDto | null;
   classes: TodayClassSummaryDto[];
+  classBreakdown: ClassBreakdownDto | null;
+  financialError: string | null;
   businessError: string | null;
   classesError: string | null;
+  breakdownError: string | null;
   loadedAt: string;
 };
 
@@ -88,29 +84,45 @@ export default function ExecutiveDashboardScreen() {
       else setLoading(true);
       setFatalError(null);
 
-      const businessResult = await fetchAnalyticsBusiness(studioId).then(
-        (business) => ({ business, error: null as string | null }),
-        (e) => ({ business: null, error: userFacingApiMessage(e, 'No se pudieron cargar ingresos') }),
-      );
+      const [financialResult, businessResult, classesResult, breakdownResult] = await Promise.all([
+        fetchAnalyticsFinancial(studioId, 'month').then(
+          (financial) => ({ financial, error: null as string | null }),
+          (e) => ({ financial: null, error: userFacingApiMessage(e, 'No se pudieron cargar datos financieros') }),
+        ),
+        fetchAnalyticsBusiness(studioId).then(
+          (business) => ({ business, error: null as string | null }),
+          (e) => ({ business: null, error: userFacingApiMessage(e, 'No se pudieron cargar ingresos') }),
+        ),
+        loadStaffTodayClasses(studioId, timeZone).then(
+          (classes) => ({ classes, error: null as string | null }),
+          (e) => ({
+            classes: [] as TodayClassSummaryDto[],
+            error: userFacingApiMessage(e, 'No se pudo cargar el horario de hoy'),
+          }),
+        ),
+        fetchAnalyticsClassBreakdown(studioId).then(
+          (classBreakdown) => ({ classBreakdown, error: null as string | null }),
+          (e) => ({
+            classBreakdown: null,
+            error: userFacingApiMessage(e, 'No se pudieron cargar las analíticas'),
+          }),
+        ),
+      ]);
 
-      const classesResult = await loadStaffTodayClasses(studioId, timeZone).then(
-        (classes) => ({ classes, error: null as string | null }),
-        (e) => ({
-          classes: [] as TodayClassSummaryDto[],
-          error: userFacingApiMessage(e, 'No se pudo cargar el horario de hoy'),
-        }),
-      );
-
-      const allFailed = !businessResult.business && classesResult.classes.length === 0;
-      if (allFailed && businessResult.error) {
-        setFatalError(businessResult.error);
+      const allFailed = !financialResult.financial && classesResult.classes.length === 0;
+      if (allFailed && financialResult.error) {
+        setFatalError(financialResult.error);
       }
 
       setData({
+        financial: financialResult.financial,
         business: businessResult.business,
         classes: classesResult.classes,
+        classBreakdown: breakdownResult.classBreakdown,
+        financialError: financialResult.error,
         businessError: businessResult.error,
         classesError: classesResult.error,
+        breakdownError: breakdownResult.error,
         loadedAt: new Date().toISOString(),
       });
 
@@ -127,18 +139,12 @@ export default function ExecutiveDashboardScreen() {
   );
 
   const metrics = useMemo(() => {
-    if (!data) return null;
-    const utcDayKey = new Date().toISOString().slice(0, 10);
-    const yearMonth = utcDayKey.slice(0, 7);
-    const revenueTrend = data.business?.revenueTrend ?? [];
-    const revenueMonthCents = revenueCentsMonthToDate(revenueTrend, yearMonth);
-    // Rolling 30d vs prior 30d: current = [today-29, today], previous = [today-59, today-30]
-    const current30d = data.business?.revenueLast30DaysCents ?? 0;
-    const prev30d = sumTrendRange(revenueTrend, 59, 30);
-    const pct = prev30d > 0
-      ? Math.round(((current30d - prev30d) / prev30d) * 100)
-      : null;
-    return { revenueMonthCents, pct };
+    if (!data?.financial) return null;
+    const kpi = data.financial.kpis.totalCollected;
+    return {
+      revenueMonthCents: kpi.cents ?? 0,
+      pct: kpi.comparisonPercent ?? null,
+    };
   }, [data]);
 
   const alerts = useMemo<Alert[]>(() => {
@@ -224,8 +230,8 @@ export default function ExecutiveDashboardScreen() {
         }
       >
         {/* ── Revenue hero ── */}
-        {data?.business && metrics ? (
-          <Animated.View entering={FadeInDown.duration(300)} style={{ paddingTop: 32, marginBottom: Space.sp5 }}>
+        {data?.financial && metrics ? (
+          <Animated.View entering={FadeInDown.duration(300)} style={{ paddingTop: 32, marginBottom: Space.sp3 }}>
             <Text
               style={{
                 fontSize: 52,
@@ -260,13 +266,30 @@ export default function ExecutiveDashboardScreen() {
                   fontVariant: ['tabular-nums'],
                 }}
               >
-                {metrics.pct >= 0 ? '+' : ''}{metrics.pct}% vs últimos 30 días
+                {metrics.pct >= 0 ? '+' : ''}{metrics.pct}% vs mes anterior
               </Text>
             ) : null}
           </Animated.View>
         ) : (
-          <View style={{ paddingTop: 32, marginBottom: Space.sp5 }} />
+          <View style={{ paddingTop: 32, marginBottom: Space.sp3 }} />
         )}
+
+        {/* ── Operational KPIs — four instruments, no chrome ── */}
+        {data ? (() => {
+          const totalBooked = data.classes.reduce((s, c) => s + c.bookedCount, 0);
+          const totalCheckedIn = data.classes.reduce((s, c) => s + c.checkedInCount, 0);
+          const attendancePct = totalBooked > 0 ? Math.round((totalCheckedIn / totalBooked) * 100) : 0;
+          return (
+            <SummaryStrip
+              items={[
+                { value: String(data.classes.length), label: 'Clases' },
+                { value: String(totalBooked), label: 'Reservas' },
+                { value: String(totalCheckedIn), label: 'Check-ins' },
+                { value: `${attendancePct}%`, label: 'Asistencia' },
+              ]}
+            />
+          );
+        })() : null}
 
         {/* ── Today's schedule ── */}
         <SectionOverline>Hoy</SectionOverline>
@@ -333,6 +356,16 @@ export default function ExecutiveDashboardScreen() {
           <QuickActionTile label="Miembros" icon="users" index={0} onPress={() => router.push(membersDirectoryHref())} />
           <QuickActionTile label="Ventas" icon="credit-card" index={1} onPress={() => router.push('/(app)/staff-sales' as Href)} />
         </View>
+
+        {/* ── Analytics charts ── */}
+        {data ? (
+          <PanelAnalytics
+            financial={data.financial}
+            financialError={data.financialError}
+            classBreakdown={data.classBreakdown}
+            breakdownError={data.breakdownError}
+          />
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

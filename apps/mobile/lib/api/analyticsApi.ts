@@ -35,6 +35,8 @@ export type BusinessAnalyticsDto = {
   canceledSubscriptionsTotal: number;
   cancellationsLast30Days: number;
   revenueLast30DaysCents: number;
+  cashRevenueLast30DaysCents: number;
+  stripeRevenueLast30DaysCents: number;
   averageRevenuePerMemberCents: number;
   memberCountForArpu: number;
   membersWithTwoPlusBookingsLast30Days: number;
@@ -57,6 +59,73 @@ export async function fetchAnalyticsBusiness(studioId: string): Promise<Business
   return apiRequest<BusinessAnalyticsDto>(`/studios/${studioId}/analytics/business`, {
     method: 'GET',
   });
+}
+
+export type FinancialKpiValue = {
+  cents?: number | null;
+  count?: number;
+  comparisonPercent?: number | null;
+  available: boolean;
+};
+
+export type FinancialSummaryDto = {
+  period: {
+    key: string;
+    timezone: string;
+    from: string;
+    to: string;
+    prevFrom: string;
+    prevTo: string;
+  };
+  currency: string;
+  kpis: {
+    totalCollected: FinancialKpiValue;
+    stripeCollected: FinancialKpiValue;
+    cashCollected: FinancialKpiValue;
+    otherCollected?: FinancialKpiValue;
+    paymentsCollected: FinancialKpiValue;
+  };
+  charts: {
+    collectedTrend: { date: string; amountCents: number; paymentCount: number }[];
+    stripeVsCash: { method: string; amountCents: number }[];
+  };
+  reconciliation?: {
+    methodSplitEqualsTotal: boolean;
+    trendAmountEqualsTotal: boolean;
+  };
+  generatedAt: string;
+};
+
+export async function fetchAnalyticsFinancial(
+  studioId: string,
+  period = 'month',
+): Promise<FinancialSummaryDto> {
+  return apiRequest<FinancialSummaryDto>(
+    `/studios/${studioId}/analytics/financial?period=${period}`,
+    { method: 'GET' },
+  );
+}
+
+export type ClassBreakdownDto = {
+  periodDays?: number;
+  timezone?: string;
+  topTemplates: {
+    templateId: string;
+    name: string;
+    color: string | null;
+    bookingCount: number;
+  }[];
+  peakHours: { hour: number; count: number }[];
+};
+
+export async function fetchAnalyticsClassBreakdown(
+  studioId: string,
+  days = 30,
+): Promise<ClassBreakdownDto> {
+  return apiRequest<ClassBreakdownDto>(
+    `/studios/${studioId}/analytics/class-breakdown?days=${days}`,
+    { method: 'GET' },
+  );
 }
 
 /** Revenue for a calendar day key (YYYY-MM-DD) from the 30-day business trend. */
