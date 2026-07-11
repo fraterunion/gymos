@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import FontAwesome from '@expo/vector-icons/FontAwesome';
 import Animated, {
   FadeInDown,
   useAnimatedStyle,
@@ -30,6 +31,8 @@ type Props = {
   showSpotsLabel?: boolean;
   /** Optional footer rendered below the card (e.g. check-in CTA). */
   footer?: ReactNode;
+  /** Monochrome member schedule — no accent strip, optional chevron. */
+  variant?: 'default' | 'member';
 };
 
 const THUMB_W = 84;
@@ -44,7 +47,9 @@ export function ClassCard({
   statusPill,
   showSpotsLabel = false,
   footer,
+  variant = 'default',
 }: Props) {
+  const isMember = variant === 'member';
   const ins = item.instructor
     ? resolveCoachDisplayName(item.instructor.firstName, item.instructor.lastName)
     : null;
@@ -78,14 +83,15 @@ export function ClassCard({
           onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 200 }); }}
           style={{
             flexDirection: 'row',
-            minHeight: 92,
+            minHeight: isMember ? 96 : 92,
+            alignItems: 'center',
           }}
         >
-          {/* Left accent strip */}
-          <View style={{ width: 3, backgroundColor: accentColor }} />
+          {/* Left accent strip — hidden in member variant */}
+          {!isMember ? <View style={{ width: 3, backgroundColor: accentColor }} /> : null}
 
           {/* Text content */}
-          <View style={{ flex: 1, paddingLeft: 18, paddingRight: 14, paddingVertical: 20 }}>
+          <View style={{ flex: 1, paddingLeft: isMember ? 20 : 18, paddingRight: 14, paddingVertical: 20 }}>
             {statusPill && pillColors ? (
               <View
                 style={{
@@ -167,31 +173,40 @@ export function ClassCard({
             vignette={false}
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
           />
-          {/* Left-edge fade — blends thumbnail into card background */}
-          <View
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              bottom: 0,
-              width: 28,
-              backgroundColor: 'rgba(26,26,28,0.92)',
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 18,
-              bottom: 0,
-              width: 16,
-              backgroundColor: 'rgba(26,26,28,0.55)',
-            }}
-          />
+          {!isMember ? (
+            <>
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  bottom: 0,
+                  width: 28,
+                  backgroundColor: 'rgba(26,26,28,0.92)',
+                }}
+              />
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 18,
+                  bottom: 0,
+                  width: 16,
+                  backgroundColor: 'rgba(26,26,28,0.55)',
+                }}
+              />
+            </>
+          ) : null}
         </View>
+
+        {isMember ? (
+          <View style={{ paddingRight: 16 }}>
+            <FontAwesome name="chevron-right" size={12} color="rgba(255,255,255,0.35)" />
+          </View>
+        ) : null}
         </Pressable>
 
-        {footer ? (
+        {footer && !isMember ? (
           <View
             style={{
               borderTopWidth: 1,

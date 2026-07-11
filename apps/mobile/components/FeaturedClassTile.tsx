@@ -1,3 +1,4 @@
+import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Pressable, Text, View } from 'react-native';
 import Animated, {
   FadeInDown,
@@ -9,7 +10,7 @@ import Animated, {
 import { ImageSlot } from '@/components/ImageSlot';
 import { formatClassTime } from '@/lib/datetime';
 import { resolveCoachDisplayName } from '@/lib/coachDisplay';
-import { lowSpotsLabel } from '@/lib/spotsRemaining';
+import { lowSpotsLabel, spotsAvailableLabel } from '@/lib/spotsRemaining';
 import { LowSpotsBadge } from '@/components/LowSpotsBadge';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
@@ -26,6 +27,8 @@ type Props = {
   delay?: number;
   /** Remote image URI. Falls back to atmospheric placeholder when absent. */
   imageUri?: string;
+  /** Monochrome member schedule — no accent strip, RESERVAR overline, chevron. */
+  variant?: 'default' | 'member';
 };
 
 export function FeaturedClassTile({
@@ -37,11 +40,14 @@ export function FeaturedClassTile({
   label,
   delay = 0,
   imageUri,
+  variant = 'default',
 }: Props) {
+  const isMember = variant === 'member';
   const ins = item.instructor
     ? resolveCoachDisplayName(item.instructor.firstName, item.instructor.lastName)
     : null;
   const spotsWarning = lowSpotsLabel(item);
+  const spotsLabel = isMember ? spotsAvailableLabel(item) : null;
   const time = formatClassTime(item.startsAt, timeZone);
   const duration = item.classTemplate.durationMinutes;
 
@@ -66,22 +72,30 @@ export function FeaturedClassTile({
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         />
 
-        {/* Brand accent strip at top */}
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 3,
-            backgroundColor: accentColor,
-          }}
-        />
+        {/* Brand accent strip at top — hidden in member variant */}
+        {!isMember ? (
+          <View
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 3,
+              backgroundColor: accentColor,
+            }}
+          />
+        ) : null}
+
+        {isMember ? (
+          <View style={{ position: 'absolute', top: 16, right: 16 }}>
+            <FontAwesome name="chevron-right" size={14} color="rgba(255,255,255,0.55)" />
+          </View>
+        ) : null}
 
         {/* Content pinned to bottom */}
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 20 }}>
           {/* Editorial label */}
-          {label ? (
+          {(label || isMember) ? (
             <Text
               style={{
                 fontSize: 10,
@@ -92,7 +106,7 @@ export function FeaturedClassTile({
                 marginBottom: 8,
               }}
             >
-              {label}
+              {isMember ? 'Reservar' : label}
             </Text>
           ) : null}
 
@@ -138,6 +152,11 @@ export function FeaturedClassTile({
             <View style={{ marginTop: 10 }}>
               <LowSpotsBadge label={spotsWarning} />
             </View>
+          ) : null}
+          {!spotsWarning && spotsLabel ? (
+            <Text style={{ marginTop: 10, fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.72)' }}>
+              {spotsLabel}
+            </Text>
           ) : null}
         </View>
       </Pressable>

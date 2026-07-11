@@ -6,19 +6,18 @@ import { getColors, Space } from '@/constants/Theme';
 type Props = {
   selectedId: string;
   onSelect: (filterId: string) => void;
-  accentColor: string;
 };
 
-export function ScheduleFilterBar({ selectedId, onSelect, accentColor }: Props) {
+export function ScheduleFilterBar({ selectedId, onSelect }: Props) {
   const C = getColors();
 
   return (
-    <View style={{ marginTop: 4, marginBottom: 4 }}>
+    <View style={{ marginBottom: 8 }}>
       <Text
         style={{
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: '700',
-          letterSpacing: 1.0,
+          letterSpacing: 1.2,
           textTransform: 'uppercase',
           color: C.textMute,
           marginBottom: 12,
@@ -42,18 +41,20 @@ export function ScheduleFilterBar({ selectedId, onSelect, accentColor }: Props) 
               onPress={() => onSelect(filter.id)}
               style={{
                 borderRadius: 100,
-                paddingHorizontal: 14,
-                paddingVertical: 8,
-                backgroundColor: active ? accentColor : C.surface2,
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                minHeight: 44,
+                justifyContent: 'center',
+                backgroundColor: active ? '#FFFFFF' : C.surface1,
                 borderWidth: 1,
-                borderColor: active ? accentColor : C.separator,
+                borderColor: active ? '#FFFFFF' : C.separator,
               }}
             >
               <Text
                 style={{
                   fontSize: 13,
                   fontWeight: active ? '700' : '600',
-                  color: active ? '#FFFFFF' : C.textSub,
+                  color: active ? '#000000' : C.textSub,
                   letterSpacing: -0.2,
                 }}
               >

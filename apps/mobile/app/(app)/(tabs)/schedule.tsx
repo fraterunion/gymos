@@ -1,205 +1,80 @@
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { Pressable, RefreshControl, SectionList, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
+import { MemberDaySelector } from '@/components/member/MemberDaySelector';
+import { MemberScheduleEmptyState } from '@/components/member/MemberScheduleEmptyState';
+import { MemberWeekNavigator } from '@/components/member/MemberWeekNavigator';
 import { OpenGymBenefitCard } from '@/components/OpenGymBenefitCard';
 import { ScheduleFilterBar } from '@/components/ScheduleFilterBar';
-import { resolveScheduledClassImageUri } from '@/lib/imagery';
 import {
   ARES_CLASS_FILTER_ALL,
   matchesAresClassFilter,
 } from '@/lib/aresScheduleFilters';
 import {
-  EmptyHint,
   ErrorBanner,
   LoadRetryPanel,
   Skeleton,
   ScreenLoader,
 } from '@/components/StudioScreenChrome';
-import { useBranding } from '@/contexts/BrandingContext';
 import { usePublicSchedule } from '@/contexts/PublicScheduleContext';
 import { usePublicStudio } from '@/contexts/PublicStudioContext';
+import { todayKeyInZone, weekBoundsInZone } from '@/lib/datetime';
+import { resolveScheduledClassImageUri } from '@/lib/imagery';
 import {
-  calendarDayKeyInZone,
-  formatClassDateLabel,
-  todayKeyInZone,
-  weekBoundsInZone,
-} from '@/lib/datetime';
-import type { ScheduledClassDto } from '@/lib/types/studio';
+  buildMemberClassCountByDay,
+  filterMemberScheduleClasses,
+  formatMemberDayHeading,
+  formatMemberWeekRangeLabel,
+  memberWeekDayKeys,
+  resolveDefaultMemberDayKey,
+} from '@/lib/memberSchedule';
 import { getColors, Space } from '@/constants/Theme';
 
-type Section = {
-  key: string;
-  title: string;
-  isToday: boolean;
-  data: ScheduledClassDto[];
-};
-
-// ---------------------------------------------------------------------------
-// Editorial day header — large weekday anchors each section
-// ---------------------------------------------------------------------------
-
-function DayHeader({
-  title,
-  isToday,
-  accentColor,
-}: {
-  title: string;
-  isToday: boolean;
-  accentColor: string;
-}) {
-  const C = getColors();
-
-  if (isToday) {
-    return (
-      <View style={{ paddingTop: 36, paddingBottom: 18 }}>
-        <Text
-          style={{
-            fontSize: 30,
-            fontWeight: '800',
-            letterSpacing: -0.8,
-            color: C.text,
-            lineHeight: 34,
-          }}
-        >
-          Hoy
-        </Text>
-      </View>
-    );
-  }
-
-  // Split "Mon, May 12" → "MON" headline + "May 12" subtitle
-  let headline = title;
-  let subtitle: string | null = null;
-  if (title.includes(',')) {
-    const comma = title.indexOf(',');
-    headline = title.slice(0, comma).toUpperCase();
-    subtitle = title.slice(comma + 1).trim();
-  }
-
+function ScheduleSkeleton() {
   return (
-    <View style={{ paddingTop: 40, paddingBottom: 16 }}>
-      <Text
-        style={{
-          fontSize: 26,
-          fontWeight: '800',
-          letterSpacing: -0.6,
-          color: C.text,
-          lineHeight: 30,
-        }}
-      >
-        {headline}
-      </Text>
-      {subtitle ? (
-        <Text
-          style={{
-            fontSize: 13,
-            color: C.textMute,
-            marginTop: 3,
-            letterSpacing: 0.1,
-          }}
-        >
-          {subtitle}
-        </Text>
-      ) : null}
+    <View style={{ flex: 1, paddingHorizontal: Space.screenH, paddingTop: 32 }}>
+      <Skeleton width="40%" height={40} radius={8} style={{ marginBottom: 28 }} />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
+        <Skeleton width={44} height={44} radius={22} />
+        <Skeleton width="45%" height={16} radius={6} />
+        <Skeleton width={44} height={44} radius={22} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 }}>
+        {Array.from({ length: 7 }).map((_, i) => (
+          <Skeleton key={i} width={40} height={72} radius={12} />
+        ))}
+      </View>
+      <Skeleton height={96} radius={22} style={{ marginBottom: 20 }} />
+      <Skeleton height={32} radius={8} style={{ marginBottom: 12 }} />
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 24 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} width={72} height={36} radius={18} />
+        ))}
+      </View>
+      <Skeleton width="55%" height={24} radius={6} style={{ marginBottom: 20 }} />
+      <Skeleton height={220} radius={20} style={{ marginBottom: Space.cardGap }} />
+      <Skeleton height={106} radius={16} />
     </View>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Week navigation
-// ---------------------------------------------------------------------------
-
-function WeekNavigator({
-  label,
-  weekOffset,
-  onChange,
-  accentColor,
-}: {
-  label: string;
-  weekOffset: number;
-  onChange: (next: number) => void;
-  accentColor: string;
-}) {
-  const C = getColors();
-  const canGoPrev = weekOffset > 0;
-
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingTop: 20,
-        paddingBottom: 8,
-        gap: 12,
-      }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Semana anterior"
-        onPress={() => canGoPrev && onChange(weekOffset - 1)}
-        disabled={!canGoPrev}
-        hitSlop={10}
-        style={{ opacity: canGoPrev ? 1 : 0.35, minWidth: 72 }}
-      >
-        <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>← Anterior</Text>
-      </Pressable>
-
-      <View style={{ flex: 1, alignItems: 'center' }}>
-        <Text
-          style={{
-            fontSize: 12,
-            fontWeight: '700',
-            letterSpacing: 0.6,
-            textTransform: 'uppercase',
-            color: weekOffset === 0 ? accentColor : C.textMute,
-          }}
-        >
-          {weekOffset === 0 ? 'Esta semana' : 'Semana'}
-        </Text>
-        <Text
-          style={{
-            fontSize: 13,
-            color: C.textSub,
-            marginTop: 4,
-            letterSpacing: -0.1,
-            textAlign: 'center',
-          }}
-        >
-          {label}
-        </Text>
-      </View>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Siguiente semana"
-        onPress={() => onChange(weekOffset + 1)}
-        hitSlop={10}
-        style={{ minWidth: 72, alignItems: 'flex-end' }}
-      >
-        <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>Siguiente →</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Screen
-// ---------------------------------------------------------------------------
 
 export default function ScheduleScreen() {
   const router = useRouter();
   const C = getColors();
-  const { primaryColor } = useBranding();
   const { timezone, loading: studioLoading } = usePublicStudio();
   const { classes, loading: scheduleLoading, error, refresh } = usePublicSchedule();
+
   const [weekOffset, setWeekOffset] = useState(0);
   const [classFilterId, setClassFilterId] = useState(ARES_CLASS_FILTER_ALL);
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const listAnchorY = useRef(0);
 
   const timeZone = timezone;
   const todayKey = useMemo(() => todayKeyInZone(timeZone), [timeZone]);
@@ -207,53 +82,109 @@ export default function ScheduleScreen() {
     () => weekBoundsInZone(timeZone, weekOffset),
     [timeZone, weekOffset],
   );
+  const weekDayKeys = useMemo(
+    () => memberWeekDayKeys(weekBounds.startKey),
+    [weekBounds.startKey],
+  );
+  const weekLabel = useMemo(
+    () => formatMemberWeekRangeLabel(weekBounds.startKey, weekBounds.endKey, timeZone),
+    [weekBounds.startKey, weekBounds.endKey, timeZone],
+  );
 
-  const sections: Section[] = useMemo(() => {
-    const now = Date.now();
-    const fut = classes.filter(
-      (c) =>
-        c.status === 'SCHEDULED' &&
-        new Date(c.startsAt).getTime() > now &&
-        matchesAresClassFilter(c.classTemplate.name, classFilterId),
-    );
-    const map = new Map<string, ScheduledClassDto[]>();
-    for (const c of fut) {
-      const k = calendarDayKeyInZone(c.startsAt, timeZone);
-      if (k < weekBounds.startKey || k > weekBounds.endKey) continue;
-      if (!map.has(k)) map.set(k, []);
-      map.get(k)!.push(c);
-    }
-    const keys = [...map.keys()].sort();
-    return keys.map((k) => {
-      const first = map.get(k)![0]!;
-      return {
-        key: k,
-        title: k === todayKey ? 'Hoy' : formatClassDateLabel(first.startsAt, timeZone),
-        isToday: k === todayKey,
-        data: map.get(k)!,
-      };
+  const unfilteredClassCountByDay = useMemo(
+    () =>
+      buildMemberClassCountByDay(
+        classes,
+        timeZone,
+        weekBounds.startKey,
+        weekBounds.endKey,
+      ),
+    [classes, timeZone, weekBounds.startKey, weekBounds.endKey],
+  );
+
+  const defaultDayKey = useMemo(
+    () => resolveDefaultMemberDayKey(weekDayKeys, todayKey, unfilteredClassCountByDay),
+    [weekDayKeys, todayKey, unfilteredClassCountByDay],
+  );
+
+  useEffect(() => {
+    setSelectedDayKey(defaultDayKey);
+  }, [defaultDayKey, weekOffset]);
+
+  const activeDayKey = selectedDayKey ?? defaultDayKey;
+
+  const dayClasses = useMemo(
+    () =>
+      filterMemberScheduleClasses(
+        classes,
+        timeZone,
+        activeDayKey,
+        weekBounds.startKey,
+        weekBounds.endKey,
+        classFilterId,
+        matchesAresClassFilter,
+      ),
+    [
+      classes,
+      timeZone,
+      activeDayKey,
+      weekBounds.startKey,
+      weekBounds.endKey,
+      classFilterId,
+    ],
+  );
+
+  const unfilteredDayCount = unfilteredClassCountByDay.get(activeDayKey) ?? 0;
+  const dayHeading = useMemo(
+    () => formatMemberDayHeading(activeDayKey, todayKey, timeZone),
+    [activeDayKey, todayKey, timeZone],
+  );
+
+  const handleSelectDay = useCallback((dayKey: string) => {
+    setSelectedDayKey(dayKey);
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, listAnchorY.current - 8),
+        animated: true,
+      });
     });
-  }, [classes, timeZone, todayKey, weekBounds.startKey, weekBounds.endKey, classFilterId]);
+  }, []);
+
+  const handleWeekChange = useCallback((next: number) => {
+    setWeekOffset(next);
+  }, []);
+
+  const openClass = useCallback(
+    (classId: string) => {
+      router.push(`/(app)/class/${classId}`);
+    },
+    [router],
+  );
 
   if (studioLoading) return <ScreenLoader />;
-  if (error && classes.length === 0) return <LoadRetryPanel message={error} onRetry={refresh} />;
+  if (error && classes.length === 0) {
+    return <LoadRetryPanel message={error} onRetry={refresh} />;
+  }
 
   const showSkeleton = scheduleLoading && classes.length === 0;
+  const canGoPrev = weekOffset > 0;
+
+  const emptyTitle =
+    classFilterId !== ARES_CLASS_FILTER_ALL && unfilteredDayCount > 0
+      ? 'No hay clases que coincidan con este filtro.'
+      : 'No hay clases programadas para este día.';
+  const emptyBody =
+    classFilterId !== ARES_CLASS_FILTER_ALL && unfilteredDayCount > 0
+      ? undefined
+      : 'Prueba otro día o cambia de semana.';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
       {showSkeleton ? (
-        <View style={{ flex: 1, paddingHorizontal: Space.screenH, paddingTop: 36 }}>
-          <Skeleton width="30%" height={28} radius={6} style={{ marginBottom: 20 }} />
-          <Skeleton height={240} radius={20} style={{ marginBottom: Space.cardGap }} />
-          <Skeleton height={106} radius={16} style={{ marginBottom: Space.cardGap }} />
-          <Skeleton height={106} radius={16} style={{ marginBottom: Space.cardGap }} />
-        </View>
+        <ScheduleSkeleton />
       ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) => item.id}
-          stickySectionHeadersEnabled={false}
+        <ScrollView
+          ref={scrollRef}
           contentContainerStyle={{
             paddingHorizontal: Space.screenH,
             paddingBottom: TAB_BAR_CLEARANCE,
@@ -262,92 +193,117 @@ export default function ScheduleScreen() {
             <RefreshControl
               refreshing={scheduleLoading}
               onRefresh={() => void refresh()}
-              tintColor={primaryColor}
+              tintColor="rgba(255,255,255,0.35)"
             />
           }
-          ListHeaderComponent={
-            <>
-              <WeekNavigator
-                label={weekBounds.label}
-                weekOffset={weekOffset}
-                onChange={setWeekOffset}
-                accentColor={primaryColor}
-              />
-              {error ? (
-                <View style={{ paddingTop: 8 }}>
-                  <ErrorBanner message={error} onRetry={refresh} />
-                </View>
-              ) : null}
-              <OpenGymBenefitCard compact delay={40} />
-              <ScheduleFilterBar
-                selectedId={classFilterId}
-                onSelect={setClassFilterId}
-                accentColor={primaryColor}
-              />
-            </>
-          }
-          ListEmptyComponent={
-            <View style={{ marginTop: 80 }}>
-              <EmptyHint
-                title={
-                  classFilterId === ARES_CLASS_FILTER_ALL
-                    ? 'Próximamente habrá clases.'
-                    : 'Sin clases para este filtro.'
-                }
-                body={
-                  classFilterId === ARES_CLASS_FILTER_ALL
-                    ? 'Estamos preparando el horario. Vuelve pronto.'
-                    : 'Prueba otro tipo de clase o cambia de semana.'
-                }
-              />
-            </View>
-          }
-          renderSectionHeader={({ section }) => (
-            <DayHeader
-              title={section.title}
-              isToday={section.isToday}
-              accentColor={primaryColor}
-            />
-          )}
-          renderItem={({ item, index, section }) => {
-            const bookFooter = (
-              <Text style={{ fontSize: 13, fontWeight: '700', color: primaryColor }}>
-                Reservar →
-              </Text>
-            );
+        >
+          {/* 1. Page header */}
+          <Text
+            style={{
+              fontSize: 40,
+              fontWeight: '800',
+              letterSpacing: -1.6,
+              color: C.text,
+              lineHeight: 44,
+              paddingTop: 32,
+              paddingBottom: 24,
+            }}
+          >
+            Clases
+          </Text>
 
-            if (index === 0) {
+          {/* 2. Week navigation */}
+          <MemberWeekNavigator
+            label={weekLabel}
+            canGoPrev={canGoPrev}
+            onPrev={() => canGoPrev && handleWeekChange(weekOffset - 1)}
+            onNext={() => handleWeekChange(weekOffset + 1)}
+          />
+
+          {/* 3. Seven-day selector */}
+          <MemberDaySelector
+            weekDayKeys={weekDayKeys}
+            selectedDayKey={activeDayKey}
+            todayKey={todayKey}
+            timeZone={timeZone}
+            classCountByDay={unfilteredClassCountByDay}
+            onSelectDay={handleSelectDay}
+          />
+
+          {error ? (
+            <View style={{ marginBottom: 16 }}>
+              <ErrorBanner message={error} onRetry={refresh} />
+            </View>
+          ) : null}
+
+          {/* 4. Open Gym benefit */}
+          <OpenGymBenefitCard compact delay={0} />
+
+          {/* 5. Class filters */}
+          <ScheduleFilterBar selectedId={classFilterId} onSelect={setClassFilterId} />
+
+          {/* 6. Selected date heading */}
+          <View
+            onLayout={(e) => {
+              listAnchorY.current = e.nativeEvent.layout.y;
+            }}
+            style={{ paddingTop: 8, paddingBottom: 20 }}
+          >
+            <Text
+              style={{
+                fontSize: 22,
+                fontWeight: '700',
+                letterSpacing: -0.5,
+                color: C.text,
+                lineHeight: 28,
+              }}
+            >
+              {dayHeading}
+            </Text>
+          </View>
+
+          {/* 7. Class cards */}
+          {dayClasses.length === 0 ? (
+            <MemberScheduleEmptyState title={emptyTitle} body={emptyBody} />
+          ) : (
+            dayClasses.map((item, index) => {
+              if (index === 0) {
+                return (
+                  <Animated.View
+                    key={item.id}
+                    entering={FadeInDown.duration(400)}
+                    style={{ marginBottom: Space.cardGap }}
+                  >
+                    <FeaturedClassTile
+                      item={item}
+                      timeZone={timeZone}
+                      accentColor="#FFFFFF"
+                      imageUri={resolveScheduledClassImageUri(item.classTemplate, 'hero')}
+                      height={228}
+                      variant="member"
+                      delay={0}
+                      onPress={() => openClass(item.id)}
+                    />
+                  </Animated.View>
+                );
+              }
+
               return (
-                <View style={{ marginBottom: Space.cardGap }}>
-                  <FeaturedClassTile
-                    item={item}
-                    timeZone={timeZone}
-                    accentColor={item.classTemplate.color ?? primaryColor}
-                    imageUri={resolveScheduledClassImageUri(item.classTemplate, 'hero')}
-                    height={section.isToday ? 240 : 210}
-                    label={section.isToday ? 'Hoy · Reservar' : 'Reservar'}
-                    delay={0}
-                    onPress={() => router.push(`/(app)/class/${item.id}`)}
-                  />
-                </View>
-              );
-            }
-            return (
-              <View style={{ marginTop: Space.cardGap }}>
                 <ClassCard
+                  key={item.id}
                   item={item}
                   timeZone={timeZone}
-                  accentColor={item.classTemplate.color ?? primaryColor}
+                  accentColor="#FFFFFF"
                   imageUri={resolveScheduledClassImageUri(item.classTemplate, 'thumbnail')}
                   index={index}
                   showSpotsLabel
-                  footer={bookFooter}
-                  onPress={() => router.push(`/(app)/class/${item.id}`)}
+                  variant="member"
+                  onPress={() => openClass(item.id)}
                 />
-              </View>
-            );
-          }}
-        />
+              );
+            })
+          )}
+        </ScrollView>
       )}
     </SafeAreaView>
   );
