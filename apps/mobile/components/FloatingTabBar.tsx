@@ -5,7 +5,6 @@ import { Pressable, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Accent } from '@/constants/Theme';
 
 /** Content height of the tab bar (icons + labels), excluding safe-area inset. */
 export const TAB_BAR_HEIGHT = 64;
@@ -28,7 +27,6 @@ const ROUTE_ICONS: Record<string, IconName> = {
   membership: 'star',
   profile: 'user',
   scan: 'qrcode',
-  today: 'calendar-check-o',
   horario: 'calendar',
   dashboard: 'line-chart',
   team: 'users',
@@ -41,7 +39,6 @@ const ROUTE_LABELS: Record<string, string> = {
   membership: 'Membresía',
   profile: 'Perfil',
   scan: 'Escanear',
-  today: 'Hoy',
   horario: 'Horario',
   dashboard: 'Panel',
   team: 'Equipo',
@@ -85,7 +82,7 @@ function TabItem({
               width: 32,
               height: 3,
               borderRadius: 2,
-              backgroundColor: Accent,
+              backgroundColor: '#FFFFFF',
             }}
           />
         ) : null}

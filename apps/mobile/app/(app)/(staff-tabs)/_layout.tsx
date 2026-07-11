@@ -32,7 +32,6 @@ export default function StaffTabsLayout() {
           href: showScan ? undefined : null,
         }}
       />
-      <Tabs.Screen name="today" />
       <Tabs.Screen name="horario" />
       <Tabs.Screen
         name="team"

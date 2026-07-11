@@ -9,7 +9,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { Accent, Radius, Space, getColors, type ThemeColors } from '@/constants/Theme';
+import { Radius, Space, getColors, type ThemeColors } from '@/constants/Theme';
 
 type IconName = ComponentProps<typeof FontAwesome>['name'];
 
@@ -145,7 +145,7 @@ export function KpiTile({
           fontSize: 34,
           fontWeight: '800',
           letterSpacing: -1.4,
-          color: highlight ? Accent : C.text,
+          color: C.text,
           lineHeight: 38,
           fontVariant: ['tabular-nums'],
         }}
@@ -193,7 +193,7 @@ export function OccupancyBar({
           width: `${pct}%`,
           height: '100%',
           borderRadius: 1,
-          backgroundColor: Accent,
+          backgroundColor: 'rgba(255,255,255,0.45)',
         }}
       />
     </View>
@@ -201,6 +201,7 @@ export function OccupancyBar({
 }
 
 export function ClassMonogram({ name, size = 48 }: { name: string; size?: number }) {
+  const C = getColors();
   const letter = name.trim()[0]?.toUpperCase() ?? 'C';
   return (
     <View
@@ -208,12 +209,12 @@ export function ClassMonogram({ name, size = 48 }: { name: string; size?: number
         width: size,
         height: size,
         borderRadius: Radius.inner,
-        backgroundColor: 'rgba(91,92,235,0.10)',
+        backgroundColor: C.surface2,
         alignItems: 'center',
         justifyContent: 'center',
       }}
     >
-      <Text style={{ fontSize: size * 0.38, fontWeight: '800', color: Accent }}>{letter}</Text>
+      <Text style={{ fontSize: size * 0.38, fontWeight: '800', color: C.textSub }}>{letter}</Text>
     </View>
   );
 }
@@ -323,9 +324,9 @@ export function DayCapsule({
           paddingHorizontal: 12,
           borderRadius: Radius.inner,
           alignItems: 'center',
-          backgroundColor: selected ? Accent : 'transparent',
+          backgroundColor: selected ? '#FFFFFF' : 'transparent',
           borderWidth: selected ? 0 : isToday ? 1 : 0,
-          borderColor: isToday && !selected ? 'rgba(91,92,235,0.35)' : 'transparent',
+          borderColor: isToday && !selected ? C.separator : 'transparent',
         }}
       >
         <Text
@@ -334,7 +335,7 @@ export function DayCapsule({
             fontWeight: '700',
             letterSpacing: 0.6,
             textTransform: 'uppercase',
-            color: selected ? '#FFFFFF' : C.textMute,
+            color: selected ? '#000000' : C.textMute,
             marginBottom: 4,
           }}
         >
@@ -344,7 +345,7 @@ export function DayCapsule({
           style={{
             fontSize: 18,
             fontWeight: '800',
-            color: selected ? '#FFFFFF' : isToday ? Accent : C.text,
+            color: selected ? '#000000' : C.text,
             letterSpacing: -0.5,
           }}
         >
@@ -433,7 +434,7 @@ export function TabStrip<T extends string>({
                   left: 0,
                   right: 0,
                   height: 2,
-                  backgroundColor: Accent,
+                  backgroundColor: '#FFFFFF',
                   borderRadius: 1,
                 }}
               />
@@ -489,7 +490,7 @@ export function FilterChip({
             left: 0,
             right: 0,
             height: 2,
-            backgroundColor: Accent,
+            backgroundColor: '#FFFFFF',
             borderRadius: 1,
           }}
         />
@@ -657,7 +658,7 @@ export function QuickActionTile({
             justifyContent: 'space-between',
           }}
         >
-          <FontAwesome name={icon} size={18} color={Accent} />
+          <FontAwesome name={icon} size={18} color={C.text} />
           <Text style={{ fontSize: 15, fontWeight: '700', color: C.text, letterSpacing: -0.3, marginTop: Space.sp2 }}>
             {label}
           </Text>
@@ -816,9 +817,9 @@ export function TimelineClassRow({
             borderBottomColor: C.separator,
           }}
         >
-          {/* Time column — Accent when live */}
+          {/* Time column — heavier weight when live */}
           <View style={{ width: 52, justifyContent: 'flex-start', paddingTop: 2 }}>
-            <Text style={{ fontSize: 13, fontWeight: '600', color: isNow ? Accent : C.textMute, letterSpacing: -0.2 }}>
+            <Text style={{ fontSize: 13, fontWeight: isNow ? '700' : '600', color: isNow ? C.text : C.textMute, letterSpacing: -0.2 }}>
               {time}
             </Text>
           </View>
@@ -905,7 +906,7 @@ export function TodayClassRow({
             style={{
               fontSize: 13,
               fontWeight: '600',
-              color: isNow ? Accent : C.textMute,
+              color: isNow ? C.text : C.textMute,
               width: 44,
               letterSpacing: -0.2,
             }}
@@ -925,7 +926,7 @@ export function TodayClassRow({
             {className}
           </Text>
           {isNow ? (
-            <Text style={{ fontSize: 10, fontWeight: '700', color: Accent, letterSpacing: 0.6, textTransform: 'uppercase' }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: C.text, letterSpacing: 0.6, textTransform: 'uppercase' }}>
               Ahora
             </Text>
           ) : (

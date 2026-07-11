@@ -57,10 +57,10 @@ export function canAccessTeamTab(role: string | null | undefined): boolean {
 
 export function staffTabsInitialRoute(
   role: string | null | undefined,
-): 'dashboard' | 'today' | 'scan' {
+): 'dashboard' | 'scan' | 'horario' {
   if (canAccessExecutiveDashboard(role)) return 'dashboard';
-  if (isFrontDeskRole(role)) return 'today';
-  return canAccessStaffScan(role) ? 'scan' : 'today';
+  if (canAccessStaffScan(role)) return 'scan';
+  return 'horario';
 }
 
 export function staffModeTitle(role: string | null | undefined): string {

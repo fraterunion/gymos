@@ -129,7 +129,7 @@ export default function StaffScanScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!canAccessStaffScan(role)) {
-        router.replace('/(app)/(staff-tabs)/today' as Href);
+        router.replace('/(app)/(staff-tabs)/horario' as Href);
       }
     }, [role, router]),
   );
