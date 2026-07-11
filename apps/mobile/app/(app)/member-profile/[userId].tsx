@@ -53,14 +53,12 @@ import { canAccessMemberProfile } from '@/lib/memberProfilePermissions';
 import { fetchSalesSettings, type SalesSettings } from '@/lib/api/salesApi';
 import { canAttestMemberWaiver } from '@/lib/waiverPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
-import { getColors, Space, type ThemeColors } from '@/constants/Theme';
-
-const CARD_BG = '#141416';
+import { getColors, Radius, Space, type ThemeColors } from '@/constants/Theme';
 
 function cardStyle(C: ThemeColors) {
   return {
-    backgroundColor: CARD_BG,
-    borderRadius: 28,
+    backgroundColor: C.surface1,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: C.separator,
     padding: 24,
@@ -74,11 +72,11 @@ function SectionLabel({ children }: { children: string }) {
       style={{
         fontSize: 11,
         fontWeight: '700',
-        letterSpacing: 1.2,
+        letterSpacing: 1.4,
         textTransform: 'uppercase',
         color: C.textMute,
-        marginBottom: 14,
-        marginTop: 28,
+        marginBottom: Space.sp2,
+        marginTop: Space.sp4,
       }}
     >
       {children}
@@ -116,7 +114,7 @@ function ActivityRow({
   const C = getColors();
   return (
     <Animated.View
-      entering={FadeInDown.delay(index * 35).duration(320)}
+      entering={FadeInDown.delay(index * 32).duration(300)}
       style={{
         flexDirection: 'row',
         gap: 14,
@@ -156,9 +154,9 @@ function ProfileSkeleton() {
           <Skeleton width={120} height={28} radius={14} />
         </View>
       </View>
-      <Skeleton height={220} radius={28} />
-      <Skeleton height={180} radius={28} />
-      <Skeleton height={200} radius={28} />
+      <Skeleton height={220} radius={Radius.card} />
+      <Skeleton height={180} radius={Radius.card} />
+      <Skeleton height={200} radius={Radius.card} />
     </View>
   );
 }
@@ -366,7 +364,7 @@ export default function MemberProfileScreen() {
 
   if (!allowed) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <View style={{ flex: 1, justifyContent: 'center', padding: Space.screenH }}>
           <Text style={{ fontSize: 20, fontWeight: '800', color: C.text, marginBottom: 12 }}>
             Sin acceso
@@ -382,14 +380,14 @@ export default function MemberProfileScreen() {
 
   if (!userId) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <LoadRetryPanel message="Miembro no especificado" onRetry={() => router.back()} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }} edges={['bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom']}>
       <View
         style={{
           flexDirection: 'row',
@@ -440,10 +438,10 @@ export default function MemberProfileScreen() {
         <ScrollView
           contentContainerStyle={{ padding: Space.screenH, paddingBottom: 48 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={primaryColor} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor="rgba(255,255,255,0.35)" />
           }
         >
-          <Animated.View entering={FadeInDown.duration(380)} style={{ marginBottom: 8 }}>
+          <Animated.View entering={FadeInDown.duration(300)} style={{ marginBottom: 8 }}>
             <View style={{ flexDirection: 'row', gap: 18, alignItems: 'flex-start' }}>
               <StaffAvatar
                 userId={profile.user.id}
@@ -491,7 +489,7 @@ export default function MemberProfileScreen() {
           ) : null}
 
           <SectionLabel>Carta responsiva</SectionLabel>
-          <Animated.View entering={FadeInDown.delay(100).duration(380)} style={cardStyle(C)}>
+          <Animated.View entering={FadeInDown.delay(100).duration(300)} style={cardStyle(C)}>
             {waiver ? (
               <>
                 <StatusPill
@@ -562,7 +560,7 @@ export default function MemberProfileScreen() {
           ) : null}
 
           <SectionLabel>Actividad reciente</SectionLabel>
-          <Animated.View entering={FadeInDown.delay(140).duration(380)} style={cardStyle(C)}>
+          <Animated.View entering={FadeInDown.delay(140).duration(300)} style={cardStyle(C)}>
             {activityItems.length > 0 ? (
               activityItems.map((item) => (
                 <ActivityRow
@@ -599,7 +597,7 @@ export default function MemberProfileScreen() {
           {(from === 'sales' || from === 'directory') ? (
             <SectionLabel>Navegación</SectionLabel>
           ) : null}
-          <Animated.View entering={FadeInDown.delay(180).duration(380)} style={{ gap: 12 }}>
+          <Animated.View entering={FadeInDown.delay(180).duration(300)} style={{ gap: 12 }}>
             {from === 'sales' ? (
               <BrandButton
                 label="Volver a ventas"

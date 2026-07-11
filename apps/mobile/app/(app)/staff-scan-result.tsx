@@ -7,7 +7,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BrandButton } from '@/components/BrandButton';
 import { useBranding } from '@/contexts/BrandingContext';
 import { formatClassTime } from '@/lib/datetime';
-import { getColors, Space } from '@/constants/Theme';
+import { getColors, Radius, Space } from '@/constants/Theme';
 
 function searchParam(value: string | string[] | undefined): string | undefined {
   return typeof value === 'string' ? value : value?.[0];
@@ -94,11 +94,11 @@ export default function StaffScanResultScreen() {
           justifyContent: 'center',
         }}
       >
-        <Animated.View entering={FadeInDown.duration(420)}>
+        <Animated.View entering={FadeInDown.duration(300)}>
           <View
             style={{
-              backgroundColor: '#141416',
-              borderRadius: 28,
+              backgroundColor: C.surface1,
+              borderRadius: Radius.card,
               borderWidth: 1,
               borderColor: C.separator,
               padding: 28,

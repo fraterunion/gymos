@@ -31,14 +31,14 @@ import {
 import { statusConfig } from '@/lib/membershipStatus';
 import { canAccessSales } from '@/lib/salesPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
-import { getColors, Space, type ThemeColors } from '@/constants/Theme';
+import { getColors, Radius, Space, type ThemeColors } from '@/constants/Theme';
 
 const PAGE_SIZE = 30;
 
 function cardStyle(C: ThemeColors) {
   return {
-    backgroundColor: '#141416',
-    borderRadius: 28,
+    backgroundColor: C.surface1,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: C.separator,
     padding: 20,
@@ -87,7 +87,7 @@ function MemberDirectoryRow({
   const pill = membershipPill(member);
 
   return (
-    <Animated.View entering={FadeInDown.delay(Math.min(index * 30, 180)).duration(360)}>
+    <Animated.View entering={FadeInDown.delay(Math.min(index * 32, 160)).duration(300)}>
       <View
         style={[
           cardStyle(C),
@@ -139,7 +139,7 @@ function MemberDirectoryRow({
               <StatusPill label={pill.label} bg={pill.bg} textColor={pill.textColor} />
             </View>
           </View>
-          <FontAwesome name="chevron-right" size={14} color="rgba(255,255,255,0.28)" />
+          <FontAwesome name="chevron-right" size={12} color="rgba(255,255,255,0.28)" />
         </Pressable>
         {canSales ? (
           <Pressable
@@ -158,6 +158,7 @@ function MemberDirectoryRow({
 }
 
 function RowSkeleton() {
+  const C = getColors();
   return (
     <View
       style={{
@@ -165,10 +166,10 @@ function RowSkeleton() {
         alignItems: 'center',
         marginBottom: 12,
         padding: 20,
-        borderRadius: 28,
-        backgroundColor: '#141416',
+        borderRadius: Radius.card,
+        backgroundColor: C.surface1,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
+        borderColor: C.separator,
       }}
     >
       <Skeleton width={52} height={52} radius={26} style={{ marginRight: 14 }} />
@@ -270,7 +271,7 @@ export default function MembersDirectoryScreen() {
 
   if (!allowed) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <View style={{ flex: 1, justifyContent: 'center', padding: Space.screenH }}>
           <Text style={{ fontSize: 20, fontWeight: '800', color: C.text, marginBottom: 12 }}>
             Sin acceso
@@ -290,19 +291,19 @@ export default function MembersDirectoryScreen() {
 
   const listHeader = (
     <View style={{ paddingBottom: 8 }}>
-      <Animated.View entering={FadeInDown.duration(400)} style={{ paddingTop: 8, paddingBottom: 20 }}>
+      <Animated.View entering={FadeInDown.duration(300)} style={{ paddingTop: 8, paddingBottom: 20 }}>
         <Text
           style={{
-            fontSize: 34,
+            fontSize: 36,
             fontWeight: '800',
-            letterSpacing: -1.1,
+            letterSpacing: -1.3,
             color: C.text,
-            lineHeight: 38,
+            lineHeight: 40,
           }}
         >
           Miembros
         </Text>
-        <Text style={{ fontSize: 15, lineHeight: 22, color: C.textSub, marginTop: 10 }}>
+        <Text style={{ fontSize: 16, lineHeight: 24, color: C.textSub, marginTop: 10, letterSpacing: -0.2 }}>
           Busca clientes del estudio y abre su perfil.
         </Text>
       </Animated.View>
@@ -317,12 +318,12 @@ export default function MembersDirectoryScreen() {
         returnKeyType="search"
         clearButtonMode="while-editing"
         style={{
-          backgroundColor: '#141416',
+          backgroundColor: C.surface1,
           borderWidth: 1,
           borderColor: C.separator,
-          borderRadius: 18,
-          paddingHorizontal: 18,
-          paddingVertical: 14,
+          borderRadius: Radius.button,
+          paddingHorizontal: Space.sp2,
+          paddingVertical: 12,
           fontSize: 16,
           color: C.text,
           marginBottom: 16,
@@ -370,7 +371,7 @@ export default function MembersDirectoryScreen() {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0A0A0A' }} edges={['bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom']}>
       <View
         style={{
           flexDirection: 'row',
@@ -444,7 +445,7 @@ export default function MembersDirectoryScreen() {
           paddingBottom: 48,
         }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={primaryColor} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="rgba(255,255,255,0.35)" />
         }
         onEndReached={onEndReached}
         onEndReachedThreshold={0.4}

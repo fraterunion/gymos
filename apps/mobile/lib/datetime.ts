@@ -131,3 +131,33 @@ export function weekBoundsInZone(
     label: `${startLabel} – ${endLabel}`,
   };
 }
+
+/** Seven YYYY-MM-DD keys from Monday through Sunday for a week starting at `startKey`. */
+export function weekDayKeysFromStart(startKey: string): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    keys.push(shiftDayKey(startKey, i));
+  }
+  return keys;
+}
+
+export function weekdayShortLabel(dayKey: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('es-MX', { timeZone, weekday: 'short' })
+      .format(new Date(`${dayKey}T12:00:00Z`))
+      .replace('.', '')
+      .slice(0, 3);
+  } catch {
+    return new Intl.DateTimeFormat('es-MX', { weekday: 'short' }).format(new Date(`${dayKey}T12:00:00Z`));
+  }
+}
+
+export function dayOfMonthLabel(dayKey: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('es-MX', { timeZone, day: 'numeric' }).format(
+      new Date(`${dayKey}T12:00:00Z`),
+    );
+  } catch {
+    return dayKey.slice(8, 10);
+  }
+}

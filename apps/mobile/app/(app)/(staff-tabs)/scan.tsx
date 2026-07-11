@@ -23,7 +23,7 @@ import {
   staffScanErrorCopy,
 } from '@/lib/staffScanFeedback';
 import { canAccessStaffScan } from '@/lib/staffRole';
-import { getColors, Space } from '@/constants/Theme';
+import { getColors, Radius, Space } from '@/constants/Theme';
 
 const SCAN_FRAME_SIZE = 248;
 
@@ -34,7 +34,7 @@ function ScanReticle() {
       style={{
         width: SCAN_FRAME_SIZE,
         height: SCAN_FRAME_SIZE,
-        borderRadius: 28,
+        borderRadius: Radius.card,
         borderWidth: 2,
         borderColor: 'rgba(255,255,255,0.82)',
         backgroundColor: 'transparent',
@@ -243,25 +243,25 @@ export default function StaffScanScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
       <View style={{ flex: 1, paddingHorizontal: Space.screenH, paddingBottom: TAB_BAR_CLEARANCE }}>
-        <Animated.View entering={FadeInDown.duration(420)} style={{ paddingTop: 20, paddingBottom: 20 }}>
+        <Animated.View entering={FadeInDown.duration(300)} style={{ paddingTop: 32, paddingBottom: Space.sp5 }}>
           <Text
             style={{
-              fontSize: 32,
+              fontSize: 40,
               fontWeight: '800',
-              letterSpacing: -1.0,
+              letterSpacing: -1.6,
               color: C.text,
-              lineHeight: 38,
+              lineHeight: 44,
             }}
           >
-            Escanear QR de miembro
+            Escanear QR
           </Text>
           <Text
             style={{
-              fontSize: 15,
+              fontSize: 16,
               color: C.textSub,
-              lineHeight: 22,
-              marginTop: 8,
-              letterSpacing: -0.1,
+              lineHeight: 24,
+              marginTop: 10,
+              letterSpacing: -0.2,
             }}
           >
             Apunta la cámara al código de check-in del miembro.
@@ -271,11 +271,11 @@ export default function StaffScanScreen() {
         <View
           style={{
             flex: 1,
-            borderRadius: 28,
+            borderRadius: Radius.card,
             borderWidth: 1,
             borderColor: C.separator,
             overflow: 'hidden',
-            backgroundColor: '#141416',
+            backgroundColor: C.surface1,
             minHeight: 360,
           }}
         >
@@ -335,18 +335,6 @@ export default function StaffScanScreen() {
           Los códigos QR expiran después de unos minutos.
         </Text>
 
-        <Text
-          style={{
-            marginTop: 10,
-            fontSize: 11,
-            letterSpacing: 0.8,
-            color: C.textMute,
-            textTransform: 'uppercase',
-            textAlign: 'center',
-          }}
-        >
-          La validación de QR está protegida por {appDisplayName}.
-        </Text>
       </View>
     </SafeAreaView>
   );

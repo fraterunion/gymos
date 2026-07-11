@@ -17,11 +17,11 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 const ROLE_COLORS: Record<string, { bg: string; text: string }> = {
-  OWNER: { bg: 'rgba(245,158,11,0.18)', text: '#FCD34D' },
-  ADMIN: { bg: 'rgba(139,92,246,0.18)', text: '#C4B5FD' },
-  STAFF: { bg: 'rgba(20,184,166,0.18)', text: '#5EEAD4' },
-  INSTRUCTOR: { bg: 'rgba(56,189,248,0.18)', text: '#7DD3FC' },
-  FRONT_DESK: { bg: 'rgba(167,139,250,0.18)', text: '#DDD6FE' },
+  OWNER: { bg: 'rgba(91,92,235,0.16)', text: '#A5A6F6' },
+  ADMIN: { bg: 'rgba(91,92,235,0.12)', text: '#8B8CF0' },
+  STAFF: { bg: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.72)' },
+  INSTRUCTOR: { bg: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.72)' },
+  FRONT_DESK: { bg: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.72)' },
 };
 
 const DEFAULT_ROLE_COLOR = { bg: 'rgba(255,255,255,0.10)', text: '#E4E4E7' };

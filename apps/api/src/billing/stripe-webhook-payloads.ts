@@ -31,7 +31,10 @@ export type WebhookInvoicePayload = {
   id: string;
   status: string | null;
   customer: string | { id: string } | null;
+  // Present in pre-basil API (before 2025-08-27.basil); absent in basil invoices.
+  // Use readInvoiceSubscriptionId() to resolve from either shape.
   subscription: string | { id: string } | null;
+  // Absent in basil API invoices — payment intent is no longer embedded on the invoice.
   payment_intent: string | { id: string } | null;
   currency: string | null;
   amount_paid: number | null;
@@ -45,6 +48,16 @@ export type WebhookInvoicePayload = {
   // Do NOT use these for currentPeriodStart/currentPeriodEnd.
   period_start: number | null;
   period_end: number | null;
+  // Stripe basil API (2025-08-27.basil) moved the subscription ID and metadata
+  // from the invoice root to parent.subscription_details. Always read via
+  // readInvoiceSubscriptionId() which handles both shapes.
+  parent?: {
+    type?: string | null;
+    subscription_details?: {
+      subscription?: string | null;
+      metadata?: Record<string, string> | null;
+    } | null;
+  } | null;
 };
 
 export type WebhookPaymentIntentPayload = {

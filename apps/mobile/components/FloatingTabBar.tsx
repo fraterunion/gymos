@@ -2,16 +2,19 @@ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import type { ComponentProps } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Accent } from '@/constants/Theme';
+
 /** Content height of the tab bar (icons + labels), excluding safe-area inset. */
-export const TAB_BAR_HEIGHT = 56;
+export const TAB_BAR_HEIGHT = 64;
 
 /**
  * Bottom padding that scrollable tab screens should add so content is not
  * hidden behind the fixed tab bar. Includes typical safe-area inset + breathing room.
  */
-export const TAB_BAR_CLEARANCE = TAB_BAR_HEIGHT + 52;
+export const TAB_BAR_CLEARANCE = TAB_BAR_HEIGHT + 48;
 
 /** @deprecated Use TAB_BAR_CLEARANCE */
 export const FLOATING_TAB_CLEARANCE = TAB_BAR_CLEARANCE;
@@ -24,7 +27,6 @@ const ROUTE_ICONS: Record<string, IconName> = {
   bookings: 'bookmark',
   membership: 'star',
   profile: 'user',
-  // Staff tabs
   scan: 'qrcode',
   today: 'calendar-check-o',
   horario: 'calendar',
@@ -38,7 +40,6 @@ const ROUTE_LABELS: Record<string, string> = {
   bookings: 'Reservas',
   membership: 'Membresía',
   profile: 'Perfil',
-  // Staff tabs
   scan: 'Escanear',
   today: 'Hoy',
   horario: 'Horario',
@@ -46,8 +47,7 @@ const ROUTE_LABELS: Record<string, string> = {
   team: 'Equipo',
 };
 
-const ACTIVE_COLOR = '#FFFFFF';
-const INACTIVE_COLOR = '#6B6B70';
+const INACTIVE_COLOR = 'rgba(255,255,255,0.38)';
 
 function TabItem({
   routeName,
@@ -60,9 +60,10 @@ function TabItem({
   onPress: () => void;
   onLongPress: () => void;
 }) {
-  const color = isFocused ? ACTIVE_COLOR : INACTIVE_COLOR;
   const icon: IconName = ROUTE_ICONS[routeName] ?? 'circle';
   const label = ROUTE_LABELS[routeName] ?? routeName;
+  const scale = useSharedValue(1);
+  const anim = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
   return (
     <Pressable
@@ -71,20 +72,36 @@ function TabItem({
       accessibilityLabel={label}
       onPress={onPress}
       onLongPress={onLongPress}
-      style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}
+      onPressIn={() => { scale.value = withTiming(0.94, { duration: 80 }); }}
+      onPressOut={() => { scale.value = withTiming(1, { duration: 140 }); }}
+      style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 10 }}
     >
-      <FontAwesome name={icon} size={26} color={color} />
-      <Text
-        style={{
-          marginTop: 5,
-          fontSize: 10,
-          fontWeight: isFocused ? '600' : '500',
-          letterSpacing: 0.1,
-          color,
-        }}
-      >
-        {label}
-      </Text>
+      <Animated.View style={[{ alignItems: 'center' }, anim]}>
+        {isFocused ? (
+          <View
+            style={{
+              position: 'absolute',
+              top: -6,
+              width: 32,
+              height: 3,
+              borderRadius: 2,
+              backgroundColor: Accent,
+            }}
+          />
+        ) : null}
+        <FontAwesome name={icon} size={22} color={isFocused ? '#FFFFFF' : INACTIVE_COLOR} />
+        <Text
+          style={{
+            marginTop: 6,
+            fontSize: 10,
+            fontWeight: isFocused ? '700' : '500',
+            letterSpacing: 0.2,
+            color: isFocused ? '#FFFFFF' : INACTIVE_COLOR,
+          }}
+        >
+          {label}
+        </Text>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -100,9 +117,9 @@ export function FloatingTabBar({ state, descriptors: _descriptors, navigation }:
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: '#0A0A0A',
+        backgroundColor: '#000000',
         borderTopWidth: 1,
-        borderTopColor: 'rgba(255,255,255,0.08)',
+        borderTopColor: 'rgba(255,255,255,0.07)',
         paddingBottom: insets.bottom,
       }}
     >

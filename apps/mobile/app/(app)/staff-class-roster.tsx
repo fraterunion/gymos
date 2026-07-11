@@ -3,6 +3,7 @@ import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
+  Pressable,
   RefreshControl,
   ScrollView,
   Text,
@@ -11,9 +12,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
-import { BrandButton } from '@/components/BrandButton';
 import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
-import { useBranding } from '@/contexts/BrandingContext';
+import {
+  MemberRow,
+  StatCard,
+  TabStrip,
+} from '@/components/staff/StaffPrimitives';
+import { Accent, getColors, Radius, Space } from '@/constants/Theme';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { ApiError } from '@/lib/api/errors';
 import {
@@ -24,6 +29,7 @@ import {
   type ClassRosterEntryDto,
 } from '@/lib/api/checkInsApi';
 import { fetchScheduledClassById, type ScheduledClassDetailDto } from '@/lib/api/scheduleApi';
+import { fetchClassWaitlist, type ClassWaitlistEntryDto } from '@/lib/api/staffWaitlistApi';
 import {
   DEFAULT_CHECK_IN_EARLY_MINUTES,
   isWithinCheckInWindow,
@@ -32,7 +38,6 @@ import { formatClassRange, formatClassTime } from '@/lib/datetime';
 import { canManualCheckIn } from '@/lib/staffRole';
 import { staffScanErrorCopy } from '@/lib/staffScanFeedback';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
-import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
 type RosterRow = {
   bookingId: string;
@@ -44,37 +49,10 @@ type RosterRow = {
   checkInMethod: string | null;
 };
 
+type Segment = 'reservations' | 'waitlist' | 'attendance';
+
 function searchParam(value: string | string[] | undefined): string | undefined {
   return typeof value === 'string' ? value : value?.[0];
-}
-
-function cardStyle(C: ThemeColors) {
-  return {
-    backgroundColor: '#141416',
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: C.separator,
-    padding: 24,
-  } as const;
-}
-
-function SectionLabel({ children }: { children: string }) {
-  const C = getColors();
-  return (
-    <Text
-      style={{
-        fontSize: 11,
-        fontWeight: '700',
-        letterSpacing: 1.2,
-        textTransform: 'uppercase',
-        color: C.textMute,
-        marginBottom: 14,
-        marginTop: 28,
-      }}
-    >
-      {children}
-    </Text>
-  );
 }
 
 function memberInitials(firstName: string, lastName: string): string {
@@ -86,14 +64,10 @@ function memberInitials(firstName: string, lastName: string): string {
 function formatCheckInMethod(method: string | null): string {
   if (!method) return '';
   switch (method.toUpperCase()) {
-    case 'QR':
-      return 'QR';
-    case 'MANUAL':
-      return 'Manual';
-    case 'KIOSK':
-      return 'Kiosco';
-    default:
-      return method;
+    case 'QR': return 'QR';
+    case 'MANUAL': return 'Manual';
+    case 'KIOSK': return 'Kiosco';
+    default: return method;
   }
 }
 
@@ -103,11 +77,8 @@ function mergeRosterRows(
 ): RosterRow[] {
   const byUserId = new Map<string, AttendanceSummaryDto>();
   for (const row of attendance) {
-    if (!byUserId.has(row.userId)) {
-      byUserId.set(row.userId, row);
-    }
+    if (!byUserId.has(row.userId)) byUserId.set(row.userId, row);
   }
-
   return roster.map((entry) => {
     const att = byUserId.get(entry.userId);
     const fullName = `${entry.user.firstName} ${entry.user.lastName}`.trim();
@@ -123,166 +94,48 @@ function mergeRosterRows(
   });
 }
 
-function SummaryStat({ value, label }: { value: string; label: string }) {
-  const C = getColors();
-  return (
-    <View style={{ flex: 1, alignItems: 'center' }}>
-      <Text
-        style={{
-          fontSize: 24,
-          fontWeight: '800',
-          letterSpacing: -0.6,
-          color: C.text,
-          lineHeight: 28,
-        }}
-      >
-        {value}
-      </Text>
-      <Text
-        style={{
-          fontSize: 10,
-          fontWeight: '700',
-          letterSpacing: 0.7,
-          textTransform: 'uppercase',
-          color: C.textMute,
-          marginTop: 4,
-        }}
-      >
-        {label}
-      </Text>
-    </View>
-  );
+function classStatusLabel(status: string | undefined): string {
+  if (!status) return 'Programada';
+  if (status === 'CANCELLED') return 'Cancelada';
+  if (status === 'COMPLETED') return 'Completada';
+  return status;
 }
 
-function CheckedInRow({
-  row,
-  timeZone,
-  isLast,
+function CheckInButton({
+  loading,
+  onPress,
 }: {
-  row: RosterRow;
-  timeZone: string;
-  isLast?: boolean;
+  loading: boolean;
+  onPress: () => void;
 }) {
-  const C = getColors();
-  const timeLabel = row.checkedInAt ? formatClassTime(row.checkedInAt, timeZone) : '—';
-  const methodLabel = formatCheckInMethod(row.checkInMethod);
-
   return (
-    <View
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      disabled={loading}
       style={{
-        flexDirection: 'row',
+        paddingHorizontal: Space.sp2,
+        paddingVertical: 8,
+        borderRadius: Radius.button,
+        borderWidth: 1,
+        borderColor: Accent,
+        opacity: loading ? 0.5 : 1,
+        minWidth: 80,
         alignItems: 'center',
-        paddingVertical: 14,
-        borderBottomWidth: isLast ? 0 : 1,
-        borderBottomColor: C.separator,
       }}
     >
-      <View
-        style={{
-          width: 36,
-          height: 36,
-          borderRadius: 18,
-          backgroundColor: 'rgba(52,211,153,0.14)',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginRight: 14,
-        }}
-      >
-        <FontAwesome name="check" size={14} color={C.positive} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text
-          style={{
-            fontSize: 16,
-            fontWeight: '600',
-            color: C.text,
-            letterSpacing: -0.2,
-          }}
-          numberOfLines={1}
-        >
-          {row.fullName}
-        </Text>
-        <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>
-          {timeLabel}
-          {methodLabel ? ` · ${methodLabel}` : ''}
-        </Text>
-      </View>
-    </View>
+      <Text style={{ fontSize: 13, fontWeight: '700', color: Accent }}>
+        {loading ? '…' : 'Check-in'}
+      </Text>
+    </Pressable>
   );
 }
 
-function ExpectedRow({
-  row,
-  canCheckIn,
-  checkingIn,
-  onCheckIn,
-  isLast,
-}: {
-  row: RosterRow;
-  canCheckIn: boolean;
-  checkingIn: boolean;
-  onCheckIn: () => void;
-  isLast?: boolean;
-}) {
-  const C = getColors();
-  const { primaryColor } = useBranding();
-
-  return (
-    <View
-      style={{
-        paddingVertical: 16,
-        borderBottomWidth: isLast ? 0 : 1,
-        borderBottomColor: C.separator,
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: canCheckIn ? 14 : 0 }}>
-        <View
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            backgroundColor: '#1E1E22',
-            borderWidth: 1,
-            borderColor: C.separator,
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: 14,
-          }}
-        >
-          <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }}>
-            {row.initials}
-          </Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text
-            style={{
-              fontSize: 16,
-              fontWeight: '600',
-              color: C.text,
-              letterSpacing: -0.2,
-            }}
-            numberOfLines={1}
-          >
-            {row.fullName}
-          </Text>
-          <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>
-            Sin check-in
-          </Text>
-        </View>
-      </View>
-      {canCheckIn ? (
-        <BrandButton
-          label="Check-in"
-          variant="white"
-          accentColor={primaryColor}
-          loading={checkingIn}
-          disabled={checkingIn}
-          onPress={onCheckIn}
-        />
-      ) : null}
-    </View>
-  );
-}
+const SEGMENT_OPTIONS: { id: Segment; label: string }[] = [
+  { id: 'reservations', label: 'Reservas' },
+  { id: 'waitlist', label: 'Espera' },
+  { id: 'attendance', label: 'Asistencia' },
+];
 
 export default function StaffClassRosterScreen() {
   const C = getColors();
@@ -300,7 +153,10 @@ export default function StaffClassRosterScreen() {
   const manualCheckInAllowed = canManualCheckIn(role);
   const isInstructor = role === 'INSTRUCTOR';
 
+  const [segment, setSegment] = useState<Segment>('reservations');
   const [rows, setRows] = useState<RosterRow[]>([]);
+  const [waitlist, setWaitlist] = useState<ClassWaitlistEntryDto[]>([]);
+  const [waitlistNote, setWaitlistNote] = useState<string | null>(null);
   const [classDetail, setClassDetail] = useState<ScheduledClassDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -315,22 +171,14 @@ export default function StaffClassRosterScreen() {
     ? manualCheckInAllowed &&
       isWithinCheckInWindow(classDetail.startsAt, new Date(), checkInWindowMinutes)
     : false;
-  const isFutureClass =
-    classDetail != null &&
-    new Date(classDetail.startsAt).getTime() > Date.now();
-  const isPastClass =
-    classDetail != null &&
-    new Date(classDetail.endsAt).getTime() < Date.now();
 
   const load = useCallback(
     async (isRefresh = false) => {
       if (!studioId || !classId) return;
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
       setError(null);
+      setWaitlistNote(null);
       try {
         const [detail, roster, attendance] = await Promise.all([
           fetchScheduledClassById(studioId, classId),
@@ -339,6 +187,16 @@ export default function StaffClassRosterScreen() {
         ]);
         setClassDetail(detail);
         setRows(mergeRosterRows(roster, attendance));
+
+        try {
+          const w = await fetchClassWaitlist(studioId, classId);
+          setWaitlist(w.filter((e) => e.status === 'WAITING'));
+        } catch (e) {
+          setWaitlist([]);
+          if (e instanceof ApiError && (e.status === 403 || e.status === 401)) {
+            setWaitlistNote('No tienes acceso a la lista de espera.');
+          }
+        }
       } catch (e) {
         setClassDetail(null);
         setError(
@@ -346,6 +204,7 @@ export default function StaffClassRosterScreen() {
         );
         if (!isRefresh) {
           setRows([]);
+          setWaitlist([]);
         }
       } finally {
         setLoading(false);
@@ -358,9 +217,7 @@ export default function StaffClassRosterScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (studioId && classId) {
-        void load();
-      }
+      if (studioId && classId) void load();
     }, [studioId, classId, load]),
   );
 
@@ -406,27 +263,36 @@ export default function StaffClassRosterScreen() {
   );
 
   const headerTitle =
-    (classDetail?.classTemplate.name ?? className?.trim()) || 'Lista de clase';
+    (classDetail?.classTemplate.name ?? className?.trim()) || 'Detalle de clase';
   const totalBooked = classDetail?.bookedCount ?? rows.length;
   const checkedInCount = classDetail?.checkedInCount ?? checkedInRows.length;
-  const pendingCount = Math.max(0, totalBooked - checkedInCount);
-  const waitlistCount = classDetail?.waitlistCount ?? 0;
-  const showInitialLoader = loading && !loadedOnce;
+  const waitlistCount = classDetail?.waitlistCount ?? waitlist.length;
+  const capacity = classDetail?.capacity ?? 0;
+
+  const isFutureClass =
+    classDetail != null && new Date(classDetail.startsAt).getTime() > Date.now();
+  const isPastClass =
+    classDetail != null && new Date(classDetail.endsAt).getTime() < Date.now();
+
   const emptyTitle = isFutureClass
-    ? 'No hay reservas para esta clase.'
+    ? 'Sin reservas aún.'
     : isPastClass
-      ? 'No hay registros para esta clase.'
-      : 'Aún no hay reservaciones confirmadas.';
+      ? 'Sin registros para esta clase.'
+      : 'Sin reservaciones confirmadas.';
   const emptyBody = isFutureClass
     ? 'Cuando los miembros reserven, aparecerán aquí.'
     : isPastClass
       ? 'No hubo reservas confirmadas ni check-ins registrados.'
       : 'Los miembros con reservaciones confirmadas aparecerán aquí.';
 
+  const coachName = classDetail?.instructor
+    ? `${classDetail.instructor.firstName} ${classDetail.instructor.lastName}`
+    : 'Sin coach asignado';
+
   if (!classId) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-        <Stack.Screen options={{ title: 'Lista de clase' }} />
+        <Stack.Screen options={{ title: 'Detalle de clase' }} />
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 32 }}>
           <Text style={{ textAlign: 'center', fontSize: 15, lineHeight: 22, color: C.textSub }}>
             Falta información de la clase. Regresa e inténtalo de nuevo.
@@ -448,7 +314,7 @@ export default function StaffClassRosterScreen() {
     );
   }
 
-  if (showInitialLoader) {
+  if (loading && !loadedOnce) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <Stack.Screen options={{ title: headerTitle }} />
@@ -457,7 +323,7 @@ export default function StaffClassRosterScreen() {
     );
   }
 
-  if (error && rows.length === 0) {
+  if (error && rows.length === 0 && !classDetail) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <Stack.Screen options={{ title: headerTitle }} />
@@ -468,133 +334,182 @@ export default function StaffClassRosterScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'bottom']}>
-      <Stack.Screen options={{ title: headerTitle }} />
+      <Stack.Screen options={{ title: headerTitle, headerLargeTitle: false }} />
 
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          paddingHorizontal: Space.screenH,
-          paddingBottom: 40,
-        }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: showCheckInOps ? 100 : 40 }}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void load(true)}
-            tintColor="rgba(255,255,255,0.4)"
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor="rgba(255,255,255,0.35)" />
         }
       >
-        <Animated.View entering={FadeInDown.duration(420)} style={{ paddingTop: 8, paddingBottom: 20 }}>
-          {classDetail ? (
-            <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, marginBottom: 8 }}>
-              {formatClassRange(classDetail.startsAt, classDetail.endsAt, timeZone)}
-            </Text>
-          ) : null}
-          <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>
-            {checkedInCount} con check-in · {totalBooked} reservados
-            {waitlistCount > 0 ? ` · ${waitlistCount} en lista de espera` : ''}
+        {/* ── Class hero ── */}
+        <Animated.View entering={FadeInDown.duration(300)} style={{ paddingTop: 8, paddingBottom: Space.sp4 }}>
+          <Text
+            style={{
+              fontSize: 36,
+              fontWeight: '800',
+              letterSpacing: -1.4,
+              color: C.text,
+              lineHeight: 40,
+              marginBottom: 10,
+            }}
+          >
+            {headerTitle}
           </Text>
+          {classDetail ? (
+            <>
+              {/* Accent on time = active indicator. No badge. */}
+              <Text style={{ fontSize: 16, fontWeight: '600', color: Accent, lineHeight: 22, marginBottom: 4 }}>
+                {formatClassRange(classDetail.startsAt, classDetail.endsAt, timeZone)}
+              </Text>
+              <Text style={{ fontSize: 14, color: C.textMute, marginBottom: 4 }}>{coachName}</Text>
+              <Text style={{ fontSize: 13, color: C.textMute }}>
+                {classStatusLabel(classDetail.status)}
+                {!showCheckInOps ? ' · Solo lectura' : ''}
+              </Text>
+            </>
+          ) : null}
         </Animated.View>
 
+        {/* ── Check-in success — inline text, no banner card ── */}
         {successName ? (
-          <Animated.View entering={FadeInDown.duration(300)} style={{ marginBottom: 16 }}>
-            <View
-              style={{
-                backgroundColor: 'rgba(52,211,153,0.12)',
-                borderRadius: 14,
-                borderWidth: 1,
-                borderColor: 'rgba(52,211,153,0.25)',
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-              }}
-            >
-              <Text style={{ fontSize: 14, fontWeight: '600', color: C.positive, textAlign: 'center' }}>
-                {successName} registró check-in
-              </Text>
-            </View>
+          <Animated.View entering={FadeInDown.duration(300)} style={{ marginBottom: Space.sp3 }}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: Accent }}>
+              {successName} · Check-in registrado
+            </Text>
           </Animated.View>
         ) : null}
 
-        <Animated.View entering={FadeInDown.delay(40).duration(420)}>
-          <View style={cardStyle(C)}>
-            <View style={{ flexDirection: 'row' }}>
-              <SummaryStat value={String(totalBooked)} label="Reservados" />
-              <SummaryStat value={String(checkedInCount)} label="Check-in" />
-              <SummaryStat value={String(pendingCount)} label="Pendientes" />
-            </View>
+        {/* ── Stats — open metric row, no card containers ── */}
+        <Animated.View entering={FadeInDown.delay(40).duration(300)}>
+          <View style={{ flexDirection: 'row', marginBottom: Space.sp4 }}>
+            <StatCard value={String(totalBooked)} label="Confirmados" />
+            <StatCard value={String(waitlistCount)} label="Espera" />
+            <StatCard value={String(checkedInCount)} label="Check-in" />
+            <StatCard value={String(capacity)} label="Capacidad" />
           </View>
         </Animated.View>
 
-        {rows.length === 0 ? (
-          <Animated.View entering={FadeInDown.delay(80).duration(420)}>
-            <View style={[cardStyle(C), { alignItems: 'center', paddingVertical: 40, marginTop: 28 }]}>
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontWeight: '700',
-                  letterSpacing: -0.3,
-                  color: C.text,
-                  textAlign: 'center',
-                  marginBottom: 8,
-                }}
-              >
-                {emptyTitle}
+        {/* ── Tab strip — GymOS signature ── */}
+        <TabStrip<Segment>
+          options={SEGMENT_OPTIONS}
+          value={segment}
+          onChange={setSegment}
+        />
+
+        {/* ── Reservations segment ── */}
+        {segment === 'reservations' ? (
+          expectedRows.length === 0 && rows.length === 0 ? (
+            <View style={{ paddingTop: Space.sp3, paddingBottom: Space.sp4 }}>
+              <Text style={{ fontSize: 17, fontWeight: '600', color: C.text }}>{emptyTitle}</Text>
+              <Text style={{ fontSize: 14, color: C.textSub, marginTop: 6, lineHeight: 21 }}>{emptyBody}</Text>
+            </View>
+          ) : (
+            <View>
+              {isInstructor ? (
+                <Text style={{ fontSize: 13, color: C.textMute, paddingVertical: Space.sp2, lineHeight: 19 }}>
+                  El check-in manual está disponible para staff y administradores.
+                </Text>
+              ) : null}
+              {expectedRows.map((row, index) => (
+                <MemberRow
+                  key={row.bookingId}
+                  initials={row.initials}
+                  name={row.fullName}
+                  subtitle="Sin check-in"
+                  index={index}
+                  trailing={
+                    showCheckInOps ? (
+                      <CheckInButton
+                        loading={checkingInBookingId === row.bookingId}
+                        onPress={() => void handleCheckIn(row)}
+                      />
+                    ) : (
+                      <FontAwesome name="chevron-right" size={12} color={C.textMute} />
+                    )
+                  }
+                />
+              ))}
+              {expectedRows.length === 0 && rows.length > 0 ? (
+                <Text style={{ fontSize: 14, color: C.textSub, textAlign: 'center', paddingVertical: Space.sp5 }}>
+                  Todos ya tienen check-in.
+                </Text>
+              ) : null}
+            </View>
+          )
+        ) : null}
+
+        {/* ── Waitlist segment ── */}
+        {segment === 'waitlist' ? (
+          waitlist.length === 0 ? (
+            <View style={{ paddingTop: Space.sp3, paddingBottom: Space.sp4 }}>
+              <Text style={{ fontSize: 17, fontWeight: '600', color: C.text }}>
+                {waitlistNote ?? 'Sin lista de espera.'}
               </Text>
-              <Text style={{ fontSize: 14, color: C.textSub, lineHeight: 21, textAlign: 'center' }}>
-                {emptyBody}
+              <Text style={{ fontSize: 14, color: C.textSub, marginTop: 6, lineHeight: 21 }}>
+                {waitlistNote
+                  ? 'Contacta a un administrador si necesitas acceso.'
+                  : 'Nadie en espera para esta clase.'}
               </Text>
             </View>
-          </Animated.View>
-        ) : (
-          <>
-            {checkedInRows.length > 0 ? (
-              <Animated.View entering={FadeInDown.delay(80).duration(420)}>
-                <SectionLabel>Check-in</SectionLabel>
-                <View style={[cardStyle(C), { paddingVertical: 8, paddingHorizontal: 20 }]}>
-                  {checkedInRows.map((row, index) => (
-                    <CheckedInRow
-                      key={row.bookingId}
-                      row={row}
-                      timeZone={timeZone}
-                      isLast={index === checkedInRows.length - 1}
-                    />
-                  ))}
-                </View>
-              </Animated.View>
-            ) : null}
+          ) : (
+            <View>
+              {waitlist.map((entry, index) => (
+                <MemberRow
+                  key={entry.id}
+                  initials={memberInitials(entry.user.firstName, entry.user.lastName)}
+                  name={`${entry.user.firstName} ${entry.user.lastName}`}
+                  subtitle={`Posición ${entry.position}`}
+                  index={index}
+                />
+              ))}
+            </View>
+          )
+        ) : null}
 
-            {expectedRows.length > 0 ? (
-              <Animated.View entering={FadeInDown.delay(120).duration(420)}>
-                <SectionLabel>Esperados</SectionLabel>
-                {isInstructor ? (
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      color: C.textMute,
-                      lineHeight: 19,
-                      marginBottom: 14,
-                    }}
-                  >
-                    El check-in manual está disponible para staff y administradores.
-                  </Text>
-                ) : null}
-                <View style={[cardStyle(C), { paddingVertical: 8, paddingHorizontal: 20 }]}>
-                  {expectedRows.map((row, index) => (
-                    <ExpectedRow
-                      key={row.bookingId}
-                      row={row}
-                      canCheckIn={showCheckInOps}
-                      checkingIn={checkingInBookingId === row.bookingId}
-                      onCheckIn={() => void handleCheckIn(row)}
-                      isLast={index === expectedRows.length - 1}
-                    />
-                  ))}
-                </View>
-              </Animated.View>
-            ) : null}
-          </>
-        )}
+        {/* ── Attendance segment ── */}
+        {segment === 'attendance' ? (
+          checkedInRows.length === 0 ? (
+            <View style={{ paddingTop: Space.sp3, paddingBottom: Space.sp4 }}>
+              <Text style={{ fontSize: 17, fontWeight: '600', color: C.text }}>Sin check-ins aún.</Text>
+              <Text style={{ fontSize: 14, color: C.textSub, marginTop: 6, lineHeight: 21 }}>
+                Los miembros que registren asistencia aparecerán aquí.
+              </Text>
+            </View>
+          ) : (
+            <View>
+              {checkedInRows.map((row, index) => {
+                const timeLabel = row.checkedInAt ? formatClassTime(row.checkedInAt, timeZone) : '—';
+                const methodLabel = formatCheckInMethod(row.checkInMethod);
+                return (
+                  <MemberRow
+                    key={row.bookingId}
+                    initials={row.initials}
+                    name={row.fullName}
+                    subtitle={`${timeLabel}${methodLabel ? ` · ${methodLabel}` : ''}`}
+                    index={index}
+                  />
+                );
+              })}
+            </View>
+          )
+        ) : null}
       </ScrollView>
+
+      {showCheckInOps && expectedRows.length > 0 ? (
+        <View
+          style={{
+            position: 'absolute',
+            left: Space.screenH,
+            right: Space.screenH,
+            bottom: 24,
+          }}
+        >
+          <Text style={{ fontSize: 12, color: C.textMute, textAlign: 'center' }}>
+            Ventana de check-in activa
+          </Text>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }

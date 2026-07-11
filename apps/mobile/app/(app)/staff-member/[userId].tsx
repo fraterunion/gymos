@@ -29,7 +29,7 @@ import {
   type StaffRole,
   type StaffType,
 } from '@/lib/api/staffApi';
-import { formatStaffRoleLabel, formatStaffType, getStaffRoleChipStyle } from '@/lib/staffLabels';
+import { formatStaffRoleLabel, formatStaffType } from '@/lib/staffLabels';
 import {
   assignableRolesForActor,
   canActorManageTarget,
@@ -39,7 +39,7 @@ import {
 } from '@/lib/staffManagement';
 import { canAccessTeamTab, canManageTeam } from '@/lib/staffRole';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
-import { getColors, Space, type ThemeColors } from '@/constants/Theme';
+import { getColors, Radius, Space, type ThemeColors } from '@/constants/Theme';
 
 function searchParam(value: string | string[] | undefined): string | undefined {
   return typeof value === 'string' ? value : value?.[0];
@@ -47,8 +47,8 @@ function searchParam(value: string | string[] | undefined): string | undefined {
 
 function cardStyle(C: ThemeColors) {
   return {
-    backgroundColor: '#141416',
-    borderRadius: 28,
+    backgroundColor: C.surface1,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: C.separator,
     padding: 20,
@@ -62,11 +62,11 @@ function SectionTitle({ children }: { children: string }) {
       style={{
         fontSize: 11,
         fontWeight: '700',
-        letterSpacing: 1.2,
+        letterSpacing: 1.4,
         textTransform: 'uppercase',
         color: C.textMute,
-        marginTop: 28,
-        marginBottom: 12,
+        marginTop: Space.sp4,
+        marginBottom: Space.sp2,
       }}
     >
       {children}
@@ -298,8 +298,6 @@ export default function StaffMemberDetailScreen() {
     ? `${member.user.firstName} ${member.user.lastName}`.trim()
     : 'Miembro del equipo';
 
-  const roleStyle = member ? getStaffRoleChipStyle(member.role) : getStaffRoleChipStyle('STAFF');
-
   return (
     <>
       <Stack.Screen options={{ title: fullName }} />
@@ -324,7 +322,7 @@ export default function StaffMemberDetailScreen() {
                 paddingBottom: 40,
               }}
             >
-              <Animated.View entering={FadeInDown.duration(420)} style={{ alignItems: 'center', marginBottom: 8 }}>
+              <Animated.View entering={FadeInDown.duration(300)} style={{ alignItems: 'center', marginBottom: 8 }}>
                 <StaffAvatar
                   userId={member.userId}
                   firstName={member.user.firstName}
@@ -344,27 +342,15 @@ export default function StaffMemberDetailScreen() {
                 >
                   {member.user.firstName} {member.user.lastName}
                 </Text>
-                <View
+                <Text
                   style={{
-                    backgroundColor: roleStyle.bg,
-                    borderRadius: 100,
-                    paddingVertical: 6,
-                    paddingHorizontal: 12,
-                    marginTop: 12,
+                    fontSize: 13,
+                    color: C.textMute,
+                    marginTop: 10,
                   }}
                 >
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      fontWeight: '700',
-                      letterSpacing: 0.5,
-                      textTransform: 'uppercase',
-                      color: roleStyle.text,
-                    }}
-                  >
-                    {formatStaffRoleLabel(member.role)}
-                  </Text>
-                </View>
+                  {formatStaffRoleLabel(member.role)}
+                </Text>
               </Animated.View>
 
               {canManageThisMember && !editing ? (
@@ -515,7 +501,7 @@ export default function StaffMemberDetailScreen() {
                       setEditing(false);
                       setFormError(null);
                     }}
-                    style={{ alignItems: 'center', paddingVertical: 12 }}
+                    style={{ alignItems: 'center', paddingVertical: Space.sp2 }}
                   >
                     <Text style={{ fontSize: 15, color: C.textSub }}>Cancelar</Text>
                   </Pressable>
@@ -541,9 +527,9 @@ export default function StaffMemberDetailScreen() {
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }}>
             <View
               style={{
-                backgroundColor: '#141416',
-                borderTopLeftRadius: 24,
-                borderTopRightRadius: 24,
+                backgroundColor: C.surface1,
+                borderTopLeftRadius: Radius.card,
+                borderTopRightRadius: Radius.card,
                 padding: Space.screenH,
                 paddingBottom: 40,
               }}
@@ -573,7 +559,7 @@ export default function StaffMemberDetailScreen() {
               <Pressable
                 accessibilityRole="button"
                 onPress={() => setResetVisible(false)}
-                style={{ marginTop: 12, alignItems: 'center', paddingVertical: 12 }}
+                style={{ marginTop: 12, alignItems: 'center', paddingVertical: Space.sp2 }}
               >
                 <Text style={{ fontSize: 15, color: C.textSub }}>Cancelar</Text>
               </Pressable>
@@ -585,9 +571,9 @@ export default function StaffMemberDetailScreen() {
           <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }}>
             <View
               style={{
-                backgroundColor: '#141416',
-                borderTopLeftRadius: 24,
-                borderTopRightRadius: 24,
+                backgroundColor: C.surface1,
+                borderTopLeftRadius: Radius.card,
+                borderTopRightRadius: Radius.card,
                 padding: Space.screenH,
                 paddingBottom: 40,
               }}
@@ -627,7 +613,7 @@ export default function StaffMemberDetailScreen() {
                   setPhotoUrl(member?.staffProfile?.photoUrl ?? '');
                   setPhotoVisible(false);
                 }}
-                style={{ marginTop: 12, alignItems: 'center', paddingVertical: 12 }}
+                style={{ marginTop: 12, alignItems: 'center', paddingVertical: Space.sp2 }}
               >
                 <Text style={{ fontSize: 15, color: C.textSub }}>Cancelar</Text>
               </Pressable>

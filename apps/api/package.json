@@ -35,6 +35,7 @@
     "diagnose:ares-demo": "ts-node --project tsconfig.seed.json prisma/diagnose-ares-demo.ts",
     "audit:ares-analytics": "ts-node --project tsconfig.seed.json prisma/audit-ares-analytics.ts",
     "backfill:ares-review-analytics-exclusion": "ts-node --project tsconfig.seed.json prisma/backfill-ares-review-analytics-exclusion.ts",
+    "backfill:missing-stripe-invoice-payments": "ts-node --project tsconfig.seed.json prisma/backfill-missing-stripe-invoice-payments.ts",
     "cleanup:ares-demo": "ts-node --project tsconfig.seed.json prisma/cleanup-ares-demo.ts"
   },
   "prisma": {

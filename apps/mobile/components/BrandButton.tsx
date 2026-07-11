@@ -1,7 +1,7 @@
 import { ActivityIndicator, Pressable, Text, useColorScheme } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
-import { getColors } from '@/constants/Theme';
+import { getColors, Radius } from '@/constants/Theme';
 
 type Props = {
   label: string;
@@ -29,15 +29,15 @@ export function BrandButton({ label, loading, variant = 'primary', accentColor, 
         accessibilityRole="button"
         disabled={isDisabled}
         onPress={onPress}
-        onPressIn={() => { scale.value = withSpring(0.968, { damping: 22, stiffness: 400 }); }}
-        onPressOut={() => { scale.value = withSpring(1.0, { damping: 14, stiffness: 220 }); }}
+        onPressIn={() => { scale.value = withTiming(0.968, { duration: 80 }); }}
+        onPressOut={() => { scale.value = withTiming(1.0, { duration: 140 }); }}
         style={[
           {
             minHeight: 56,
             width: '100%',
             alignItems: 'center',
             justifyContent: 'center',
-            borderRadius: 14,
+            borderRadius: Radius.button,
             paddingHorizontal: 20,
             opacity: isDisabled ? 0.5 : 1,
           },

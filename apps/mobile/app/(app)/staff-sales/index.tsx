@@ -59,19 +59,19 @@ import { copyTextToClipboard } from '@/lib/copyToClipboard';
 import { memberProfileHref } from '@/lib/memberProfileRoutes';
 import { canAttestMemberWaiver } from '@/lib/waiverPermissions';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
-import { getColors, Space, type ThemeColors } from '@/constants/Theme';
+import { getColors, Radius, Space, type ThemeColors } from '@/constants/Theme';
 
 type Step = 1 | 2 | 3 | 4 | 5;
 type MemberMode = 'search' | 'create';
 type PaymentMethodChoice = 'stripe' | 'cash';
 type PaymentOutcome = 'pending' | 'succeeded' | null;
 
-const CARD_BG = '#141416';
+const CARD_BG = '#0D0D0D';
 
 function cardStyle(C: ThemeColors) {
   return {
     backgroundColor: CARD_BG,
-    borderRadius: 28,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: C.separator,
     padding: 24,
@@ -203,7 +203,7 @@ function ModeToggle({
             onPress={() => onChange(opt.id)}
             style={{
               flex: 1,
-              borderRadius: 12,
+              borderRadius: Radius.button,
               paddingVertical: 12,
               alignItems: 'center',
               backgroundColor: selected ? C.text : 'transparent',
@@ -280,7 +280,7 @@ function MemberResultRow({
             <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>{member.user.phone}</Text>
           ) : null}
         </View>
-        <FontAwesome name="chevron-right" size={14} color={C.textMute} />
+        <FontAwesome name="chevron-right" size={12} color={C.textMute} />
       </Pressable>
       <Pressable
         accessibilityRole="button"
@@ -323,7 +323,7 @@ function SalesPlanCard({
       onPress={onSelect}
       style={{
         marginBottom: 16,
-        borderRadius: 28,
+        borderRadius: Radius.card,
         borderWidth: selected ? 2 : 1,
         borderColor: selected ? accent : C.separator,
         backgroundColor: CARD_BG,
@@ -337,7 +337,7 @@ function SalesPlanCard({
               style={{
                 fontSize: 11,
                 fontWeight: '700',
-                letterSpacing: 1,
+                letterSpacing: 0.8,
                 textTransform: 'uppercase',
                 color: accent,
                 marginBottom: 8,
@@ -435,7 +435,7 @@ function PaymentMethodChip({
       onPress={onPress}
       style={{
         flex: 1,
-        borderRadius: 20,
+        borderRadius: Radius.card,
         borderWidth: selected ? 2 : 1,
         borderColor: selected ? C.text : C.separator,
         backgroundColor: selected ? 'rgba(255,255,255,0.08)' : CARD_BG,
@@ -897,7 +897,7 @@ export default function StaffSalesScreen() {
           ) : null}
 
           {step === 1 ? (
-            <Animated.View entering={FadeInDown.duration(350)}>
+            <Animated.View entering={FadeInDown.duration(300)}>
               <SectionTitle>Cliente</SectionTitle>
               <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22, marginBottom: 20 }}>
                 Busca un miembro existente o registra un walk-in.
@@ -979,7 +979,7 @@ export default function StaffSalesScreen() {
           ) : null}
 
           {step === 2 && selectedMember ? (
-            <Animated.View entering={FadeInDown.duration(350)}>
+            <Animated.View entering={FadeInDown.duration(300)}>
               <SectionTitle>Carta responsiva</SectionTitle>
               <View style={[cardStyle(C), { marginBottom: 16 }]}>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: C.text }}>
@@ -992,8 +992,8 @@ export default function StaffSalesScreen() {
                   <View
                     style={{
                       marginTop: 16,
-                      padding: 14,
-                      borderRadius: 14,
+                      padding: Space.sp2,
+                      borderRadius: Radius.inner,
                       backgroundColor: 'rgba(245,158,11,0.08)',
                       borderWidth: 1,
                       borderColor: 'rgba(245,158,11,0.35)',
@@ -1075,8 +1075,8 @@ export default function StaffSalesScreen() {
                         ) : (
                           <View
                             style={{
-                              padding: 14,
-                              borderRadius: 14,
+                              padding: Space.sp2,
+                              borderRadius: Radius.inner,
                               backgroundColor: 'rgba(255,255,255,0.04)',
                               borderWidth: 1,
                               borderColor: C.separator,
@@ -1114,7 +1114,7 @@ export default function StaffSalesScreen() {
           ) : null}
 
           {step === 3 ? (
-            <Animated.View entering={FadeInDown.duration(350)}>
+            <Animated.View entering={FadeInDown.duration(300)}>
               <SectionTitle>Seleccionar plan</SectionTitle>
               <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22, marginBottom: 20 }}>
                 Elige la membresía para {selectedMember ? memberDisplayName(selectedMember) : 'el cliente'}.
@@ -1162,7 +1162,7 @@ export default function StaffSalesScreen() {
           ) : null}
 
           {step === 4 && selectedMember && selectedPlan ? (
-            <Animated.View entering={FadeInDown.duration(350)}>
+            <Animated.View entering={FadeInDown.duration(300)}>
               <SectionTitle>Método de pago</SectionTitle>
 
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
@@ -1263,11 +1263,11 @@ export default function StaffSalesScreen() {
           ) : null}
 
           {step === 5 && selectedMember && selectedPlan ? (
-            <Animated.View entering={FadeInDown.duration(350)}>
+            <Animated.View entering={FadeInDown.duration(300)}>
               <SectionTitle>Confirmación</SectionTitle>
 
               <View style={[cardStyle(C), { marginBottom: 20, gap: 12 }]}>
-                <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1, color: C.textMute }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.8, color: C.textMute }}>
                   RESUMEN
                 </Text>
                 <Text style={{ fontSize: 20, fontWeight: '800', color: C.text }}>
@@ -1326,7 +1326,7 @@ export default function StaffSalesScreen() {
                     style={{
                       fontSize: 11,
                       fontWeight: '700',
-                      letterSpacing: 1,
+                      letterSpacing: 0.8,
                       color: C.textMute,
                       alignSelf: 'flex-start',
                       marginBottom: 16,
@@ -1336,8 +1336,8 @@ export default function StaffSalesScreen() {
                   </Text>
                   <View
                     style={{
-                      padding: 16,
-                      borderRadius: 20,
+                      padding: Space.sp2,
+                      borderRadius: Radius.card,
                       backgroundColor: '#FFFFFF',
                       marginBottom: 20,
                     }}
@@ -1351,7 +1351,7 @@ export default function StaffSalesScreen() {
                     multiline
                     style={{
                       width: '100%',
-                      borderRadius: 14,
+                      borderRadius: Radius.button,
                       borderWidth: 1,
                       borderColor: C.separator,
                       backgroundColor: '#1A1A1C',

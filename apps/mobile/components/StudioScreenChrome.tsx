@@ -11,7 +11,7 @@ import Animated, {
 
 import { BrandButton } from '@/components/BrandButton';
 import { useBranding } from '@/contexts/BrandingContext';
-import { getColors } from '@/constants/Theme';
+import { getColors, Radius } from '@/constants/Theme';
 
 // ---------------------------------------------------------------------------
 // Skeleton
@@ -210,7 +210,7 @@ export function ErrorBanner({ message, onRetry }: { message: string; onRetry: ()
         paddingHorizontal: 16,
         paddingVertical: 12,
         backgroundColor: 'rgba(248,113,113,0.10)',
-        borderRadius: 12,
+        borderRadius: Radius.button,
       }}
     >
       <Text style={{ flex: 1, fontSize: 13, color: '#F87171', marginRight: 12, lineHeight: 19 }}>

@@ -1,8 +1,11 @@
+/** Single product accent — deep indigo. */
+export const Accent = '#5B5CEB';
+
 export const dark = {
-  bg:         '#0A0A0A',
-  surface1:   '#141414',
-  surface2:   '#1C1C1C',
-  surface3:   '#282828',
+  bg:         '#000000',
+  surface1:   '#0D0D0D',
+  surface2:   '#161616',
+  surface3:   '#1F1F1F',
   text:       '#FFFFFF',
   textSub:    'rgba(255,255,255,0.55)',
   textMute:   'rgba(255,255,255,0.32)',
@@ -51,15 +54,23 @@ export function getColors(_scheme?: 'light' | 'dark' | null | undefined): ThemeC
 
 export const Radius = {
   card:   16,
-  button: 14,
+  button: 10,
   pill:   100,
   inner:  8,
 } as const;
 
 export const Space = {
   screenH:    24,
-  cardV:      18,
+  cardV:      20,
   cardH:      20,
-  sectionGap: 36,
-  cardGap:    10,
+  sectionGap: 40,
+  cardGap:    12,
+  row:        72,
+  /** 8-point grid tokens */
+  sp1: 8,
+  sp2: 16,
+  sp3: 24,
+  sp4: 32,
+  sp5: 40,
+  sp6: 48,
 } as const;

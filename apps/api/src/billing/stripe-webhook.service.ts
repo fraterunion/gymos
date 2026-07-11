@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DayPassStatus, PaymentStatus, Prisma, SubscriptionStatus } from '@prisma/client';
+import { DayPassStatus, PaymentMethod, PaymentStatus, Prisma, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
@@ -11,6 +11,7 @@ import {
   type WebhookSubscriptionPayload,
 } from './stripe-webhook-payloads';
 import { mapStripeSubscriptionStatus } from './stripe-subscription-status';
+import { readInvoiceSubscriptionId } from './stripe-invoice.utils';
 
 type VerifiedStripeEvent = {
   id: string;
@@ -233,7 +234,12 @@ export class StripeWebhookService {
 
   /**
    * Resolves userId, studioId, DB subscriptionId, and membershipPlanId from an invoice.
-   * Prefers DB lookup (avoids extra Stripe API call); falls back to retrieveSubscription metadata.
+   *
+   * Resolution order:
+   *   1. readInvoiceSubscriptionId() — handles both legacy and basil invoice shapes
+   *   2. DB lookup by Stripe subscription ID
+   *   3. Basil parent.subscription_details.metadata fallback (validated)
+   *   4. Stripe API subscription metadata lookup
    */
   private async resolveInvoiceContext(invoice: WebhookInvoicePayload): Promise<{
     userId: string;
@@ -250,15 +256,10 @@ export class StripeWebhookService {
     });
     if (!user) return null;
 
-    const stripeSubId =
-      typeof invoice.subscription === 'string'
-        ? invoice.subscription
-        : invoice.subscription && typeof invoice.subscription !== 'string'
-          ? invoice.subscription.id
-          : null;
+    const stripeSubId = readInvoiceSubscriptionId(invoice);
 
-    // Try DB first to avoid an extra Stripe API call
     if (stripeSubId) {
+      // Path 1: DB lookup by Stripe subscription ID (fast path)
       const dbSub = await this.prisma.subscription.findUnique({
         where: { stripeSubscriptionId: stripeSubId },
       });
@@ -270,7 +271,13 @@ export class StripeWebhookService {
           membershipPlanId: dbSub.membershipPlanId,
         };
       }
-      // Fallback: retrieve from Stripe to get metadata
+
+      // Path 2: Basil metadata fallback — subscription exists in Stripe but not yet in DB
+      // (e.g. invoice.paid raced ahead of customer.subscription.created)
+      const basilCtx = await this.resolveFromBasilMetadata(invoice, user.id);
+      if (basilCtx) return basilCtx;
+
+      // Path 3: Stripe API lookup — get studioId from subscription metadata
       const stripeSub = (await this.stripe.retrieveSubscription(
         stripeSubId,
       )) as unknown as WebhookSubscriptionPayload;
@@ -279,7 +286,48 @@ export class StripeWebhookService {
       return { userId: user.id, studioId, dbSubscriptionId: null, membershipPlanId: null };
     }
 
-    return null;
+    // Path 4: No subscription ID resolved — try basil metadata as last resort
+    return this.resolveFromBasilMetadata(invoice, user.id);
+  }
+
+  /**
+   * Validates and resolves context from invoice.parent.subscription_details.metadata.
+   * Enforces tenant isolation: userId in metadata must match the Stripe customer's user,
+   * plan must belong to studio, and user must have a membership in the studio.
+   */
+  private async resolveFromBasilMetadata(
+    invoice: WebhookInvoicePayload,
+    expectedUserId: string,
+  ): Promise<{
+    userId: string;
+    studioId: string;
+    dbSubscriptionId: null;
+    membershipPlanId: string | null;
+  } | null> {
+    const md = readTriplet(invoice.parent?.subscription_details?.metadata ?? null);
+    if (!md.studioId || !md.userId || !md.planId) return null;
+
+    // Tenant isolation: metadata userId must match the Stripe customer's DB user
+    if (md.userId !== expectedUserId) return null;
+
+    // Validate plan belongs to the studio
+    const plan = await this.prisma.membershipPlan.findFirst({
+      where: { id: md.planId, studioId: md.studioId, deletedAt: null },
+    });
+    if (!plan) return null;
+
+    // Validate user has membership in the studio
+    const membership = await this.prisma.studioMembership.findFirst({
+      where: { userId: expectedUserId, studioId: md.studioId, deletedAt: null },
+    });
+    if (!membership) return null;
+
+    return {
+      userId: expectedUserId,
+      studioId: md.studioId,
+      dbSubscriptionId: null,
+      membershipPlanId: md.planId,
+    };
   }
 
   private async onInvoicePaid(invoice: WebhookInvoicePayload): Promise<void> {
@@ -288,7 +336,24 @@ export class StripeWebhookService {
     }
     const ctx = await this.resolveInvoiceContext(invoice);
     if (!ctx) {
-      this.logger.warn(`invoice.paid ${invoice.id} could not resolve context; skipping payment row`);
+      const customerId =
+        typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id ?? null;
+      // Emit a structured ERROR (not warn) so this is queryable in production logs.
+      // The webhook is still marked processed to avoid infinite Stripe retries — but
+      // the log entry is the inspectable record that no Payment row was created.
+      this.logger.error(
+        JSON.stringify({
+          event: 'invoice_paid_skipped',
+          reason: 'context_resolution_failed',
+          invoiceId: invoice.id,
+          customerId,
+          stripeSubscriptionIdLegacy: invoice.subscription ?? null,
+          stripeSubscriptionIdBasil: invoice.parent?.subscription_details?.subscription ?? null,
+          stripeSubscriptionIdResolved: readInvoiceSubscriptionId(invoice),
+          amountCents: invoice.amount_paid,
+          currency: invoice.currency,
+        }),
+      );
       return;
     }
 
@@ -303,6 +368,7 @@ export class StripeWebhookService {
       ? new Date(invoice.status_transitions.paid_at * 1000)
       : new Date();
 
+    // Keyed by stripeInvoiceId — idempotent on Stripe retries
     await this.prisma.payment.upsert({
       where: { stripeInvoiceId: invoice.id },
       create: {
@@ -313,12 +379,14 @@ export class StripeWebhookService {
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         status: PaymentStatus.SUCCEEDED,
+        paymentMethod: PaymentMethod.STRIPE,
         stripeInvoiceId: invoice.id,
         stripePaymentIntentId: piId,
         paidAt,
       },
       update: {
         status: PaymentStatus.SUCCEEDED,
+        paymentMethod: PaymentMethod.STRIPE,
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         stripePaymentIntentId: piId ?? undefined,
@@ -327,7 +395,6 @@ export class StripeWebhookService {
         paidAt,
       },
     });
-
   }
 
   private async onInvoicePaymentFailed(invoice: WebhookInvoicePayload): Promise<void> {
@@ -355,11 +422,13 @@ export class StripeWebhookService {
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         status: PaymentStatus.FAILED,
+        paymentMethod: PaymentMethod.STRIPE,
         stripeInvoiceId: invoice.id,
         stripePaymentIntentId: piId,
       },
       update: {
         status: PaymentStatus.FAILED,
+        paymentMethod: PaymentMethod.STRIPE,
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
         stripePaymentIntentId: piId ?? undefined,

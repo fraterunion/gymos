@@ -7,5 +7,5 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["prisma/seed.ts", "prisma/seed-ares-production.ts", "prisma/seed-ares-review-accounts.ts", "prisma/seed-ares-front-desk.ts", "prisma/seed-ares-waiver.ts", "prisma/diagnose-ares-demo.ts", "prisma/cleanup-ares-demo.ts", "prisma/audit-ares-analytics.ts", "prisma/backfill-ares-review-analytics-exclusion.ts", "prisma/repair-subscription-periods.ts", "prisma/migrate-ares-1.3-schedule.ts", "src/common/date/studio-local-date.ts", "src/schedule-generator/ares-1.3-schedule-pattern.ts", "src/schedule-generator/ares-1.3-class-template-clone.ts"]
+  "include": ["prisma/seed.ts", "prisma/seed-ares-production.ts", "prisma/seed-ares-review-accounts.ts", "prisma/seed-ares-front-desk.ts", "prisma/seed-ares-waiver.ts", "prisma/diagnose-ares-demo.ts", "prisma/cleanup-ares-demo.ts", "prisma/audit-ares-analytics.ts", "prisma/backfill-ares-review-analytics-exclusion.ts", "prisma/backfill-missing-stripe-invoice-payments.ts", "prisma/repair-subscription-periods.ts", "prisma/migrate-ares-1.3-schedule.ts", "src/billing/stripe-invoice.utils.ts", "src/common/date/studio-local-date.ts", "src/schedule-generator/ares-1.3-schedule-pattern.ts", "src/schedule-generator/ares-1.3-class-template-clone.ts"]
 }

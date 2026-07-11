@@ -489,6 +489,7 @@ function SubRow({
       <td className="px-4 py-3 text-zinc-600">
         {sub.membershipPlan.name}
         <p className="text-xs text-zinc-400">
+          Precio del plan:{" "}
           {formatCents(sub.membershipPlan.priceCents, sub.membershipPlan.currency)} /{" "}
           {INTERVAL_LABELS[sub.membershipPlan.billingInterval].toLowerCase()}
         </p>
@@ -503,12 +504,12 @@ function SubRow({
           {isStripeLinked ? (
             <span className="inline-flex w-fit items-center gap-1 text-xs text-indigo-600">
               <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-              Stripe
+              Gestionada por Stripe
             </span>
           ) : (
             <span className="inline-flex w-fit items-center gap-1 text-xs text-amber-600">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              Manual
+              Cobro presencial
             </span>
           )}
         </div>
@@ -812,6 +813,10 @@ export default function MembershipsPage() {
             </select>
           </div>
         </div>
+
+        <p className="mb-3 text-xs text-zinc-400">
+          El precio y la fuente de facturación no confirman que el pago del periodo ya esté registrado. Consulta Analytics para ver ingresos cobrados.
+        </p>
 
         <div className="overflow-x-auto rounded-xl border border-zinc-200">
           <table className="w-full min-w-[640px] text-left">

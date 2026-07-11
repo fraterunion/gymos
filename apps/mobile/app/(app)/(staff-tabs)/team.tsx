@@ -1,22 +1,20 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { BrandButton } from '@/components/BrandButton';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
-import { StaffAvatar } from '@/components/StaffAvatar';
-import { useBranding } from '@/contexts/BrandingContext';
 import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
+import { useBranding } from '@/contexts/BrandingContext';
+import {
+  MemberRow,
+  SpotlightSearch,
+  StaffScreenHeader,
+  TabStrip,
+} from '@/components/staff/StaffPrimitives';
+import { Accent, getColors, Space } from '@/constants/Theme';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import {
   fetchStaff,
@@ -25,177 +23,22 @@ import {
 } from '@/lib/api/staffApi';
 import {
   formatStaffRoleLabel,
-  getStaffRoleChipStyle,
 } from '@/lib/staffLabels';
 import { canAccessTeamTab, canManageTeam } from '@/lib/staffRole';
 import { canAccessMembersDirectory } from '@/lib/memberProfilePermissions';
 import { membersDirectoryHref } from '@/lib/memberProfileRoutes';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
-import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
 type RoleFilter = 'ALL' | StaffRole;
 
 const ROLE_FILTERS: { id: RoleFilter; label: string }[] = [
   { id: 'ALL', label: 'Todos' },
-  { id: 'OWNER', label: 'Dueños' },
-  { id: 'ADMIN', label: 'Administradores' },
-  { id: 'STAFF', label: 'Staff' },
-  { id: 'INSTRUCTOR', label: 'Entrenadores' },
+  { id: 'INSTRUCTOR', label: 'Coaches' },
   { id: 'FRONT_DESK', label: 'Recepción' },
+  { id: 'OWNER', label: 'Dueños' },
+  { id: 'ADMIN', label: 'Admin' },
+  { id: 'STAFF', label: 'Staff' },
 ];
-
-function cardStyle(C: ThemeColors) {
-  return {
-    backgroundColor: '#141416',
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: C.separator,
-    padding: 20,
-  } as const;
-}
-
-function RoleChip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  const C = getColors();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={{
-        paddingVertical: 8,
-        paddingHorizontal: 14,
-        borderRadius: 100,
-        borderWidth: 1,
-        borderColor: selected ? 'rgba(255,255,255,0.35)' : C.separator,
-        backgroundColor: selected ? 'rgba(255,255,255,0.12)' : 'transparent',
-        marginRight: 8,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 12,
-          fontWeight: selected ? '700' : '600',
-          color: selected ? C.text : C.textSub,
-          letterSpacing: 0.2,
-        }}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-function ActiveBadge({ active }: { active: boolean }) {
-  const C = getColors();
-  return (
-    <View
-      style={{
-        backgroundColor: active ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)',
-        borderRadius: 100,
-        paddingVertical: 4,
-        paddingHorizontal: 8,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 10,
-          fontWeight: '700',
-          letterSpacing: 0.5,
-          textTransform: 'uppercase',
-          color: active ? '#6EE7B7' : C.textMute,
-        }}
-      >
-        {active ? 'Activo' : 'Inactivo'}
-      </Text>
-    </View>
-  );
-}
-
-function StaffCard({
-  member,
-  index,
-  onPress,
-}: {
-  member: StaffMemberDto;
-  index: number;
-  onPress: () => void;
-}) {
-  const C = getColors();
-  const { user, staffProfile, role } = member;
-  const isActive = staffProfile ? staffProfile.isActive : true;
-  const roleStyle = getStaffRoleChipStyle(role);
-
-  return (
-    <Animated.View entering={FadeInDown.delay(Math.min(index * 40, 200)).duration(420)}>
-      <Pressable
-        accessibilityRole="button"
-        onPress={onPress}
-        style={({ pressed }) => [
-          cardStyle(C),
-          {
-            marginBottom: 12,
-            opacity: pressed ? 0.92 : 1,
-            flexDirection: 'row',
-            alignItems: 'center',
-          },
-        ]}
-      >
-        <StaffAvatar
-          userId={user.id}
-          firstName={user.firstName}
-          lastName={user.lastName}
-          photoUrl={staffProfile?.photoUrl}
-          size={52}
-          style={{ marginRight: 14 }}
-        />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text
-            style={{
-              fontSize: 17,
-              fontWeight: '700',
-              letterSpacing: -0.3,
-              color: C.text,
-            }}
-            numberOfLines={1}
-          >
-            {user.firstName} {user.lastName}
-          </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 8 }}>
-            <View
-              style={{
-                backgroundColor: roleStyle.bg,
-                borderRadius: 100,
-                paddingVertical: 4,
-                paddingHorizontal: 8,
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 10,
-                  fontWeight: '700',
-                  letterSpacing: 0.5,
-                  textTransform: 'uppercase',
-                  color: roleStyle.text,
-                }}
-              >
-                {formatStaffRoleLabel(role)}
-              </Text>
-            </View>
-            <ActiveBadge active={isActive} />
-          </View>
-        </View>
-        <FontAwesome name="chevron-right" size={14} color="rgba(255,255,255,0.28)" />
-      </Pressable>
-    </Animated.View>
-  );
-}
 
 export default function StaffTeamScreen() {
   const router = useRouter();
@@ -238,11 +81,8 @@ export default function StaffTeamScreen() {
   const load = useCallback(
     async (isRefresh = false) => {
       if (!studioId || !canAccessTeamTab(role)) return;
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
       setError(null);
       try {
         const res = await fetchStaff(studioId, {
@@ -269,9 +109,7 @@ export default function StaffTeamScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (studioId && canAccessTeamTab(role)) {
-        void load();
-      }
+      if (studioId && canAccessTeamTab(role)) void load();
     }, [studioId, role, load]),
   );
 
@@ -283,8 +121,6 @@ export default function StaffTeamScreen() {
     }
     void load();
   }, [debouncedSearch, roleFilter, loadedOnce, studioId, role, load]);
-
-  const showInitialLoader = loading && !loadedOnce;
 
   if (!canAccessTeamTab(role)) {
     return <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} />;
@@ -301,7 +137,7 @@ export default function StaffTeamScreen() {
     );
   }
 
-  if (showInitialLoader) {
+  if (loading && !loadedOnce) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <ScreenLoader />
@@ -320,49 +156,16 @@ export default function StaffTeamScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          paddingHorizontal: Space.screenH,
-          paddingBottom: TAB_BAR_CLEARANCE,
-        }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: TAB_BAR_CLEARANCE }}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void load(true)}
-            tintColor="rgba(255,255,255,0.4)"
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor="rgba(255,255,255,0.35)" />
         }
         keyboardShouldPersistTaps="handled"
       >
-        <Animated.View entering={FadeInDown.duration(450)} style={{ paddingTop: 28, paddingBottom: 20 }}>
-          <Text
-            style={{
-              fontSize: 38,
-              fontWeight: '800',
-              letterSpacing: -1.3,
-              color: C.text,
-              lineHeight: 44,
-            }}
-          >
-            Equipo
-          </Text>
-          <Text
-            style={{
-              fontSize: 15,
-              color: C.textSub,
-              lineHeight: 22,
-              marginTop: 10,
-              letterSpacing: -0.1,
-            }}
-          >
-            {canManage
-              ? 'Administra tu equipo de coaching y operaciones.'
-              : 'Consulta tu equipo de coaching y operaciones (solo lectura).'}
-          </Text>
-        </Animated.View>
+        <StaffScreenHeader title="Equipo" />
 
         {canManage ? (
-          <View style={{ marginBottom: 20 }}>
+          <View style={{ marginBottom: Space.sp3 }}>
             <BrandButton
               label="Agregar staff"
               accentColor={primaryColor}
@@ -371,133 +174,105 @@ export default function StaffTeamScreen() {
           </View>
         ) : null}
 
+        {/* Members directory entry — open row, no card chrome */}
         {canAccessMembersDirectory(role) && role === 'STAFF' ? (
           <Pressable
             accessibilityRole="button"
             onPress={() => router.push(membersDirectoryHref())}
-            style={[
-              cardStyle(C),
-              {
-                marginBottom: 20,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 14,
-              },
-            ]}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: Space.sp2,
+              paddingVertical: Space.sp2,
+              marginBottom: Space.sp2,
+              borderBottomWidth: 1,
+              borderBottomColor: C.separator,
+              opacity: pressed ? 0.88 : 1,
+            })}
           >
-            <View
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 14,
-                backgroundColor: 'rgba(255,255,255,0.06)',
-                borderWidth: 1,
-                borderColor: C.separator,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <FontAwesome name="users" size={18} color={C.textSub} />
-            </View>
+            <FontAwesome name="users" size={16} color={Accent} style={{ width: 20 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: C.text }}>Directorio de miembros</Text>
-              <Text style={{ fontSize: 13, color: C.textSub, marginTop: 4, lineHeight: 18 }}>
-                Busca clientes del estudio (solo lectura).
-              </Text>
+              <Text style={{ fontSize: 16, fontWeight: '600', color: C.text, letterSpacing: -0.3 }}>Miembros</Text>
+              <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>Directorio del estudio</Text>
             </View>
-            <FontAwesome name="chevron-right" size={14} color="rgba(255,255,255,0.28)" />
+            <FontAwesome name="chevron-right" size={12} color={C.textMute} />
           </Pressable>
         ) : null}
 
-        <TextInput
+        <SpotlightSearch
           value={search}
           onChangeText={setSearch}
           placeholder="Buscar por nombre o correo…"
-          placeholderTextColor={C.textMute}
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={{
-            backgroundColor: '#141416',
-            borderWidth: 1,
-            borderColor: C.separator,
-            borderRadius: 16,
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            fontSize: 15,
-            color: C.text,
-            marginBottom: 14,
-          }}
         />
 
+        {/* Text tab strip — GymOS signature via shared TabStrip component */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 18 }}
+          contentContainerStyle={{ paddingBottom: 4 }}
         >
-          {ROLE_FILTERS.map((f) => (
-            <RoleChip
-              key={f.id}
-              label={f.label}
-              selected={roleFilter === f.id}
-              onPress={() => setRoleFilter(f.id)}
-            />
-          ))}
+          <TabStrip<RoleFilter>
+            options={ROLE_FILTERS}
+            value={roleFilter}
+            onChange={setRoleFilter}
+            style={{ marginBottom: 0 }}
+          />
         </ScrollView>
+        <View style={{ height: 1, backgroundColor: C.separator, marginBottom: Space.sp3 }} />
 
-        {error ? (
-          <Text style={{ fontSize: 13, color: '#FCA5A5', marginBottom: 12 }}>{error}</Text>
+        {error ? <Text style={{ fontSize: 13, color: C.textSub, marginBottom: Space.sp1 }}>{error}</Text> : null}
+
+        {total > 0 ? (
+          <Text style={{ fontSize: 12, color: C.textMute, marginBottom: Space.sp2 }}>
+            {total} miembro{total !== 1 ? 's' : ''}
+          </Text>
         ) : null}
 
-        <Text style={{ fontSize: 12, color: C.textMute, marginBottom: 16 }}>
-          {total} miembro{total !== 1 ? 's' : ''} del equipo
-        </Text>
-
+        {/* Staff list — no bordered container wrapper */}
         {staff.length === 0 ? (
-          <View style={[cardStyle(C), { alignItems: 'center', paddingVertical: 36 }]}>
-            <Text
-              style={{
-                fontSize: 17,
-                fontWeight: '700',
-                color: C.text,
-                textAlign: 'center',
-                marginBottom: 8,
-              }}
-            >
-              No se encontraron miembros del equipo.
+          <View style={{ paddingTop: Space.sp3, paddingBottom: Space.sp4 }}>
+            <Text style={{ fontSize: 17, fontWeight: '600', color: C.text }}>
+              No se encontraron miembros.
             </Text>
-            <Text style={{ fontSize: 14, color: C.textSub, textAlign: 'center', lineHeight: 21 }}>
+            <Text style={{ fontSize: 14, color: C.textSub, marginTop: 6, lineHeight: 21 }}>
               {debouncedSearch || roleFilter !== 'ALL'
-                ? 'Intenta ajustar tu búsqueda o filtros.'
-                : 'Tu directorio de equipo está vacío.'}
+                ? 'Ajusta tu búsqueda o filtro.'
+                : 'El directorio del equipo está vacío.'}
             </Text>
           </View>
         ) : (
-          staff.map((member, index) => (
-            <StaffCard
-              key={member.membershipId}
-              member={member}
-              index={index}
-              onPress={() =>
-                router.push(`/(app)/staff-member/${member.userId}` as Href)
-              }
-            />
-          ))
+          staff.map((member, index) => {
+            const { user, staffProfile, role: memberRole } = member;
+            const isActive = staffProfile ? staffProfile.isActive : true;
+            const initials = `${user.firstName?.[0] ?? ''}${user.lastName?.[0] ?? ''}`.toUpperCase();
+            // Role + status as plain subtitle text — no pill chrome
+            const roleLabel = formatStaffRoleLabel(memberRole);
+            const statusLabel = isActive ? '' : ' · Inactivo';
+            return (
+              <MemberRow
+                key={member.membershipId}
+                initials={initials || '?'}
+                name={`${user.firstName} ${user.lastName}`}
+                subtitle={`${roleLabel}${statusLabel}`}
+                trailing={
+                  <FontAwesome
+                    name="chevron-right"
+                    size={12}
+                    color={isActive ? C.textMute : C.separator}
+                  />
+                }
+                index={index}
+                onPress={() => router.push(`/(app)/staff-member/${member.userId}` as Href)}
+              />
+            );
+          })
         )}
 
-        {canManage ? null : (
-          <Text
-            style={{
-              fontSize: 12,
-              color: C.textMute,
-              textAlign: 'center',
-              lineHeight: 18,
-              marginTop: 24,
-              paddingHorizontal: 12,
-            }}
-          >
+        {!canManage ? (
+          <Text style={{ fontSize: 12, color: C.textMute, textAlign: 'center', marginTop: 32, lineHeight: 18 }}>
             Los cambios del equipo los administran OWNER y ADMIN.
           </Text>
-        )}
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

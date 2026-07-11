@@ -266,7 +266,7 @@ export default function AddStaffScreen() {
             <Pressable
               accessibilityRole="button"
               onPress={() => router.back()}
-              style={{ marginTop: 16, alignItems: 'center', paddingVertical: 12 }}
+              style={{ marginTop: 16, alignItems: 'center', paddingVertical: Space.sp2 }}
             >
               <Text style={{ fontSize: 15, color: C.textSub }}>Cancelar</Text>
             </Pressable>
