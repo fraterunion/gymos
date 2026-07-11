@@ -166,10 +166,9 @@ export function filterMemberScheduleClasses(
 ): ScheduledClassDto[] {
   return classes
     .filter((row) => {
-      if (row.status !== 'SCHEDULED') return false;
-      if (new Date(row.startsAt).getTime() <= nowMs) return false;
+      if (!isMemberScheduleRowInWeek(row, timeZone, weekStartKey, weekEndKey, nowMs)) return false;
       const key = calendarDayKeyInZone(row.startsAt, timeZone);
-      if (key !== dayKey || key < weekStartKey || key > weekEndKey) return false;
+      if (key !== dayKey) return false;
       return matchesFilter(row.classTemplate.name, classFilterId);
     })
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
@@ -177,4 +176,118 @@ export function filterMemberScheduleClasses(
 
 export function memberWeekDayKeys(weekStartKey: string): string[] {
   return weekDayKeysFromStart(weekStartKey);
+}
+
+function isMemberScheduleRowInWeek(
+  row: ScheduledClassDto,
+  timeZone: string,
+  weekStartKey: string,
+  weekEndKey: string,
+  nowMs: number,
+): boolean {
+  if (row.status !== 'SCHEDULED') return false;
+  if (new Date(row.startsAt).getTime() <= nowMs) return false;
+  const key = calendarDayKeyInZone(row.startsAt, timeZone);
+  return key >= weekStartKey && key <= weekEndKey;
+}
+
+/** Per-day counts for a class filter within the visible week. */
+export function buildMemberFilteredClassCountByDay(
+  classes: ScheduledClassDto[],
+  timeZone: string,
+  weekStartKey: string,
+  weekEndKey: string,
+  classFilterId: string,
+  matchesFilter: (name: string, filterId: string) => boolean,
+  nowMs: number = Date.now(),
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of classes) {
+    if (!isMemberScheduleRowInWeek(row, timeZone, weekStartKey, weekEndKey, nowMs)) continue;
+    if (!matchesFilter(row.classTemplate.name, classFilterId)) continue;
+    const key = calendarDayKeyInZone(row.startsAt, timeZone);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export function weekHasMatchingFilteredClasses(
+  filteredClassCountByDay: ReadonlyMap<string, number>,
+): boolean {
+  for (const count of filteredClassCountByDay.values()) {
+    if (count > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Nearest-day rule when the selected day has no classes for the active filter:
+ * 1. Search forward from the selected day (later days in the same week).
+ * 2. If none exist forward, search backward (earlier days).
+ * 3. Return the first day with ≥1 matching class, or null if none in the week.
+ *
+ * Example: selected Tuesday, Push on Thursday and Monday → returns Thursday.
+ * Example: selected Tuesday, Push only on Monday → returns Monday.
+ */
+export function findNearestDayWithMatchingClasses(params: {
+  selectedDayKey: string;
+  weekDayKeys: string[];
+  classes: ScheduledClassDto[];
+  timeZone: string;
+  weekStartKey: string;
+  weekEndKey: string;
+  classFilterId: string;
+  matchesFilter: (name: string, filterId: string) => boolean;
+  nowMs?: number;
+}): string | null {
+  const {
+    selectedDayKey,
+    weekDayKeys,
+    classes,
+    timeZone,
+    weekStartKey,
+    weekEndKey,
+    classFilterId,
+    matchesFilter,
+    nowMs = Date.now(),
+  } = params;
+
+  const filteredCounts = buildMemberFilteredClassCountByDay(
+    classes,
+    timeZone,
+    weekStartKey,
+    weekEndKey,
+    classFilterId,
+    matchesFilter,
+    nowMs,
+  );
+
+  const selectedIndex = weekDayKeys.indexOf(selectedDayKey);
+  if (selectedIndex < 0) return null;
+
+  for (let i = selectedIndex + 1; i < weekDayKeys.length; i++) {
+    const key = weekDayKeys[i]!;
+    if ((filteredCounts.get(key) ?? 0) > 0) return key;
+  }
+
+  for (let i = selectedIndex - 1; i >= 0; i--) {
+    const key = weekDayKeys[i]!;
+    if ((filteredCounts.get(key) ?? 0) > 0) return key;
+  }
+
+  return null;
+}
+
+/** Screen-reader message when a filter auto-selects another day in the week. */
+export function formatFilterAutoJumpAccessibilityMessage(
+  filterLabel: string,
+  dayKey: string,
+  todayKey: string,
+  timeZone: string,
+): string {
+  if (dayKey === todayKey) {
+    return `Mostrando clases ${filterLabel} de hoy.`;
+  }
+  const date = formatMemberDayHeading(dayKey, '__not_today__', timeZone).toLowerCase();
+  return `Mostrando clases ${filterLabel} del ${date}.`;
 }

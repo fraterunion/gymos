@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshControl, ScrollView, Text, View } from 'react-native';
+import { AccessibilityInfo, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -14,6 +14,7 @@ import { OpenGymBenefitCard } from '@/components/OpenGymBenefitCard';
 import { ScheduleFilterBar } from '@/components/ScheduleFilterBar';
 import {
   ARES_CLASS_FILTER_ALL,
+  ARES_CLASS_FILTERS,
   matchesAresClassFilter,
 } from '@/lib/aresScheduleFilters';
 import {
@@ -28,11 +29,15 @@ import { todayKeyInZone, weekBoundsInZone } from '@/lib/datetime';
 import { resolveScheduledClassImageUri } from '@/lib/imagery';
 import {
   buildMemberClassCountByDay,
+  buildMemberFilteredClassCountByDay,
   filterMemberScheduleClasses,
+  findNearestDayWithMatchingClasses,
+  formatFilterAutoJumpAccessibilityMessage,
   formatMemberDayHeading,
   formatMemberWeekRangeLabel,
   memberWeekDayKeys,
   resolveDefaultMemberDayKey,
+  weekHasMatchingFilteredClasses,
 } from '@/lib/memberSchedule';
 import { getColors, Space } from '@/constants/Theme';
 
@@ -134,14 +139,27 @@ export default function ScheduleScreen() {
     ],
   );
 
-  const unfilteredDayCount = unfilteredClassCountByDay.get(activeDayKey) ?? 0;
-  const dayHeading = useMemo(
-    () => formatMemberDayHeading(activeDayKey, todayKey, timeZone),
-    [activeDayKey, todayKey, timeZone],
+  const filteredClassCountByDay = useMemo(
+    () =>
+      buildMemberFilteredClassCountByDay(
+        classes,
+        timeZone,
+        weekBounds.startKey,
+        weekBounds.endKey,
+        classFilterId,
+        matchesAresClassFilter,
+      ),
+    [classes, timeZone, weekBounds.startKey, weekBounds.endKey, classFilterId],
   );
 
-  const handleSelectDay = useCallback((dayKey: string) => {
-    setSelectedDayKey(dayKey);
+  const weekHasFilterMatches = useMemo(
+    () =>
+      classFilterId === ARES_CLASS_FILTER_ALL ||
+      weekHasMatchingFilteredClasses(filteredClassCountByDay),
+    [classFilterId, filteredClassCountByDay],
+  );
+
+  const scrollToClassList = useCallback(() => {
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({
         y: Math.max(0, listAnchorY.current - 8),
@@ -149,6 +167,78 @@ export default function ScheduleScreen() {
       });
     });
   }, []);
+
+  const handleSelectDay = useCallback(
+    (dayKey: string) => {
+      setSelectedDayKey(dayKey);
+      scrollToClassList();
+    },
+    [scrollToClassList],
+  );
+
+  const handleSelectFilter = useCallback(
+    (filterId: string) => {
+      setClassFilterId(filterId);
+
+      if (filterId === ARES_CLASS_FILTER_ALL) return;
+
+      const currentDay = selectedDayKey ?? defaultDayKey;
+      const currentDayMatches = filterMemberScheduleClasses(
+        classes,
+        timeZone,
+        currentDay,
+        weekBounds.startKey,
+        weekBounds.endKey,
+        filterId,
+        matchesAresClassFilter,
+      );
+
+      if (currentDayMatches.length > 0) return;
+
+      const nearestDay = findNearestDayWithMatchingClasses({
+        selectedDayKey: currentDay,
+        weekDayKeys,
+        classes,
+        timeZone,
+        weekStartKey: weekBounds.startKey,
+        weekEndKey: weekBounds.endKey,
+        classFilterId: filterId,
+        matchesFilter: matchesAresClassFilter,
+      });
+
+      if (!nearestDay) return;
+
+      setSelectedDayKey(nearestDay);
+
+      const filterLabel =
+        ARES_CLASS_FILTERS.find((f) => f.id === filterId)?.label ?? filterId;
+      AccessibilityInfo.announceForAccessibility(
+        formatFilterAutoJumpAccessibilityMessage(
+          filterLabel,
+          nearestDay,
+          todayKey,
+          timeZone,
+        ),
+      );
+      scrollToClassList();
+    },
+    [
+      selectedDayKey,
+      defaultDayKey,
+      classes,
+      timeZone,
+      weekDayKeys,
+      weekBounds.startKey,
+      weekBounds.endKey,
+      todayKey,
+      scrollToClassList,
+    ],
+  );
+
+  const dayHeading = useMemo(
+    () => formatMemberDayHeading(activeDayKey, todayKey, timeZone),
+    [activeDayKey, todayKey, timeZone],
+  );
 
   const handleWeekChange = useCallback((next: number) => {
     setWeekOffset(next);
@@ -170,13 +260,13 @@ export default function ScheduleScreen() {
   const canGoPrev = weekOffset > 0;
 
   const emptyTitle =
-    classFilterId !== ARES_CLASS_FILTER_ALL && unfilteredDayCount > 0
-      ? 'No hay clases que coincidan con este filtro.'
-      : 'No hay clases programadas para este día.';
+    classFilterId === ARES_CLASS_FILTER_ALL
+      ? 'No hay clases programadas para este día.'
+      : !weekHasFilterMatches
+        ? 'No hay clases de este tipo esta semana.'
+        : 'No hay clases de este tipo este día.';
   const emptyBody =
-    classFilterId !== ARES_CLASS_FILTER_ALL && unfilteredDayCount > 0
-      ? undefined
-      : 'Prueba otro día o cambia de semana.';
+    classFilterId === ARES_CLASS_FILTER_ALL ? 'Prueba otro día o cambia de semana.' : undefined;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
@@ -240,7 +330,7 @@ export default function ScheduleScreen() {
           <OpenGymBenefitCard compact delay={0} />
 
           {/* 5. Class filters */}
-          <ScheduleFilterBar selectedId={classFilterId} onSelect={setClassFilterId} />
+          <ScheduleFilterBar selectedId={classFilterId} onSelect={handleSelectFilter} />
 
           {/* 6. Selected date heading */}
           <View
