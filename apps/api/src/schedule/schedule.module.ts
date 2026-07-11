@@ -10,4 +10,4 @@ import { ScheduleService } from './schedule.service';
   providers: [ScheduleService],
   exports: [ScheduleService],
 })
-export class ScheduleModule {}
+export class StudioScheduleModule {}

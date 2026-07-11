@@ -1,10 +1,11 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import { ScheduleQueryDto } from '../schedule/dto/schedule-query.dto';
+import { PublicThrottlerGuard } from './public-throttler.guard';
 import { PublicDiscoveryService } from './public-discovery.service';
 
 @Controller('public/studios')
-@UseGuards(ThrottlerGuard)
+@UseGuards(PublicThrottlerGuard)
 @Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class PublicDiscoveryController {
   constructor(private readonly publicDiscoveryService: PublicDiscoveryService) {}

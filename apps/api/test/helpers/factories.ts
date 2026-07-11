@@ -43,6 +43,8 @@ export async function createClassTemplate(
       durationMinutes: opts.durationMinutes ?? 60,
       defaultCapacity: opts.defaultCapacity ?? 12,
       description: opts.description ?? null,
+      equipment: [],
+      tags: [],
       deletedAt: opts.deletedAt ?? null,
     },
   });

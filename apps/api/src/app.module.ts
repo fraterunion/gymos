@@ -22,7 +22,7 @@ import { MembershipPlansModule } from './membership-plans/membership-plans.modul
 import { MembershipsModule } from './memberships/memberships.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PublicDiscoveryModule } from './public-discovery/public-discovery.module';
-import { ScheduleModule } from './schedule/schedule.module';
+import { StudioScheduleModule } from './schedule/schedule.module';
 import { StaffModule } from './staff/staff.module';
 import { StudioSettingsModule } from './studio-settings/studio-settings.module';
 import { StudiosModule } from './studios/studios.module';
@@ -39,6 +39,8 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
   return !url.includes('/auth/');
 }
 
+const isE2e = process.env['GYMOS_E2E'] === '1';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -46,7 +48,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
       validate: validateEnv,
       envFilePath: ['.env'],
     }),
-    NestSchedulerModule.forRoot(),
+    ...(isE2e ? [] : [NestSchedulerModule.forRoot()]),
     ThrottlerModule.forRoot([
       {
         name: 'default',
@@ -69,7 +71,7 @@ function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
     MembersModule,
     StaffModule,
     ClassTemplatesModule,
-    ScheduleModule,
+    StudioScheduleModule,
     ScheduleTemplatesModule,
     ScheduleGeneratorModule,
     StudioSettingsModule,
