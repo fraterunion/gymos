@@ -241,13 +241,41 @@ svg {
   color: var(--text-muted);
 }
 
-.content-card ul {
+.content-card ul,
+.content-card ol {
   margin: 0 0 16px;
   padding-left: 1.2rem;
 }
 
 .content-card li {
   margin-bottom: 8px;
+}
+
+.numbered-steps {
+  list-style: decimal;
+  padding-left: 1.35rem;
+}
+
+.cta-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 12px 22px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: #ffffff;
+  color: #000000;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+  transition: opacity 0.15s ease;
+}
+
+.cta-button:hover {
+  opacity: 0.92;
+  color: #000000;
 }
 
 .content-card a {

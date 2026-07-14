@@ -7,6 +7,7 @@ const NAV_LINKS = [
   { href: '/privacy', label: 'Privacy' },
   { href: '/support', label: 'Support' },
   { href: '/terms', label: 'Terms' },
+  { href: '/account-deletion', label: 'Account Deletion' },
 ] as const;
 
 type Props = {
