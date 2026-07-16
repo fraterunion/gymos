@@ -2,13 +2,7 @@
   "extends": "@gymos/config/tsconfig/base",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist",
-    "module": "CommonJS",
-    "moduleResolution": "node",
-    "declaration": true,
-    "declarationMap": true,
-    "noEmit": false,
-    "emitDeclarationOnly": false
+    "noEmit": true
   },
   "include": ["src/**/*.ts"]
 }

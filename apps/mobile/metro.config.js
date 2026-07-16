@@ -2,7 +2,16 @@ const path = require('path');
 const { getDefaultConfig } = require('expo/metro-config');
 const { withNativeWind } = require('nativewind/metro');
 
-const config = getDefaultConfig(__dirname);
+const projectRoot = __dirname;
+const WORKSPACE_ROOT = path.resolve(projectRoot, '../..');
+const config = getDefaultConfig(projectRoot);
+
+// Workspace packages (e.g. @gymos/utils) live outside the app root.
+config.watchFolders = [WORKSPACE_ROOT];
+config.resolver.nodeModulesPaths = [
+  path.resolve(projectRoot, 'node_modules'),
+  path.resolve(WORKSPACE_ROOT, 'node_modules'),
+];
 
 // ─── React deduplication ───────────────────────────────────────────────────
 // The pnpm monorepo has two peer-resolved instances of use-sync-external-store@1.6.0:
@@ -21,7 +30,6 @@ const config = getDefaultConfig(__dirname);
 // This resolver MUST be set before withNativeWind — NativeWind/css-interop installs
 // its own resolveRequest and chains whatever is in config.resolver.resolveRequest at
 // that moment. Setting ours first means NativeWind chains ours correctly.
-const WORKSPACE_ROOT = path.resolve(__dirname, '../..');
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (
