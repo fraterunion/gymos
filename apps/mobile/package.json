@@ -25,6 +25,7 @@
     "eas:build:android:production": "eas build --platform android --profile production"
   },
   "dependencies": {
+    "@gymos/utils": "workspace:*",
     "@expo/vector-icons": "^15.0.3",
     "@react-navigation/bottom-tabs": "7.4.0",
     "@react-navigation/native": "7.1.8",

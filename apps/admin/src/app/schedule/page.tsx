@@ -27,22 +27,17 @@ import { fetchClassTemplates, type ClassTemplateDto } from "@/lib/api/classTempl
 import { fetchStaffInstructors, type StaffInstructorDto } from "@/lib/api/staff";
 import { calendarDayKeyInZone, todayKeyInZone } from "@/lib/datetime";
 import { classRosterHref } from "@/lib/classRosterNav";
+import {
+  filterOperationalScheduleInWeek,
+  mondayStartKeyForInstant,
+  studioLocalDateKeyToUtcAnchor,
+  studioWeekQueryRangeIso,
+  weekBoundsInZone,
+  weekDayKeysFromStart,
+  weekOffsetFromMondayStartKey,
+} from "@/lib/operationalSchedule";
 
 // ── date helpers ──────────────────────────────────────────────────────────────
-
-function getMondayOf(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  const day = d.getDay();
-  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-  return d;
-}
-
-function addDays(date: Date, n: number): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() + n);
-  return d;
-}
 
 function toLocalDatetimeString(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -57,26 +52,11 @@ function formatTime(iso: string, tz: string): string {
   }).format(new Date(iso));
 }
 
-function formatDayHeader(date: Date, tz: string): { weekday: string; day: string } {
-  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(date);
-  const day = new Intl.DateTimeFormat("en-US", { timeZone: tz, day: "numeric" }).format(date);
+function formatDayHeader(dayKey: string, tz: string): { weekday: string; day: string } {
+  const anchor = new Date(`${dayKey}T12:00:00Z`);
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(anchor);
+  const day = new Intl.DateTimeFormat("en-US", { timeZone: tz, day: "numeric" }).format(anchor);
   return { weekday, day };
-}
-
-function formatWeekRange(start: Date, tz: string): string {
-  const end = addDays(start, 6);
-  const s = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    month: "short",
-    day: "numeric",
-  }).format(start);
-  const e = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(end);
-  return `${s} – ${e}`;
 }
 
 // ── schedule form ─────────────────────────────────────────────────────────────
@@ -532,22 +512,15 @@ function ClassCard({
   onViewRoster: () => void;
   onEdit: () => void;
 }) {
-  const isCancelled = cls.status === "CANCELLED";
   const accentColor = cls.classTemplate.color;
 
   return (
-    <div
-      className={`w-full rounded-xl border p-2.5 text-left transition ${
-        isCancelled
-          ? "border-zinc-200 bg-zinc-50 opacity-50"
-          : "border-zinc-200 bg-white shadow-sm hover:border-zinc-300 hover:shadow"
-      }`}
-    >
-      {accentColor && !isCancelled ? (
+    <div className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-left shadow-sm transition hover:border-zinc-300 hover:shadow">
+      {accentColor ? (
         <div className="mb-1.5 h-0.5 w-8 rounded-full" style={{ backgroundColor: accentColor }} />
       ) : null}
       <button type="button" onClick={onViewRoster} className="w-full text-left">
-        <p className={`text-xs font-semibold leading-snug ${isCancelled ? "line-through text-zinc-400" : "text-zinc-900"}`}>
+        <p className="text-xs font-semibold leading-snug text-zinc-900">
           {cls.classTemplate.name}
         </p>
         <p className="mt-0.5 text-[11px] text-zinc-500">
@@ -582,7 +555,7 @@ export default function SchedulePage() {
   const { selectedStudioId, selected, loading: studioLoading, error: studioError } = useDeskStudio();
   const tz = selected?.studio.timezone ?? "UTC";
 
-  const [weekStart, setWeekStart] = useState<Date>(() => getMondayOf(new Date()));
+  const [weekOffset, setWeekOffset] = useState(0);
   const [classes, setClasses] = useState<ScheduledClassDto[]>([]);
   const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
   const [members, setMembers] = useState<StaffInstructorDto[]>([]);
@@ -590,7 +563,32 @@ export default function SchedulePage() {
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ScheduleModalState>({ type: "closed" });
 
-  const weekEnd = useMemo(() => addDays(weekStart, 7), [weekStart]);
+  const urlWeekStart = searchParams.get("weekStart");
+  const weekOffsetFromUrl = useMemo(() => {
+    if (!urlWeekStart) return null;
+    const mondayKey = mondayStartKeyForInstant(urlWeekStart, tz);
+    return weekOffsetFromMondayStartKey(mondayKey, tz);
+  }, [urlWeekStart, tz]);
+  const effectiveWeekOffset = weekOffsetFromUrl ?? weekOffset;
+
+  const shiftWeek = useCallback(
+    (delta: number) => {
+      const base = weekOffsetFromUrl ?? weekOffset;
+      setWeekOffset(base + delta);
+      if (urlWeekStart) router.replace("/schedule");
+    },
+    [router, urlWeekStart, weekOffset, weekOffsetFromUrl],
+  );
+
+  const weekBounds = useMemo(
+    () => weekBoundsInZone(tz, effectiveWeekOffset),
+    [tz, effectiveWeekOffset],
+  );
+  const weekDays = useMemo(() => weekDayKeysFromStart(weekBounds.startKey), [weekBounds.startKey]);
+  const queryRange = useMemo(
+    () => studioWeekQueryRangeIso(weekBounds.startKey, weekBounds.endKey, tz),
+    [weekBounds.endKey, weekBounds.startKey, tz],
+  );
 
   const load = useCallback(async () => {
     if (!selectedStudioId) {
@@ -602,7 +600,7 @@ export default function SchedulePage() {
     setError(null);
     try {
       const [cls, tpl, mem] = await Promise.all([
-        fetchStudioSchedule(selectedStudioId, weekStart.toISOString(), weekEnd.toISOString()),
+        fetchStudioSchedule(selectedStudioId, queryRange.from, queryRange.to),
         fetchClassTemplates(selectedStudioId),
         fetchStaffInstructors(selectedStudioId),
       ]);
@@ -614,49 +612,47 @@ export default function SchedulePage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedStudioId, weekStart, weekEnd]);
+  }, [selectedStudioId, queryRange.from, queryRange.to]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
     return () => clearTimeout(t);
   }, [load]);
 
-  useEffect(() => {
-    const ws = searchParams.get("weekStart");
-    if (!ws) return;
-    const parsed = new Date(ws);
-    if (!Number.isNaN(parsed.getTime())) {
-      setWeekStart(getMondayOf(parsed));
-    }
-  }, [searchParams]);
+  const activeClasses = useMemo(
+    () =>
+      filterOperationalScheduleInWeek(
+        classes,
+        weekBounds.startKey,
+        weekBounds.endKey,
+        tz,
+        selectedStudioId ?? undefined,
+      ),
+    [classes, weekBounds.endKey, weekBounds.startKey, selectedStudioId, tz],
+  );
 
   const openClassRoster = useCallback(
     (cls: ScheduledClassDto) => {
       router.push(
         classRosterHref(cls.id, {
           returnTo: "schedule",
-          weekStart: weekStart.toISOString(),
+          weekStart: studioLocalDateKeyToUtcAnchor(weekBounds.startKey, tz).toISOString(),
         }),
       );
     },
-    [router, weekStart],
-  );
-
-  const weekDays = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart],
+    [router, weekBounds.startKey, tz],
   );
 
   const classesByDay = useMemo(() => {
     const map = new Map<string, ScheduledClassDto[]>();
-    for (const cls of classes) {
+    for (const cls of activeClasses) {
       const key = calendarDayKeyInZone(cls.startsAt, tz);
       const arr = map.get(key) ?? [];
       arr.push(cls);
       map.set(key, arr);
     }
     return map;
-  }, [classes, tz]);
+  }, [activeClasses, tz]);
 
   const todayKey = useMemo(() => todayKeyInZone(tz), [tz]);
 
@@ -690,12 +686,15 @@ export default function SchedulePage() {
       <div className="space-y-6">
         <PageHeader
           title="Calendario"
-          subtitle={formatWeekRange(weekStart, tz)}
+          subtitle={weekBounds.label}
           actions={
             <>
               <button
                 type="button"
-                onClick={() => setWeekStart(getMondayOf(new Date()))}
+                onClick={() => {
+                  setWeekOffset(0);
+                  if (urlWeekStart) router.replace("/schedule");
+                }}
                 className={adminSecondaryBtn}
               >
                 Hoy
@@ -703,14 +702,14 @@ export default function SchedulePage() {
               <div className="flex rounded-xl border border-zinc-200">
                 <button
                   type="button"
-                  onClick={() => setWeekStart((w) => addDays(w, -7))}
+                  onClick={() => shiftWeek(-1)}
                   className="rounded-l-xl px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                 >
                   ‹
                 </button>
                 <button
                   type="button"
-                  onClick={() => setWeekStart((w) => addDays(w, 7))}
+                  onClick={() => shiftWeek(1)}
                   className="rounded-r-xl border-l border-zinc-200 px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                 >
                   ›
@@ -740,13 +739,12 @@ export default function SchedulePage() {
         <SurfaceCard padding="sm" className="overflow-x-auto p-0">
           <div className="min-w-[700px]">
             <div className="grid grid-cols-7 border-b border-zinc-100">
-              {weekDays.map((day) => {
-                const key = calendarDayKeyInZone(day.toISOString(), tz);
-                const { weekday, day: dayNum } = formatDayHeader(day, tz);
-                const isToday = key === todayKey;
+              {weekDays.map((dayKey) => {
+                const { weekday, day: dayNum } = formatDayHeader(dayKey, tz);
+                const isToday = dayKey === todayKey;
                 return (
                   <div
-                    key={key}
+                    key={dayKey}
                     className="border-r border-zinc-100 px-3 py-3 text-center last:border-r-0"
                   >
                     <p className={`text-[11px] font-medium uppercase tracking-wider ${isToday ? "text-zinc-900" : "text-zinc-400"}`}>
@@ -769,13 +767,10 @@ export default function SchedulePage() {
 
             {/* Day columns */}
             <div className="grid grid-cols-7 divide-x divide-zinc-100">
-              {weekDays.map((day) => {
-                const key = calendarDayKeyInZone(day.toISOString(), tz);
-                const dayCls = (classesByDay.get(key) ?? []).sort(
-                  (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-                );
+              {weekDays.map((dayKey) => {
+                const dayCls = classesByDay.get(dayKey) ?? [];
                 return (
-                  <div key={key} className="min-h-[120px] p-2">
+                  <div key={dayKey} className="min-h-[120px] p-2">
                     {loading ? (
                       <div className="space-y-1.5">
                         <div className="h-14 animate-pulse rounded-lg bg-zinc-100" />
@@ -783,7 +778,7 @@ export default function SchedulePage() {
                     ) : dayCls.length === 0 ? (
                       <button
                         type="button"
-                        onClick={() => setModal({ type: "create", prefillDate: key })}
+                        onClick={() => setModal({ type: "create", prefillDate: dayKey })}
                         className="flex h-full w-full min-h-[80px] items-center justify-center rounded-lg text-zinc-300 hover:bg-zinc-50 hover:text-zinc-400"
                       >
                         <span className="text-lg leading-none">+</span>
@@ -801,7 +796,7 @@ export default function SchedulePage() {
                         ))}
                         <button
                           type="button"
-                          onClick={() => setModal({ type: "create", prefillDate: key })}
+                          onClick={() => setModal({ type: "create", prefillDate: dayKey })}
                           className="w-full rounded-lg py-1 text-center text-xs text-zinc-300 hover:bg-zinc-50 hover:text-zinc-500"
                         >
                           + Agregar
@@ -815,15 +810,13 @@ export default function SchedulePage() {
           </div>
         </SurfaceCard>
 
-        {!loading && classes.filter((c) => c.status === "SCHEDULED").length > 0 ? (
+        {!loading && activeClasses.length > 0 ? (
           <div>
             <h2 className="mb-3 text-sm font-semibold text-zinc-800">
-              Esta semana · {classes.filter((c) => c.status === "SCHEDULED").length} programadas
+              Esta semana · {activeClasses.length} programadas
             </h2>
             <ul className="space-y-2">
-              {classes
-                .filter((c) => c.status === "SCHEDULED")
-                .map((c) => (
+              {activeClasses.map((c) => (
                   <li key={c.id}>
                     <div className="flex w-full items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm transition hover:border-zinc-300 hover:shadow">
                       <button

@@ -80,6 +80,7 @@ export class ScheduleService {
     const rows = await this.prisma.scheduledClass.findMany({
       where: {
         studioId,
+        status: ClassStatus.SCHEDULED,
         startsAt: { lt: to },
         endsAt: { gt: from },
         classTemplate: { deletedAt: null },

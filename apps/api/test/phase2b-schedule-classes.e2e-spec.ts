@@ -218,6 +218,14 @@ describe('Phase 2B class templates and schedule (e2e)', () => {
     const updated = await prisma.scheduledClass.findUniqueOrThrow({ where: { id: cls.id } });
     expect(updated.status).toBe(ClassStatus.CANCELLED);
     expect(updated.cancelReason).toBe('Low enrollment');
+
+    const listRes = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/schedule`)
+      .query({ from: rangeFrom, to: rangeTo })
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const ids = (listRes.body as { id: string }[]).map((row) => row.id);
+    expect(ids).not.toContain(cls.id);
   });
 
   it('allows FRONT_DESK to GET scheduled class by id without date gate', async () => {
