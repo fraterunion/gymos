@@ -343,7 +343,7 @@ export default function StaffClassRosterScreen() {
   const headerTitle =
     (classDetail?.classTemplate.name ?? className?.trim()) || 'Detalle de clase';
   const totalBooked = classDetail?.bookedCount ?? rows.length;
-  const checkedInCount = classDetail?.checkedInCount ?? checkedInRows.length;
+  const checkedInCount = Math.max(classDetail?.checkedInCount ?? 0, checkedInRows.length);
   const waitlistCount = classDetail?.waitlistCount ?? waitlist.length;
   const capacity = classDetail?.capacity ?? 0;
 
@@ -415,7 +415,7 @@ export default function StaffClassRosterScreen() {
       <Stack.Screen options={{ title: headerTitle, headerLargeTitle: false }} />
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: registerAttendanceAllowed && showCheckInOps ? 120 : 40 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: 40 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor="rgba(255,255,255,0.35)" />
         }
@@ -572,50 +572,38 @@ export default function StaffClassRosterScreen() {
             </View>
           )
         ) : null}
-      </ScrollView>
 
-      {registerAttendanceAllowed && showCheckInOps ? (
-        <View
-          style={{
-            position: 'absolute',
-            left: Space.screenH,
-            right: Space.screenH,
-            bottom: 24,
-          }}
-        >
+        {registerAttendanceAllowed ? (
           <Pressable
             accessibilityRole="button"
             onPress={() => setRegisterModalVisible(true)}
             style={{
+              marginTop: Space.sp4,
+              marginBottom: Space.sp3,
               paddingVertical: 16,
               borderRadius: Radius.button,
               backgroundColor: C.text,
               alignItems: 'center',
             }}
           >
-            <Text style={{ fontSize: 15, fontWeight: '700', color: C.bg }}>+ Registrar asistencia</Text>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: C.bg }}>+ Agregar asistencia</Text>
           </Pressable>
-        </View>
-      ) : showCheckInOps && expectedRows.length > 0 ? (
-        <View
-          style={{
-            position: 'absolute',
-            left: Space.screenH,
-            right: Space.screenH,
-            bottom: 24,
-          }}
-        >
-          <Text style={{ fontSize: 12, color: C.textMute, textAlign: 'center' }}>
+        ) : null}
+
+        {showCheckInOps && expectedRows.length > 0 ? (
+          <Text style={{ fontSize: 12, color: C.textMute, textAlign: 'center', marginBottom: Space.sp3 }}>
             Ventana de check-in activa
           </Text>
-        </View>
-      ) : null}
+        ) : null}
+      </ScrollView>
 
       {studioId && classId ? (
         <RegisterAttendanceModal
           visible={registerModalVisible}
           studioId={studioId}
           classId={classId}
+          classStartsAt={classDetail?.startsAt}
+          timeZone={timeZone}
           reservedUserIds={reservedUserIds}
           onClose={() => setRegisterModalVisible(false)}
           onRegistered={handleRegisteredAttendance}

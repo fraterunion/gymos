@@ -212,7 +212,7 @@ export default function ClassCheckInPage() {
 
   const bookedCount = cls?.bookedCount ?? roster.length;
   const waitlistCount = cls?.waitlistCount ?? waitlist.filter((w) => w.status === "WAITING").length;
-  const checkedInCount = cls?.checkedInCount ?? attendance.length;
+  const checkedInCount = Math.max(cls?.checkedInCount ?? 0, attendance.length);
   const availableSpots = cls ? Math.max(0, cls.capacity - bookedCount) : 0;
 
   const loadAll = useCallback(async () => {
@@ -638,7 +638,7 @@ export default function ClassCheckInPage() {
           </>
         )}
 
-        {canRegisterAttendance && showCheckInOps ? (
+        {canRegisterAttendance ? (
           <button
             type="button"
             onClick={() => setRegisterModalOpen(true)}
@@ -653,6 +653,8 @@ export default function ClassCheckInPage() {
         <RegisterAttendanceModal
           studioId={studioId}
           classId={classId}
+          classStartsAt={cls.startsAt}
+          timeZone={tz}
           reservedUserIds={reservedUserIds}
           onClose={() => setRegisterModalOpen(false)}
           onRegistered={(row) => {

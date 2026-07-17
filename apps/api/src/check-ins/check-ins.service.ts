@@ -22,7 +22,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { MANUAL_ATTENDANCE_ROLES } from '../auth/desk-roles';
 import { assertEligibleForCheckIn } from './check-in-eligibility';
-import { assertWithinCheckInWindow } from './check-in-window.utils';
 
 const QR_TTL_SECONDS = 5 * 60;
 
@@ -43,6 +42,11 @@ const staffCheckInRoles: ReadonlySet<Role> = new Set([
 ]);
 
 const manualAttendanceRoles: ReadonlySet<Role> = new Set(MANUAL_ATTENDANCE_ROLES);
+
+const manualAttendanceClassStatuses: ReadonlySet<ClassStatus> = new Set([
+  ClassStatus.SCHEDULED,
+  ClassStatus.COMPLETED,
+]);
 
 export type QrTokenResponse = {
   qrToken: string;
@@ -348,7 +352,7 @@ export class CheckInsService {
   ): Promise<AttendanceSummary> {
     await this.requireManualAttendanceRole(studioId, actorUserId);
 
-    const [membership, scheduledClass, studio] = await Promise.all([
+    const [membership, scheduledClass] = await Promise.all([
       this.prisma.studioMembership.findFirst({
         where: {
           studioId,
@@ -363,27 +367,21 @@ export class CheckInsService {
       this.prisma.scheduledClass.findFirst({
         where: { id: scheduledClassId, studioId },
       }),
-      this.prisma.studio.findFirst({
-        where: { id: studioId, deletedAt: null },
-        select: { checkInWindowMinutes: true },
-      }),
     ]);
 
     if (!scheduledClass) {
       throw new NotFoundException('Class not found');
     }
-    if (!studio) {
-      throw new NotFoundException('Studio not found');
-    }
     if (!membership || membership.user.deletedAt) {
       throw new NotFoundException('Member not found');
     }
 
-    const now = new Date();
-    if (scheduledClass.status !== ClassStatus.SCHEDULED) {
-      throw new ConflictException('Check-in is only available for scheduled classes');
+    if (scheduledClass.status === ClassStatus.CANCELLED) {
+      throw new ConflictException('Cannot register attendance for a cancelled class.');
     }
-    assertWithinCheckInWindow(scheduledClass.startsAt, now, studio.checkInWindowMinutes);
+    if (!manualAttendanceClassStatuses.has(scheduledClass.status)) {
+      throw new ConflictException('Cannot register attendance for this class.');
+    }
 
     const activeSubscription = await this.prisma.subscription.findFirst({
       where: {

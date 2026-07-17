@@ -1,5 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
-import { CheckInMethod, Role } from '@prisma/client';
+import { CheckInMethod, ClassStatus, Role } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import * as jwt from 'jsonwebtoken';
 import request from 'supertest';
@@ -53,6 +53,20 @@ function classTimesBeforeEarlyWindow() {
 /** Class starts in two days — future roster allowed, check-in rejected. */
 function futureClassTimes() {
   const start = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { start, end };
+}
+
+/** Class occurred yesterday — outside any live check-in window. */
+function classTimesYesterday() {
+  const start = new Date(Date.now() - 26 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return { start, end };
+}
+
+/** Class occurred one week ago — historical manual attendance. */
+function classTimesOneWeekAgo() {
+  const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   return { start, end };
 }
@@ -588,6 +602,142 @@ describe('Check-ins (e2e)', () => {
         .send({ memberId: member.id })
         .expect(400);
       expect(String((res.body as { message: unknown }).message)).toContain('inactive');
+    });
+
+    it('allows OWNER to register attendance for a class one week ago', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesOneWeekAgo();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'hist-owner-mem@e2e.local' });
+      const ownerUser = await createUserWithPassword(prisma, { email: 'hist-owner@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, ownerUser.id, studio.id, Role.OWNER);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const ownerToken = await loginAccessToken(app, ownerUser.email, ownerUser.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ memberId: member.id })
+        .expect(201);
+    });
+
+    it('allows ADMIN to register attendance for yesterday’s class', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesYesterday();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'hist-admin-mem@e2e.local' });
+      const adminUser = await createUserWithPassword(prisma, { email: 'hist-admin@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, adminUser.id, studio.id, Role.ADMIN);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const adminToken = await loginAccessToken(app, adminUser.email, adminUser.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ memberId: member.id })
+        .expect(201);
+    });
+
+    it('allows FRONT_DESK to register attendance for a completed class', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesOutsideCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, {
+        startsAt: start,
+        endsAt: end,
+        status: ClassStatus.COMPLETED,
+      });
+      const member = await createUserWithPassword(prisma, { email: 'hist-desk-mem@e2e.local' });
+      const deskUser = await createUserWithPassword(prisma, { email: 'hist-desk@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, deskUser.id, studio.id, Role.FRONT_DESK);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const deskToken = await loginAccessToken(app, deskUser.email, deskUser.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({ memberId: member.id })
+        .expect(201);
+    });
+
+    it('returns 409 for duplicate historical attendance', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesOneWeekAgo();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'hist-dup-mem@e2e.local' });
+      const ownerUser = await createUserWithPassword(prisma, { email: 'hist-dup-owner@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, ownerUser.id, studio.id, Role.OWNER);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const ownerToken = await loginAccessToken(app, ownerUser.email, ownerUser.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ memberId: member.id })
+        .expect(201);
+
+      const dup = await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ memberId: member.id })
+        .expect(409);
+      expect(String((dup.body as { message: unknown }).message)).toContain('already registered');
+    });
+
+    it('rejects cancelled classes', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesYesterday();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, {
+        startsAt: start,
+        endsAt: end,
+        status: ClassStatus.CANCELLED,
+      });
+      const member = await createUserWithPassword(prisma, { email: 'hist-cancel-mem@e2e.local' });
+      const ownerUser = await createUserWithPassword(prisma, { email: 'hist-cancel-owner@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, ownerUser.id, studio.id, Role.OWNER);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const ownerToken = await loginAccessToken(app, ownerUser.email, ownerUser.password);
+
+      const res = await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ memberId: member.id })
+        .expect(409);
+      expect(String((res.body as { message: unknown }).message)).toContain('cancelled');
+    });
+
+    it('allows manual attendance outside the live check-in window', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesOutsideCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'hist-window-mem@e2e.local' });
+      const ownerUser = await createUserWithPassword(prisma, { email: 'hist-window-owner@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, ownerUser.id, studio.id, Role.OWNER);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const ownerToken = await loginAccessToken(app, ownerUser.email, ownerUser.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ memberId: member.id })
+        .expect(201);
     });
   });
 });

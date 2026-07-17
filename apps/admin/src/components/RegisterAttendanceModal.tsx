@@ -24,14 +24,22 @@ function isActiveMember(member: MemberListItem): boolean {
   return status === "ACTIVE" || status === "TRIALING";
 }
 
+function formatManualClassDate(iso: string | undefined, timeZone: string): string | null {
+  if (!iso) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 function friendlyRegisterError(e: unknown): string {
   if (e instanceof ApiError) {
     const m = e.message.toLowerCase();
     if (m.includes("already registered")) return "Attendance already registered.";
     if (m.includes("inactive")) return "Cannot register attendance because this membership is inactive.";
-    if (m.includes("window") || m.includes("not yet available")) {
-      return "Check-in is outside the allowed time window for this class.";
-    }
+    if (m.includes("cancelled")) return "Cannot register attendance for a cancelled class.";
     if (e.status === 403) return "You are not allowed to register attendance.";
     return e.message;
   }
@@ -41,12 +49,16 @@ function friendlyRegisterError(e: unknown): string {
 export function RegisterAttendanceModal({
   studioId,
   classId,
+  classStartsAt,
+  timeZone,
   reservedUserIds,
   onClose,
   onRegistered,
 }: {
   studioId: string;
   classId: string;
+  classStartsAt?: string;
+  timeZone: string;
   reservedUserIds: Set<string>;
   onClose: () => void;
   onRegistered: (row: AttendanceSummary) => void;
@@ -95,6 +107,11 @@ export function RegisterAttendanceModal({
       cancelled = true;
     };
   }, [studioId, debouncedSearch]);
+
+  const classDateLabel = useMemo(
+    () => formatManualClassDate(classStartsAt, timeZone),
+    [classStartsAt, timeZone],
+  );
 
   const hasReservation = useMemo(
     () => (selected ? reservedUserIds.has(selected.user.id) : false),
@@ -192,12 +209,15 @@ export function RegisterAttendanceModal({
             <p className="mt-1 text-sm text-zinc-500">
               {selected.subscription?.planName ?? "Active membership"}
             </p>
-            <p className="mt-4 text-sm leading-relaxed text-zinc-700">
-              {hasReservation
-                ? "This member already has a reservation."
-                : "This member does not have a reservation for this class."}{" "}
-              Register attendance?
-            </p>
+            {classDateLabel ? (
+              <p className="mt-2 text-sm text-zinc-500">This class was on {classDateLabel}.</p>
+            ) : null}
+            <p className="mt-4 text-sm leading-relaxed text-zinc-700">Register manual attendance?</p>
+            {hasReservation ? (
+              <p className="mt-2 text-sm text-zinc-500">
+                This member already has a reservation for this class.
+              </p>
+            ) : null}
 
             {error ? <p className="mt-3 text-sm text-red-700">{error}</p> : null}
 

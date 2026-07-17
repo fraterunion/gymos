@@ -32,13 +32,45 @@ function memberInitials(firstName: string, lastName: string): string {
   return `${a}${b}`.toUpperCase() || '?';
 }
 
+function formatManualClassDate(iso: string | undefined, timeZone: string): string | null {
+  if (!iso) return null;
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone,
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(iso));
+}
+
+function subscriptionStatusLabel(status: string | undefined): string | null {
+  if (!status) return null;
+  switch (status) {
+    case 'ACTIVE':
+      return 'Activa';
+    case 'TRIALING':
+      return 'Prueba';
+    default:
+      return status;
+  }
+}
+
+function memberSubtitle(member: MemberListItem): string {
+  const plan = member.subscription?.planName;
+  const status = subscriptionStatusLabel(member.subscription?.status);
+  if (plan && status) return `${plan} · ${status}`;
+  if (plan) return plan;
+  return member.user.email;
+}
+
 function friendlyRegisterError(e: unknown): string {
   if (e instanceof ApiError) {
     const m = e.message.toLowerCase();
     if (m.includes('already registered')) return 'Asistencia ya registrada.';
-    if (m.includes('inactive')) return 'No se puede registrar asistencia porque la membresía está inactiva.';
-    if (m.includes('window') || m.includes('not yet available')) {
-      return 'El check-in está fuera de la ventana permitida para esta clase.';
+    if (m.includes('inactive')) {
+      return 'No se puede registrar la asistencia porque la membresía está inactiva.';
+    }
+    if (m.includes('cancelled')) {
+      return 'No se puede registrar asistencia en una clase cancelada.';
     }
     if (e.status === 403) return 'No tienes permiso para registrar asistencia.';
     return e.message;
@@ -50,6 +82,8 @@ export function RegisterAttendanceModal({
   visible,
   studioId,
   classId,
+  classStartsAt,
+  timeZone,
   reservedUserIds,
   onClose,
   onRegistered,
@@ -57,6 +91,8 @@ export function RegisterAttendanceModal({
   visible: boolean;
   studioId: string;
   classId: string;
+  classStartsAt?: string;
+  timeZone: string;
   reservedUserIds: Set<string>;
   onClose: () => void;
   onRegistered: (row: AttendanceSummaryDto) => void;
@@ -119,6 +155,11 @@ export function RegisterAttendanceModal({
       cancelled = true;
     };
   }, [visible, studioId, debouncedSearch]);
+
+  const classDateLabel = useMemo(
+    () => formatManualClassDate(classStartsAt, timeZone),
+    [classStartsAt, timeZone],
+  );
 
   const hasReservation = useMemo(
     () => (selected ? reservedUserIds.has(selected.user.id) : false),
@@ -210,7 +251,7 @@ export function RegisterAttendanceModal({
                     key={member.membershipId}
                     initials={memberInitials(member.user.firstName, member.user.lastName)}
                     name={memberDisplayName(member)}
-                    subtitle={member.subscription?.planName ?? member.user.email}
+                    subtitle={memberSubtitle(member)}
                     index={index}
                     onPress={() => selectMember(member)}
                   />
@@ -240,12 +281,19 @@ export function RegisterAttendanceModal({
               <Text style={{ fontSize: 14, color: C.textSub, marginTop: 6 }}>
                 {selected.subscription?.planName ?? 'Membresía activa'}
               </Text>
+              {classDateLabel ? (
+                <Text style={{ fontSize: 14, color: C.textSub, marginTop: Space.sp2, lineHeight: 20 }}>
+                  Esta clase fue el {classDateLabel}.
+                </Text>
+              ) : null}
               <Text style={{ fontSize: 15, color: C.text, marginTop: Space.sp4, lineHeight: 22 }}>
-                {hasReservation
-                  ? 'Este miembro ya tiene una reservación.'
-                  : 'Este miembro no tiene reservación para esta clase.'}{' '}
-                ¿Registrar asistencia?
+                ¿Registrar asistencia manual?
               </Text>
+              {hasReservation ? (
+                <Text style={{ fontSize: 13, color: C.textMute, marginTop: 6, lineHeight: 19 }}>
+                  Este miembro ya tiene una reservación para esta clase.
+                </Text>
+              ) : null}
 
               {error ? (
                 <Text style={{ marginTop: Space.sp3, fontSize: 13, color: C.negative }}>{error}</Text>
