@@ -23,7 +23,7 @@ import { ApiError } from '@/lib/api/errors';
 import { isActiveSubscriptionRequiredError } from '@/lib/billing/subscriptionRequired';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { cancelWaitlistEntry, joinClassWaitlist } from '@/lib/api/waitlistApi';
-import { isClassFullMessage } from '@/lib/classUtils';
+import { isClassAlreadyStartedMessage, isClassFullMessage } from '@/lib/classUtils';
 import {
   buildScheduleQueryRange,
   calendarDayKeyInZone,
@@ -166,6 +166,8 @@ export default function ClassDetailScreen() {
   const [memberProfile, setMemberProfile] = useState<MyMemberProfileDto | null>(null);
   const [hasMatchingDayPass, setHasMatchingDayPass] = useState(false);
   const [authModalVisible, setAuthModalVisible] = useState(false);
+  /** Set when the API rejects booking/waitlist because the class already started. */
+  const [serverClassClosed, setServerClassClosed] = useState(false);
 
   const studioId = matched?.studio.id;
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
@@ -205,6 +207,12 @@ export default function ClassDetailScreen() {
       if (isGuest) void loadGuestSchedule();
     }, [isGuest, loadGuestSchedule]),
   );
+
+  useEffect(() => {
+    setServerClassClosed(false);
+    setOfferWaitlist(false);
+    setInlineError(null);
+  }, [classId]);
 
   useEffect(() => {
     if (isGuest || !studioId || !cls) return;
@@ -272,10 +280,8 @@ export default function ClassDetailScreen() {
     navigation.setOptions({ title: cls?.classTemplate.name ?? 'Clase' });
   }, [navigation, cls]);
 
-  const now = Date.now();
-  const hasStarted = cls ? new Date(cls.startsAt).getTime() <= now : true;
   const isScheduled = cls?.status === 'SCHEDULED';
-  const canAct = isScheduled && !hasStarted;
+  const canReserve = isScheduled && !serverClassClosed;
 
   async function run(action: () => Promise<void>) {
     setInlineError(null);
@@ -285,11 +291,21 @@ export default function ClassDetailScreen() {
       await action();
       setOfferWaitlist(false);
       setSubscriptionRequired(false);
+      setServerClassClosed(false);
       await refreshActivity();
     } catch (e) {
-      if (isActiveSubscriptionRequiredError(e)) { setSubscriptionRequired(true); return; }
+      if (isActiveSubscriptionRequiredError(e)) {
+        setSubscriptionRequired(true);
+        await refreshActivity();
+        return;
+      }
       if (e instanceof ApiError && e.status === 409 && isClassFullMessage(e.message)) {
         setOfferWaitlist(true);
+        return;
+      }
+      if (e instanceof ApiError && e.status === 409 && isClassAlreadyStartedMessage(e.message)) {
+        setServerClassClosed(true);
+        await refreshActivity();
         return;
       }
       setInlineError(userFacingApiMessage(e, 'No se pudo completar esa acción. Inténtalo de nuevo.'));
@@ -356,7 +372,7 @@ export default function ClassDetailScreen() {
       label: 'Salir de la lista de espera',
       onPress: () => void run(async () => { await cancelWaitlistEntry(memberStudioId, waitlistEntry.id); }),
     };
-  } else if (canAct) {
+  } else if (canReserve) {
     if (isGuest) {
       primaryCTA = {
         label: 'Crear cuenta para reservar',
@@ -540,7 +556,7 @@ export default function ClassDetailScreen() {
               <View style={{ marginTop: 32 }}>
                 <EmptyHint title="No disponible para reservar" body="Esta sesión no acepta nuevas reservas." />
               </View>
-            ) : hasStarted ? (
+            ) : serverClassClosed ? (
               <View style={{ marginTop: 32 }}>
                 <EmptyHint title="La clase ya comenzó" body="Las reservas y cambios en la lista de espera están cerrados." />
               </View>
