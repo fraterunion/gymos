@@ -17,3 +17,10 @@ export const DESK_SCHEDULE_READ_ROLES: readonly Role[] = [
   Role.ADMIN,
   Role.OWNER,
 ];
+
+/** Roles allowed to register walk-in class attendance without a reservation. */
+export const MANUAL_ATTENDANCE_ROLES: readonly Role[] = [
+  Role.FRONT_DESK,
+  Role.ADMIN,
+  Role.OWNER,
+];

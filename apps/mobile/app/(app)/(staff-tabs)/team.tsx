@@ -14,7 +14,7 @@ import {
   StaffScreenHeader,
   TabStrip,
 } from '@/components/staff/StaffPrimitives';
-import { Accent, getColors, Space } from '@/constants/Theme';
+import { getColors, Space } from '@/constants/Theme';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import {
   fetchStaff,
@@ -190,7 +190,7 @@ export default function StaffTeamScreen() {
               opacity: pressed ? 0.88 : 1,
             })}
           >
-            <FontAwesome name="users" size={16} color={Accent} style={{ width: 20 }} />
+            <FontAwesome name="users" size={16} color={C.text} style={{ width: 20 }} />
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 16, fontWeight: '600', color: C.text, letterSpacing: -0.3 }}>Miembros</Text>
               <Text style={{ fontSize: 13, color: C.textMute, marginTop: 2 }}>Directorio del estudio</Text>

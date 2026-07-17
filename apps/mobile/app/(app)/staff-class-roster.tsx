@@ -18,7 +18,8 @@ import {
   StatCard,
   TabStrip,
 } from '@/components/staff/StaffPrimitives';
-import { Accent, getColors, Radius, Space } from '@/constants/Theme';
+import { RegisterAttendanceModal } from '@/components/staff/RegisterAttendanceModal';
+import { getColors, Radius, Space } from '@/constants/Theme';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { ApiError } from '@/lib/api/errors';
 import {
@@ -35,7 +36,7 @@ import {
   isWithinCheckInWindow,
 } from '@/lib/checkInWindow';
 import { formatClassRange, formatClassTime } from '@/lib/datetime';
-import { canManualCheckIn } from '@/lib/staffRole';
+import { canManualCheckIn, canRegisterManualAttendance } from '@/lib/staffRole';
 import { staffScanErrorCopy } from '@/lib/staffScanFeedback';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 
@@ -47,6 +48,7 @@ type RosterRow = {
   checkedIn: boolean;
   checkedInAt: string | null;
   checkInMethod: string | null;
+  isWalkIn: boolean;
 };
 
 type Segment = 'reservations' | 'waitlist' | 'attendance';
@@ -79,7 +81,8 @@ function mergeRosterRows(
   for (const row of attendance) {
     if (!byUserId.has(row.userId)) byUserId.set(row.userId, row);
   }
-  return roster.map((entry) => {
+  const rosterUserIds = new Set(roster.map((entry) => entry.userId));
+  const rows: RosterRow[] = roster.map((entry) => {
     const att = byUserId.get(entry.userId);
     const fullName = `${entry.user.firstName} ${entry.user.lastName}`.trim();
     return {
@@ -90,8 +93,43 @@ function mergeRosterRows(
       checkedIn: Boolean(att),
       checkedInAt: att?.checkedInAt ?? null,
       checkInMethod: att?.checkInMethod ?? null,
+      isWalkIn: false,
     };
   });
+  for (const att of attendance) {
+    if (rosterUserIds.has(att.userId)) continue;
+    rows.push({
+      bookingId: `walk-in-${att.userId}`,
+      userId: att.userId,
+      fullName: `${att.user.firstName} ${att.user.lastName}`.trim(),
+      initials: memberInitials(att.user.firstName, att.user.lastName),
+      checkedIn: true,
+      checkedInAt: att.checkedInAt,
+      checkInMethod: att.checkInMethod,
+      isWalkIn: true,
+    });
+  }
+  return rows;
+}
+
+function ManualBadge() {
+  const C = getColors();
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: C.separator,
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+      }}
+    >
+      <Text style={{ fontSize: 10, fontWeight: '700', letterSpacing: 0.6, color: C.textMute }}>
+        MANUAL
+      </Text>
+    </View>
+  );
 }
 
 function classStatusLabel(status: string | undefined): string {
@@ -108,6 +146,7 @@ function CheckInButton({
   loading: boolean;
   onPress: () => void;
 }) {
+  const C = getColors();
   return (
     <Pressable
       accessibilityRole="button"
@@ -118,13 +157,13 @@ function CheckInButton({
         paddingVertical: 8,
         borderRadius: Radius.button,
         borderWidth: 1,
-        borderColor: Accent,
+        borderColor: 'rgba(255,255,255,0.25)',
         opacity: loading ? 0.5 : 1,
         minWidth: 80,
         alignItems: 'center',
       }}
     >
-      <Text style={{ fontSize: 13, fontWeight: '700', color: Accent }}>
+      <Text style={{ fontSize: 13, fontWeight: '700', color: C.text }}>
         {loading ? '…' : 'Check-in'}
       </Text>
     </Pressable>
@@ -151,6 +190,7 @@ export default function StaffClassRosterScreen() {
   const timeZone = matched?.studio.timezone ?? 'UTC';
   const role = matched?.role;
   const manualCheckInAllowed = canManualCheckIn(role);
+  const registerAttendanceAllowed = canRegisterManualAttendance(role);
   const isInstructor = role === 'INSTRUCTOR';
 
   const [segment, setSegment] = useState<Segment>('reservations');
@@ -164,6 +204,7 @@ export default function StaffClassRosterScreen() {
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [checkingInBookingId, setCheckingInBookingId] = useState<string | null>(null);
   const [successName, setSuccessName] = useState<string | null>(null);
+  const [registerModalVisible, setRegisterModalVisible] = useState(false);
 
   const checkInWindowMinutes =
     classDetail?.checkInWindowMinutes ?? DEFAULT_CHECK_IN_EARLY_MINUTES;
@@ -223,6 +264,43 @@ export default function StaffClassRosterScreen() {
 
   const checkedInRows = useMemo(() => rows.filter((r) => r.checkedIn), [rows]);
   const expectedRows = useMemo(() => rows.filter((r) => !r.checkedIn), [rows]);
+  const reservedUserIds = useMemo(
+    () => new Set(rows.filter((r) => !r.isWalkIn).map((r) => r.userId)),
+    [rows],
+  );
+
+  const handleRegisteredAttendance = useCallback((attendance: AttendanceSummaryDto) => {
+    setRows((prev) => {
+      const existing = prev.find((r) => r.userId === attendance.userId);
+      if (existing) {
+        return prev.map((r) =>
+          r.userId === attendance.userId
+            ? {
+                ...r,
+                checkedIn: true,
+                checkedInAt: attendance.checkedInAt,
+                checkInMethod: attendance.checkInMethod,
+              }
+            : r,
+        );
+      }
+      return [
+        ...prev,
+        {
+          bookingId: `walk-in-${attendance.userId}`,
+          userId: attendance.userId,
+          fullName: `${attendance.user.firstName} ${attendance.user.lastName}`.trim(),
+          initials: memberInitials(attendance.user.firstName, attendance.user.lastName),
+          checkedIn: true,
+          checkedInAt: attendance.checkedInAt,
+          checkInMethod: attendance.checkInMethod,
+          isWalkIn: true,
+        },
+      ];
+    });
+    setSuccessName(`${attendance.user.firstName} ${attendance.user.lastName}`.trim());
+    setTimeout(() => setSuccessName(null), 3000);
+  }, []);
 
   const handleCheckIn = useCallback(
     async (row: RosterRow) => {
@@ -337,7 +415,7 @@ export default function StaffClassRosterScreen() {
       <Stack.Screen options={{ title: headerTitle, headerLargeTitle: false }} />
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: showCheckInOps ? 100 : 40 }}
+        contentContainerStyle={{ paddingHorizontal: Space.screenH, paddingBottom: registerAttendanceAllowed && showCheckInOps ? 120 : 40 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor="rgba(255,255,255,0.35)" />
         }
@@ -358,8 +436,7 @@ export default function StaffClassRosterScreen() {
           </Text>
           {classDetail ? (
             <>
-              {/* Accent on time = active indicator. No badge. */}
-              <Text style={{ fontSize: 16, fontWeight: '600', color: Accent, lineHeight: 22, marginBottom: 4 }}>
+              <Text style={{ fontSize: 16, fontWeight: '600', color: C.textSub, lineHeight: 22, marginBottom: 4 }}>
                 {formatClassRange(classDetail.startsAt, classDetail.endsAt, timeZone)}
               </Text>
               <Text style={{ fontSize: 14, color: C.textMute, marginBottom: 4 }}>{coachName}</Text>
@@ -374,7 +451,7 @@ export default function StaffClassRosterScreen() {
         {/* ── Check-in success — inline text, no banner card ── */}
         {successName ? (
           <Animated.View entering={FadeInDown.duration(300)} style={{ marginBottom: Space.sp3 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', color: Accent }}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: C.positive }}>
               {successName} · Check-in registrado
             </Text>
           </Animated.View>
@@ -487,6 +564,7 @@ export default function StaffClassRosterScreen() {
                     initials={row.initials}
                     name={row.fullName}
                     subtitle={`${timeLabel}${methodLabel ? ` · ${methodLabel}` : ''}`}
+                    badge={row.isWalkIn ? <ManualBadge /> : undefined}
                     index={index}
                   />
                 );
@@ -496,7 +574,29 @@ export default function StaffClassRosterScreen() {
         ) : null}
       </ScrollView>
 
-      {showCheckInOps && expectedRows.length > 0 ? (
+      {registerAttendanceAllowed && showCheckInOps ? (
+        <View
+          style={{
+            position: 'absolute',
+            left: Space.screenH,
+            right: Space.screenH,
+            bottom: 24,
+          }}
+        >
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRegisterModalVisible(true)}
+            style={{
+              paddingVertical: 16,
+              borderRadius: Radius.button,
+              backgroundColor: C.text,
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '700', color: C.bg }}>+ Registrar asistencia</Text>
+          </Pressable>
+        </View>
+      ) : showCheckInOps && expectedRows.length > 0 ? (
         <View
           style={{
             position: 'absolute',
@@ -509,6 +609,17 @@ export default function StaffClassRosterScreen() {
             Ventana de check-in activa
           </Text>
         </View>
+      ) : null}
+
+      {studioId && classId ? (
+        <RegisterAttendanceModal
+          visible={registerModalVisible}
+          studioId={studioId}
+          classId={classId}
+          reservedUserIds={reservedUserIds}
+          onClose={() => setRegisterModalVisible(false)}
+          onRegistered={handleRegisteredAttendance}
+        />
       ) : null}
     </SafeAreaView>
   );

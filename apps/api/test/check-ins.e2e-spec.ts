@@ -7,9 +7,11 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
 import {
+  createActiveSubscription,
   createClassTemplate,
   createConfirmedBooking,
   createMembership,
+  createMembershipPlanForStudio,
   createScheduledClass,
   createStudio,
   createUserWithPassword,
@@ -463,5 +465,129 @@ describe('Check-ins (e2e)', () => {
       .expect(200);
     expect((roster.body as unknown[]).length).toBe(1);
     expect((roster.body as { id: string }[])[0].id).toBe(booking.id);
+  });
+
+  describe('manual class attendance (walk-in)', () => {
+    const path = (studioId: string, classId: string) =>
+      `/api/v1/studios/${studioId}/classes/${classId}/manual-attendance`;
+
+    it('registers attendance for a member without a reservation', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'walkin-mem@e2e.local' });
+      const deskUser = await createUserWithPassword(prisma, { email: 'walkin-desk@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, deskUser.id, studio.id, Role.FRONT_DESK);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const deskToken = await loginAccessToken(app, deskUser.email, deskUser.password);
+
+      const res = await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({ memberId: member.id })
+        .expect(201);
+
+      const body = res.body as { checkInMethod: string; userId: string; checkedInByUserId: string | null };
+      expect(body.checkInMethod).toBe(CheckInMethod.MANUAL);
+      expect(body.userId).toBe(member.id);
+      expect(body.checkedInByUserId).toBe(deskUser.id);
+
+      const attendance = await prisma.attendance.findUnique({
+        where: {
+          scheduledClassId_userId: { scheduledClassId: cls.id, userId: member.id },
+        },
+      });
+      expect(attendance).not.toBeNull();
+      expect(attendance?.method).toBe(CheckInMethod.MANUAL);
+    });
+
+    it('returns 409 when attendance already exists', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'walkin-dup-mem@e2e.local' });
+      const adminUser = await createUserWithPassword(prisma, { email: 'walkin-dup-admin@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, adminUser.id, studio.id, Role.ADMIN);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const adminToken = await loginAccessToken(app, adminUser.email, adminUser.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ memberId: member.id })
+        .expect(201);
+
+      const dup = await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ memberId: member.id })
+        .expect(409);
+      expect(String((dup.body as { message: unknown }).message)).toContain('already registered');
+    });
+
+    it('forbids STAFF from walk-in manual attendance', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'walkin-staff-mem@e2e.local' });
+      const staffUser = await createUserWithPassword(prisma, { email: 'walkin-staff@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, staffUser.id, studio.id, Role.STAFF);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const staffToken = await loginAccessToken(app, staffUser.email, staffUser.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ memberId: member.id })
+        .expect(403);
+    });
+
+    it('forbids MEMBER from walk-in manual attendance', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'walkin-member@e2e.local' });
+      const other = await createUserWithPassword(prisma, { email: 'walkin-other@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, other.id, studio.id, Role.MEMBER);
+      await createActiveSubscription(prisma, studio.id, other.id, plan.id);
+      const memberToken = await loginAccessToken(app, member.email, member.password);
+
+      await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({ memberId: other.id })
+        .expect(403);
+    });
+
+    it('rejects inactive membership', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'walkin-inactive@e2e.local' });
+      const ownerUser = await createUserWithPassword(prisma, { email: 'walkin-owner@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, ownerUser.id, studio.id, Role.OWNER);
+      const ownerToken = await loginAccessToken(app, ownerUser.email, ownerUser.password);
+
+      const res = await request(app.getHttpServer())
+        .post(path(studio.id, cls.id))
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ memberId: member.id })
+        .expect(400);
+      expect(String((res.body as { message: unknown }).message)).toContain('inactive');
+    });
   });
 });

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -12,13 +13,16 @@ import {
   ClassStatus,
   Prisma,
   Role,
+  SubscriptionStatus,
 } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import type { JwtPayload } from 'jsonwebtoken';
 import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
+import { MANUAL_ATTENDANCE_ROLES } from '../auth/desk-roles';
 import { assertEligibleForCheckIn } from './check-in-eligibility';
+import { assertWithinCheckInWindow } from './check-in-window.utils';
 
 const QR_TTL_SECONDS = 5 * 60;
 
@@ -37,6 +41,8 @@ const staffCheckInRoles: ReadonlySet<Role> = new Set([
   Role.ADMIN,
   Role.OWNER,
 ]);
+
+const manualAttendanceRoles: ReadonlySet<Role> = new Set(MANUAL_ATTENDANCE_ROLES);
 
 export type QrTokenResponse = {
   qrToken: string;
@@ -334,6 +340,96 @@ export class CheckInsService {
     return { attendance: this.toAttendanceSummary(row) };
   }
 
+  async registerManualClassAttendance(
+    studioId: string,
+    scheduledClassId: string,
+    memberId: string,
+    actorUserId: string,
+  ): Promise<AttendanceSummary> {
+    await this.requireManualAttendanceRole(studioId, actorUserId);
+
+    const [membership, scheduledClass, studio] = await Promise.all([
+      this.prisma.studioMembership.findFirst({
+        where: {
+          studioId,
+          userId: memberId,
+          deletedAt: null,
+          role: Role.MEMBER,
+        },
+        include: {
+          user: { select: { ...attendanceUserSelect, deletedAt: true } },
+        },
+      }),
+      this.prisma.scheduledClass.findFirst({
+        where: { id: scheduledClassId, studioId },
+      }),
+      this.prisma.studio.findFirst({
+        where: { id: studioId, deletedAt: null },
+        select: { checkInWindowMinutes: true },
+      }),
+    ]);
+
+    if (!scheduledClass) {
+      throw new NotFoundException('Class not found');
+    }
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
+    }
+    if (!membership || membership.user.deletedAt) {
+      throw new NotFoundException('Member not found');
+    }
+
+    const now = new Date();
+    if (scheduledClass.status !== ClassStatus.SCHEDULED) {
+      throw new ConflictException('Check-in is only available for scheduled classes');
+    }
+    assertWithinCheckInWindow(scheduledClass.startsAt, now, studio.checkInWindowMinutes);
+
+    const activeSubscription = await this.prisma.subscription.findFirst({
+      where: {
+        studioId,
+        userId: memberId,
+        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+      },
+    });
+    if (!activeSubscription) {
+      throw new BadRequestException(
+        'Cannot register attendance because this membership is inactive.',
+      );
+    }
+
+    const existing = await this.prisma.attendance.findUnique({
+      where: {
+        scheduledClassId_userId: {
+          scheduledClassId,
+          userId: memberId,
+        },
+      },
+    });
+    if (existing) {
+      throw new ConflictException('Attendance already registered.');
+    }
+
+    try {
+      const attendance = await this.prisma.attendance.create({
+        data: {
+          studioId,
+          scheduledClassId,
+          userId: memberId,
+          method: CheckInMethod.MANUAL,
+          checkedInByUserId: actorUserId,
+        },
+        include: { user: { select: attendanceUserSelect } },
+      });
+      return this.toAttendanceSummary(attendance);
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('Attendance already registered.');
+      }
+      throw e;
+    }
+  }
+
   async listClassAttendance(studioId: string, scheduledClassId: string): Promise<AttendanceSummary[]> {
     const cls = await this.prisma.scheduledClass.findFirst({
       where: { id: scheduledClassId, studioId },
@@ -361,6 +457,16 @@ export class CheckInsService {
       where: { studioId, userId: actorUserId, deletedAt: null },
     });
     if (!membership || !staffCheckInRoles.has(membership.role)) {
+      throw new ForbiddenException();
+    }
+    return membership;
+  }
+
+  private async requireManualAttendanceRole(studioId: string, actorUserId: string) {
+    const membership = await this.prisma.studioMembership.findFirst({
+      where: { studioId, userId: actorUserId, deletedAt: null },
+    });
+    if (!membership || !manualAttendanceRoles.has(membership.role)) {
       throw new ForbiddenException();
     }
     return membership;

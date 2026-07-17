@@ -39,3 +39,14 @@ export async function checkInManual(studioId: string, bookingId: string): Promis
     body: JSON.stringify({ bookingId }),
   });
 }
+
+export async function registerManualClassAttendance(
+  studioId: string,
+  classId: string,
+  memberId: string,
+): Promise<AttendanceSummary> {
+  return apiRequest<AttendanceSummary>(`/studios/${studioId}/classes/${classId}/manual-attendance`, {
+    method: "POST",
+    body: JSON.stringify({ memberId }),
+  });
+}

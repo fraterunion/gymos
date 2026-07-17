@@ -50,3 +50,9 @@ export function canManageStudioSettings(role: string | undefined | null): boolea
   const normalized = normalizeStudioRole(role);
   return normalized === "OWNER" || normalized === "ADMIN";
 }
+
+/** Walk-in class attendance without a reservation — OWNER, ADMIN, FRONT_DESK only. */
+export function canRegisterManualAttendance(role: string | undefined | null): boolean {
+  const normalized = normalizeStudioRole(role);
+  return normalized === "OWNER" || normalized === "ADMIN" || normalized === "FRONT_DESK";
+}

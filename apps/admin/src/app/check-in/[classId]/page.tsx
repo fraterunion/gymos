@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DeskQrScanner } from "@/components/DeskQrScanner";
+import { AttendanceMethodBadge, RegisterAttendanceModal } from "@/components/RegisterAttendanceModal";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import {
@@ -23,6 +24,7 @@ import { fetchClassRoster, type RosterBooking } from "@/lib/api/roster";
 import { fetchScheduledClassById, type ScheduledClassDto } from "@/lib/api/schedule";
 import { fetchClassWaitlist, type ClassWaitlistEntry } from "@/lib/api/waitlist";
 import { checkInDeskHref, scheduleHref } from "@/lib/classRosterNav";
+import { canRegisterManualAttendance } from "@/lib/deskRoles";
 
 function friendlyCheckInError(e: unknown): string {
   if (e instanceof TypeError) {
@@ -30,7 +32,8 @@ function friendlyCheckInError(e: unknown): string {
   }
   if (e instanceof ApiError) {
     const m = e.message.toLowerCase();
-    if (m.includes("already checked in")) return "This member is already checked in.";
+    if (m.includes("already checked in") || m.includes("already registered"))
+      return "This member is already checked in.";
     if (m.includes("qr token already used") || m.includes("expired"))
       return "That code was already used or has expired. Ask the member to refresh their code.";
     if (m.includes("invalid") && m.includes("token"))
@@ -53,32 +56,70 @@ function attendanceByUserId(attendance: AttendanceSummary[]): Map<string, Attend
   return map;
 }
 
+type DisplayRosterRow = {
+  key: string;
+  booking: RosterBooking | null;
+  user: RosterBooking["user"];
+  attendance: AttendanceSummary | undefined;
+  isWalkIn: boolean;
+};
+
+function buildDisplayRoster(
+  roster: RosterBooking[],
+  attendance: AttendanceSummary[],
+): DisplayRosterRow[] {
+  const attendanceMap = attendanceByUserId(attendance);
+  const rosterUserIds = new Set(roster.map((b) => b.userId));
+  const rows: DisplayRosterRow[] = roster.map((booking) => ({
+    key: booking.id,
+    booking,
+    user: booking.user,
+    attendance: attendanceMap.get(booking.userId),
+    isWalkIn: false,
+  }));
+  for (const att of attendance) {
+    if (rosterUserIds.has(att.userId)) continue;
+    rows.push({
+      key: `walk-in-${att.userId}`,
+      booking: null,
+      user: att.user,
+      attendance: att,
+      isWalkIn: true,
+    });
+  }
+  return rows;
+}
+
 function RosterRowCard({
-  booking,
-  attendance,
+  row,
   showCheckIn,
   busyBookingId,
   onManual,
 }: {
-  booking: RosterBooking;
-  attendance: AttendanceSummary | undefined;
+  row: DisplayRosterRow;
   showCheckIn: boolean;
   busyBookingId: string | null;
   onManual: (bookingId: string) => void;
 }) {
+  const { booking, user, attendance, isWalkIn } = row;
   const checked = Boolean(attendance);
   return (
     <div className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-zinc-900">
-            {booking.user.firstName} {booking.user.lastName}
-          </p>
-          <p className="text-xs text-zinc-500">{booking.user.email}</p>
-          {booking.user.phone ? (
-            <p className="text-xs text-zinc-500">{booking.user.phone}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium text-zinc-900">
+              {user.firstName} {user.lastName}
+            </p>
+            {checked && isWalkIn ? <AttendanceMethodBadge method="MANUAL" /> : null}
+          </div>
+          <p className="text-xs text-zinc-500">{user.email}</p>
+          {user.phone ? (
+            <p className="text-xs text-zinc-500">{user.phone}</p>
           ) : null}
-          {booking.createdAt ? (
+          {isWalkIn ? (
+            <p className="mt-1 text-[11px] text-zinc-400">Walk-in · no reservation</p>
+          ) : booking?.createdAt ? (
             <p className="mt-1 text-[11px] text-zinc-400">
               Booked{" "}
               {new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(
@@ -104,9 +145,9 @@ function RosterRowCard({
           ) : (
             <>
               <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
-                {booking.status}
+                {booking?.status ?? "CONFIRMED"}
               </span>
-              {showCheckIn ? (
+              {showCheckIn && booking ? (
                 <button
                   type="button"
                   disabled={busyBookingId === booking.id}
@@ -128,7 +169,7 @@ export default function ClassCheckInPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const classId = typeof params.classId === "string" ? params.classId : "";
-  const { selected, selectedStudioId } = useDeskStudio();
+  const { selected, selectedStudioId, studioRole } = useDeskStudio();
   const studioId = selectedStudioId ?? "";
   const tz = selected?.studio.timezone ?? "UTC";
 
@@ -148,6 +189,9 @@ export default function ClassCheckInPage() {
   const [qrBusy, setQrBusy] = useState(false);
   const submitQrLockRef = useRef(false);
   const [flash, setFlash] = useState<{ type: "ok" | "warn" | "err"; text: string } | null>(null);
+  const [registerModalOpen, setRegisterModalOpen] = useState(false);
+
+  const canRegisterAttendance = canRegisterManualAttendance(studioRole);
 
   const clsDayKey = cls ? calendarDayKeyInZone(cls.startsAt, tz) : null;
   const todayKey = useMemo(() => todayKeyInZone(tz), [tz]);
@@ -155,7 +199,11 @@ export default function ClassCheckInPage() {
   const showCheckInOps = cls
     ? canOperateClassCheckIn(cls.startsAt, checkInWindowMinutes)
     : false;
-  const attendanceMap = useMemo(() => attendanceByUserId(attendance), [attendance]);
+  const displayRoster = useMemo(
+    () => buildDisplayRoster(roster, attendance),
+    [roster, attendance],
+  );
+  const reservedUserIds = useMemo(() => new Set(roster.map((b) => b.userId)), [roster]);
 
   const backHref = useMemo(() => {
     if (returnTo === "schedule") return scheduleHref(weekStart ?? undefined);
@@ -438,15 +486,7 @@ export default function ClassCheckInPage() {
                         )}
                       </p>
                     </div>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                        a.checkInMethod === "QR"
-                          ? "bg-violet-100 text-violet-800"
-                          : "bg-sky-100 text-sky-800"
-                      }`}
-                    >
-                      {a.checkInMethod}
-                    </span>
+                    <AttendanceMethodBadge method={a.checkInMethod} />
                   </li>
                 ))}
               </ul>
@@ -485,9 +525,7 @@ export default function ClassCheckInPage() {
                       )}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
-                    {a.checkInMethod}
-                  </span>
+                  <AttendanceMethodBadge method={a.checkInMethod} />
                 </li>
               ))}
             </ul>
@@ -507,9 +545,9 @@ export default function ClassCheckInPage() {
           </button>
         </div>
         {rosterNote ? <p className="mt-3 text-sm text-amber-800">{rosterNote}</p> : null}
-        {roster.length === 0 && !rosterNote ? (
+        {displayRoster.length === 0 && !rosterNote ? (
           <p className="mt-4 text-sm text-zinc-500">No confirmed bookings for this class.</p>
-        ) : roster.length === 0 ? null : (
+        ) : displayRoster.length === 0 ? null : (
           <>
             <div className="mt-4 hidden overflow-x-auto md:block">
               <table className="w-full min-w-[640px] text-left text-sm">
@@ -522,28 +560,33 @@ export default function ClassCheckInPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {roster.map((b) => {
-                    const att = attendanceMap.get(b.userId);
+                  {displayRoster.map((row) => {
+                    const { booking, user, attendance: att, isWalkIn } = row;
                     const checked = Boolean(att);
                     return (
-                      <tr key={b.id}>
+                      <tr key={row.key}>
                         <td className="py-3 pr-4">
-                          <p className="font-medium text-zinc-900">
-                            {b.user.firstName} {b.user.lastName}
-                          </p>
-                          {b.createdAt ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-zinc-900">
+                              {user.firstName} {user.lastName}
+                            </p>
+                            {checked && isWalkIn ? <AttendanceMethodBadge method="MANUAL" /> : null}
+                          </div>
+                          {isWalkIn ? (
+                            <p className="text-xs text-zinc-400">Walk-in · no reservation</p>
+                          ) : booking?.createdAt ? (
                             <p className="text-xs text-zinc-400">
                               Booked{" "}
                               {new Intl.DateTimeFormat(undefined, {
                                 dateStyle: "short",
                                 timeStyle: "short",
-                              }).format(new Date(b.createdAt))}
+                              }).format(new Date(booking.createdAt))}
                             </p>
                           ) : null}
                         </td>
                         <td className="py-3 pr-4 text-xs text-zinc-500">
-                          <p>{b.user.email}</p>
-                          {b.user.phone ? <p>{b.user.phone}</p> : null}
+                          <p>{user.email}</p>
+                          {user.phone ? <p>{user.phone}</p> : null}
                         </td>
                         <td className="py-3 pr-4">
                           {checked ? (
@@ -557,19 +600,19 @@ export default function ClassCheckInPage() {
                             </span>
                           ) : (
                             <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
-                              {b.status}
+                              {booking?.status ?? "CONFIRMED"}
                             </span>
                           )}
                         </td>
                         <td className="py-3 text-right">
-                          {!checked && showCheckInOps ? (
+                          {!checked && showCheckInOps && booking ? (
                             <button
                               type="button"
-                              disabled={busyBookingId === b.id}
-                              onClick={() => void onManual(b.id)}
+                              disabled={busyBookingId === booking.id}
+                              onClick={() => void onManual(booking.id)}
                               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                             >
-                              {busyBookingId === b.id ? "…" : "Check in"}
+                              {busyBookingId === booking.id ? "…" : "Check in"}
                             </button>
                           ) : (
                             <span className="text-xs text-zinc-400">—</span>
@@ -582,11 +625,10 @@ export default function ClassCheckInPage() {
               </table>
             </div>
             <div className="mt-4 space-y-2 md:hidden">
-              {roster.map((b) => (
+              {displayRoster.map((row) => (
                 <RosterRowCard
-                  key={b.id}
-                  booking={b}
-                  attendance={attendanceMap.get(b.userId)}
+                  key={row.key}
+                  row={row}
                   showCheckIn={showCheckInOps}
                   busyBookingId={busyBookingId}
                   onManual={onManual}
@@ -595,7 +637,33 @@ export default function ClassCheckInPage() {
             </div>
           </>
         )}
+
+        {canRegisterAttendance && showCheckInOps ? (
+          <button
+            type="button"
+            onClick={() => setRegisterModalOpen(true)}
+            className="mt-6 w-full rounded-xl bg-zinc-900 py-3.5 text-sm font-semibold text-white"
+          >
+            + Register Attendance
+          </button>
+        ) : null}
       </section>
+
+      {registerModalOpen && studioId && classId ? (
+        <RegisterAttendanceModal
+          studioId={studioId}
+          classId={classId}
+          reservedUserIds={reservedUserIds}
+          onClose={() => setRegisterModalOpen(false)}
+          onRegistered={(row) => {
+            setAttendance((prev) => [...prev.filter((a) => a.userId !== row.userId), row]);
+            setFlash({
+              type: "ok",
+              text: `Registered attendance for ${row.user.firstName} ${row.user.lastName}.`,
+            });
+          }}
+        />
+      ) : null}
 
       {waitlist.length > 0 || waitlistNote ? (
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">

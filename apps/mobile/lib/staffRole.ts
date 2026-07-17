@@ -29,6 +29,13 @@ export function isStaffRole(role: string | null | undefined): boolean {
   return Boolean(role && STAFF_SHELL_ROLES.has(role));
 }
 
+/** Walk-in class attendance — OWNER, ADMIN, FRONT_DESK only. */
+const MANUAL_ATTENDANCE_ROLES = new Set<string>(['FRONT_DESK', 'ADMIN', 'OWNER']);
+
+export function canRegisterManualAttendance(role: string | null | undefined): boolean {
+  return Boolean(role && MANUAL_ATTENDANCE_ROLES.has(role));
+}
+
 /** Manual check-in is FRONT_DESK | STAFF | ADMIN | OWNER (not INSTRUCTOR). */
 const MANUAL_CHECK_IN_ROLES = new Set<string>(['FRONT_DESK', 'STAFF', 'ADMIN', 'OWNER']);
 

@@ -78,11 +78,20 @@ export class MembersService {
 
     if (search) {
       const s = search.trim();
+      const parts = s.split(/\s+/).filter(Boolean);
       userFilter.OR = [
         { firstName: { contains: s, mode: 'insensitive' } },
         { lastName: { contains: s, mode: 'insensitive' } },
         { email: { contains: s, mode: 'insensitive' } },
       ];
+      if (parts.length >= 2) {
+        userFilter.OR.push({
+          AND: [
+            { firstName: { contains: parts[0], mode: 'insensitive' } },
+            { lastName: { contains: parts.slice(1).join(' '), mode: 'insensitive' } },
+          ],
+        });
+      }
     }
 
     const where: Prisma.StudioMembershipWhereInput = {

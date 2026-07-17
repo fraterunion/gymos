@@ -128,3 +128,15 @@ export async function staffForceCheckIn(
     user: a.user,
   };
 }
+
+/** Register walk-in attendance without a reservation (OWNER | ADMIN | FRONT_DESK). */
+export async function registerManualClassAttendance(
+  studioId: string,
+  classId: string,
+  memberId: string,
+): Promise<AttendanceSummaryDto> {
+  return apiRequest<AttendanceSummaryDto>(
+    `/studios/${studioId}/classes/${classId}/manual-attendance`,
+    { method: 'POST', body: JSON.stringify({ memberId }) },
+  );
+}
