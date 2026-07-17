@@ -21,6 +21,8 @@ import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { MANUAL_ATTENDANCE_ROLES } from '../auth/desk-roles';
+import { acquireMembershipUsageAdvisoryLock } from '../membership-usage/membership-usage-advisory-lock';
+import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { assertEligibleForCheckIn } from './check-in-eligibility';
 
 const QR_TTL_SECONDS = 5 * 60;
@@ -101,6 +103,7 @@ export class CheckInsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly waiverService: WaiverService,
+    private readonly membershipUsage: MembershipUsageService,
   ) {}
 
   async generateQrForBooking(
@@ -352,80 +355,98 @@ export class CheckInsService {
   ): Promise<AttendanceSummary> {
     await this.requireManualAttendanceRole(studioId, actorUserId);
 
-    const [membership, scheduledClass] = await Promise.all([
-      this.prisma.studioMembership.findFirst({
+    return this.prisma.$transaction(async (tx) => {
+      await acquireMembershipUsageAdvisoryLock(tx, studioId, memberId);
+
+      const [membership, scheduledClass, activeSubscription] = await Promise.all([
+        tx.studioMembership.findFirst({
+          where: {
+            studioId,
+            userId: memberId,
+            deletedAt: null,
+            role: Role.MEMBER,
+          },
+          include: {
+            user: { select: { ...attendanceUserSelect, deletedAt: true } },
+          },
+        }),
+        tx.scheduledClass.findFirst({
+          where: { id: scheduledClassId, studioId },
+        }),
+        tx.subscription.findFirst({
+          where: {
+            studioId,
+            userId: memberId,
+            status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+          },
+          select: {
+            currentPeriodStart: true,
+            currentPeriodEnd: true,
+            membershipPlan: { select: { classCredits: true } },
+          },
+        }),
+      ]);
+
+      if (!scheduledClass) {
+        throw new NotFoundException('Class not found');
+      }
+      if (!membership || membership.user.deletedAt) {
+        throw new NotFoundException('Member not found');
+      }
+      if (!activeSubscription) {
+        throw new BadRequestException(
+          'Cannot register attendance because this membership is inactive.',
+        );
+      }
+
+      if (scheduledClass.status === ClassStatus.CANCELLED) {
+        throw new ConflictException('Cannot register attendance for a cancelled class.');
+      }
+      if (!manualAttendanceClassStatuses.has(scheduledClass.status)) {
+        throw new ConflictException('Cannot register attendance for this class.');
+      }
+
+      const existing = await tx.attendance.findUnique({
         where: {
-          studioId,
-          userId: memberId,
-          deletedAt: null,
-          role: Role.MEMBER,
+          scheduledClassId_userId: {
+            scheduledClassId,
+            userId: memberId,
+          },
         },
-        include: {
-          user: { select: { ...attendanceUserSelect, deletedAt: true } },
-        },
-      }),
-      this.prisma.scheduledClass.findFirst({
-        where: { id: scheduledClassId, studioId },
-      }),
-    ]);
-
-    if (!scheduledClass) {
-      throw new NotFoundException('Class not found');
-    }
-    if (!membership || membership.user.deletedAt) {
-      throw new NotFoundException('Member not found');
-    }
-
-    if (scheduledClass.status === ClassStatus.CANCELLED) {
-      throw new ConflictException('Cannot register attendance for a cancelled class.');
-    }
-    if (!manualAttendanceClassStatuses.has(scheduledClass.status)) {
-      throw new ConflictException('Cannot register attendance for this class.');
-    }
-
-    const activeSubscription = await this.prisma.subscription.findFirst({
-      where: {
-        studioId,
-        userId: memberId,
-        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
-      },
-    });
-    if (!activeSubscription) {
-      throw new BadRequestException(
-        'Cannot register attendance because this membership is inactive.',
-      );
-    }
-
-    const existing = await this.prisma.attendance.findUnique({
-      where: {
-        scheduledClassId_userId: {
-          scheduledClassId,
-          userId: memberId,
-        },
-      },
-    });
-    if (existing) {
-      throw new ConflictException('Attendance already registered.');
-    }
-
-    try {
-      const attendance = await this.prisma.attendance.create({
-        data: {
-          studioId,
-          scheduledClassId,
-          userId: memberId,
-          method: CheckInMethod.MANUAL,
-          checkedInByUserId: actorUserId,
-        },
-        include: { user: { select: attendanceUserSelect } },
       });
-      return this.toAttendanceSummary(attendance);
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      if (existing) {
         throw new ConflictException('Attendance already registered.');
       }
-      throw e;
-    }
+
+      await this.membershipUsage.assertCreditAvailableForClass(
+        tx,
+        studioId,
+        memberId,
+        scheduledClassId,
+        scheduledClass.startsAt,
+        activeSubscription,
+        { errorType: 'bad_request' },
+      );
+
+      try {
+        const attendance = await tx.attendance.create({
+          data: {
+            studioId,
+            scheduledClassId,
+            userId: memberId,
+            method: CheckInMethod.MANUAL,
+            checkedInByUserId: actorUserId,
+          },
+          include: { user: { select: attendanceUserSelect } },
+        });
+        return this.toAttendanceSummary(attendance);
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          throw new ConflictException('Attendance already registered.');
+        }
+        throw e;
+      }
+    });
   }
 
   async listClassAttendance(studioId: string, scheduledClassId: string): Promise<AttendanceSummary[]> {

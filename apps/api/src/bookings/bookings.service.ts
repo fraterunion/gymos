@@ -92,6 +92,7 @@ export class BookingsService {
           scheduledClass.startsAt,
           studio.timezone,
           scheduledClass.classTemplateId,
+          scheduledClassId,
         );
 
         // Overlap check — members cannot hold two CONFIRMED bookings whose

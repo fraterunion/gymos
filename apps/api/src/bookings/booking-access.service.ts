@@ -1,6 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import {
-  BookingStatus,
   DayPassStatus,
   Prisma,
   Role,
@@ -10,6 +9,10 @@ import {
   getStudioLocalDateKey,
   studioLocalDateKeyToUtcAnchor,
 } from '../common/date/studio-local-date';
+import { MembershipUsageService } from '../membership-usage/membership-usage.service';
+import {
+  MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE,
+} from '../membership-usage/membership-usage.constants';
 
 const bypassRoles: ReadonlySet<Role> = new Set([
   Role.STAFF,
@@ -28,6 +31,8 @@ const bypassRoles: ReadonlySet<Role> = new Set([
  */
 @Injectable()
 export class BookingAccessService {
+  constructor(private readonly membershipUsage: MembershipUsageService) {}
+
   async assertAccess(
     tx: Prisma.TransactionClient,
     studioId: string,
@@ -36,6 +41,7 @@ export class BookingAccessService {
     classStartsAt: Date,
     studioTimezone: string,
     classTemplateId: string,
+    scheduledClassId: string,
   ): Promise<void> {
     if (bypassRoles.has(membershipRole)) {
       return;
@@ -85,26 +91,23 @@ export class BookingAccessService {
 
       // ── Credit check (only when category passed) ───────────────────────────
       if (!subscriptionRestricted && classCredits !== null) {
-        // Both period bounds must be present to enforce credits accurately.
-        // When either is missing (legacy subscription without a known billing
-        // window) skip enforcement rather than produce a false denial.
         if (sub.currentPeriodStart && sub.currentPeriodEnd) {
-          const used = await tx.booking.count({
-            where: {
+          try {
+            await this.membershipUsage.assertCreditAvailableForClass(
+              tx,
               studioId,
               userId,
-              status: BookingStatus.CONFIRMED,
-              scheduledClass: {
-                startsAt: {
-                  gte: sub.currentPeriodStart,
-                  lt: sub.currentPeriodEnd,
-                },
-              },
-            },
-          });
-
-          if (used >= classCredits) {
-            creditsExhausted = true;
+              scheduledClassId,
+              classStartsAt,
+              sub,
+              { errorType: 'forbidden' },
+            );
+          } catch (e) {
+            if (e instanceof ForbiddenException) {
+              creditsExhausted = true;
+            } else {
+              throw e;
+            }
           }
         }
       }
@@ -137,7 +140,7 @@ export class BookingAccessService {
       throw new ForbiddenException('Your membership does not include this class type.');
     }
     if (creditsExhausted) {
-      throw new ForbiddenException('You have used all your class credits for this billing period.');
+      throw new ForbiddenException(MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE);
     }
     throw new ForbiddenException('Active membership or Day Pass required to book this class.');
   }

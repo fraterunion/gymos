@@ -19,6 +19,7 @@ import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock'
 import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
+import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import type { ListMembersQueryDto } from './dto/list-members-query.dto';
 import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
@@ -39,6 +40,7 @@ export class MembersService {
     private readonly prisma: PrismaService,
     private readonly waitlistService: WaitlistService,
     private readonly stripeService: StripeService,
+    private readonly membershipUsage: MembershipUsageService,
   ) {}
 
   // ── Simple list (legacy — kept for compatibility) ──────────────────────────
@@ -270,9 +272,7 @@ export class MembersService {
     const noShowCount = bookingGroups.find((g) => g.status === BookingStatus.NO_SHOW)?._count._all ?? 0;
     const cancelledCount = bookingGroups.find((g) => g.status === BookingStatus.CANCELLED)?._count._all ?? 0;
 
-    // Compute credit usage for credit-limited plans. Runs after the parallel
-    // queries because it depends on subscription data. Skipped entirely for
-    // unlimited plans (classCredits = null) — zero extra DB round-trip.
+    // Compute credit usage for credit-limited plans via shared membership usage.
     let creditsUsed: number | null = null;
     let creditsRemaining: number | null = null;
 
@@ -280,29 +280,22 @@ export class MembersService {
       const { classCredits } = activeSubscription.membershipPlan;
 
       if (classCredits !== null) {
-        const { currentPeriodStart, currentPeriodEnd } = activeSubscription;
-
-        if (currentPeriodStart && currentPeriodEnd) {
-          // Must mirror BookingAccessService.assertAccess exactly:
-          // CONFIRMED bookings whose scheduled class starts within the period.
-          creditsUsed = await this.prisma.booking.count({
-            where: {
-              studioId,
-              userId,
-              status: BookingStatus.CONFIRMED,
-              scheduledClass: {
-                startsAt: {
-                  gte: currentPeriodStart,
-                  lt: currentPeriodEnd,
-                },
-              },
-            },
-          });
-          creditsRemaining = Math.max(classCredits - creditsUsed, 0);
+        const period = this.membershipUsage.resolveBillingPeriodForClassDate(
+          activeSubscription,
+          new Date(),
+        );
+        if (period) {
+          const usage = await this.membershipUsage.getUsageForPeriod(
+            this.prisma,
+            studioId,
+            userId,
+            period,
+            classCredits,
+          );
+          creditsUsed = usage.creditsUsed;
+          creditsRemaining = usage.creditsRemaining;
         }
-        // else: cannot compute without billing period bounds — leave null.
       }
-      // else: unlimited plan (classCredits = null) — leave null.
     }
 
     return {

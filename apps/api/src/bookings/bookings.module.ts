@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { MembershipUsageModule } from '../membership-usage/membership-usage.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { WaiverModule } from '../waiver/waiver.module';
 import { WaitlistModule } from '../waitlist/waitlist.module';
@@ -9,7 +10,7 @@ import { BookingsService } from './bookings.service';
 import { ClassBookingsController } from './class-bookings.controller';
 
 @Module({
-  imports: [PrismaModule, AuthModule, WaitlistModule, WaiverModule],
+  imports: [PrismaModule, AuthModule, WaitlistModule, WaiverModule, MembershipUsageModule],
   controllers: [BookingsController, ClassBookingsController],
   providers: [BookingsService, BookingAccessService],
 })

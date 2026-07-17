@@ -75,6 +75,9 @@ function friendlyRegisterError(e: unknown): string {
     if (m.includes('cancelled')) {
       return 'No se puede registrar asistencia en una clase cancelada.';
     }
+    if (m.includes('credits exhausted')) {
+      return 'No se puede registrar la asistencia porque el miembro ya utilizó todas las clases incluidas en su plan.';
+    }
     if (e.status === 403) return 'No tienes permiso para registrar asistencia.';
     return e.message;
   }

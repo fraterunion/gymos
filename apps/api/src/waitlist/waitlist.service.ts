@@ -124,6 +124,7 @@ export class WaitlistService {
           scheduledClass.startsAt,
           studio.timezone,
           scheduledClass.classTemplateId,
+          scheduledClassId,
         );
       } catch (e) {
         if (e instanceof ForbiddenException) continue;
@@ -221,6 +222,7 @@ export class WaitlistService {
           scheduledClass.startsAt,
           studio.timezone,
           scheduledClass.classTemplateId,
+          scheduledClass.id,
         );
 
         // Overlap check — members cannot join a waitlist for a class that

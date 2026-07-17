@@ -40,6 +40,9 @@ function friendlyRegisterError(e: unknown): string {
     if (m.includes("already registered")) return "Attendance already registered.";
     if (m.includes("inactive")) return "Cannot register attendance because this membership is inactive.";
     if (m.includes("cancelled")) return "Cannot register attendance for a cancelled class.";
+    if (m.includes("credits exhausted")) {
+      return "Cannot register attendance because the member has used all classes included in their plan.";
+    }
     if (e.status === 403) return "You are not allowed to register attendance.";
     return e.message;
   }
