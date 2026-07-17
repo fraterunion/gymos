@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -98,6 +101,7 @@ export function RegisterAttendanceModal({
   onRegistered: (row: AttendanceSummaryDto) => void;
 }) {
   const C = getColors();
+  const searchInputRef = useRef<TextInput>(null);
   const [step, setStep] = useState<Step>('search');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -115,6 +119,8 @@ export function RegisterAttendanceModal({
 
   useEffect(() => {
     if (!visible) {
+      searchInputRef.current?.blur();
+      Keyboard.dismiss();
       setStep('search');
       setSearch('');
       setDebouncedSearch('');
@@ -124,6 +130,16 @@ export function RegisterAttendanceModal({
       setSubmitting(false);
     }
   }, [visible]);
+
+  const dismissKeyboard = useCallback(() => {
+    searchInputRef.current?.blur();
+    Keyboard.dismiss();
+  }, []);
+
+  const handleClose = useCallback(() => {
+    dismissKeyboard();
+    onClose();
+  }, [dismissKeyboard, onClose]);
 
   useEffect(() => {
     if (!visible || !studioId) return;
@@ -167,10 +183,11 @@ export function RegisterAttendanceModal({
   );
 
   const selectMember = useCallback((member: MemberListItem) => {
+    dismissKeyboard();
     setSelected(member);
     setStep('confirm');
     setError(null);
-  }, []);
+  }, [dismissKeyboard]);
 
   const submit = useCallback(async () => {
     if (!selected) return;
@@ -179,45 +196,54 @@ export function RegisterAttendanceModal({
     try {
       const row = await registerManualClassAttendance(studioId, classId, selected.user.id);
       onRegistered(row);
-      onClose();
+      handleClose();
     } catch (e) {
       setError(friendlyRegisterError(e));
     } finally {
       setSubmitting(false);
     }
-  }, [selected, studioId, classId, onRegistered, onClose]);
+  }, [selected, studioId, classId, onRegistered, handleClose]);
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
       <Pressable
         style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
-        onPress={onClose}
+        onPress={handleClose}
       >
-        <Pressable
-          onPress={(e) => e.stopPropagation()}
-          style={{
-            maxHeight: '85%',
-            backgroundColor: C.surface2,
-            borderTopLeftRadius: Radius.card,
-            borderTopRightRadius: Radius.card,
-            paddingHorizontal: Space.screenH,
-            paddingTop: Space.sp4,
-            paddingBottom: Space.sp5,
-          }}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ maxHeight: '85%' }}
         >
+          <View
+            style={{
+              backgroundColor: C.surface2,
+              borderTopLeftRadius: Radius.card,
+              borderTopRightRadius: Radius.card,
+              paddingHorizontal: Space.screenH,
+              paddingTop: Space.sp4,
+              paddingBottom: Space.sp5,
+            }}
+          >
           {step === 'search' ? (
             <>
-              <Text style={{ fontSize: 20, fontWeight: '700', color: C.text }}>Registrar asistencia</Text>
-              <Text style={{ fontSize: 14, color: C.textSub, marginTop: 6, lineHeight: 20 }}>
-                Selecciona un miembro que asistió a esta clase.
-              </Text>
+              <Pressable onPress={dismissKeyboard}>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: C.text }}>Registrar asistencia</Text>
+                <Text style={{ fontSize: 14, color: C.textSub, marginTop: 6, lineHeight: 20 }}>
+                  Selecciona un miembro que asistió a esta clase.
+                </Text>
+              </Pressable>
 
               <TextInput
+                ref={searchInputRef}
                 value={search}
                 onChangeText={setSearch}
                 placeholder="Buscar miembros…"
                 placeholderTextColor={C.textMute}
-                autoFocus
+                returnKeyType="search"
+                blurOnSubmit
+                onSubmitEditing={dismissKeyboard}
+                autoCorrect={false}
+                autoCapitalize="words"
                 style={{
                   marginTop: Space.sp4,
                   borderWidth: 1,
@@ -235,7 +261,13 @@ export function RegisterAttendanceModal({
                 <Text style={{ marginTop: Space.sp2, fontSize: 13, color: C.negative }}>{error}</Text>
               ) : null}
 
-              <ScrollView style={{ marginTop: Space.sp3, maxHeight: 360 }} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                style={{ marginTop: Space.sp3, maxHeight: 360 }}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                contentContainerStyle={{ paddingBottom: Space.sp3 }}
+                nestedScrollEnabled
+              >
                 {searchLoading && members.length === 0 ? (
                   <View style={{ paddingVertical: Space.sp5, alignItems: 'center' }}>
                     <ActivityIndicator color={C.textMute} />
@@ -260,7 +292,7 @@ export function RegisterAttendanceModal({
 
               <Pressable
                 accessibilityRole="button"
-                onPress={onClose}
+                onPress={handleClose}
                 style={{
                   marginTop: Space.sp4,
                   paddingVertical: 14,
@@ -340,7 +372,8 @@ export function RegisterAttendanceModal({
               </View>
             </>
           ) : null}
-        </Pressable>
+          </View>
+        </KeyboardAvoidingView>
       </Pressable>
     </Modal>
   );
