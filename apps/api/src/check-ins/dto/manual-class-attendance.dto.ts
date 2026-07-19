@@ -1,5 +1,5 @@
 import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
-import { GYMOS_CUID_PATTERN } from '@gymos/utils';
+import { GYMOS_CUID_PATTERN } from '../../common/validation/gymos-id.validation';
 
 /** Body for walk-in attendance — `memberId` is the member's User.id (Prisma cuid). */
 export class ManualClassAttendanceDto {

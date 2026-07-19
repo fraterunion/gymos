@@ -1,10 +1,10 @@
 import { validate } from 'class-validator';
 import {
   buildManualAttendancePayload,
-  GYMOS_CUID_PATTERN,
   INVALID_MEMBER_USER_ID_MESSAGE_ES,
   resolveMemberUserId,
 } from '@gymos/utils';
+import { GYMOS_CUID_PATTERN } from '../common/validation/gymos-id.validation';
 import { ManualClassAttendanceDto } from './dto/manual-class-attendance.dto';
 
 const SAMPLE_USER_ID = 'clh1234567890abcdefghijk';
