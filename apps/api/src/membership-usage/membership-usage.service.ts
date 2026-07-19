@@ -16,6 +16,13 @@ import {
 
 type DbClient = PrismaService | Prisma.TransactionClient;
 
+/** PostgreSQL requires explicit enum casts when comparing `"BookingStatus"` via raw SQL. */
+const CREDIT_CONSUMING_BOOKING_STATUS_SQL = Prisma.join(
+  CREDIT_CONSUMING_BOOKING_STATUSES.map(
+    (status) => Prisma.sql`${status}::"BookingStatus"`,
+  ),
+);
+
 export type MembershipUsageSnapshot = {
   classCredits: number | null;
   creditsUsed: number;
@@ -56,7 +63,7 @@ export class MembershipUsageService {
         INNER JOIN scheduled_classes sc ON sc.id = b.scheduled_class_id
         WHERE b.studio_id = ${studioId}
           AND b.user_id = ${userId}
-          AND b.status IN (${Prisma.join(CREDIT_CONSUMING_BOOKING_STATUSES)})
+          AND b.status IN (${CREDIT_CONSUMING_BOOKING_STATUS_SQL})
           AND sc.starts_at >= ${periodStart}
           AND sc.starts_at < ${periodEnd}
         UNION
@@ -90,7 +97,7 @@ export class MembershipUsageService {
           WHERE b.studio_id = ${studioId}
             AND b.user_id = ${userId}
             AND b.scheduled_class_id = ${scheduledClassId}
-            AND b.status IN (${Prisma.join(CREDIT_CONSUMING_BOOKING_STATUSES)})
+            AND b.status IN (${CREDIT_CONSUMING_BOOKING_STATUS_SQL})
             AND sc.starts_at >= ${periodStart}
             AND sc.starts_at < ${periodEnd}
           UNION

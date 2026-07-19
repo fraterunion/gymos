@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -99,6 +100,8 @@ function isQrJwtPayload(v: JwtPayload | string): v is QrJwtPayload & JwtPayload 
 
 @Injectable()
 export class CheckInsService {
+  private readonly logger = new Logger(CheckInsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -353,100 +356,150 @@ export class CheckInsService {
     memberId: string,
     actorUserId: string,
   ): Promise<AttendanceSummary> {
+    this.logger.log(
+      JSON.stringify({
+        event: 'registerManualClassAttendance.start',
+        studioId,
+        scheduledClassId,
+        memberId,
+        actorUserId,
+      }),
+    );
+
     await this.requireManualAttendanceRole(studioId, actorUserId);
 
-    return this.prisma.$transaction(async (tx) => {
-      await acquireMembershipUsageAdvisoryLock(tx, studioId, memberId);
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.lock' }));
+        await acquireMembershipUsageAdvisoryLock(tx, studioId, memberId);
 
-      const [membership, scheduledClass, activeSubscription] = await Promise.all([
-        tx.studioMembership.findFirst({
-          where: {
-            studioId,
-            userId: memberId,
-            deletedAt: null,
-            role: Role.MEMBER,
-          },
-          include: {
-            user: { select: { ...attendanceUserSelect, deletedAt: true } },
-          },
-        }),
-        tx.scheduledClass.findFirst({
-          where: { id: scheduledClassId, studioId },
-        }),
-        tx.subscription.findFirst({
-          where: {
-            studioId,
-            userId: memberId,
-            status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
-          },
-          select: {
-            currentPeriodStart: true,
-            currentPeriodEnd: true,
-            membershipPlan: { select: { classCredits: true } },
-          },
-        }),
-      ]);
+        const [membership, scheduledClass, activeSubscription] = await Promise.all([
+          tx.studioMembership.findFirst({
+            where: {
+              studioId,
+              userId: memberId,
+              deletedAt: null,
+              role: Role.MEMBER,
+            },
+            include: {
+              user: { select: { ...attendanceUserSelect, deletedAt: true } },
+            },
+          }),
+          tx.scheduledClass.findFirst({
+            where: { id: scheduledClassId, studioId },
+          }),
+          tx.subscription.findFirst({
+            where: {
+              studioId,
+              userId: memberId,
+              status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+            },
+            select: {
+              currentPeriodStart: true,
+              currentPeriodEnd: true,
+              membershipPlan: { select: { classCredits: true } },
+            },
+          }),
+        ]);
 
-      if (!scheduledClass) {
-        throw new NotFoundException('Class not found');
-      }
-      if (!membership || membership.user.deletedAt) {
-        throw new NotFoundException('Member not found');
-      }
-      if (!activeSubscription) {
-        throw new BadRequestException(
-          'Cannot register attendance because this membership is inactive.',
+        if (!scheduledClass) {
+          throw new NotFoundException('Class not found');
+        }
+        this.logger.log(
+          JSON.stringify({
+            event: 'registerManualClassAttendance.foundClass',
+            classStatus: scheduledClass.status,
+          }),
         );
-      }
 
-      if (scheduledClass.status === ClassStatus.CANCELLED) {
-        throw new ConflictException('Cannot register attendance for a cancelled class.');
-      }
-      if (!manualAttendanceClassStatuses.has(scheduledClass.status)) {
-        throw new ConflictException('Cannot register attendance for this class.');
-      }
+        if (!membership || membership.user.deletedAt) {
+          throw new NotFoundException('Member not found');
+        }
+        this.logger.log(
+          JSON.stringify({
+            event: 'registerManualClassAttendance.foundMembership',
+            membershipId: membership.id,
+            userId: membership.userId,
+          }),
+        );
 
-      const existing = await tx.attendance.findUnique({
-        where: {
-          scheduledClassId_userId: {
-            scheduledClassId,
-            userId: memberId,
+        if (!activeSubscription) {
+          throw new BadRequestException(
+            'Cannot register attendance because this membership is inactive.',
+          );
+        }
+        this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.foundSubscription' }));
+
+        if (scheduledClass.status === ClassStatus.CANCELLED) {
+          throw new ConflictException('Cannot register attendance for a cancelled class.');
+        }
+        if (!manualAttendanceClassStatuses.has(scheduledClass.status)) {
+          throw new ConflictException('Cannot register attendance for this class.');
+        }
+
+        const existing = await tx.attendance.findUnique({
+          where: {
+            scheduledClassId_userId: {
+              scheduledClassId,
+              userId: memberId,
+            },
           },
-        },
-      });
-      if (existing) {
-        throw new ConflictException('Attendance already registered.');
-      }
-
-      await this.membershipUsage.assertCreditAvailableForClass(
-        tx,
-        studioId,
-        memberId,
-        scheduledClassId,
-        scheduledClass.startsAt,
-        activeSubscription,
-        { errorType: 'bad_request' },
-      );
-
-      try {
-        const attendance = await tx.attendance.create({
-          data: {
-            studioId,
-            scheduledClassId,
-            userId: memberId,
-            method: CheckInMethod.MANUAL,
-            checkedInByUserId: actorUserId,
-          },
-          include: { user: { select: attendanceUserSelect } },
         });
-        return this.toAttendanceSummary(attendance);
-      } catch (e) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        if (existing) {
           throw new ConflictException('Attendance already registered.');
         }
-        throw e;
-      }
-    });
+
+        this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.assertCredits' }));
+        await this.membershipUsage.assertCreditAvailableForClass(
+          tx,
+          studioId,
+          memberId,
+          scheduledClassId,
+          scheduledClass.startsAt,
+          activeSubscription,
+          { errorType: 'bad_request' },
+        );
+
+        this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.createAttendance' }));
+        try {
+          const attendance = await tx.attendance.create({
+            data: {
+              studioId,
+              scheduledClassId,
+              userId: memberId,
+              method: CheckInMethod.MANUAL,
+              checkedInByUserId: actorUserId,
+            },
+            include: { user: { select: attendanceUserSelect } },
+          });
+          this.logger.log(
+            JSON.stringify({
+              event: 'registerManualClassAttendance.done',
+              attendanceId: attendance.id,
+            }),
+          );
+          return this.toAttendanceSummary(attendance);
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+            throw new ConflictException('Attendance already registered.');
+          }
+          throw e;
+        }
+      });
+    } catch (e) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'registerManualClassAttendance.failed',
+          studioId,
+          scheduledClassId,
+          memberId,
+          actorUserId,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+        e instanceof Error ? e.stack : undefined,
+      );
+      throw e;
+    }
   }
 
   async listClassAttendance(studioId: string, scheduledClassId: string): Promise<AttendanceSummary[]> {
