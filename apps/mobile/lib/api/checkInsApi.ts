@@ -1,4 +1,5 @@
 import { apiRequest } from '@/lib/api/client';
+import { buildManualAttendancePayload, type MemberUserIdSource } from '@gymos/utils';
 
 export type QrTokenResponse = {
   qrToken: string;
@@ -133,10 +134,14 @@ export async function staffForceCheckIn(
 export async function registerManualClassAttendance(
   studioId: string,
   classId: string,
-  memberId: string,
+  member: MemberUserIdSource,
 ): Promise<AttendanceSummaryDto> {
+  const payload = buildManualAttendancePayload(member);
+  if (!payload.ok) {
+    throw new Error('INVALID_MEMBER_USER_ID');
+  }
   return apiRequest<AttendanceSummaryDto>(
     `/studios/${studioId}/classes/${classId}/manual-attendance`,
-    { method: 'POST', body: JSON.stringify({ memberId }) },
+    { method: 'POST', body: JSON.stringify({ memberId: payload.memberId }) },
   );
 }

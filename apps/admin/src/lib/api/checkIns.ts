@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api/client";
+import { buildManualAttendancePayload, type MemberUserIdSource } from "@gymos/utils";
 
 export type AttendanceSummary = {
   id: string;
@@ -43,10 +44,14 @@ export async function checkInManual(studioId: string, bookingId: string): Promis
 export async function registerManualClassAttendance(
   studioId: string,
   classId: string,
-  memberId: string,
+  member: MemberUserIdSource,
 ): Promise<AttendanceSummary> {
+  const payload = buildManualAttendancePayload(member);
+  if (!payload.ok) {
+    throw new Error("INVALID_MEMBER_USER_ID");
+  }
   return apiRequest<AttendanceSummary>(`/studios/${studioId}/classes/${classId}/manual-attendance`, {
     method: "POST",
-    body: JSON.stringify({ memberId }),
+    body: JSON.stringify({ memberId: payload.memberId }),
   });
 }

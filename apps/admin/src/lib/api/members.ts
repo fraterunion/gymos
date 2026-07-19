@@ -31,7 +31,10 @@ export type MemberSubscriptionSummary = {
 };
 
 export type MemberListItem = {
+  /** StudioMembership.id — roster/display only; never send as manual-attendance memberId. */
   membershipId: string;
+  /** User.id — send as manual-attendance `memberId`. */
+  userId: string;
   role: MemberRole;
   joinedAt: string;
   user: {
@@ -269,10 +272,20 @@ export async function fetchMembers(
   if (query.page) params.set("page", String(query.page));
   if (query.limit) params.set("limit", String(query.limit));
   const qs = params.toString();
-  return apiRequest<MemberListResponse>(
-    `/studios/${studioId}/members${qs ? `?${qs}` : ""}`,
-    { method: "GET" },
-  );
+  type ApiMemberListRow = Omit<MemberListItem, "userId">;
+  const res = await apiRequest<{
+    data: ApiMemberListRow[];
+    total: number;
+    page: number;
+    limit: number;
+  }>(`/studios/${studioId}/members${qs ? `?${qs}` : ""}`, { method: "GET" });
+  return {
+    ...res,
+    data: res.data.map((row) => ({
+      ...row,
+      userId: row.user.id,
+    })),
+  };
 }
 
 export async function fetchMemberProfile(

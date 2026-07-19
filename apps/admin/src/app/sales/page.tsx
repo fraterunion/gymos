@@ -206,6 +206,7 @@ export default function WalkInSalesPage() {
       });
       const asListItem: MemberListItem = {
         membershipId: created.membership.id,
+        userId: created.user.id,
         role: "MEMBER",
         joinedAt: created.membership.createdAt,
         user: created.user,

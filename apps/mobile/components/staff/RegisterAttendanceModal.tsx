@@ -21,6 +21,7 @@ import {
   memberDisplayName,
   type MemberListItem,
 } from '@/lib/api/membersDirectoryApi';
+import { INVALID_MEMBER_USER_ID_MESSAGE_ES } from '@gymos/utils';
 
 type Step = 'search' | 'confirm';
 
@@ -77,6 +78,9 @@ function friendlyRegisterError(e: unknown): string {
     }
     if (m.includes('credits exhausted')) {
       return 'No se puede registrar la asistencia porque el miembro ya utilizó todas las clases incluidas en su plan.';
+    }
+    if (m.includes('memberid') && m.includes('uuid')) {
+      return INVALID_MEMBER_USER_ID_MESSAGE_ES;
     }
     if (e.status === 403) return 'No tienes permiso para registrar asistencia.';
     return e.message;
@@ -181,7 +185,7 @@ export function RegisterAttendanceModal({
   );
 
   const hasReservation = useMemo(
-    () => (selected ? reservedUserIds.has(selected.user.id) : false),
+    () => (selected ? reservedUserIds.has(selected.userId) : false),
     [selected, reservedUserIds],
   );
 
@@ -197,10 +201,14 @@ export function RegisterAttendanceModal({
     setSubmitting(true);
     setError(null);
     try {
-      const row = await registerManualClassAttendance(studioId, classId, selected.user.id);
+      const row = await registerManualClassAttendance(studioId, classId, selected);
       onRegistered(row);
       handleClose();
     } catch (e) {
+      if (e instanceof Error && e.message === 'INVALID_MEMBER_USER_ID') {
+        setError(INVALID_MEMBER_USER_ID_MESSAGE_ES);
+        return;
+      }
       setError(friendlyRegisterError(e));
     } finally {
       setSubmitting(false);

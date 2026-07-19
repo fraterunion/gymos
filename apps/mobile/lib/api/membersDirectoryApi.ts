@@ -10,7 +10,10 @@ export type MemberSubscriptionSummary = {
 };
 
 export type MemberListItem = {
+  /** StudioMembership.id — roster/display only; never send as manual-attendance memberId. */
   membershipId: string;
+  /** User.id — send as manual-attendance `memberId`. */
+  userId: string;
   role: string;
   joinedAt: string;
   user: {
@@ -61,10 +64,20 @@ export async function fetchMembers(
   if (query.sortBy) params.set('sortBy', query.sortBy);
   if (query.sortDir) params.set('sortDir', query.sortDir);
   const qs = params.toString();
-  return apiRequest<MemberListResponse>(
-    `/studios/${studioId}/members${qs ? `?${qs}` : ''}`,
-    { method: 'GET' },
-  );
+  type ApiMemberListRow = Omit<MemberListItem, 'userId'>;
+  const res = await apiRequest<{
+    data: ApiMemberListRow[];
+    total: number;
+    page: number;
+    limit: number;
+  }>(`/studios/${studioId}/members${qs ? `?${qs}` : ''}`, { method: 'GET' });
+  return {
+    ...res,
+    data: res.data.map((row) => ({
+      ...row,
+      userId: row.user.id,
+    })),
+  };
 }
 
 export function memberDisplayName(member: Pick<MemberListItem, 'user'>): string {

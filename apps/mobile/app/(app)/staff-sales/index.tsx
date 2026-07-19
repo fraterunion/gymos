@@ -629,6 +629,7 @@ export default function StaffSalesScreen() {
       .then((p) => {
         const pseudo: MemberListItem = {
           membershipId: p.membership.id,
+          userId: p.user.id,
           role: 'MEMBER',
           joinedAt: p.membership.createdAt,
           user: p.user,
@@ -678,6 +679,7 @@ export default function StaffSalesScreen() {
       });
       const asListItem: MemberListItem = {
         membershipId: created.membership.id,
+        userId: created.user.id,
         role: 'MEMBER',
         joinedAt: created.membership.createdAt,
         user: created.user,

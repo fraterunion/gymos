@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError } from "@/lib/api/errors";
 import { registerManualClassAttendance, type AttendanceSummary } from "@/lib/api/checkIns";
 import { fetchMembers, type MemberListItem } from "@/lib/api/members";
+import { INVALID_MEMBER_USER_ID_MESSAGE_EN } from "@gymos/utils";
 import {
   adminInput,
   adminModalOverlay,
@@ -42,6 +43,9 @@ function friendlyRegisterError(e: unknown): string {
     if (m.includes("cancelled")) return "Cannot register attendance for a cancelled class.";
     if (m.includes("credits exhausted")) {
       return "Cannot register attendance because the member has used all classes included in their plan.";
+    }
+    if (m.includes("memberid") && m.includes("uuid")) {
+      return INVALID_MEMBER_USER_ID_MESSAGE_EN;
     }
     if (e.status === 403) return "You are not allowed to register attendance.";
     return e.message;
@@ -117,7 +121,7 @@ export function RegisterAttendanceModal({
   );
 
   const hasReservation = useMemo(
-    () => (selected ? reservedUserIds.has(selected.user.id) : false),
+    () => (selected ? reservedUserIds.has(selected.userId) : false),
     [selected, reservedUserIds],
   );
 
@@ -138,10 +142,14 @@ export function RegisterAttendanceModal({
     setSubmitting(true);
     setError(null);
     try {
-      const row = await registerManualClassAttendance(studioId, classId, selected.user.id);
+      const row = await registerManualClassAttendance(studioId, classId, selected);
       onRegistered(row);
       onClose();
     } catch (e) {
+      if (e instanceof Error && e.message === "INVALID_MEMBER_USER_ID") {
+        setError(INVALID_MEMBER_USER_ID_MESSAGE_EN);
+        return;
+      }
       setError(friendlyRegisterError(e));
     } finally {
       setSubmitting(false);
