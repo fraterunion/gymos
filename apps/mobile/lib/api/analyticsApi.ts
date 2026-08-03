@@ -140,14 +140,6 @@ export type ExecutiveDashboardDto = {
     comparisonPercent: number | null;
   }[];
   insights: { id: string; tone: string; title: string; body: string }[];
-  activity: {
-    id: string;
-    type: string;
-    memberName: string;
-    planName: string | null;
-    amountCents: number | null;
-    relativeLabel: string;
-  }[];
   upcomingRevenue: {
     expected7DaysCents: number;
     expected30DaysCents: number;
@@ -174,6 +166,51 @@ export async function fetchAnalyticsExecutive(studioId: string): Promise<Executi
   return apiRequest<ExecutiveDashboardDto>(`/studios/${studioId}/analytics/executive`, {
     method: 'GET',
   });
+}
+
+export type FinancialActivityItemDto = {
+  id: string;
+  occurredAt: string;
+  member: { id: string; name: string };
+  eventLabel: string;
+  planName: string | null;
+  amountCents: number | null;
+  currency: string;
+  methodLabel: string;
+  statusLabel: string;
+};
+
+export type FinancialActivityDto = {
+  currency: string;
+  summary: {
+    movementCount: number;
+    stripeCollectedCents: number;
+    cashCollectedCents: number;
+    failedCount: number;
+    refundedCents: number;
+  };
+  items: FinancialActivityItemDto[];
+  pagination: {
+    nextCursor: string | null;
+    hasMore: boolean;
+    totalCount: number;
+  };
+};
+
+export async function fetchFinancialActivity(
+  studioId: string,
+  query: { from?: string; to?: string; limit?: number; cursor?: string } = {},
+): Promise<FinancialActivityDto> {
+  const params = new URLSearchParams();
+  if (query.from) params.set('from', query.from);
+  if (query.to) params.set('to', query.to);
+  if (query.limit) params.set('limit', String(query.limit));
+  if (query.cursor) params.set('cursor', query.cursor);
+  const qs = params.toString();
+  return apiRequest<FinancialActivityDto>(
+    `/studios/${studioId}/analytics/financial-activity${qs ? `?${qs}` : ''}`,
+    { method: 'GET' },
+  );
 }
 
 /** Revenue for a calendar day key (YYYY-MM-DD) from the 30-day business trend. */

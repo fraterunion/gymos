@@ -4,10 +4,11 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AnalyticsController } from './analytics.controller';
 import { AnalyticsService } from './analytics.service';
 import { ExecutiveDashboardService } from './executive-dashboard.service';
+import { FinancialActivityService } from './financial-activity.service';
 
 @Module({
   imports: [PrismaModule, AuthModule],
   controllers: [AnalyticsController],
-  providers: [AnalyticsService, ExecutiveDashboardService],
+  providers: [AnalyticsService, ExecutiveDashboardService, FinancialActivityService],
 })
 export class AnalyticsModule {}

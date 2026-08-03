@@ -19,6 +19,7 @@ import {
 
 import { FinancialKpiSection } from "@/components/analytics/FinancialKpiSection";
 import { ExecutiveDashboard } from "@/components/analytics/executive/ExecutiveDashboard";
+import { FinancialActivitySection } from "@/components/analytics/executive/FinancialActivitySection";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { SectionHeader } from "@/components/shell/SectionHeader";
 import { SurfaceCard } from "@/components/shell/SurfaceCard";
@@ -840,6 +841,12 @@ export default function AnalyticsPage() {
       ) : null}
 
       <ExecutiveDashboard data={executive} loading={loadingExecutive} />
+
+      {selectedStudioId ? (
+        <section className="border-t border-zinc-200 pt-12">
+          <FinancialActivitySection studioId={selectedStudioId} />
+        </section>
+      ) : null}
 
       <section className="scroll-mt-8 space-y-6 border-t border-zinc-200 pt-12">
         <SectionHeader title="Análisis detallado" />

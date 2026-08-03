@@ -65,7 +65,7 @@ export type ExecutiveTopMembersRow = {
 };
 
 /** Bounded query helpers — each function is exactly one DB round-trip. */
-export const EXECUTIVE_QUERY_BUDGET = 21 as const;
+export const EXECUTIVE_QUERY_BUDGET = 19 as const;
 
 export function sqlFinancialCore(
   studioId: string,

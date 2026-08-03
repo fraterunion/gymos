@@ -210,17 +210,6 @@ export type ExecutiveDashboardDto = {
     averageRevenuePerMemberCents: number;
     currency: string;
   };
-  activity: {
-    id: string;
-    type: string;
-    memberName: string;
-    memberUserId: string;
-    planName: string | null;
-    amountCents: number | null;
-    paymentMethod: string | null;
-    occurredAt: string;
-    relativeLabel: string;
-  }[];
   upcomingRevenue: {
     expected7DaysCents: number;
     expected30DaysCents: number;
@@ -366,4 +355,82 @@ export async function fetchAnalyticsExecutive(studioId: string): Promise<Executi
   return apiRequest<ExecutiveDashboardDto>(`/studios/${studioId}/analytics/executive`, {
     method: "GET",
   });
+}
+
+// ── Financial Activity ───────────────────────────────────────────────────────
+
+export type FinancialActivityCategory =
+  | "all"
+  | "stripe"
+  | "cash"
+  | "renewals"
+  | "failed"
+  | "refunds";
+
+export type FinancialActivityPeriodPreset = "today" | "7d" | "30d" | "month" | "custom";
+
+export type FinancialActivityItemDto = {
+  id: string;
+  occurredAt: string;
+  member: { id: string; name: string };
+  eventType: string;
+  eventLabel: string;
+  planName: string | null;
+  amountCents: number | null;
+  currency: string;
+  method: string;
+  methodLabel: string;
+  status: string;
+  statusLabel: string;
+  nextRenewalAt: string | null;
+  failureReason: string | null;
+  actionTarget: "member" | "review";
+  memberHref: string;
+};
+
+export type FinancialActivityDto = {
+  currency: string;
+  timezone: string;
+  period: { from: string; to: string };
+  summary: {
+    movementCount: number;
+    stripeCollectedCents: number;
+    cashCollectedCents: number;
+    failedCount: number;
+    refundedCents: number;
+  };
+  items: FinancialActivityItemDto[];
+  pagination: {
+    nextCursor: string | null;
+    hasMore: boolean;
+    totalCount: number;
+  };
+  generatedAt: string;
+};
+
+export type FinancialActivityQuery = {
+  from?: string;
+  to?: string;
+  category?: FinancialActivityCategory;
+  memberSearch?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export async function fetchFinancialActivity(
+  studioId: string,
+  query: FinancialActivityQuery = {},
+): Promise<FinancialActivityDto> {
+  const params = new URLSearchParams();
+  if (query.from) params.set("from", query.from);
+  if (query.to) params.set("to", query.to);
+  if (query.category && query.category !== "all") params.set("category", query.category);
+  if (query.memberSearch) params.set("memberSearch", query.memberSearch);
+  if (query.cursor) params.set("cursor", query.cursor);
+  if (query.limit) params.set("limit", String(query.limit));
+  const qs = params.toString();
+  return apiRequest<FinancialActivityDto>(
+    `/studios/${studioId}/analytics/financial-activity${qs ? `?${qs}` : ""}`,
+    { method: "GET" },
+  );
 }

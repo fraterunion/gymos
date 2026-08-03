@@ -180,7 +180,6 @@ export type ExecutiveDashboardDto = {
   kpis: ExecutiveKpiDto[];
   revenue: ExecutiveRevenueSectionDto;
   stripe: ExecutiveStripeOverviewDto;
-  activity: ExecutiveActivityEventDto[];
   upcomingRevenue: ExecutiveUpcomingRevenueDto;
   failedPayments: ExecutiveFailedPaymentDto[];
   membershipHealth: ExecutiveMembershipHealthDto;

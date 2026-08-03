@@ -20,9 +20,11 @@ import {
   fetchAnalyticsExecutive,
   fetchAnalyticsClassBreakdown,
   fetchAnalyticsFinancial,
+  fetchFinancialActivity,
   type BusinessAnalyticsDto,
   type ClassBreakdownDto,
   type ExecutiveDashboardDto,
+  type FinancialActivityDto,
   type FinancialSummaryDto,
 } from '@/lib/api/analyticsApi';
 import { PanelAnalytics } from '@/components/staff/AnalyticsCharts';
@@ -50,6 +52,7 @@ function isClassNow(c: TodayClassSummaryDto): boolean {
 
 type DashboardData = {
   executive: ExecutiveDashboardDto | null;
+  financialActivity: FinancialActivityDto | null;
   financial: FinancialSummaryDto | null;
   business: BusinessAnalyticsDto | null;
   classes: TodayClassSummaryDto[];
@@ -87,7 +90,10 @@ export default function ExecutiveDashboardScreen() {
       else setLoading(true);
       setFatalError(null);
 
-      const [executiveResult, classesResult] = await Promise.all([
+      const now = new Date();
+      const activityFrom = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+
+      const [executiveResult, classesResult, activityResult] = await Promise.all([
         fetchAnalyticsExecutive(studioId).then(
           (executive) => ({ executive, error: null as string | null }),
           (e) => ({ executive: null, error: userFacingApiMessage(e, 'No se pudo cargar el panel') }),
@@ -98,6 +104,14 @@ export default function ExecutiveDashboardScreen() {
             classes: [] as TodayClassSummaryDto[],
             error: userFacingApiMessage(e, 'No se pudo cargar el horario de hoy'),
           }),
+        ),
+        fetchFinancialActivity(studioId, {
+          from: activityFrom,
+          to: now.toISOString(),
+          limit: 3,
+        }).then(
+          (financialActivity) => ({ financialActivity, error: null as string | null }),
+          () => ({ financialActivity: null, error: null as string | null }),
         ),
       ]);
 
@@ -130,6 +144,7 @@ export default function ExecutiveDashboardScreen() {
 
       setData({
         executive,
+        financialActivity: activityResult.financialActivity,
         financial,
         business: null,
         classes: classesResult.classes,
@@ -372,34 +387,40 @@ export default function ExecutiveDashboardScreen() {
           </View>
         ) : null}
 
-        {data?.executive?.activity.length ? (
+        {data?.financialActivity?.items.length ? (
           <View style={{ marginBottom: Space.sp4 }}>
-            <SectionOverline>Actividad reciente</SectionOverline>
-            {data.executive.activity.slice(0, 3).map((ev, index) => (
+            <SectionOverline>Actividad financiera</SectionOverline>
+            {data.financialActivity.items.slice(0, 3).map((ev, index) => (
               <Animated.View
                 key={ev.id}
                 entering={FadeInDown.delay(index * 30).duration(280)}
                 style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
                   paddingVertical: 12,
                   borderBottomWidth: 1,
                   borderBottomColor: C.separator,
-                  gap: 12,
+                  gap: 4,
                 }}
               >
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>{ev.memberName}</Text>
-                  <Text style={{ fontSize: 13, color: C.textSub, marginTop: 2 }} numberOfLines={1}>
-                    {ev.planName ?? 'Pago'}
+                <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>{ev.member.name}</Text>
+                <Text style={{ fontSize: 13, color: C.textSub }}>{ev.eventLabel}</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+                  <Text style={{ fontSize: 13, color: C.textSub, flex: 1 }} numberOfLines={1}>
+                    {ev.methodLabel}
                     {ev.amountCents != null
-                      ? ` · ${formatMoneyFromCents(ev.amountCents, data.executive?.currency ?? 'mxn')}`
+                      ? ` · ${formatMoneyFromCents(ev.amountCents, ev.currency || (data.financialActivity?.currency ?? 'mxn'))}`
                       : ''}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 12, color: C.textMute }}>{ev.relativeLabel}</Text>
               </Animated.View>
             ))}
+            <Pressable
+              onPress={() => router.push('/financial-activity' as Href)}
+              style={{ paddingVertical: 14 }}
+            >
+              <Text style={{ fontSize: 15, fontWeight: '600', color: primaryColor }}>
+                Ver toda la actividad
+              </Text>
+            </Pressable>
           </View>
         ) : null}
 

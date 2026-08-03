@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
-  PaymentMethod,
   PaymentStatus,
   SubscriptionStatus,
 } from '@prisma/client';
@@ -26,7 +25,6 @@ import {
   buildExecutiveDataQuality,
   buildExecutiveReconciliation,
   computeEstimatedMrrCents,
-  paymentMethodOwnerLabel,
 } from './executive-dashboard.utils';
 import {
   buildExecutiveInsights,
@@ -34,7 +32,6 @@ import {
   relativeTimeLabel,
 } from './executive-insights.utils';
 import type {
-  ExecutiveActivityEventDto,
   ExecutiveDashboardDto,
   ExecutiveFailedPaymentDto,
   ExecutiveKpiDto,
@@ -83,8 +80,6 @@ export class ExecutiveDashboardService {
       operations,
       topMembersRow,
       subscriptionRows,
-      activityPayments,
-      activityNewSubs,
       upcomingSubs,
       failedPaymentRows,
       inactiveRiskRows,
@@ -130,33 +125,6 @@ export class ExecutiveDashboardService {
           status: true,
           cancelAtPeriodEnd: true,
           membershipPlan: { select: { name: true, priceCents: true, billingInterval: true } },
-        },
-      }),
-      this.prisma.payment.findMany({
-        where: {
-          studioId,
-          createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
-          status: { in: [PaymentStatus.SUCCEEDED, PaymentStatus.FAILED] },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 25,
-        include: {
-          user: { select: { id: true, firstName: true, lastName: true } },
-          membershipPlan: { select: { name: true } },
-          subscription: { select: { id: true } },
-        },
-      }),
-      this.prisma.subscription.findMany({
-        where: {
-          studioId,
-          createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
-          ...analyticsExcludedSubscriptionFilter(studioId),
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-        include: {
-          user: { select: { id: true, firstName: true, lastName: true } },
-          membershipPlan: { select: { name: true, priceCents: true } },
         },
       }),
       this.fetchUpcomingRenewals(studioId, now),
@@ -338,7 +306,6 @@ export class ExecutiveDashboardService {
       highestOccupancyPercent: null,
     });
 
-    const activity = this.buildActivityFeed(activityPayments, activityNewSubs, now);
     const memberRisk = this.buildMemberRisk(inactiveRiskRows, riskSubscriptions);
     const topMembers = this.buildTopMembers(top, longestMembership, newestMembership, now);
     const planCategoryRows = this.buildPlanCategoryCounts(subscriptionRows);
@@ -484,7 +451,6 @@ export class ExecutiveDashboardService {
         averageRevenuePerMemberCents,
         currency,
       },
-      activity,
       upcomingRevenue: {
         expected7DaysCents,
         expected30DaysCents,
@@ -557,62 +523,6 @@ export class ExecutiveDashboardService {
         failedChecks: failed.map(([k]) => k),
       }),
     );
-  }
-
-  private buildActivityFeed(
-    payments: Array<{
-      id: string;
-      status: PaymentStatus;
-      subscriptionId: string | null;
-      amountCents: number;
-      paymentMethod: PaymentMethod;
-      paidAt: Date | null;
-      createdAt: Date;
-      user: { id: string; firstName: string; lastName: string } | null;
-      membershipPlan: { name: string } | null;
-    }>,
-    newSubs: Array<{
-      id: string;
-      createdAt: Date;
-      user: { id: string; firstName: string; lastName: string };
-      membershipPlan: { name: string; priceCents: number };
-    }>,
-    now: Date,
-  ): ExecutiveActivityEventDto[] {
-    const paymentEvents: ExecutiveActivityEventDto[] = payments
-      .filter((p) => p.user)
-      .map((p) => ({
-        id: `pay-${p.id}`,
-        type:
-          p.status === PaymentStatus.FAILED
-            ? 'payment_failed'
-            : p.subscriptionId
-              ? 'subscription_renewed'
-              : 'payment_succeeded',
-        memberName: fullName(p.user!.firstName, p.user!.lastName),
-        memberUserId: p.user!.id,
-        planName: p.membershipPlan?.name ?? null,
-        amountCents: p.amountCents,
-        paymentMethod: paymentMethodOwnerLabel(p.paymentMethod),
-        occurredAt: (p.paidAt ?? p.createdAt).toISOString(),
-        relativeLabel: relativeTimeLabel((p.paidAt ?? p.createdAt).toISOString(), now),
-      }));
-
-    const subEvents: ExecutiveActivityEventDto[] = newSubs.map((s) => ({
-      id: `sub-${s.id}`,
-      type: 'subscription_created',
-      memberName: fullName(s.user.firstName, s.user.lastName),
-      memberUserId: s.user.id,
-      planName: s.membershipPlan.name,
-      amountCents: s.membershipPlan.priceCents,
-      paymentMethod: paymentMethodOwnerLabel(PaymentMethod.STRIPE),
-      occurredAt: s.createdAt.toISOString(),
-      relativeLabel: relativeTimeLabel(s.createdAt.toISOString(), now),
-    }));
-
-    return [...paymentEvents, ...subEvents]
-      .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
-      .slice(0, 30);
   }
 
   private async fetchUpcomingRenewals(

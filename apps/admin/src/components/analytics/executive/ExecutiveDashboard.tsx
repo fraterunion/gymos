@@ -40,14 +40,6 @@ function kpiDisplay(
   return fmtCount(kpi.value);
 }
 
-function activityIcon(type: string): string {
-  if (type === "payment_failed") return "❌";
-  if (type === "subscription_renewed") return "🔁";
-  if (type === "subscription_created") return "💳";
-  if (type === "invoice_paid") return "💰";
-  return "✅";
-}
-
 function insightToneClass(tone: string): string {
   if (tone === "positive") return "border-emerald-200/80 bg-emerald-50/60";
   if (tone === "warning") return "border-amber-200/80 bg-amber-50/60";
@@ -241,8 +233,8 @@ export function ExecutiveDashboard({ data, loading }: Props) {
         </div>
       </section>
 
-      {/* §3 Stripe + §4 Activity */}
-      <section className="grid gap-6 xl:grid-cols-2">
+      {/* §3 Stripe */}
+      <section>
         <SurfaceCard padding="lg">
           <p className="text-lg font-semibold text-zinc-900">Stripe</p>
           <p className="mt-1 text-sm text-zinc-500">{data.stripe.connectionLabel}</p>
@@ -272,29 +264,6 @@ export function ExecutiveDashboard({ data, loading }: Props) {
           <p className="mt-4 text-xs text-zinc-500">
             {data.definitions.averageRevenuePerMember.label}
           </p>
-        </SurfaceCard>
-
-        <SurfaceCard padding="lg">
-          <p className="text-lg font-semibold text-zinc-900">Actividad reciente</p>
-          <ul className="mt-4 max-h-80 space-y-3 overflow-y-auto">
-            {data.activity.map((ev) => (
-              <li key={ev.id} className="flex items-start gap-3 text-sm">
-                <span aria-hidden>{activityIcon(ev.type)}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-zinc-900">{ev.memberName}</p>
-                  <p className="text-zinc-600">
-                    {ev.planName ?? "Pago"}
-                    {ev.amountCents != null ? ` · ${formatMoneyFromCents(ev.amountCents, currency)}` : ""}
-                    {ev.paymentMethod ? ` · ${ev.paymentMethod}` : ""}
-                  </p>
-                </div>
-                <span className="shrink-0 text-xs text-zinc-500">{ev.relativeLabel}</span>
-              </li>
-            ))}
-            {data.activity.length === 0 ? (
-              <li className="text-sm text-zinc-500">Sin actividad de cobro reciente.</li>
-            ) : null}
-          </ul>
         </SurfaceCard>
       </section>
 
