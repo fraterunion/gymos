@@ -5,6 +5,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import { AnalyticsService } from './analytics.service';
+import { ExecutiveDashboardService } from './executive-dashboard.service';
 
 function parseDays(raw: string | undefined, defaultDays: number): number {
   const n = parseInt(raw ?? '', 10);
@@ -16,7 +17,10 @@ function parseDays(raw: string | undefined, defaultDays: number): number {
 @UseGuards(JwtAuthGuard, StudioMemberGuard, RolesGuard)
 @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
 export class AnalyticsController {
-  constructor(private readonly analyticsService: AnalyticsService) {}
+  constructor(
+    private readonly analyticsService: AnalyticsService,
+    private readonly executiveDashboardService: ExecutiveDashboardService,
+  ) {}
 
   @Get('overview')
   getOverview(
@@ -66,5 +70,12 @@ export class AnalyticsController {
   @Get('briefing')
   getBriefing(@Param('studioId') studioId: string) {
     return this.analyticsService.getOwnerBriefing(studioId);
+  }
+
+  /** Executive Dashboard 2.0 — owner/admin financial intelligence only. */
+  @Get('executive')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getExecutive(@Param('studioId') studioId: string) {
+    return this.executiveDashboardService.getExecutiveDashboard(studioId);
   }
 }

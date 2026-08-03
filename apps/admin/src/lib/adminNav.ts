@@ -4,6 +4,7 @@ import {
   isFrontDeskRole,
   normalizeStudioRole,
 } from "@/lib/deskRoles";
+import { canAccessExecutiveDashboard } from "@/lib/executivePermissions";
 
 export type AdminNavItem = {
   href: string;
@@ -36,6 +37,8 @@ export function getAdminNavStructure(ctx: AdminNavContext): AdminNavStructure {
   const canManage = ready && canManageStudioSettings(resolved);
   const canSales = ready && canAccessWalkInSales(resolved);
 
+  const canExecutive = ready && canAccessExecutiveDashboard(resolved);
+
   if (rolePending) {
     return { primary: [{ href: "/check-in", label: "Inicio" }], more: [] };
   }
@@ -54,7 +57,7 @@ export function getAdminNavStructure(ctx: AdminNavContext): AdminNavStructure {
     { href: "/members", label: "Miembros" },
     ...(canManage ? [{ href: "/memberships", label: "Membresías" }] : []),
     ...(canManage ? [{ href: "/staff", label: "Equipo" }] : []),
-    { href: "/analytics", label: "Analytics" },
+    ...(canExecutive ? [{ href: "/analytics", label: "Analytics" }] : []),
   ];
 
   const more: AdminNavItem[] = [

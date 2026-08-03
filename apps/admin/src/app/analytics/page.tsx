@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+
 import {
   Area,
   Bar,
@@ -16,6 +18,7 @@ import {
 } from "recharts";
 
 import { FinancialKpiSection } from "@/components/analytics/FinancialKpiSection";
+import { ExecutiveDashboard } from "@/components/analytics/executive/ExecutiveDashboard";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { SectionHeader } from "@/components/shell/SectionHeader";
 import { SurfaceCard } from "@/components/shell/SurfaceCard";
@@ -34,17 +37,20 @@ import { ApiError } from "@/lib/api/errors";
 import {
   fetchAnalyticsBusiness,
   fetchAnalyticsClassBreakdown,
+  fetchAnalyticsExecutive,
   fetchAnalyticsFinancial,
   fetchAnalyticsOverview,
   fetchAnalyticsTrends,
   type BusinessAnalyticsDto,
   type ClassBreakdownDto,
+  type ExecutiveDashboardDto,
   type FinancialPeriodKey,
   type FinancialSummaryDto,
   type OverviewDto,
   type TrendsDto,
 } from "@/lib/api/analytics";
 import { formatMoneyAxis, formatMoneyFromCents } from "@/lib/formatMoney";
+import { canAccessExecutiveDashboard } from "@/lib/executivePermissions";
 
 function periodLabel(days: number): string {
   if (days >= 365) return "este año";
@@ -599,11 +605,14 @@ function PeriodSegment({
 }
 
 export default function AnalyticsPage() {
-  const { selectedStudioId, loading: studioLoading, error: studioError } =
+  const router = useRouter();
+  const { selectedStudioId, loading: studioLoading, error: studioError, studioRole, ready } =
     useDeskStudio();
   const chartsRef = useRef<HTMLElement>(null);
 
   const [financialPeriod, setFinancialPeriod] = useState<FinancialPeriodKey>("month");
+  const [executive, setExecutive] = useState<ExecutiveDashboardDto | null>(null);
+  const [loadingExecutive, setLoadingExecutive] = useState(true);
   const [financial, setFinancial] = useState<FinancialSummaryDto | null>(null);
   const [period, setPeriod] = useState<PeriodKey>(30);
   const [overview, setOverview] = useState<OverviewDto | null>(null);
@@ -617,7 +626,31 @@ export default function AnalyticsPage() {
   const [loadingBusiness, setLoadingBusiness] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const studioCurrency = financial?.currency ?? "mxn";
+  const studioCurrency = financial?.currency ?? executive?.currency ?? "mxn";
+  const canExecutive = canAccessExecutiveDashboard(studioRole);
+
+  useEffect(() => {
+    if (ready && !studioLoading && studioRole && !canExecutive) {
+      router.replace("/check-in");
+    }
+  }, [ready, studioLoading, studioRole, canExecutive, router]);
+
+  const loadExecutive = useCallback(async () => {
+    if (!selectedStudioId || !canExecutive) {
+      setExecutive(null);
+      setLoadingExecutive(false);
+      return;
+    }
+    setLoadingExecutive(true);
+    try {
+      const exec = await fetchAnalyticsExecutive(selectedStudioId);
+      setExecutive(exec);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No se pudo cargar el panel ejecutivo");
+    } finally {
+      setLoadingExecutive(false);
+    }
+  }, [selectedStudioId, canExecutive]);
 
   const loadFinancial = useCallback(async () => {
     if (!selectedStudioId) {
@@ -693,11 +726,17 @@ export default function AnalyticsPage() {
   }, [selectedStudioId, period]);
 
   const refreshAll = useCallback(() => {
+    void loadExecutive();
     void loadFinancial();
     void loadOverview();
     void loadCharts();
     void loadBusiness();
-  }, [loadFinancial, loadOverview, loadCharts, loadBusiness]);
+  }, [loadExecutive, loadFinancial, loadOverview, loadCharts, loadBusiness]);
+
+  useEffect(() => {
+    const t = setTimeout(() => void loadExecutive(), 0);
+    return () => clearTimeout(t);
+  }, [loadExecutive]);
 
   useEffect(() => {
     const t = setTimeout(() => void loadFinancial(), 0);
@@ -719,9 +758,9 @@ export default function AnalyticsPage() {
     return () => clearTimeout(t);
   }, [loadBusiness]);
 
-  const lastUpdated = financial?.generatedAt
+  const lastUpdated = executive?.generatedAt
     ? new Intl.DateTimeFormat("es-MX", { timeStyle: "short" }).format(
-        new Date(financial.generatedAt),
+        new Date(executive.generatedAt),
       )
     : null;
 
@@ -733,6 +772,16 @@ export default function AnalyticsPage() {
 
   if (studioLoading) {
     return <p className="text-sm text-zinc-500">Cargando estudios…</p>;
+  }
+
+  if (ready && studioRole && !canExecutive) {
+    return (
+      <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
+        <p className="text-sm text-zinc-600">
+          El panel ejecutivo está disponible solo para propietarios y administradores.
+        </p>
+      </div>
+    );
   }
 
   if (studioError) {
@@ -756,8 +805,8 @@ export default function AnalyticsPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Analytics"
-        subtitle="Resumen financiero y operación del estudio."
+        title="Panel ejecutivo"
+        subtitle="Salud del negocio en 15 segundos — cobros, miembros y lo que requiere atención."
         actions={
           <>
             {lastUpdated ? (
@@ -790,12 +839,18 @@ export default function AnalyticsPage() {
         </div>
       ) : null}
 
-      <FinancialKpiSection
-        data={financial}
-        loading={loadingFinancial}
-        period={financialPeriod}
-        onPeriodChange={setFinancialPeriod}
-      />
+      <ExecutiveDashboard data={executive} loading={loadingExecutive} />
+
+      <section className="scroll-mt-8 space-y-6 border-t border-zinc-200 pt-12">
+        <SectionHeader title="Análisis detallado" />
+        <p className="mt-1 text-sm text-zinc-500">Biblioteca completa de gráficos — métricas históricas preservadas.</p>
+        <FinancialKpiSection
+          data={financial}
+          loading={loadingFinancial}
+          period={financialPeriod}
+          onPeriodChange={setFinancialPeriod}
+        />
+      </section>
 
       <section className="space-y-6">
         <SectionHeader title="Ingresos" />

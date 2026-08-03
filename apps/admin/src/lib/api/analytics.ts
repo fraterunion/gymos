@@ -167,6 +167,146 @@ export type OwnerBriefingDto = {
   generatedAt: string;
 };
 
+// ── Executive Dashboard 2.0 ─────────────────────────────────────────────────
+
+export type ExecutiveKpiDto = {
+  id: string;
+  label: string;
+  value: number;
+  valueKind: "money" | "count" | "percent";
+  comparisonPercent: number | null;
+  comparisonLabel: string | null;
+  sparkline: { date: string; amountCents: number }[];
+};
+
+export type ExecutiveDashboardDto = {
+  currency: string;
+  timezone: string;
+  generatedAt: string;
+  kpis: ExecutiveKpiDto[];
+  revenue: {
+    period: "daily" | "monthly" | "yearly";
+    currency: string;
+    trend: { date: string; amountCents: number; paymentCount: number }[];
+    breakdown: {
+      subscriptionsCents: number;
+      oneTimeCents: number;
+      retailCents: number;
+      otherCents: number;
+      totalCents: number;
+    };
+  };
+  stripe: {
+    connected: boolean;
+    connectionLabel: string;
+    lastSyncAt: string | null;
+    totalSubscriptions: number;
+    activeSubscriptions: number;
+    trialingSubscriptions: number;
+    pastDueSubscriptions: number;
+    cancelledSubscriptions: number;
+    pausedSubscriptions: number;
+    lifetimeRevenueCents: number;
+    averageRevenuePerMemberCents: number;
+    currency: string;
+  };
+  activity: {
+    id: string;
+    type: string;
+    memberName: string;
+    memberUserId: string;
+    planName: string | null;
+    amountCents: number | null;
+    paymentMethod: string | null;
+    occurredAt: string;
+    relativeLabel: string;
+  }[];
+  upcomingRevenue: {
+    expected7DaysCents: number;
+    expected30DaysCents: number;
+    estimationNote: string;
+    items: {
+      memberUserId: string;
+      memberName: string;
+      planName: string;
+      amountCents: number;
+      renewalDate: string;
+      bucket: string;
+      isEstimated: true;
+    }[];
+  };
+  failedPayments: {
+    paymentId: string;
+    memberUserId: string;
+    memberName: string;
+    amountCents: number;
+    currency: string;
+    failureReason: string | null;
+    failureReasonAvailable: boolean;
+    attemptCount: null;
+    retryAt: null;
+    subscriptionStatus: string | null;
+    occurredAt: string;
+    memberHref: string;
+  }[];
+  membershipHealth: {
+    byPlanCategory: { label: string; count: number }[];
+    newMembersThisMonth: number;
+    cancelledThisMonth: number;
+    netGrowth: number;
+    trialConversionRatePercent: number | null;
+    statusBreakdown: { status: string; count: number }[];
+  };
+  memberRisk: {
+    memberUserId: string;
+    memberName: string;
+    reason: string;
+    severity: string;
+    memberHref: string;
+  }[];
+  topMembers: {
+    category: string;
+    memberUserId: string;
+    memberName: string;
+    valueLabel: string;
+    memberHref: string;
+  }[];
+  operations: {
+    classesToday: number;
+    occupancyRateToday: number;
+    checkInsToday: number;
+    averageAttendancePercent: number;
+    mostPopularClass: { name: string; bookingCount: number } | null;
+    lowestAttendanceClass: { name: string; fillPercent: number } | null;
+    topCoach: { name: string; classCount: number } | null;
+  };
+  insights: {
+    id: string;
+    tone: string;
+    title: string;
+    body: string;
+    facts: Record<string, string | number | boolean | null>;
+    priority: number;
+  }[];
+  definitions: {
+    mrr: { kind: string; label: string; arrFormula: string };
+    upcomingRevenue: { kind: string; label: string };
+    lifetimeRevenue: { kind: string; label: string };
+    averageRevenuePerMember: { kind: string; label: string };
+  };
+  dataQuality: {
+    lastPaymentAt: string | null;
+    warnings: string[];
+  };
+  reconciliation: {
+    methodSplitEqualsTotal: boolean;
+    trendAmountEqualsTotal: boolean;
+    trendCountEqualsTotal: boolean;
+    breakdownEqualsMonthCollected: boolean;
+    planAttributedPlusUnattributed: boolean;
+  };
+};
+
 // ── Fetchers ────────────────────────────────────────────────────────────────
 
 export async function fetchAnalyticsFinancial(
@@ -218,6 +358,12 @@ export async function fetchAnalyticsBusiness(
 
 export async function fetchAnalyticsBriefing(studioId: string): Promise<OwnerBriefingDto> {
   return apiRequest<OwnerBriefingDto>(`/studios/${studioId}/analytics/briefing`, {
+    method: "GET",
+  });
+}
+
+export async function fetchAnalyticsExecutive(studioId: string): Promise<ExecutiveDashboardDto> {
+  return apiRequest<ExecutiveDashboardDto>(`/studios/${studioId}/analytics/executive`, {
     method: "GET",
   });
 }

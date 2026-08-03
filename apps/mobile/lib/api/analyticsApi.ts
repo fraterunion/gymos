@@ -128,6 +128,54 @@ export async function fetchAnalyticsClassBreakdown(
   );
 }
 
+export type ExecutiveDashboardDto = {
+  currency: string;
+  timezone?: string;
+  generatedAt: string;
+  kpis: {
+    id: string;
+    label: string;
+    value: number;
+    valueKind: 'money' | 'count' | 'percent';
+    comparisonPercent: number | null;
+  }[];
+  insights: { id: string; tone: string; title: string; body: string }[];
+  activity: {
+    id: string;
+    type: string;
+    memberName: string;
+    planName: string | null;
+    amountCents: number | null;
+    relativeLabel: string;
+  }[];
+  upcomingRevenue: {
+    expected7DaysCents: number;
+    expected30DaysCents: number;
+    estimationNote: string;
+    items: { memberName: string; amountCents: number; renewalDate: string }[];
+  };
+  failedPayments: {
+    paymentId: string;
+    memberName: string;
+    amountCents: number;
+    currency: string;
+    failureReason: string | null;
+    failureReasonAvailable: boolean;
+  }[];
+  stripe: {
+    pastDueSubscriptions: number;
+    activeSubscriptions: number;
+  };
+  operations: { checkInsToday: number; classesToday: number };
+  dataQuality?: { warnings: string[] };
+};
+
+export async function fetchAnalyticsExecutive(studioId: string): Promise<ExecutiveDashboardDto> {
+  return apiRequest<ExecutiveDashboardDto>(`/studios/${studioId}/analytics/executive`, {
+    method: 'GET',
+  });
+}
+
 /** Revenue for a calendar day key (YYYY-MM-DD) from the 30-day business trend. */
 export function revenueCentsForDay(
   trend: BusinessAnalyticsDto['revenueTrend'],

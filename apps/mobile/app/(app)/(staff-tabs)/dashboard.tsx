@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -17,11 +17,12 @@ import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { getColors, Space } from '@/constants/Theme';
 import {
-  fetchAnalyticsBusiness,
+  fetchAnalyticsExecutive,
   fetchAnalyticsClassBreakdown,
   fetchAnalyticsFinancial,
   type BusinessAnalyticsDto,
   type ClassBreakdownDto,
+  type ExecutiveDashboardDto,
   type FinancialSummaryDto,
 } from '@/lib/api/analyticsApi';
 import { PanelAnalytics } from '@/components/staff/AnalyticsCharts';
@@ -48,6 +49,7 @@ function isClassNow(c: TodayClassSummaryDto): boolean {
 }
 
 type DashboardData = {
+  executive: ExecutiveDashboardDto | null;
   financial: FinancialSummaryDto | null;
   business: BusinessAnalyticsDto | null;
   classes: TodayClassSummaryDto[];
@@ -74,6 +76,7 @@ export default function ExecutiveDashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [showDetailCharts, setShowDetailCharts] = useState(false);
 
   const allowed = canAccessExecutiveDashboard(role);
 
@@ -84,14 +87,10 @@ export default function ExecutiveDashboardScreen() {
       else setLoading(true);
       setFatalError(null);
 
-      const [financialResult, businessResult, classesResult, breakdownResult] = await Promise.all([
-        fetchAnalyticsFinancial(studioId, 'month').then(
-          (financial) => ({ financial, error: null as string | null }),
-          (e) => ({ financial: null, error: userFacingApiMessage(e, 'No se pudieron cargar datos financieros') }),
-        ),
-        fetchAnalyticsBusiness(studioId).then(
-          (business) => ({ business, error: null as string | null }),
-          (e) => ({ business: null, error: userFacingApiMessage(e, 'No se pudieron cargar ingresos') }),
+      const [executiveResult, classesResult] = await Promise.all([
+        fetchAnalyticsExecutive(studioId).then(
+          (executive) => ({ executive, error: null as string | null }),
+          (e) => ({ executive: null, error: userFacingApiMessage(e, 'No se pudo cargar el panel') }),
         ),
         loadStaffTodayClasses(studioId, timeZone).then(
           (classes) => ({ classes, error: null as string | null }),
@@ -100,36 +99,52 @@ export default function ExecutiveDashboardScreen() {
             error: userFacingApiMessage(e, 'No se pudo cargar el horario de hoy'),
           }),
         ),
-        fetchAnalyticsClassBreakdown(studioId).then(
-          (classBreakdown) => ({ classBreakdown, error: null as string | null }),
-          (e) => ({
-            classBreakdown: null,
-            error: userFacingApiMessage(e, 'No se pudieron cargar las analíticas'),
-          }),
-        ),
       ]);
 
-      const allFailed = !financialResult.financial && classesResult.classes.length === 0;
-      if (allFailed && financialResult.error) {
-        setFatalError(financialResult.error);
+      const executive = executiveResult.executive;
+
+      let financial: FinancialSummaryDto | null = null;
+      let classBreakdown: ClassBreakdownDto | null = null;
+      let financialError: string | null = executiveResult.error;
+      let breakdownError: string | null = null;
+
+      if (showDetailCharts && executive) {
+        const [fin, br] = await Promise.all([
+          fetchAnalyticsFinancial(studioId, 'month').catch((e) => {
+            financialError = userFacingApiMessage(e, 'No se pudo cargar finanzas');
+            return null;
+          }),
+          fetchAnalyticsClassBreakdown(studioId, 30).catch((e) => {
+            breakdownError = userFacingApiMessage(e, 'No se pudo cargar desglose');
+            return null;
+          }),
+        ]);
+        financial = fin;
+        classBreakdown = br;
+      }
+
+      const allFailed = !executive && classesResult.classes.length === 0;
+      if (allFailed && executiveResult.error) {
+        setFatalError(executiveResult.error);
       }
 
       setData({
-        financial: financialResult.financial,
-        business: businessResult.business,
+        executive,
+        financial,
+        business: null,
         classes: classesResult.classes,
-        classBreakdown: breakdownResult.classBreakdown,
-        financialError: financialResult.error,
-        businessError: businessResult.error,
+        classBreakdown,
+        financialError,
+        businessError: null,
         classesError: classesResult.error,
-        breakdownError: breakdownResult.error,
+        breakdownError,
         loadedAt: new Date().toISOString(),
       });
 
       setLoading(false);
       setRefreshing(false);
     },
-    [studioId, allowed, timeZone],
+    [studioId, allowed, timeZone, showDetailCharts],
   );
 
   useFocusEffect(
@@ -139,18 +154,21 @@ export default function ExecutiveDashboardScreen() {
   );
 
   const metrics = useMemo(() => {
-    if (!data?.financial) return null;
-    const kpi = data.financial.kpis.totalCollected;
+    const monthKpi = data?.executive?.kpis.find((k) => k.id === 'revenue-month');
+    const todayKpi = data?.executive?.kpis.find((k) => k.id === 'revenue-today');
+    if (!monthKpi) return null;
     return {
-      revenueMonthCents: kpi.cents ?? 0,
-      pct: kpi.comparisonPercent ?? null,
+      revenueMonthCents: monthKpi.value,
+      revenueTodayCents: todayKpi?.value ?? 0,
+      pct: monthKpi.comparisonPercent ?? null,
+      currency: data?.executive?.currency ?? 'mxn',
     };
   }, [data]);
 
   const alerts = useMemo<Alert[]>(() => {
     if (!data) return [];
     const result: Alert[] = [];
-    const pastDue = data.business?.pastDueSubscriptions ?? 0;
+    const pastDue = data.executive?.stripe.pastDueSubscriptions ?? 0;
     if (pastDue > 0) {
       result.push({
         key: 'past-due',
@@ -230,7 +248,7 @@ export default function ExecutiveDashboardScreen() {
         }
       >
         {/* ── Revenue hero ── */}
-        {data?.financial && metrics ? (
+        {data?.executive && metrics ? (
           <Animated.View entering={FadeInDown.duration(300)} style={{ paddingTop: 32, marginBottom: Space.sp3 }}>
             <Text
               style={{
@@ -243,7 +261,7 @@ export default function ExecutiveDashboardScreen() {
                 fontVariant: ['tabular-nums'],
               }}
             >
-              {formatMoneyFromCents(metrics.revenueMonthCents, 'mxn')}
+              {formatMoneyFromCents(metrics.revenueMonthCents, metrics.currency)}
             </Text>
             <Text
               style={{
@@ -256,6 +274,9 @@ export default function ExecutiveDashboardScreen() {
               }}
             >
               INGRESOS · {monthLabel}
+            </Text>
+            <Text style={{ fontSize: 14, color: C.textSub, marginBottom: 4, fontVariant: ['tabular-nums'] }}>
+              Hoy {formatMoneyFromCents(metrics.revenueTodayCents, metrics.currency)}
             </Text>
             {metrics.pct !== null ? (
               <Text
@@ -274,7 +295,115 @@ export default function ExecutiveDashboardScreen() {
           <View style={{ paddingTop: 32, marginBottom: Space.sp3 }} />
         )}
 
-        {/* ── Operational KPIs — four instruments, no chrome ── */}
+        {data?.executive?.upcomingRevenue ? (
+          <View style={{ marginBottom: Space.sp4 }}>
+            <SectionOverline>Próximas renovaciones (estimado)</SectionOverline>
+            <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 8, lineHeight: 18 }}>
+              {data.executive.upcomingRevenue.estimationNote}
+            </Text>
+            <Text style={{ fontSize: 14, color: C.textSub, marginBottom: 8, fontVariant: ['tabular-nums'] }}>
+              7 días: {formatMoneyFromCents(data.executive.upcomingRevenue.expected7DaysCents, data.executive.currency)}
+            </Text>
+            {data.executive.upcomingRevenue.items.slice(0, 3).map((item) => (
+              <View
+                key={`${item.memberName}-${item.renewalDate}`}
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  paddingVertical: 10,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.separator,
+                }}
+              >
+                <Text style={{ fontSize: 14, color: C.text, flex: 1 }} numberOfLines={1}>
+                  {item.memberName}
+                </Text>
+                <Text style={{ fontSize: 13, color: C.textSub, fontVariant: ['tabular-nums'] }}>
+                  {formatMoneyFromCents(item.amountCents, data.executive!.currency)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {data?.executive?.failedPayments.length ? (
+          <View style={{ marginBottom: Space.sp4 }}>
+            <SectionOverline>Pagos fallidos</SectionOverline>
+            {data.executive.failedPayments.slice(0, 3).map((fp) => (
+              <View
+                key={fp.paymentId}
+                style={{
+                  paddingVertical: 12,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.separator,
+                }}
+              >
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: C.text, flex: 1 }}>{fp.memberName}</Text>
+                  <Text style={{ fontSize: 14, color: C.negative, fontVariant: ['tabular-nums'] }}>
+                    {formatMoneyFromCents(fp.amountCents, fp.currency)}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 13, color: C.textSub, marginTop: 4 }}>
+                  {fp.failureReasonAvailable ? fp.failureReason : 'Motivo no disponible'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {data?.executive?.insights.length ? (
+          <View style={{ marginBottom: Space.sp4 }}>
+            <SectionOverline>Insights</SectionOverline>
+            {data.executive.insights.slice(0, 3).map((insight, index) => (
+              <Animated.View
+                key={insight.id}
+                entering={FadeInDown.delay(index * 40).duration(300)}
+                style={{
+                  paddingVertical: 14,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.separator,
+                }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>{insight.title}</Text>
+                <Text style={{ fontSize: 14, color: C.textSub, marginTop: 4, lineHeight: 20 }}>{insight.body}</Text>
+              </Animated.View>
+            ))}
+          </View>
+        ) : null}
+
+        {data?.executive?.activity.length ? (
+          <View style={{ marginBottom: Space.sp4 }}>
+            <SectionOverline>Actividad reciente</SectionOverline>
+            {data.executive.activity.slice(0, 3).map((ev, index) => (
+              <Animated.View
+                key={ev.id}
+                entering={FadeInDown.delay(index * 30).duration(280)}
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  paddingVertical: 12,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.separator,
+                  gap: 12,
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>{ev.memberName}</Text>
+                  <Text style={{ fontSize: 13, color: C.textSub, marginTop: 2 }} numberOfLines={1}>
+                    {ev.planName ?? 'Pago'}
+                    {ev.amountCents != null
+                      ? ` · ${formatMoneyFromCents(ev.amountCents, data.executive?.currency ?? 'mxn')}`
+                      : ''}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 12, color: C.textMute }}>{ev.relativeLabel}</Text>
+              </Animated.View>
+            ))}
+          </View>
+        ) : null}
+
+        {/* ── Operational KPIs ── */}
         {data ? (() => {
           const totalBooked = data.classes.reduce((s, c) => s + c.bookedCount, 0);
           const totalCheckedIn = data.classes.reduce((s, c) => s + c.checkedInCount, 0);
@@ -357,8 +486,17 @@ export default function ExecutiveDashboardScreen() {
           <QuickActionTile label="Ventas" icon="credit-card" index={1} onPress={() => router.push('/(app)/staff-sales' as Href)} />
         </View>
 
-        {/* ── Analytics charts ── */}
-        {data ? (
+        <Pressable
+          onPress={() => {
+            setShowDetailCharts(true);
+            void load(true);
+          }}
+          style={{ marginBottom: Space.sp4, paddingVertical: 12 }}
+        >
+          <Text style={{ fontSize: 15, fontWeight: '600', color: primaryColor }}>Ver detalle analítico</Text>
+        </Pressable>
+
+        {showDetailCharts && data?.financial ? (
           <PanelAnalytics
             financial={data.financial}
             financialError={data.financialError}
