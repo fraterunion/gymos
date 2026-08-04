@@ -227,7 +227,7 @@ export function MemberBillingCenter({
                 fontWeight: '700',
                 letterSpacing: 1,
                 textTransform: 'uppercase',
-                color: primaryColor,
+                color: C.textMute,
                 marginBottom: 10,
               }}
             >

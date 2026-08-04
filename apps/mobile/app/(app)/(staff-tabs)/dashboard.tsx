@@ -417,7 +417,7 @@ export default function ExecutiveDashboardScreen() {
               onPress={() => router.push('/financial-activity' as Href)}
               style={{ paddingVertical: 14 }}
             >
-              <Text style={{ fontSize: 15, fontWeight: '600', color: primaryColor }}>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>
                 Ver toda la actividad
               </Text>
             </Pressable>
@@ -514,7 +514,7 @@ export default function ExecutiveDashboardScreen() {
           }}
           style={{ marginBottom: Space.sp4, paddingVertical: 12 }}
         >
-          <Text style={{ fontSize: 15, fontWeight: '600', color: primaryColor }}>Ver detalle analítico</Text>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>Ver detalle analítico</Text>
         </Pressable>
 
         {showDetailCharts && data?.financial ? (

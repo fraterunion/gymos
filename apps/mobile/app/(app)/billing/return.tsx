@@ -6,11 +6,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
 import { useBranding } from '@/contexts/BrandingContext';
+import { getColors } from '@/constants/Theme';
 import { useBillingReturnRefresh } from '@/lib/billing/useBillingReturnRefresh';
 
 export default function BillingPortalReturnScreen() {
   const router = useRouter();
-  const { primaryColor, appDisplayName } = useBranding();
+  const C = getColors();
+  const { primaryColor } = useBranding();
   const { refreshAll, studioId } = useBillingReturnRefresh();
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,8 +53,8 @@ export default function BillingPortalReturnScreen() {
           <>
             <View
               className="mb-6 self-center rounded-full p-5"
-              style={{ backgroundColor: `${primaryColor}22` }}>
-              <FontAwesome name="check-circle" size={36} color={primaryColor} />
+              style={{ backgroundColor: 'rgba(52,211,153,0.13)' }}>
+              <FontAwesome name="check-circle" size={36} color={C.positive} />
             </View>
             <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
               Ya regresaste

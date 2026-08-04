@@ -7,7 +7,6 @@ import { useFocusEffect } from 'expo-router';
 
 import { LoadRetryPanel, ScreenLoader } from '@/components/StudioScreenChrome';
 import { useAuth } from '@/contexts/AuthContext';
-import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import {
   fetchLeaderboard,
@@ -100,7 +99,6 @@ function formatActivityDate(iso: string, timezone: string): string {
 export default function ProgressScreen() {
   const C = getColors();
   const { user } = useAuth();
-  const { primaryColor } = useBranding();
   const { matched } = useMemberStudio();
   const studioId = matched?.studio.id;
 
@@ -175,7 +173,7 @@ export default function ProgressScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => void load('refresh')}
-            tintColor={primaryColor}
+            tintColor="rgba(255,255,255,0.38)"
           />
         }
       >
@@ -266,7 +264,7 @@ export default function ProgressScreen() {
               <Animated.View entering={FadeInDown.delay(120).duration(420)}>
                 <SectionLabel>Clase favorita</SectionLabel>
                 <View style={{ ...cardStyle(C), overflow: 'hidden' }}>
-                  <View style={{ height: 3, backgroundColor: primaryColor }} />
+                  <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.18)' }} />
                   <View style={{ padding: 24 }}>
                     <Text
                       style={{
@@ -329,7 +327,7 @@ export default function ProgressScreen() {
                             height: '100%',
                             borderRadius: 3,
                             width: `${maxBreakdown > 0 ? (item.count / maxBreakdown) * 100 : 0}%`,
-                            backgroundColor: primaryColor,
+                            backgroundColor: 'rgba(255,255,255,0.45)',
                           }}
                         />
                       </View>
@@ -451,7 +449,7 @@ export default function ProgressScreen() {
                         width: 28,
                         fontSize: 15,
                         fontWeight: '800',
-                        color: isMe ? primaryColor : C.textMute,
+                        color: isMe ? C.text : C.textMute,
                       }}
                     >
                       {entry.rank}

@@ -339,7 +339,7 @@ function SalesPlanCard({
                 fontWeight: '700',
                 letterSpacing: 0.8,
                 textTransform: 'uppercase',
-                color: accent,
+                color: C.textMute,
                 marginBottom: 8,
               }}
             >
@@ -393,7 +393,7 @@ function SalesPlanCard({
           <View style={{ gap: 8 }}>
             {benefits.slice(0, 4).map((b) => (
               <View key={b} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
-                <Text style={{ color: accent, fontSize: 13, marginTop: 2 }}>✓</Text>
+                <Text style={{ color: C.positive, fontSize: 13, marginTop: 2 }}>✓</Text>
                 <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.textSub }}>{b}</Text>
               </View>
             ))}

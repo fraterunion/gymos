@@ -6,12 +6,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
 import { useBranding } from '@/contexts/BrandingContext';
+import { getColors } from '@/constants/Theme';
 import { useBillingReturnRefresh } from '@/lib/billing/useBillingReturnRefresh';
 import type { MyMemberProfileDto } from '@/lib/api/membershipApi';
 
 export default function BillingCheckoutSuccessScreen() {
   const router = useRouter();
-  const { primaryColor, appDisplayName } = useBranding();
+  const C = getColors();
+  const { primaryColor } = useBranding();
   const { refreshAll, studioId } = useBillingReturnRefresh();
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,11 +47,11 @@ export default function BillingCheckoutSuccessScreen() {
       <View className="flex-1 justify-center pb-8">
         <View
           className="mb-6 self-center rounded-full p-5"
-          style={{ backgroundColor: `${primaryColor}22` }}>
+          style={{ backgroundColor: 'rgba(251,191,36,0.13)' }}>
           {busy ? (
-            <ActivityIndicator size="large" color={primaryColor} />
+            <ActivityIndicator size="large" color={C.caution} />
           ) : (
-            <FontAwesome name="clock-o" size={36} color={primaryColor} />
+            <FontAwesome name="clock-o" size={36} color={C.caution} />
           )}
         </View>
         <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">

@@ -374,7 +374,7 @@ export default function StaffMemberDetailScreen() {
                         onPress={() => setPhotoVisible(true)}
                         style={{ marginBottom: 16 }}
                       >
-                        <Text style={{ fontSize: 15, fontWeight: '600', color: primaryColor }}>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: C.text }}>
                           Cambiar foto
                         </Text>
                       </Pressable>

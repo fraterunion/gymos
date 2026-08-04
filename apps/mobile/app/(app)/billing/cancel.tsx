@@ -5,9 +5,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
 import { useBranding } from '@/contexts/BrandingContext';
+import { getColors } from '@/constants/Theme';
 
 export default function BillingCheckoutCancelScreen() {
   const router = useRouter();
+  const C = getColors();
   const { primaryColor, appDisplayName } = useBranding();
 
   return (
@@ -15,8 +17,8 @@ export default function BillingCheckoutCancelScreen() {
       <View className="flex-1 justify-center pb-8">
         <View
           className="mb-6 self-center rounded-full p-5"
-          style={{ backgroundColor: `${primaryColor}18` }}>
-          <FontAwesome name="times-circle" size={36} color={primaryColor} />
+          style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
+          <FontAwesome name="times-circle" size={36} color={C.textSub} />
         </View>
         <Text className="text-center text-2xl font-semibold text-neutral-900 dark:text-neutral-50">
           Pago cancelado
