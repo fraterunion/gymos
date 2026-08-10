@@ -254,6 +254,59 @@ function planToForm(p: MembershipPlanDto): PlanFormState {
   };
 }
 
+function activeClassTemplateIds(templates: ClassTemplateDto[]): string[] {
+  return templates.map((t) => t.id);
+}
+
+function isTemplateRowChecked(
+  templateId: string,
+  allClassesAccess: boolean,
+  selectedTemplateIds: string[],
+  isInactive = false,
+): boolean {
+  if (allClassesAccess) return !isInactive || selectedTemplateIds.includes(templateId);
+  return selectedTemplateIds.includes(templateId);
+}
+
+function ClassAccessTemplateRow({
+  name,
+  durationMinutes,
+  checked,
+  disabled,
+  inactive,
+  onToggle,
+}: {
+  name: string;
+  durationMinutes: number;
+  checked: boolean;
+  disabled: boolean;
+  inactive?: boolean;
+  onToggle?: () => void;
+}) {
+  return (
+    <label
+      className={`flex items-center gap-2 py-1.5 text-sm ${
+        disabled ? "text-zinc-500" : "text-zinc-700"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={() => onToggle?.()}
+        className="rounded"
+      />
+      <span className="min-w-0 flex-1 truncate">{name}</span>
+      {inactive ? (
+        <span className="shrink-0 text-xs text-zinc-400">Inactiva</span>
+      ) : null}
+      <span className="shrink-0 text-xs text-zinc-400 tabular-nums">
+        {durationMinutes} min
+      </span>
+    </label>
+  );
+}
+
 function PlanModal({
   editing,
   onClose,
@@ -295,6 +348,7 @@ function PlanModal({
   }
 
   function toggleTemplate(templateId: string) {
+    if (form.allClassesAccess) return;
     setForm((f) => {
       const selected = new Set(f.selectedTemplateIds);
       if (selected.has(templateId)) {
@@ -305,6 +359,43 @@ function PlanModal({
       return { ...f, selectedTemplateIds: [...selected] };
     });
   }
+
+  function handleAllClassesAccessChange(checked: boolean) {
+    if (checked) {
+      set("allClassesAccess", true);
+      return;
+    }
+    setForm((f) => {
+      const activeIds = activeClassTemplateIds(templates);
+      const inactivePreserved = (editing?.classAccess.templates ?? [])
+        .filter((t) => !t.active)
+        .map((t) => t.id);
+      return {
+        ...f,
+        allClassesAccess: false,
+        selectedTemplateIds: [...new Set([...activeIds, ...inactivePreserved])],
+      };
+    });
+  }
+
+  function selectAllActiveTemplates() {
+    const inactivePreserved = inactiveSavedTemplates
+      .filter((t) => form.selectedTemplateIds.includes(t.id))
+      .map((t) => t.id);
+    set("selectedTemplateIds", [
+      ...new Set([...activeClassTemplateIds(templates), ...inactivePreserved]),
+    ]);
+  }
+
+  function clearActiveTemplateSelection() {
+    const inactivePreserved = inactiveSavedTemplates
+      .filter((t) => form.selectedTemplateIds.includes(t.id))
+      .map((t) => t.id);
+    set("selectedTemplateIds", inactivePreserved);
+  }
+
+  const inactiveSavedTemplates =
+    editing?.classAccess.templates.filter((t) => !t.active) ?? [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -472,76 +563,83 @@ function PlanModal({
               <input
                 type="checkbox"
                 checked={form.allClassesAccess}
-                onChange={(e) => set("allClassesAccess", e.target.checked)}
+                onChange={(e) => handleAllClassesAccessChange(e.target.checked)}
                 className="rounded"
               />
               Todas las clases
             </label>
 
-            {!form.allClassesAccess && (
-              <>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      set(
-                        "selectedTemplateIds",
-                        templates.map((t) => t.id),
-                      )
-                    }
-                    className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
-                  >
-                    Seleccionar todas
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => set("selectedTemplateIds", [])}
-                    className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
-                  >
-                    Quitar todas
-                  </button>
-                </div>
-
-                {templatesLoading ? (
-                  <p className="text-xs text-zinc-500">Cargando clases…</p>
-                ) : templates.length === 0 ? (
-                  <p className="text-xs text-zinc-500">
-                    No hay plantillas de clase en este estudio.
-                  </p>
-                ) : (
-                  <div className="max-h-48 space-y-2 overflow-y-auto">
-                    {templates.map((template) => {
-                      const checked = form.selectedTemplateIds.includes(template.id);
-                      return (
-                        <label
-                          key={template.id}
-                          className="flex items-start gap-2 rounded border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleTemplate(template.id)}
-                            className="mt-0.5 rounded"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-medium">{template.name}</span>
-                            <span className="text-xs text-zinc-500">
-                              {template.durationMinutes} min
-                            </span>
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
-            )}
-
-            {form.allClassesAccess && templates.length > 0 && (
+            {form.allClassesAccess ? (
               <p className="text-xs text-zinc-500">
-                Los miembros podrán reservar cualquier clase activa del estudio.
+                Esta membresía incluye acceso a todas las clases activas del estudio.
               </p>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllActiveTemplates}
+                  className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
+                >
+                  Seleccionar todas
+                </button>
+                <button
+                  type="button"
+                  onClick={clearActiveTemplateSelection}
+                  className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
+                >
+                  Quitar todas
+                </button>
+              </div>
             )}
+
+            <div>
+              <p className="mb-1 text-xs font-medium text-zinc-500">Clases incluidas</p>
+              {templatesLoading ? (
+                <p className="text-xs text-zinc-500">Cargando clases…</p>
+              ) : templates.length === 0 && inactiveSavedTemplates.length === 0 ? (
+                <p className="text-xs text-zinc-500">
+                  No hay plantillas de clase en este estudio.
+                </p>
+              ) : (
+                <div className="max-h-48 overflow-y-auto pr-1">
+                  {templates.map((template) => (
+                    <ClassAccessTemplateRow
+                      key={template.id}
+                      name={template.name}
+                      durationMinutes={template.durationMinutes}
+                      checked={isTemplateRowChecked(
+                        template.id,
+                        form.allClassesAccess,
+                        form.selectedTemplateIds,
+                      )}
+                      disabled={form.allClassesAccess}
+                      onToggle={() => toggleTemplate(template.id)}
+                    />
+                  ))}
+
+                  {inactiveSavedTemplates.length > 0 ? (
+                    <div className="mt-2 border-t border-zinc-200 pt-2">
+                      <p className="mb-1 text-xs text-zinc-400">Inactivas</p>
+                      {inactiveSavedTemplates.map((template) => (
+                        <ClassAccessTemplateRow
+                          key={template.id}
+                          name={template.name}
+                          durationMinutes={template.durationMinutes}
+                          checked={isTemplateRowChecked(
+                            template.id,
+                            form.allClassesAccess,
+                            form.selectedTemplateIds,
+                            true,
+                          )}
+                          disabled
+                          inactive
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-3">
