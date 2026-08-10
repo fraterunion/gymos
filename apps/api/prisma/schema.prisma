@@ -255,6 +255,7 @@ model Studio {
   auditLogs                  AuditLog[]
   salesSettings              StudioSalesSettings?
   memberOperationalNotes     MemberOperationalNote[]
+  planClassAccess            MembershipPlanClassAccess[]
 
   @@map("studios")
 }
@@ -340,14 +341,18 @@ model MembershipPlan {
   /// Phase 26 — class entitlements. Empty = all-access. Non-empty = member may
   /// only book classes whose classTemplate.category is in this list.
   /// Day Pass access is never restricted by this field.
+  /// Superseded for new plans by allClassesAccess + classTemplateAccess when set.
   allowedCategories ClassCategory[] @default([]) @map("allowed_categories")
+  /// When true, member may book any active class template. Explicit unrestricted flag.
+  allClassesAccess    Boolean         @default(true) @map("all_classes_access")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   deletedAt        DateTime?       @map("deleted_at")
 
-  studio        Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
-  subscriptions Subscription[]
-  payments      Payment[]
+  studio               Studio                      @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  subscriptions        Subscription[]
+  payments             Payment[]
+  classTemplateAccess  MembershipPlanClassAccess[]
 
   @@index([studioId])
   @@index([studioId, active])
@@ -416,12 +421,32 @@ model ClassTemplate {
   defaultInstructor  User?             @relation("ClassTemplateDefaultInstructor", fields: [defaultInstructorId], references: [id], onDelete: SetNull)
   classes            ScheduledClass[]
   scheduleTemplates  ScheduleTemplate[]
+  planClassAccess    MembershipPlanClassAccess[]
 
   @@index([studioId])
   @@index([studioId, category])
   @@index([studioId, isFeatured])
   @@index([defaultInstructorId])
   @@map("class_templates")
+}
+
+/// Explicit plan ↔ class template access (Phase 27). Used when allClassesAccess is false.
+model MembershipPlanClassAccess {
+  id               String   @id @default(cuid())
+  studioId         String   @map("studio_id")
+  membershipPlanId String   @map("membership_plan_id")
+  classTemplateId  String   @map("class_template_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  membershipPlan MembershipPlan @relation(fields: [membershipPlanId], references: [id], onDelete: Cascade)
+  classTemplate  ClassTemplate  @relation(fields: [classTemplateId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipPlanId, classTemplateId])
+  @@index([studioId])
+  @@index([membershipPlanId])
+  @@index([classTemplateId])
+  @@map("membership_plan_class_access")
 }
 
 model ScheduledClass {

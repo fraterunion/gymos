@@ -38,8 +38,25 @@ import { lowSpotsLabel } from '@/lib/spotsRemaining';
 import { getColors, Space } from '@/constants/Theme';
 import type { ScheduledClassDto } from '@/lib/types/studio';
 
-const PLAN_RESTRICTED_MESSAGE =
-  'Tu membresía actual no incluye este tipo de clase. Cambia de plan o compra un pase diario para reservar esta clase.';
+const PLAN_RESTRICTED_MESSAGE = 'Esta clase no está incluida en tu membresía.';
+
+function isClassIncludedInMemberPlan(
+  plan: NonNullable<MyMemberProfileDto['activeSubscription']>['plan'],
+  classTemplateId: string,
+  classCategory: string | null | undefined,
+): boolean {
+  if (plan.allClassesAccess) return true;
+
+  if (plan.allowedTemplateIds.length > 0) {
+    return plan.allowedTemplateIds.includes(classTemplateId);
+  }
+
+  if (plan.allowedCategories.length > 0) {
+    return !!classCategory && plan.allowedCategories.includes(classCategory);
+  }
+
+  return false;
+}
 
 function hasActiveDayPassForClassDate(
   dayPasses: DayPassDto[],
@@ -348,15 +365,17 @@ export default function ClassDetailScreen() {
   const memberStudioId = studioId ?? '';
 
   const activeSubscription = memberProfile?.activeSubscription ?? null;
-  const allowedCategories = activeSubscription?.plan.allowedCategories ?? [];
+  const classTemplateId = cls.classTemplate.id;
   const classCategory = cls.classTemplate.category;
   const isPlanRestricted =
     !isGuest &&
     activeSubscription !== null &&
-    allowedCategories.length > 0 &&
-    !!classCategory &&
-    !allowedCategories.includes(classCategory) &&
-    !hasMatchingDayPass;
+    !hasMatchingDayPass &&
+    !isClassIncludedInMemberPlan(
+      activeSubscription.plan,
+      classTemplateId,
+      classCategory,
+    );
 
   // CTA logic
   let primaryCTA: { label: string; onPress: () => void; disabled?: boolean; muted?: boolean } | null = null;
@@ -411,9 +430,9 @@ export default function ClassDetailScreen() {
       };
     } else if (isPlanRestricted) {
       primaryCTA = {
-        label: 'No incluido en tu plan',
+        label: 'No incluida en tu membresía',
         muted: true,
-        onPress: () => Alert.alert('No incluido en tu plan', PLAN_RESTRICTED_MESSAGE),
+        onPress: () => Alert.alert('Membresía', PLAN_RESTRICTED_MESSAGE),
       };
     } else {
       primaryCTA = {

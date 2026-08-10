@@ -13,6 +13,10 @@ import { MembershipUsageService } from '../membership-usage/membership-usage.ser
 import {
   MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE,
 } from '../membership-usage/membership-usage.constants';
+import {
+  isClassIncludedInPlan,
+  MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
+} from '../membership-plans/membership-plan-class-access.utils';
 
 const bypassRoles: ReadonlySet<Role> = new Set([
   Role.STAFF,
@@ -23,8 +27,11 @@ const bypassRoles: ReadonlySet<Role> = new Set([
 
 /**
  * Shared booking access guard used by BookingsService (direct booking) and
- * WaitlistService (waitlist join). A single canonical path enforcing membership
- * category restrictions, class credit limits, and Day Pass access.
+ * WaitlistService (waitlist join + promotion). A single canonical path enforcing
+ * membership class access (template + legacy category), class credit limits, and
+ * Day Pass access.
+ *
+ * Staff manual attendance bypasses this service entirely.
  *
  * Receives a Prisma transaction client so callers control the transaction
  * boundary — no PrismaService injection needed here.
@@ -47,8 +54,6 @@ export class BookingAccessService {
       return;
     }
 
-    // Gate 1: active or trialing subscription.
-    // currentPeriodStart/End fetched here for the credit check below.
     const sub = await tx.subscription.findFirst({
       where: {
         userId,
@@ -60,36 +65,42 @@ export class BookingAccessService {
         currentPeriodEnd: true,
         membershipPlan: {
           select: {
+            allClassesAccess: true,
             allowedCategories: true,
             classCredits: true,
+            classTemplateAccess: {
+              select: { classTemplateId: true },
+            },
           },
         },
       },
     });
 
-    // Denial flags — mutually exclusive, both deferred past Gate 2 so a Day
-    // Pass can override either. subscriptionRestricted fires when category
-    // doesn't match (credit check skipped). creditsExhausted fires when
-    // category passes but all credits for the billing period are spent.
     let subscriptionRestricted = false;
     let creditsExhausted = false;
 
     if (sub) {
-      const { allowedCategories, classCredits } = sub.membershipPlan;
+      const { allClassesAccess, allowedCategories, classCredits, classTemplateAccess } =
+        sub.membershipPlan;
+      const allowedTemplateIds = classTemplateAccess.map((row) => row.classTemplateId);
 
-      // ── Category check ─────────────────────────────────────────────────────
-      if (allowedCategories.length > 0) {
-        const template = await tx.classTemplate.findUnique({
-          where: { id: classTemplateId },
-          select: { category: true },
-        });
+      const template = await tx.classTemplate.findUnique({
+        where: { id: classTemplateId },
+        select: { category: true },
+      });
 
-        if (!template?.category || !allowedCategories.includes(template.category)) {
-          subscriptionRestricted = true;
-        }
+      if (
+        !isClassIncludedInPlan({
+          allClassesAccess,
+          allowedTemplateIds,
+          allowedCategories,
+          classTemplateId,
+          templateCategory: template?.category ?? null,
+        })
+      ) {
+        subscriptionRestricted = true;
       }
 
-      // ── Credit check (only when category passed) ───────────────────────────
       if (!subscriptionRestricted && classCredits !== null) {
         if (sub.currentPeriodStart && sub.currentPeriodEnd) {
           try {
@@ -112,15 +123,11 @@ export class BookingAccessService {
         }
       }
 
-      // All Gate 1 checks passed — allow.
       if (!subscriptionRestricted && !creditsExhausted) {
         return;
       }
     }
 
-    // Gate 2: active Day Pass for the class's studio-local calendar date.
-    // validForDate is the UTC anchor for local midnight in the studio timezone.
-    // Day Pass is never category-restricted and bypasses credit limits.
     const dateKey = getStudioLocalDateKey(classStartsAt, studioTimezone);
     const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, studioTimezone);
 
@@ -134,10 +141,8 @@ export class BookingAccessService {
     });
     if (pass) return;
 
-    // Neither gate succeeded. Error priority:
-    // category restriction > credits exhausted > no membership.
     if (subscriptionRestricted) {
-      throw new ForbiddenException('Your membership does not include this class type.');
+      throw new ForbiddenException(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE);
     }
     if (creditsExhausted) {
       throw new ForbiddenException(MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE);

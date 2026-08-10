@@ -8,6 +8,18 @@ export type SubscriptionStatus =
   | "TRIALING"
   | "PAUSED";
 
+export type ClassAccessTemplateDto = {
+  id: string;
+  name: string;
+  durationMinutes: number;
+  active: boolean;
+};
+
+export type PlanClassAccessDto = {
+  allClasses: boolean;
+  templates: ClassAccessTemplateDto[];
+};
+
 export type MembershipPlanDto = {
   id: string;
   studioId: string;
@@ -25,6 +37,7 @@ export type MembershipPlanDto = {
   deletedAt: string | null;
   activeSubscriberCount: number;
   mrrCents: number;
+  classAccess: PlanClassAccessDto;
 };
 
 export type MembershipPlanInput = {
@@ -36,6 +49,8 @@ export type MembershipPlanInput = {
   classCredits?: number | null;
   stripeProductId?: string | null;
   stripePriceId?: string | null;
+  allClassesAccess?: boolean;
+  classTemplateIds?: string[];
 };
 
 export type MembershipPlanUpdateInput = Partial<MembershipPlanInput> & {

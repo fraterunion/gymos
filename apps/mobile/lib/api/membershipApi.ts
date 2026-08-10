@@ -44,6 +44,8 @@ export type MyMemberProfileDto = {
       currency: string;
       classCredits: number | null;
       allowedCategories: string[];
+      allClassesAccess: boolean;
+      allowedTemplateIds: string[];
     };
   } | null;
 };

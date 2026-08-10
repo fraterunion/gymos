@@ -12,6 +12,9 @@ export function userFacingApiMessage(error: unknown, fallback = 'Algo salió mal
   if (/active subscription required/i.test(m)) {
     return 'Necesitas una membresía activa para hacer eso.';
   }
+  if (/does not include access to this class/i.test(m)) {
+    return 'Tu membresía no incluye acceso a esta clase.';
+  }
   if (error.status >= 500) {
     return 'El servicio del estudio no está disponible por el momento. Inténtalo de nuevo en un momento.';
   }

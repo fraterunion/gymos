@@ -20,6 +20,10 @@ import {
   type SubscriptionListItem,
   type SubscriptionStatus,
 } from "@/lib/api/memberships";
+import {
+  fetchClassTemplates,
+  type ClassTemplateDto,
+} from "@/lib/api/classTemplates";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,6 +97,16 @@ function OverviewBar({ data }: { data: MembershipsOverview }) {
   );
 }
 
+function formatPlanAccessSummary(plan: MembershipPlanDto): string {
+  const access = plan.classAccess;
+  if (access.allClasses) return "Todas las clases";
+  if (access.templates.length === 0) return "Acceso restringido";
+  if (access.templates.length <= 3) {
+    return access.templates.map((t) => t.name).join(", ");
+  }
+  return `${access.templates.length} clases incluidas`;
+}
+
 // ── Plan card ─────────────────────────────────────────────────────────────────
 
 function PlanCard({
@@ -131,6 +145,9 @@ function PlanCard({
               : plan.classCredits === 0
               ? ""
               : ` · ${plan.classCredits} class credits`}
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Acceso: {formatPlanAccessSummary(plan)}
           </p>
         </div>
       </div>
@@ -201,6 +218,8 @@ type PlanFormState = {
   stripeProductId: string;
   stripePriceId: string;
   active: boolean;
+  allClassesAccess: boolean;
+  selectedTemplateIds: string[];
 };
 
 const emptyForm = (): PlanFormState => ({
@@ -214,6 +233,8 @@ const emptyForm = (): PlanFormState => ({
   stripeProductId: "",
   stripePriceId: "",
   active: true,
+  allClassesAccess: true,
+  selectedTemplateIds: [],
 });
 
 function planToForm(p: MembershipPlanDto): PlanFormState {
@@ -228,6 +249,8 @@ function planToForm(p: MembershipPlanDto): PlanFormState {
     stripeProductId: p.stripeProductId ?? "",
     stripePriceId: p.stripePriceId ?? "",
     active: p.active,
+    allClassesAccess: p.classAccess.allClasses,
+    selectedTemplateIds: p.classAccess.templates.map((t) => t.id),
   };
 }
 
@@ -245,11 +268,42 @@ function PlanModal({
   const [form, setForm] = useState<PlanFormState>(() =>
     editing ? planToForm(editing) : emptyForm()
   );
+  const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetchClassTemplates(studioId)
+      .then((data) => {
+        if (!cancelled) setTemplates(data);
+      })
+      .catch(() => {
+        if (!cancelled) setTemplates([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTemplatesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studioId]);
+
   function set<K extends keyof PlanFormState>(key: K, val: PlanFormState[K]) {
     setForm((f) => ({ ...f, [key]: val }));
+  }
+
+  function toggleTemplate(templateId: string) {
+    setForm((f) => {
+      const selected = new Set(f.selectedTemplateIds);
+      if (selected.has(templateId)) {
+        selected.delete(templateId);
+      } else {
+        selected.add(templateId);
+      }
+      return { ...f, selectedTemplateIds: [...selected] };
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -257,6 +311,10 @@ function PlanModal({
     const cents = Math.round(parseFloat(form.priceCents) * 100);
     if (isNaN(cents) || cents < 0) {
       setError("Enter a valid price.");
+      return;
+    }
+    if (!form.allClassesAccess && form.selectedTemplateIds.length === 0) {
+      setError("Selecciona al menos una clase o activa «Todas las clases».");
       return;
     }
     const input: MembershipPlanInput = {
@@ -270,6 +328,8 @@ function PlanModal({
         : parseInt(form.classCredits, 10) || 0,
       stripeProductId: form.stripeProductId.trim() || null,
       stripePriceId: form.stripePriceId.trim() || null,
+      allClassesAccess: form.allClassesAccess,
+      classTemplateIds: form.allClassesAccess ? [] : form.selectedTemplateIds,
     };
     setSaving(true);
     setError(null);
@@ -401,6 +461,86 @@ function PlanModal({
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
                 placeholder="Number of classes per period"
               />
+            )}
+          </div>
+
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-3">
+            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+              Acceso a clases
+            </p>
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={form.allClassesAccess}
+                onChange={(e) => set("allClassesAccess", e.target.checked)}
+                className="rounded"
+              />
+              Todas las clases
+            </label>
+
+            {!form.allClassesAccess && (
+              <>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      set(
+                        "selectedTemplateIds",
+                        templates.map((t) => t.id),
+                      )
+                    }
+                    className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
+                  >
+                    Seleccionar todas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => set("selectedTemplateIds", [])}
+                    className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
+                  >
+                    Quitar todas
+                  </button>
+                </div>
+
+                {templatesLoading ? (
+                  <p className="text-xs text-zinc-500">Cargando clases…</p>
+                ) : templates.length === 0 ? (
+                  <p className="text-xs text-zinc-500">
+                    No hay plantillas de clase en este estudio.
+                  </p>
+                ) : (
+                  <div className="max-h-48 space-y-2 overflow-y-auto">
+                    {templates.map((template) => {
+                      const checked = form.selectedTemplateIds.includes(template.id);
+                      return (
+                        <label
+                          key={template.id}
+                          className="flex items-start gap-2 rounded border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleTemplate(template.id)}
+                            className="mt-0.5 rounded"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium">{template.name}</span>
+                            <span className="text-xs text-zinc-500">
+                              {template.durationMinutes} min
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {form.allClassesAccess && templates.length > 0 && (
+              <p className="text-xs text-zinc-500">
+                Los miembros podrán reservar cualquier clase activa del estudio.
+              </p>
             )}
           </div>
 

@@ -1,6 +1,7 @@
 import { BillingInterval, ClassCategory } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsEnum,
@@ -74,4 +75,14 @@ export class UpdateMembershipPlanDto {
   @IsArray()
   @IsEnum(ClassCategory, { each: true })
   allowedCategories?: ClassCategory[];
+
+  @IsOptional()
+  @IsBoolean()
+  allClassesAccess?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  classTemplateIds?: string[];
 }

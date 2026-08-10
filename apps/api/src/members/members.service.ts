@@ -257,6 +257,10 @@ export class MembersService {
               currency: true,
               classCredits: true,
               allowedCategories: true,
+              allClassesAccess: true,
+              classTemplateAccess: {
+                select: { classTemplateId: true },
+              },
             },
           },
         },
@@ -322,7 +326,19 @@ export class MembersService {
             currentPeriodStart: activeSubscription.currentPeriodStart,
             currentPeriodEnd: activeSubscription.currentPeriodEnd,
             cancelAtPeriodEnd: activeSubscription.cancelAtPeriodEnd,
-            plan: activeSubscription.membershipPlan,
+            plan: {
+              id: activeSubscription.membershipPlan.id,
+              name: activeSubscription.membershipPlan.name,
+              billingInterval: activeSubscription.membershipPlan.billingInterval,
+              priceCents: activeSubscription.membershipPlan.priceCents,
+              currency: activeSubscription.membershipPlan.currency,
+              classCredits: activeSubscription.membershipPlan.classCredits,
+              allowedCategories: activeSubscription.membershipPlan.allowedCategories,
+              allClassesAccess: activeSubscription.membershipPlan.allClassesAccess,
+              allowedTemplateIds: activeSubscription.membershipPlan.classTemplateAccess.map(
+                (row) => row.classTemplateId,
+              ),
+            },
             creditsUsed,
             creditsRemaining,
           }
