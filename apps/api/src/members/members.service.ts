@@ -460,6 +460,15 @@ export class MembersService {
             allowedCategories: true,
           },
         },
+        pendingMembershipPlan: {
+          select: {
+            id: true,
+            name: true,
+            billingInterval: true,
+            priceCents: true,
+            currency: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });

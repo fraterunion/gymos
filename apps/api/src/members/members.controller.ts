@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -17,6 +18,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
+import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { CreateManualSubscriptionDto } from './dto/create-manual-subscription.dto';
 import { CreateOperationalNoteDto } from './dto/create-operational-note.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
@@ -52,6 +54,7 @@ export class MembersController {
     private readonly membersService: MembersService,
     private readonly operationalNotesService: MemberOperationalNotesService,
     private readonly progressService: ProgressService,
+    private readonly subscriptionLifecycle: SubscriptionLifecycleService,
   ) {}
 
   // ── Directory ──────────────────────────────────────────────────────────────
@@ -280,6 +283,22 @@ export class MembersController {
     @Body() dto: SetCancelAtPeriodEndDto,
   ) {
     return this.membersService.setCancelAtPeriodEnd(studioId, userId, subscriptionId, dto.cancel);
+  }
+
+  @Get(':userId/plan-change-preview')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  getPlanChangePreview(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @Query('planId') planId: string,
+  ) {
+    if (!planId) throw new BadRequestException('planId query param is required');
+    return this.subscriptionLifecycle.getPlanChangePreview({
+      userId,
+      studioId,
+      targetPlanId: planId,
+    });
   }
 
   // ── Timeline ──────────────────────────────────────────────────────────────

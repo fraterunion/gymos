@@ -128,6 +128,16 @@ export type MemberSubscription = {
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   membershipPlan: MemberPlan;
+  pendingMembershipPlan?: Pick<MemberPlan, "id" | "name" | "billingInterval" | "priceCents" | "currency"> | null;
+};
+
+export type PlanChangePreview = {
+  hasCurrentMembership: boolean;
+  isPlanChange: boolean;
+  currentPlan: Pick<MemberPlan, "id" | "name" | "priceCents" | "currency" | "billingInterval"> | null;
+  newPlan: Pick<MemberPlan, "id" | "name" | "priceCents" | "currency" | "billingInterval">;
+  effective: "immediate" | "next_period" | "checkout";
+  message: string;
 };
 
 export type MemberProfile = {
@@ -437,5 +447,16 @@ export async function updateMemberCrmProfile(
   return apiRequest<MemberCrmProfile>(
     `/studios/${studioId}/members/${userId}/profile`,
     { method: "PATCH", body: JSON.stringify(input) },
+  );
+}
+
+export async function fetchPlanChangePreview(
+  studioId: string,
+  memberId: string,
+  planId: string,
+): Promise<PlanChangePreview> {
+  return apiRequest<PlanChangePreview>(
+    `/studios/${studioId}/members/${memberId}/plan-change-preview?planId=${encodeURIComponent(planId)}`,
+    { method: "GET" },
   );
 }
