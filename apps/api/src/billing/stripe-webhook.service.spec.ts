@@ -481,4 +481,36 @@ describe('StripeWebhookService — subscription plan lifecycle', () => {
     expect(upsertCalls).toHaveLength(2);
     expect(upsertCalls[0]).toEqual(upsertCalls[1]);
   });
+
+  it('reconciles cancelAtPeriodEnd=false from Stripe after plan change clears scheduled cancellation', async () => {
+    const { service, subscriptionLifecycle, upsertCalls } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+
+    await service.upsertSubscriptionFromStripe(
+      { ...baseSub, cancel_at_period_end: false, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.updated',
+    );
+
+    expect(upsertCalls[0]).toMatchObject({ cancelAtPeriodEnd: false });
+  });
+
+  it('persists cancelAtPeriodEnd=true to local DB when Stripe reports cancel_at_period_end=true', async () => {
+    const { service, subscriptionLifecycle, upsertCalls } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+
+    await service.upsertSubscriptionFromStripe(
+      { ...baseSub, cancel_at_period_end: true, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.updated',
+    );
+
+    expect(upsertCalls[0]).toMatchObject({ cancelAtPeriodEnd: true });
+  });
 });

@@ -13,6 +13,7 @@ import {
   fetchMemberProfile,
   fetchMemberSubscriptions,
   fetchMemberTimeline,
+  fetchPlanChangePreview,
   staffCancelBooking,
   staffForceCheckIn,
   staffMarkNoShow,
@@ -22,12 +23,16 @@ import {
   type MemberBooking,
   type MemberCrmProfile,
   type MemberPayment,
+  type MemberPlan,
   type MemberProfile,
   type MemberSubscription,
+  type PlanChangePreview,
   type SubStatus,
   type TimelineEvent,
   type UpsertCrmProfileInput,
 } from "@/lib/api/members";
+import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
+import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/sales";
 import { ApiError } from "@/lib/api/errors";
 import {
   attestMemberWaiver,
@@ -655,14 +660,337 @@ function BillingTab({ studioId, userId }: { studioId: string; userId: string }) 
   );
 }
 
+// ── Change plan modal ─────────────────────────────────────────────────────────
+
+const INTERVAL_LABELS: Record<string, string> = { MONTHLY: "Monthly", YEARLY: "Yearly", WEEKLY: "Weekly" };
+
+function fmtPlanPrice(priceCents: number, currency: string, billingInterval: string) {
+  return `${new Intl.NumberFormat(undefined, { style: "currency", currency: currency.toUpperCase() }).format(priceCents / 100)} / ${INTERVAL_LABELS[billingInterval] ?? billingInterval}`;
+}
+
+type ChangePlanModalProps = {
+  open: boolean;
+  onClose: () => void;
+  studioId: string;
+  memberId: string;
+  currentSubscription: MemberSubscription | null;
+  onSuccess: () => void;
+};
+
+function ChangePlanModal({ open, onClose, studioId, memberId, currentSubscription, onSuccess }: ChangePlanModalProps) {
+  const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [plansError, setPlansError] = useState<string | null>(null);
+
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PlanChangePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [result, setResult] = useState<StaffCheckoutResult | null>(null);
+
+  const currentPlanId = currentSubscription?.membershipPlan.id ?? null;
+
+  // Load plans when modal opens
+  useEffect(() => {
+    if (!open) return;
+    setSelectedPlanId(null);
+    setPreview(null);
+    setPreviewError(null);
+    setSubmitError(null);
+    setResult(null);
+    setPlansLoading(true);
+    setPlansError(null);
+    fetchMembershipPlans(studioId, true)
+      .then((all) => setPlans(all.filter((p) => p.active && p.deletedAt === null)))
+      .catch((e) => setPlansError(e instanceof ApiError ? e.message : "Failed to load plans"))
+      .finally(() => setPlansLoading(false));
+  }, [open, studioId]);
+
+  // Fetch preview whenever selection changes
+  useEffect(() => {
+    if (!selectedPlanId) { setPreview(null); setPreviewError(null); return; }
+    setPreview(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    fetchPlanChangePreview(studioId, memberId, selectedPlanId)
+      .then(setPreview)
+      .catch((e) => setPreviewError(e instanceof ApiError ? e.message : "Could not load preview"))
+      .finally(() => setPreviewLoading(false));
+  }, [selectedPlanId, studioId, memberId]);
+
+  async function handleConfirm() {
+    if (!selectedPlanId || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const res = await createStaffCheckoutSession(studioId, memberId, selectedPlanId);
+      setResult(res);
+      onSuccess();
+    } catch (e) {
+      setSubmitError(e instanceof ApiError ? e.message : "Plan change failed. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleClose() {
+    if (submitting) return;
+    onClose();
+  }
+
+  if (!open) return null;
+
+  const canConfirm = !!selectedPlanId && !!preview && !previewLoading && !submitting;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-xl flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 shrink-0">
+          <h2 className="text-base font-semibold text-zinc-900">Change membership plan</h2>
+          <button onClick={handleClose} disabled={submitting}
+            className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+
+          {/* Result view (post-submit) */}
+          {result ? (
+            <div className="space-y-4">
+              {result.action === "plan_changed" && !result.requiresPayment && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <p className="text-sm font-semibold text-emerald-800">
+                    {result.effective === "immediate"
+                      ? "Membership updated successfully."
+                      : `Plan change scheduled — takes effect at next renewal.`}
+                  </p>
+                  <p className="mt-1 text-xs text-emerald-700">{result.message}</p>
+                  {result.effective === "next_period" && result.nextRenewalAt && (
+                    <p className="mt-1 text-xs text-emerald-700">
+                      Effective: {fmtDate(result.nextRenewalAt)}
+                    </p>
+                  )}
+                </div>
+              )}
+              {result.action === "plan_changed" && result.requiresPayment && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-amber-800">Payment required to complete upgrade.</p>
+                  <p className="text-xs text-amber-700">The plan change is pending payment. Share the payment link with the member.</p>
+                  {result.paymentUrl && (
+                    <a href={result.paymentUrl} target="_blank" rel="noopener noreferrer"
+                      className="inline-block rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700">
+                      Open payment link ↗
+                    </a>
+                  )}
+                </div>
+              )}
+              {result.action === "checkout" && (
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 space-y-3">
+                  <p className="text-sm font-semibold text-zinc-800">Checkout link created.</p>
+                  <p className="text-xs text-zinc-600">This member has no active Stripe subscription. Share this checkout link with them to complete enrollment.</p>
+                  <a href={result.url} target="_blank" rel="noopener noreferrer"
+                    className="inline-block rounded-lg bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-700">
+                    Open checkout link ↗
+                  </a>
+                </div>
+              )}
+              <button onClick={handleClose}
+                className="w-full rounded-xl border border-zinc-200 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100">
+                Close
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Current plan */}
+              {currentSubscription && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">Current plan</p>
+                  <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-zinc-900">{currentSubscription.membershipPlan.name}</p>
+                      <SubStatusBadge status={currentSubscription.status} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-zinc-500">
+                      {fmtPlanPrice(currentSubscription.membershipPlan.priceCents, currentSubscription.membershipPlan.currency, currentSubscription.membershipPlan.billingInterval)}
+                    </p>
+                    {currentSubscription.cancelAtPeriodEnd && (
+                      <p className="mt-1 text-xs text-amber-600">Cancels at period end · {fmtDate(currentSubscription.currentPeriodEnd)}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Select new plan */}
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">New plan</p>
+                {plansLoading && (
+                  <div className="space-y-2">
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="h-14 rounded-xl bg-zinc-100 animate-pulse" />
+                    ))}
+                  </div>
+                )}
+                {plansError && <p className="text-sm text-red-600">{plansError}</p>}
+                {!plansLoading && !plansError && (
+                  <div className="space-y-2">
+                    {plans.map((plan) => {
+                      const isCurrent = plan.id === currentPlanId;
+                      const isSelected = plan.id === selectedPlanId;
+                      return (
+                        <button
+                          key={plan.id}
+                          disabled={isCurrent}
+                          onClick={() => setSelectedPlanId(plan.id)}
+                          className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                            isCurrent
+                              ? "cursor-not-allowed border-zinc-100 bg-zinc-50 opacity-50"
+                              : isSelected
+                              ? "border-zinc-900 bg-zinc-900 text-white"
+                              : "border-zinc-200 bg-white hover:border-zinc-400"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`text-sm font-semibold ${isSelected ? "text-white" : "text-zinc-900"}`}>
+                              {plan.name}
+                              {isCurrent && <span className="ml-2 text-xs font-normal opacity-60">(current)</span>}
+                            </span>
+                            <span className={`shrink-0 text-xs tabular-nums ${isSelected ? "text-zinc-300" : "text-zinc-500"}`}>
+                              {fmtPlanPrice(plan.priceCents, plan.currency, plan.billingInterval)}
+                            </span>
+                          </div>
+                          {plan.classCredits != null && (
+                            <p className={`mt-0.5 text-xs ${isSelected ? "text-zinc-300" : "text-zinc-400"}`}>
+                              {plan.classCredits} class credits
+                            </p>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Preview */}
+              {selectedPlanId && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">What will happen</p>
+                  {previewLoading && (
+                    <div className="h-16 rounded-xl bg-zinc-100 animate-pulse" />
+                  )}
+                  {previewError && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                      <p className="text-sm text-red-700">{previewError}</p>
+                    </div>
+                  )}
+                  {preview && !previewLoading && (
+                    <div className={`rounded-xl border px-4 py-3 space-y-1 ${
+                      preview.effective === "immediate"
+                        ? "border-blue-200 bg-blue-50"
+                        : preview.effective === "next_period"
+                        ? "border-amber-200 bg-amber-50"
+                        : "border-zinc-200 bg-zinc-50"
+                    }`}>
+                      {preview.effective === "immediate" && (
+                        <>
+                          <p className="text-sm font-semibold text-blue-900">Immediate upgrade</p>
+                          <p className="text-xs text-blue-800">
+                            The plan changes immediately. Stripe will charge the prorated difference for the remainder of the current billing period.
+                          </p>
+                          {currentSubscription?.cancelAtPeriodEnd && (
+                            <p className="text-xs text-blue-800 font-medium mt-1">
+                              This plan change will keep the membership active and remove the scheduled cancellation.
+                            </p>
+                          )}
+                        </>
+                      )}
+                      {preview.effective === "next_period" && (
+                        <>
+                          <p className="text-sm font-semibold text-amber-900">Scheduled for next renewal</p>
+                          <p className="text-xs text-amber-800">
+                            {`${currentSubscription?.membershipPlan.name ?? "Current plan"} stays active until ${fmtDate(currentSubscription?.currentPeriodEnd)}. `}
+                            {`${preview.newPlan.name} activates at next renewal.`}
+                          </p>
+                          {currentSubscription?.cancelAtPeriodEnd && (
+                            <p className="text-xs text-amber-800 font-medium mt-1">
+                              This plan change will keep the membership active and remove the scheduled cancellation.
+                            </p>
+                          )}
+                        </>
+                      )}
+                      {preview.effective === "checkout" && (
+                        <>
+                          <p className="text-sm font-semibold text-zinc-900">New Stripe subscription</p>
+                          <p className="text-xs text-zinc-600">
+                            This member has no active Stripe subscription. A checkout link will be created for them to complete enrollment.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Offline-to-cash note */}
+              <p className="text-xs text-zinc-400">
+                To switch this member to cash billing, use the offline sales flow after cancelling their Stripe subscription.
+              </p>
+
+              {/* Errors */}
+              {submitError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                  <p className="text-sm text-red-700">{submitError}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        {!result && (
+          <div className="border-t border-zinc-200 px-6 py-4 shrink-0">
+            <button
+              onClick={() => void handleConfirm()}
+              disabled={!canConfirm}
+              className="w-full rounded-xl bg-zinc-900 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {submitting ? "Applying change…" : "Confirm plan change"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Membership tab ────────────────────────────────────────────────────────────
 
-function MembershipTab({ studioId, userId }: { studioId: string; userId: string }) {
+function MembershipTab({
+  studioId,
+  userId,
+  studioRole,
+  onProfileRefresh,
+}: {
+  studioId: string;
+  userId: string;
+  studioRole: string | null;
+  onProfileRefresh?: () => void;
+}) {
   const [subs, setSubs] = useState<MemberSubscription[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [changePlanSub, setChangePlanSub] = useState<MemberSubscription | null>(null);
+
+  const canChangePlan = studioRole === "OWNER" || studioRole === "ADMIN";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -692,78 +1020,106 @@ function MembershipTab({ studioId, userId }: { studioId: string; userId: string 
     }
   }
 
+  function handlePlanChangeSuccess() {
+    void load();
+    onProfileRefresh?.();
+  }
+
   if (loading) return <CardSkeleton lines={5} />;
 
-  const INTERVAL_LABELS: Record<string, string> = { MONTHLY: "Monthly", YEARLY: "Yearly", WEEKLY: "Weekly" };
-
   return (
-    <div className="space-y-4">
-      {error && <ErrorBanner message={error} />}
-      {actionError && <ErrorBanner message={actionError} />}
-      {subs.length === 0 && !loading && (
-        <div className="rounded-xl border border-zinc-200 bg-white px-6 py-10 text-center shadow-sm">
-          <p className="text-sm text-zinc-500">No subscriptions found.</p>
-        </div>
-      )}
-      {subs.map((s) => (
-        <div key={s.id} className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <p className="font-semibold text-zinc-900">{s.membershipPlan.name}</p>
-                <SubStatusBadge status={s.status} />
+    <>
+      <ChangePlanModal
+        open={changePlanSub !== null}
+        onClose={() => setChangePlanSub(null)}
+        studioId={studioId}
+        memberId={userId}
+        currentSubscription={changePlanSub}
+        onSuccess={handlePlanChangeSuccess}
+      />
+
+      <div className="space-y-4">
+        {error && <ErrorBanner message={error} />}
+        {actionError && <ErrorBanner message={actionError} />}
+        {subs.length === 0 && !loading && (
+          <div className="rounded-xl border border-zinc-200 bg-white px-6 py-10 text-center shadow-sm">
+            <p className="text-sm text-zinc-500">No subscriptions found.</p>
+          </div>
+        )}
+        {subs.map((s) => (
+          <div key={s.id} className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-zinc-900">{s.membershipPlan.name}</p>
+                  <SubStatusBadge status={s.status} />
+                </div>
+                <p className="mt-0.5 text-sm text-zinc-500">
+                  {fmtPlanPrice(s.membershipPlan.priceCents, s.membershipPlan.currency, s.membershipPlan.billingInterval)}
+                </p>
+                {/* Scheduled downgrade indicator */}
+                {s.pendingMembershipPlan && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    Scheduled change: <span className="font-medium">{s.pendingMembershipPlan.name}</span>
+                    {s.currentPeriodEnd ? ` · ${fmtDate(s.currentPeriodEnd)}` : ""}
+                  </p>
+                )}
               </div>
-              <p className="mt-0.5 text-sm text-zinc-500">
-                {new Intl.NumberFormat(undefined, { style: "currency", currency: s.membershipPlan.currency.toUpperCase() }).format(s.membershipPlan.priceCents / 100)}
-                {" / "}
-                {INTERVAL_LABELS[s.membershipPlan.billingInterval] ?? s.membershipPlan.billingInterval}
-              </p>
+              <div className="flex flex-wrap gap-2">
+                {canChangePlan && (s.status === "ACTIVE" || s.status === "TRIALING" || s.status === "PAST_DUE") && (
+                  <button
+                    onClick={() => setChangePlanSub(s)}
+                    disabled={actionLoading === s.id}
+                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-100 disabled:opacity-50"
+                  >
+                    Change plan
+                  </button>
+                )}
+                {s.status === "ACTIVE" && (
+                  <>
+                    <button onClick={() => void handleStatusChange(s.id, "PAUSED")} disabled={actionLoading === s.id}
+                      className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50">
+                      {actionLoading === s.id ? "…" : "Pause"}
+                    </button>
+                    <button onClick={() => void handleStatusChange(s.id, "CANCELED")} disabled={actionLoading === s.id}
+                      className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
+                      Cancel
+                    </button>
+                  </>
+                )}
+                {(s.status === "PAUSED" || s.status === "CANCELED" || s.status === "PAST_DUE") && (
+                  <button onClick={() => void handleStatusChange(s.id, "ACTIVE")} disabled={actionLoading === s.id}
+                    className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
+                    {actionLoading === s.id ? "…" : "Reactivate"}
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {s.status === "ACTIVE" && (
-                <>
-                  <button onClick={() => void handleStatusChange(s.id, "PAUSED")} disabled={actionLoading === s.id}
-                    className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50">
-                    {actionLoading === s.id ? "…" : "Pause"}
-                  </button>
-                  <button onClick={() => void handleStatusChange(s.id, "CANCELED")} disabled={actionLoading === s.id}
-                    className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
-                    Cancel
-                  </button>
-                </>
-              )}
-              {(s.status === "PAUSED" || s.status === "CANCELED" || s.status === "PAST_DUE") && (
-                <button onClick={() => void handleStatusChange(s.id, "ACTIVE")} disabled={actionLoading === s.id}
-                  className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
-                  {actionLoading === s.id ? "…" : "Reactivate"}
-                </button>
-              )}
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div>
+                <p className="text-xs text-zinc-400">Period start</p>
+                <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodStart)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-zinc-400">Period end</p>
+                <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodEnd)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-zinc-400">Credits</p>
+                <p className="text-sm text-zinc-700">{s.membershipPlan.classCredits ?? "Unlimited"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-zinc-400">Cancel at period end</p>
+                <p className="text-sm text-zinc-700">{s.cancelAtPeriodEnd ? <span className="text-amber-600">Yes</span> : "No"}</p>
+              </div>
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div>
-              <p className="text-xs text-zinc-400">Period start</p>
-              <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodStart)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-400">Period end</p>
-              <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodEnd)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-400">Credits</p>
-              <p className="text-sm text-zinc-700">{s.membershipPlan.classCredits ?? "Unlimited"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-400">Cancel at period end</p>
-              <p className="text-sm text-zinc-700">{s.cancelAtPeriodEnd ? <span className="text-amber-600">Yes</span> : "No"}</p>
-            </div>
-          </div>
-        </div>
-      ))}
-      {subs.length > 0 && (
-        <p className="text-xs text-zinc-400">Status changes are local only — they may be overridden by the next Stripe webhook.</p>
-      )}
-    </div>
+        ))}
+        {subs.length > 0 && (
+          <p className="text-xs text-zinc-400">Status changes are local only — they may be overridden by the next Stripe webhook.</p>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1136,7 +1492,7 @@ function WaiverStatusCard({
 
 export default function MemberProfilePage() {
   const { userId } = useParams<{ userId: string }>();
-  const { selectedStudioId } = useDeskStudio();
+  const { selectedStudioId, studioRole } = useDeskStudio();
 
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [crm, setCrm] = useState<MemberCrmProfile | null>(null);
@@ -1337,7 +1693,14 @@ export default function MemberProfilePage() {
                 </dl>
               </div>
             )}
-            {activeTab === "membership" && <MembershipTab studioId={selectedStudioId} userId={userId} />}
+            {activeTab === "membership" && (
+              <MembershipTab
+                studioId={selectedStudioId}
+                userId={userId}
+                studioRole={studioRole}
+                onProfileRefresh={() => void load()}
+              />
+            )}
             {activeTab === "bookings" && <BookingsTab studioId={selectedStudioId} userId={userId} />}
             {activeTab === "attendance" && <AttendanceTab studioId={selectedStudioId} userId={userId} />}
             {activeTab === "timeline" && <TimelineTab studioId={selectedStudioId} userId={userId} />}
