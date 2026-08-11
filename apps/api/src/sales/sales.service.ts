@@ -13,7 +13,9 @@ import {
   SubscriptionStatus,
 } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
-import { BillingService } from '../billing/billing.service';
+import { BillingService, type MembershipCheckoutResponse } from '../billing/billing.service';
+import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
+import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { AuditService } from './audit.service';
@@ -41,6 +43,7 @@ export class SalesService {
     private readonly prisma: PrismaService,
     private readonly authService: AuthService,
     private readonly billingService: BillingService,
+    private readonly subscriptionLifecycle: SubscriptionLifecycleService,
     private readonly waiverService: WaiverService,
     private readonly auditService: AuditService,
     private readonly salesSettingsService: SalesSettingsService,
@@ -149,7 +152,7 @@ export class SalesService {
     actorUserId: string,
     targetUserId: string,
     planId: string,
-  ) {
+  ): Promise<MembershipCheckoutResponse> {
     const actor = await this.getActorMembership(studioId, actorUserId);
     const settings = await this.salesSettingsService.getSettings(studioId);
 
@@ -159,7 +162,7 @@ export class SalesService {
 
     await this.assertTargetMember(studioId, targetUserId);
 
-    const { checkoutUrl } = await this.billingService.createStaffInitiatedCheckoutSession({
+    const result = await this.billingService.createStaffInitiatedCheckoutSession({
       actorUserId,
       targetUserId,
       studioId,
@@ -169,14 +172,21 @@ export class SalesService {
     await this.auditService.log({
       studioId,
       actorUserId,
-      action: 'STAFF_CHECKOUT_CREATED',
+      action: result.action === 'plan_changed' ? 'MEMBERSHIP_PLAN_CHANGED' : 'STAFF_CHECKOUT_CREATED',
       targetUserId,
       entityType: 'MembershipPlan',
       entityId: planId,
-      metadata: { checkoutUrl },
+      metadata:
+        result.action === 'plan_changed'
+          ? {
+              effective: result.effective,
+              previousPlanId: result.previousPlan.id,
+              newPlanId: result.newPlan.id,
+            }
+          : { checkoutUrl: result.url },
     });
 
-    return { checkoutUrl };
+    return result;
   }
 
   async createOfflineSubscription(
@@ -194,6 +204,20 @@ export class SalesService {
 
     await this.assertTargetMember(studioId, targetUserId);
     await this.waiverService.assertMemberWaiverAccepted(studioId, targetUserId);
+
+    await this.subscriptionLifecycle.assertNoRenewableSubscriptionConflict({
+      studioId,
+      userId: targetUserId,
+      allowStripeResolution: dto.stripeResolution,
+    });
+
+    const existingRenewable = await this.prisma.subscription.count({
+      where: {
+        studioId,
+        userId: targetUserId,
+        status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+      },
+    });
 
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: dto.planId, studioId, deletedAt: null, active: true },
@@ -236,6 +260,17 @@ export class SalesService {
       .join(' | ') || null;
 
     const result = await this.prisma.$transaction(async (tx) => {
+      if (existingRenewable > 0) {
+        await tx.subscription.updateMany({
+          where: {
+            studioId,
+            userId: targetUserId,
+            status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+          },
+          data: { status: SubscriptionStatus.CANCELED },
+        });
+      }
+
       const subscription = await tx.subscription.create({
         data: {
           studioId,

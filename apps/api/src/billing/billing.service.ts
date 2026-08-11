@@ -7,11 +7,18 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { BillingInterval } from '@prisma/client';
 import { Role } from '@prisma/client';
+import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { billingIntervalToStripeRecurring, stripeIntervalToBillingInterval } from './stripe-plan-interval';
+import {
+  SubscriptionLifecycleService,
+  type MembershipCheckoutResponse,
+} from './subscription-lifecycle.service';
+
+export type { MembershipCheckoutResponse };
 
 @Injectable()
 export class BillingService {
@@ -21,20 +28,17 @@ export class BillingService {
     private readonly config: ConfigService,
     private readonly enrollment: EnrollmentService,
     private readonly waiverService: WaiverService,
+    private readonly subscriptionLifecycle: SubscriptionLifecycleService,
   ) {}
 
   async createMemberCheckoutSession(params: {
     userId: string;
     studioId: string;
     planId: string;
-  }): Promise<{ url: string }> {
+    idempotencyKey?: string;
+  }): Promise<MembershipCheckoutResponse> {
     await this.waiverService.assertMemberWaiverAccepted(params.studioId, params.userId);
-    const { checkoutUrl } = await this.buildMemberCheckoutSession({
-      targetUserId: params.userId,
-      studioId: params.studioId,
-      planId: params.planId,
-    });
-    return { url: checkoutUrl };
+    return this.initiateMembershipPurchase(params);
   }
 
   async createStaffInitiatedCheckoutSession(params: {
@@ -42,12 +46,59 @@ export class BillingService {
     targetUserId: string;
     studioId: string;
     planId: string;
-  }): Promise<{ checkoutUrl: string }> {
-    return this.buildMemberCheckoutSession({
-      targetUserId: params.targetUserId,
+    idempotencyKey?: string;
+  }): Promise<MembershipCheckoutResponse> {
+    return this.initiateMembershipPurchase({
+      userId: params.targetUserId,
       studioId: params.studioId,
       planId: params.planId,
       initiatedByUserId: params.actorUserId,
+      idempotencyKey: params.idempotencyKey,
+    });
+  }
+
+  async getPlanChangePreview(params: {
+    userId: string;
+    studioId: string;
+    planId: string;
+  }) {
+    return this.subscriptionLifecycle.getPlanChangePreview({
+      userId: params.userId,
+      studioId: params.studioId,
+      targetPlanId: params.planId,
+    });
+  }
+
+  private async initiateMembershipPurchase(params: {
+    userId: string;
+    studioId: string;
+    planId: string;
+    initiatedByUserId?: string;
+    idempotencyKey?: string;
+  }): Promise<MembershipCheckoutResponse> {
+    const { priceId } = await this.ensureMembershipPlanStripePrice(params.planId);
+    const idempotencyKey =
+      params.idempotencyKey ??
+      createHash('sha256')
+        .update(`${params.studioId}:${params.userId}:${params.planId}:${params.initiatedByUserId ?? 'self'}`)
+        .digest('hex')
+        .slice(0, 32);
+
+    return this.subscriptionLifecycle.initiateMembershipPurchase({
+      targetUserId: params.userId,
+      studioId: params.studioId,
+      planId: params.planId,
+      newStripePriceId: priceId,
+      initiatedByUserId: params.initiatedByUserId,
+      idempotencyKey,
+      createCheckout: async (ctx) =>
+        this.buildMemberCheckoutSession({
+          targetUserId: ctx.targetUserId,
+          studioId: ctx.studioId,
+          planId: ctx.planId,
+          initiatedByUserId: ctx.initiatedByUserId,
+          idempotencyKey: ctx.idempotencyKey,
+        }),
     });
   }
 
@@ -56,6 +107,7 @@ export class BillingService {
     studioId: string;
     planId: string;
     initiatedByUserId?: string;
+    idempotencyKey?: string;
   }): Promise<{ checkoutUrl: string }> {
     const membership = await this.prisma.studioMembership.findUnique({
       where: { userId_studioId: { userId: params.targetUserId, studioId: params.studioId } },
@@ -66,6 +118,16 @@ export class BillingService {
     }
     if (membership.role !== Role.MEMBER) {
       throw new ForbiddenException('Checkout is available to studio members with the MEMBER role only');
+    }
+
+    const existingStripe = await this.subscriptionLifecycle.findPrimaryStripeSubscription(
+      params.studioId,
+      params.targetUserId,
+    );
+    if (existingStripe?.stripeSubscriptionId) {
+      throw new BadRequestException(
+        'Member already has a Stripe subscription. Use plan change instead of creating a new checkout session.',
+      );
     }
 
     const plan = await this.prisma.membershipPlan.findFirst({
@@ -102,7 +164,7 @@ export class BillingService {
     }
 
     const successUrl = this.config.getOrThrow<string>('STRIPE_SUCCESS_URL');
-    const cancelUrl  = this.config.getOrThrow<string>('STRIPE_CANCEL_URL');
+    const cancelUrl = this.config.getOrThrow<string>('STRIPE_CANCEL_URL');
 
     const quote = await this.enrollment.calculateCheckoutQuote(
       params.targetUserId,
@@ -115,7 +177,7 @@ export class BillingService {
 
     if (quote.enrollmentFeeApplies && quote.settingsId) {
       enrollmentMeta['enrollmentSettingsId'] = quote.settingsId;
-      enrollmentMeta['enrollmentCandidate']  = quote.isPromoCandidate ? 'true' : 'false';
+      enrollmentMeta['enrollmentCandidate'] = quote.isPromoCandidate ? 'true' : 'false';
 
       if (!quote.isPromoCandidate) {
         const feePriceId = await this.enrollment.ensureEnrollmentFeeStripePrice(quote.settingsId);
@@ -136,23 +198,26 @@ export class BillingService {
       ...initiatedMeta,
     };
 
-    const session = await this.stripe.createCheckoutSession({
-      mode: 'subscription',
-      customer: customer.id,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: successUrl,
-      cancel_url:  cancelUrl,
-      metadata: sessionMetadata,
-      subscription_data: {
-        metadata: {
-          userId: user.id,
-          studioId: params.studioId,
-          planId: plan.id,
-          ...initiatedMeta,
+    const session = await this.stripe.createCheckoutSession(
+      {
+        mode: 'subscription',
+        customer: customer.id,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        metadata: sessionMetadata,
+        subscription_data: {
+          metadata: {
+            userId: user.id,
+            studioId: params.studioId,
+            planId: plan.id,
+            ...initiatedMeta,
+          },
+          ...(addInvoiceItems.length > 0 ? { add_invoice_items: addInvoiceItems } : {}),
         },
-        ...(addInvoiceItems.length > 0 ? { add_invoice_items: addInvoiceItems } : {}),
       },
-    });
+      params.idempotencyKey ? { idempotencyKey: `checkout-${params.idempotencyKey}` } : undefined,
+    );
 
     const checkoutUrl = session.url;
     if (!checkoutUrl) {
@@ -188,9 +253,6 @@ export class BillingService {
     return { url };
   }
 
-  /**
-   * Ensures Stripe Product + recurring Price exist and match the GymOS plan (amount, interval).
-   */
   async ensureMembershipPlanStripePrice(planId: string): Promise<{ priceId: string; productId: string }> {
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: planId, deletedAt: null, active: true },

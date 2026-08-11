@@ -28,4 +28,9 @@ export class CreateOfflineSubscriptionDto {
   @IsString()
   @MinLength(3)
   priceOverrideNote?: string;
+
+  /** Required when member has an active Stripe subscription. */
+  @IsOptional()
+  @IsIn(['cancel_immediately', 'cancel_at_period_end'])
+  stripeResolution?: 'cancel_immediately' | 'cancel_at_period_end';
 }

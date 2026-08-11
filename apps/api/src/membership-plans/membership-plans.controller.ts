@@ -48,6 +48,21 @@ export class MembershipPlansController {
     return this.enrollmentService.calculateCheckoutQuote(req.user.sub, studioId, planId);
   }
 
+  @Get(':planId/plan-change-preview')
+  @UseGuards(RolesGuard)
+  @Roles(Role.MEMBER)
+  planChangePreview(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.billingService.getPlanChangePreview({
+      userId: req.user.sub,
+      studioId,
+      planId,
+    });
+  }
+
   @Post(':planId/checkout')
   @UseGuards(RolesGuard)
   @Roles(Role.MEMBER)

@@ -60,6 +60,7 @@ export class BookingAccessService {
         studioId,
         status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
       },
+      orderBy: { createdAt: 'desc' },
       select: {
         currentPeriodStart: true,
         currentPeriodEnd: true,

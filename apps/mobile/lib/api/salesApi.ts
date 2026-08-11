@@ -22,9 +22,20 @@ export type WalkInMemberResult = {
   };
 };
 
-export type StaffCheckoutResult = {
-  checkoutUrl: string;
-};
+export type StaffCheckoutResult =
+  | { action: 'checkout'; url: string }
+  | {
+      action: 'plan_changed';
+      effective: 'immediate' | 'next_period';
+      message: string;
+      subscriptionId: string;
+      stripeSubscriptionId: string;
+      previousPlan: { id: string; name: string; priceCents: number; currency: string; billingInterval: string };
+      newPlan: { id: string; name: string; priceCents: number; currency: string; billingInterval: string };
+      nextRenewalAt: string | null;
+      requiresPayment?: boolean;
+      paymentUrl?: string | null;
+    };
 
 export type OfflineSubscriptionResult = {
   subscription: {

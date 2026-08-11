@@ -261,7 +261,17 @@ export default function WalkInSalesPage() {
         selectedMember.user.id,
         selectedPlanId,
       );
-      setCheckoutUrl(res.checkoutUrl);
+      if (res.action === 'plan_changed') {
+        setCheckoutUrl(res.paymentUrl ?? null);
+        setError(
+          res.requiresPayment
+            ? "El cambio de plan requiere pago adicional. Comparte el enlace de pago si aparece abajo."
+            : res.message,
+        );
+        setStep(5);
+        return;
+      }
+      setCheckoutUrl(res.url);
       setStep(5);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No se pudo generar el link de pago");

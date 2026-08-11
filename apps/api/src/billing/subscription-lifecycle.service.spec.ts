@@ -1,0 +1,313 @@
+import { BadRequestException } from '@nestjs/common';
+import { SubscriptionStatus } from '@prisma/client';
+import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
+import { STRIPE_IMMEDIATE_UPGRADE_PARAMS } from './subscription-plan-resolution.utils';
+import { isUpgrade } from './subscription-lifecycle.utils';
+
+describe('subscription-lifecycle.utils', () => {
+  it('detects upgrade vs downgrade by price', () => {
+    expect(isUpgrade(1300, 1500)).toBe(true);
+    expect(isUpgrade(1500, 1300)).toBe(false);
+  });
+});
+
+describe('SubscriptionLifecycleService', () => {
+  const stripe = {
+    retrieveSubscription: jest.fn(),
+    updateSubscription: jest.fn(),
+    scheduleSubscriptionPriceChangeAtPeriodEnd: jest.fn(),
+    resolveHostedInvoiceUrl: jest.fn(),
+    cancelSubscription: jest.fn(),
+  };
+
+  const prisma = {
+    membershipPlan: { findFirst: jest.fn() },
+    subscription: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
+    $transaction: jest.fn(),
+    $executeRaw: jest.fn(),
+  };
+
+  const service = new SubscriptionLifecycleService(prisma as never, stripe as never);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));
+    prisma.subscription.update.mockResolvedValue({ id: 'sub-local-1', membershipPlan: {} });
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.membershipPlan.findFirst.mockImplementation(async (args: { where: { stripePriceId?: string } }) => {
+      if (args.where.stripePriceId === 'price_basic') return { id: 'plan-basic' };
+      if (args.where.stripePriceId === 'price_full') return { id: 'plan-full' };
+      return null;
+    });
+  });
+
+  it('routes first purchase to checkout when no Stripe subscription exists', async () => {
+    prisma.subscription.findFirst.mockResolvedValue(null);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-full',
+      name: 'Full Access',
+      priceCents: 1500,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+    });
+
+    const result = await service.initiateMembershipPurchase({
+      targetUserId: 'user-1',
+      studioId: 'studio-1',
+      planId: 'plan-full',
+      newStripePriceId: 'price_full',
+      createCheckout: jest.fn().mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.com/test' }),
+    });
+
+    expect(result).toEqual({ action: 'checkout', url: 'https://checkout.stripe.com/test' });
+  });
+
+  it('immediate upgrade uses always_invoice + pending_if_incomplete', async () => {
+    prisma.subscription.findFirst.mockResolvedValue({
+      id: 'sub-local-1',
+      studioId: 'studio-1',
+      userId: 'user-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+      membershipPlan: {
+        id: 'plan-basic',
+        name: 'Basic Access',
+        priceCents: 1300,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+      },
+    });
+    prisma.membershipPlan.findFirst.mockImplementation(async (args: { where: { id?: string; stripePriceId?: string } }) => {
+      if (args.where.id === 'plan-full') {
+        return { id: 'plan-full', name: 'Full Access', priceCents: 1500, currency: 'mxn', billingInterval: 'MONTHLY' };
+      }
+      if (args.where.stripePriceId === 'price_full') return { id: 'plan-full' };
+      if (args.where.stripePriceId === 'price_basic') return { id: 'plan-basic' };
+      return null;
+    });
+
+    stripe.retrieveSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: true,
+      items: { data: [{ id: 'si_1', price: { id: 'price_basic' } }] },
+    });
+    stripe.updateSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ id: 'si_1', price: { id: 'price_full' } }] },
+    });
+
+    await service.initiateMembershipPurchase({
+      targetUserId: 'user-1',
+      studioId: 'studio-1',
+      planId: 'plan-full',
+      newStripePriceId: 'price_full',
+      createCheckout: jest.fn(),
+    });
+
+    expect(stripe.updateSubscription).toHaveBeenCalledWith(
+      'sub_stripe_1',
+      expect.objectContaining(STRIPE_IMMEDIATE_UPGRADE_PARAMS),
+      undefined,
+    );
+    expect(prisma.subscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          membershipPlanId: 'plan-full',
+          pendingMembershipPlanId: null,
+          cancelAtPeriodEnd: false,
+        }),
+      }),
+    );
+  });
+
+  it('does not apply new effective plan when upgrade payment is incomplete', async () => {
+    stripe.retrieveSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      items: { data: [{ id: 'si_1', price: { id: 'price_basic' } }] },
+    });
+    stripe.updateSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'incomplete',
+      items: { data: [{ id: 'si_1', price: { id: 'price_basic' } }] },
+    });
+
+    await service.changeStripeSubscriptionPlan({
+      studioId: 'studio-1',
+      userId: 'user-1',
+      localSubscription: {
+        id: 'sub-local-1',
+        stripeSubscriptionId: 'sub_stripe_1',
+        membershipPlanId: 'plan-basic',
+        pendingMembershipPlanId: null,
+        membershipPlan: {
+          id: 'plan-basic',
+          name: 'Basic Access',
+          priceCents: 1300,
+          currency: 'mxn',
+          billingInterval: 'MONTHLY',
+        },
+      } as never,
+      targetPlan: {
+        id: 'plan-full',
+        name: 'Full Access',
+        priceCents: 1500,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+      } as never,
+      newStripePriceId: 'price_full',
+    });
+
+    expect(prisma.subscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          membershipPlanId: 'plan-basic',
+          pendingMembershipPlanId: null,
+        }),
+      }),
+    );
+  });
+
+  it('scheduled downgrade keeps effective plan and stores pending plan only', async () => {
+    stripe.retrieveSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      items: { data: [{ id: 'si_1', price: { id: 'price_full' }, current_period_end: 1_702_592_000 }] },
+    });
+    stripe.scheduleSubscriptionPriceChangeAtPeriodEnd.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      metadata: { pendingPlanId: 'plan-basic' },
+      items: { data: [{ id: 'si_1', price: { id: 'price_full' }, current_period_end: 1_702_592_000 }] },
+    });
+
+    const result = await service.changeStripeSubscriptionPlan({
+      studioId: 'studio-1',
+      userId: 'user-1',
+      localSubscription: {
+        id: 'sub-local-1',
+        stripeSubscriptionId: 'sub_stripe_1',
+        membershipPlanId: 'plan-full',
+        pendingMembershipPlanId: null,
+        membershipPlan: {
+          id: 'plan-full',
+          name: 'Full Access',
+          priceCents: 1500,
+          currency: 'mxn',
+          billingInterval: 'MONTHLY',
+        },
+      } as never,
+      targetPlan: {
+        id: 'plan-basic',
+        name: 'Basic Access',
+        priceCents: 1300,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+      } as never,
+      newStripePriceId: 'price_basic',
+    });
+
+    expect(result.effective).toBe('next_period');
+    expect(prisma.subscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          membershipPlanId: 'plan-full',
+          pendingMembershipPlanId: 'plan-basic',
+        }),
+      }),
+    );
+  });
+
+  it('reconcile activates pending plan only when Stripe price matches pending plan', async () => {
+    const result = await service.reconcileSubscriptionPlansFromStripe(prisma as never, {
+      stripeSubscriptionId: 'sub_stripe_1',
+      stripePriceId: 'price_basic',
+      metadata: { pendingPlanId: 'plan-basic' },
+      fallbackPlanId: 'plan-full',
+    });
+
+    expect(result).toEqual({
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+    });
+  });
+
+  it('reconcile keeps Full effective with pending Basic before period end', async () => {
+    const result = await service.reconcileSubscriptionPlansFromStripe(prisma as never, {
+      stripeSubscriptionId: 'sub_stripe_1',
+      stripePriceId: 'price_full',
+      metadata: { pendingPlanId: 'plan-basic' },
+      fallbackPlanId: 'plan-full',
+    });
+
+    expect(result).toEqual({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: 'plan-basic',
+    });
+  });
+
+  it('auditDuplicateRenewableSubscriptions logs and does not cancel Stripe', async () => {
+    const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    prisma.subscription.findMany.mockResolvedValue([
+      {
+        id: 'sub-old',
+        stripeSubscriptionId: 'sub_old',
+        membershipPlanId: 'plan-basic',
+        membershipPlan: { id: 'plan-basic', name: 'Basic Access' },
+        status: SubscriptionStatus.ACTIVE,
+        source: 'STRIPE',
+        cancelAtPeriodEnd: false,
+        createdAt: new Date(),
+      },
+    ]);
+
+    await service.auditDuplicateRenewableSubscriptions(prisma as never, {
+      studioId: 'studio-1',
+      userId: 'user-1',
+      keepSubscriptionId: 'sub-new',
+      keepStripeSubscriptionId: 'sub_new',
+      source: 'webhook',
+      stripeEventType: 'customer.subscription.updated',
+    });
+
+    expect(stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('throws when selecting the same active plan', async () => {
+    prisma.subscription.findFirst.mockResolvedValue({
+      id: 'sub-local-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+      membershipPlan: { id: 'plan-full', name: 'Full', priceCents: 1500, currency: 'mxn', billingInterval: 'MONTHLY' },
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-full',
+      name: 'Full Access',
+      priceCents: 1500,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+    });
+
+    await expect(
+      service.initiateMembershipPurchase({
+        targetUserId: 'user-1',
+        studioId: 'studio-1',
+        planId: 'plan-full',
+        newStripePriceId: 'price_full',
+        createCheckout: jest.fn(),
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+});

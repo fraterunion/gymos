@@ -351,6 +351,7 @@ model MembershipPlan {
 
   studio               Studio                      @relation(fields: [studioId], references: [id], onDelete: Restrict)
   subscriptions        Subscription[]
+  pendingSubscriptions Subscription[] @relation("SubscriptionPendingPlan")
   payments             Payment[]
   classTemplateAccess  MembershipPlanClassAccess[]
 
@@ -364,6 +365,9 @@ model Subscription {
   studioId             String               @map("studio_id")
   userId               String               @map("user_id")
   membershipPlanId     String               @map("membership_plan_id")
+  /// Future plan scheduled via Stripe Subscription Schedule (downgrade at period end).
+  /// membershipPlanId remains the current effective plan until Stripe confirms the transition.
+  pendingMembershipPlanId String?           @map("pending_membership_plan_id")
   status               SubscriptionStatus
   source               SubscriptionSource   @default(STRIPE)
   stripeSubscriptionId String?              @unique @map("stripe_subscription_id")
@@ -378,6 +382,7 @@ model Subscription {
   studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
   user           User           @relation("SubscriptionMember", fields: [userId], references: [id], onDelete: Restrict)
   membershipPlan MembershipPlan @relation(fields: [membershipPlanId], references: [id], onDelete: Restrict)
+  pendingMembershipPlan MembershipPlan? @relation("SubscriptionPendingPlan", fields: [pendingMembershipPlanId], references: [id], onDelete: SetNull)
   createdBy      User?          @relation("SubscriptionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   payments       Payment[]
 

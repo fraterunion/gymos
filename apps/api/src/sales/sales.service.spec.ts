@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
 import { BillingService } from '../billing/billing.service';
+import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { AuditService } from './audit.service';
@@ -29,7 +30,9 @@ describe('SalesService', () => {
   let billingService: { createStaffInitiatedCheckoutSession: jest.Mock };
   let waiverService: { assertMemberWaiverAccepted: jest.Mock };
   let auditService: { log: jest.Mock };
-  let salesSettingsService: { getSettings: jest.Mock };
+  let subscriptionLifecycle: {
+    assertNoRenewableSubscriptionConflict: jest.Mock;
+  };
 
   const defaultSettings = {
     frontDeskCanCreateMember: true,
@@ -49,7 +52,7 @@ describe('SalesService', () => {
       },
       user: { findFirst: jest.fn(), create: jest.fn() },
       membershipPlan: { findFirst: jest.fn() },
-      subscription: { create: jest.fn() },
+      subscription: { create: jest.fn(), count: jest.fn(), updateMany: jest.fn() },
       payment: { create: jest.fn() },
       $transaction: jest.fn(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)),
     };
@@ -57,7 +60,10 @@ describe('SalesService', () => {
     billingService = {
       createStaffInitiatedCheckoutSession: jest
         .fn()
-        .mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.test/session' }),
+        .mockResolvedValue({ action: 'checkout', url: 'https://checkout.stripe.test/session' }),
+    };
+    subscriptionLifecycle = {
+      assertNoRenewableSubscriptionConflict: jest.fn().mockResolvedValue(undefined),
     };
     waiverService = { assertMemberWaiverAccepted: jest.fn().mockResolvedValue(undefined) };
     auditService = { log: jest.fn().mockResolvedValue({ id: 'audit-1' }) };
@@ -69,6 +75,7 @@ describe('SalesService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AuthService, useValue: authService },
         { provide: BillingService, useValue: billingService },
+        { provide: SubscriptionLifecycleService, useValue: subscriptionLifecycle },
         { provide: WaiverService, useValue: waiverService },
         { provide: AuditService, useValue: auditService },
         { provide: SalesSettingsService, useValue: salesSettingsService },
@@ -151,7 +158,10 @@ describe('SalesService', () => {
       'plan-1',
     );
 
-    expect(result.checkoutUrl).toContain('checkout.stripe.test');
+    expect(result.action).toBe('checkout');
+    if (result.action === 'checkout') {
+      expect(result.url).toContain('checkout.stripe.test');
+    }
     expect(billingService.createStaffInitiatedCheckoutSession).toHaveBeenCalledWith({
       actorUserId: 'actor',
       targetUserId: 'member-1',
@@ -165,6 +175,7 @@ describe('SalesService', () => {
 
   it('records cash subscription as admin with waiver', async () => {
     mockActor(Role.ADMIN);
+    prisma.subscription.count.mockResolvedValue(0);
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-1',
       studioId: 'studio-1',

@@ -48,8 +48,11 @@ export class StripeService {
     });
   }
 
-  async createCheckoutSession(params: Stripe.Checkout.SessionCreateParams): Promise<Stripe.Checkout.Session> {
-    return this.getClient().checkout.sessions.create(params);
+  async createCheckoutSession(
+    params: Stripe.Checkout.SessionCreateParams,
+    options?: Stripe.RequestOptions,
+  ): Promise<Stripe.Checkout.Session> {
+    return this.getClient().checkout.sessions.create(params, options);
   }
 
   async createBillingPortalSession(
@@ -109,8 +112,89 @@ export class StripeService {
   async updateSubscription(
     subscriptionId: string,
     params: Stripe.SubscriptionUpdateParams,
+    options?: Stripe.RequestOptions,
   ): Promise<Stripe.Subscription> {
-    return this.getClient().subscriptions.update(subscriptionId, params);
+    return this.getClient().subscriptions.update(subscriptionId, params, options);
+  }
+
+  async cancelSubscription(
+    subscriptionId: string,
+    params: Stripe.SubscriptionCancelParams = {},
+    options?: Stripe.RequestOptions,
+  ): Promise<Stripe.Subscription> {
+    return this.getClient().subscriptions.cancel(subscriptionId, params, options);
+  }
+
+  async scheduleSubscriptionPriceChangeAtPeriodEnd(params: {
+    stripeSubscriptionId: string;
+    subscriptionItemId: string;
+    currentPriceId: string;
+    newPriceId: string;
+    metadata: Record<string, string>;
+  }): Promise<Stripe.Subscription> {
+    const stripe = this.getClient();
+    const sub = await stripe.subscriptions.retrieve(params.stripeSubscriptionId, {
+      expand: ['schedule'],
+    });
+
+    const periodEnd = sub.items.data[0]?.current_period_end;
+    if (!periodEnd) {
+      throw new Error('Stripe subscription is missing current_period_end');
+    }
+
+    let scheduleId =
+      typeof sub.schedule === 'string'
+        ? sub.schedule
+        : sub.schedule?.id ?? null;
+
+    if (!scheduleId) {
+      const created = await stripe.subscriptionSchedules.create({
+        from_subscription: params.stripeSubscriptionId,
+      });
+      scheduleId = created.id;
+    }
+
+    const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+    const phaseStart = schedule.phases[0]?.start_date ?? sub.items.data[0]?.current_period_start;
+    if (!phaseStart) {
+      throw new Error('Unable to resolve subscription schedule phase start');
+    }
+
+    await stripe.subscriptionSchedules.update(scheduleId, {
+      end_behavior: 'release',
+      phases: [
+        {
+          items: [{ price: params.currentPriceId, quantity: 1 }],
+          start_date: phaseStart,
+          end_date: periodEnd,
+          metadata: params.metadata,
+        },
+        {
+          items: [{ price: params.newPriceId, quantity: 1 }],
+          start_date: periodEnd,
+          metadata: params.metadata,
+        },
+      ],
+    });
+
+    return stripe.subscriptions.update(params.stripeSubscriptionId, {
+      cancel_at_period_end: false,
+      metadata: params.metadata,
+    });
+  }
+
+  async resolveHostedInvoiceUrl(stripeSubscriptionId: string): Promise<string | null> {
+    const stripe = this.getClient();
+    const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+      expand: ['latest_invoice'],
+    });
+    const invoice = sub.latest_invoice;
+    if (!invoice) return null;
+    if (typeof invoice === 'string') {
+      const fetched = await stripe.invoices.retrieve(invoice);
+      return fetched.hosted_invoice_url ?? null;
+    }
+    return invoice.hosted_invoice_url ?? null;
   }
 
   async createPaymentIntent(params: Stripe.PaymentIntentCreateParams): Promise<Stripe.PaymentIntent> {

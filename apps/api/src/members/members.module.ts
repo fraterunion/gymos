@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { BillingModule } from '../billing/billing.module';
 import { MembershipUsageModule } from '../membership-usage/membership-usage.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StripeModule } from '../stripe/stripe.module';
@@ -10,7 +11,7 @@ import { MembersService } from './members.service';
 import { ProgressService } from './progress.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, WaitlistModule, StripeModule, MembershipUsageModule],
+  imports: [PrismaModule, AuthModule, WaitlistModule, StripeModule, MembershipUsageModule, BillingModule],
   controllers: [MembersController],
   providers: [MembersService, MemberOperationalNotesService, ProgressService],
 })

@@ -15,6 +15,8 @@ import {
   Prisma,
   SubscriptionStatus,
 } from '@prisma/client';
+import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
+import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
@@ -41,6 +43,7 @@ export class MembersService {
     private readonly waitlistService: WaitlistService,
     private readonly stripeService: StripeService,
     private readonly membershipUsage: MembershipUsageService,
+    private readonly subscriptionLifecycle: SubscriptionLifecycleService,
   ) {}
 
   // ── Simple list (legacy — kept for compatibility) ──────────────────────────
@@ -263,6 +266,15 @@ export class MembersService {
               },
             },
           },
+          pendingMembershipPlan: {
+            select: {
+              id: true,
+              name: true,
+              billingInterval: true,
+              priceCents: true,
+              currency: true,
+            },
+          },
         },
       }),
       this.prisma.booking.groupBy({
@@ -339,6 +351,15 @@ export class MembersService {
                 (row) => row.classTemplateId,
               ),
             },
+            pendingPlan: activeSubscription.pendingMembershipPlan
+              ? {
+                  id: activeSubscription.pendingMembershipPlan.id,
+                  name: activeSubscription.pendingMembershipPlan.name,
+                  billingInterval: activeSubscription.pendingMembershipPlan.billingInterval,
+                  priceCents: activeSubscription.pendingMembershipPlan.priceCents,
+                  currency: activeSubscription.pendingMembershipPlan.currency,
+                }
+              : null,
             creditsUsed,
             creditsRemaining,
           }
@@ -600,6 +621,13 @@ export class MembersService {
     stripeSubscriptionId?: string,
   ) {
     await this.assertMembership(studioId, userId);
+
+    const existing = await this.subscriptionLifecycle.findCurrentRenewableSubscription(studioId, userId);
+    if (existing) {
+      throw new ConflictException(
+        'Member already has a current membership. Change or cancel it before creating another.',
+      );
+    }
 
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: planId, studioId, deletedAt: null, active: true },

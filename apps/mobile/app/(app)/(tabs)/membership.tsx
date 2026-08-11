@@ -3,6 +3,7 @@ import { createURL } from 'expo-linking';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   AppState,
   Linking,
   Modal,
@@ -32,6 +33,8 @@ import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import {
   createBillingPortalSession,
   createMembershipCheckoutSession,
+  fetchPlanChangePreview,
+  type MembershipPurchaseResponse,
   fetchCheckoutPreview,
   fetchMembershipPlans,
   fetchMyMemberProfile,
@@ -1313,6 +1316,22 @@ export default function MembershipScreen() {
     return () => sub.remove();
   }, [isGuest, studioId, load, refreshStudioActivity]);
 
+  async function handlePurchaseResult(result: MembershipPurchaseResponse) {
+    if (result.action === 'plan_changed') {
+      if (result.requiresPayment && result.paymentUrl) {
+        expectReturnFromBrowser.current = true;
+        await Linking.openURL(result.paymentUrl);
+        return;
+      }
+      Alert.alert('Membresía actualizada', result.message);
+      void load('refresh');
+      void refreshStudioActivity();
+      return;
+    }
+    expectReturnFromBrowser.current = true;
+    await Linking.openURL(result.url);
+  }
+
   async function openCheckout(planId: string) {
     if (isGuest) { openAuthModal('membership'); return; }
     if (!studioId) return;
@@ -1323,12 +1342,10 @@ export default function MembershipScreen() {
       if (plan) { setBreakdownPlan(plan); return; }
     }
 
-    // No enrollment fee — proceed directly to Stripe.
     setCheckoutPlanId(planId);
     try {
-      const { url } = await createMembershipCheckoutSession(studioId, planId);
-      expectReturnFromBrowser.current = true;
-      await Linking.openURL(url);
+      const result = await createMembershipCheckoutSession(studioId, planId);
+      await handlePurchaseResult(result);
     } catch (e) {
       expectReturnFromBrowser.current = false;
       setError(userFacingApiMessage(e, 'No se pudo iniciar el pago. Inténtalo de nuevo.'));
@@ -1341,10 +1358,9 @@ export default function MembershipScreen() {
     if (!studioId || !breakdownPlan) return;
     setConfirmingCheckout(true);
     try {
-      const { url } = await createMembershipCheckoutSession(studioId, breakdownPlan.id);
+      const result = await createMembershipCheckoutSession(studioId, breakdownPlan.id);
       setBreakdownPlan(null);
-      expectReturnFromBrowser.current = true;
-      await Linking.openURL(url);
+      await handlePurchaseResult(result);
     } catch (e) {
       expectReturnFromBrowser.current = false;
       setBreakdownPlan(null);
@@ -1552,18 +1568,30 @@ export default function MembershipScreen() {
               </View>
             ) : null}
 
-            {plans.map((plan, i) => (
+            {plans.map((plan, i) => {
+              const isCurrentPlan = !isGuest && sub?.plan.id === plan.id;
+              const subscribeLabel = isGuest
+                ? 'Únete ahora'
+                : isCurrentPlan
+                  ? 'Plan actual'
+                  : sub
+                    ? 'Cambiar membresía'
+                    : 'Suscribirme';
+              return (
               <PlanCard
                 key={plan.id}
                 plan={plan}
                 primaryColor={primaryColor}
                 index={i}
                 isLoading={!isGuest && checkoutPlanId === plan.id}
-                isDisabled={!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id}
-                subscribeLabel={isGuest ? 'Únete ahora' : 'Suscribirme'}
+                isDisabled={
+                  isCurrentPlan ||
+                  (!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id)
+                }
+                subscribeLabel={subscribeLabel}
                 onSubscribe={() => void (isGuest ? openAuthModal('membership') : openCheckout(plan.id))}
               />
-            ))}
+            );})}
           </View>
         ) : loading ? (
           <View style={{ gap: 10, marginTop: Space.sectionGap }}>

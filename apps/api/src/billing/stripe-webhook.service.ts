@@ -3,6 +3,12 @@ import { DayPassStatus, PaymentMethod, PaymentStatus, Prisma, SubscriptionStatus
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
+import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
+import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
+import {
+  readCurrentStripePriceId,
+  readPendingPlanIdFromMetadata,
+} from './subscription-plan-resolution.utils';
 import { markStripeWebhookEventProcessed, tryClaimStripeWebhookEvent } from './stripe-webhook-idempotency';
 import {
   type WebhookCheckoutSessionPayload,
@@ -64,6 +70,7 @@ export class StripeWebhookService {
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
     private readonly enrollment: EnrollmentService,
+    private readonly subscriptionLifecycle: SubscriptionLifecycleService,
   ) {}
 
   async handleIncomingWebhook(rawBody: Buffer, signature: string): Promise<void> {
@@ -93,7 +100,10 @@ export class StripeWebhookService {
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
-        await this.onCustomerSubscription(event.data.object as WebhookSubscriptionPayload);
+        await this.onCustomerSubscription(
+          event.data.object as WebhookSubscriptionPayload,
+          event.type,
+        );
         break;
       case 'invoice.paid':
         await this.onInvoicePaid(event.data.object as WebhookInvoicePayload);
@@ -127,7 +137,7 @@ export class StripeWebhookService {
     }
     const md = readTriplet(session.metadata);
     const stripeSub = (await this.stripe.retrieveSubscription(subId)) as unknown as WebhookSubscriptionPayload;
-    await this.upsertSubscriptionFromStripe(stripeSub, md);
+    await this.upsertSubscriptionFromStripe(stripeSub, md, 'checkout.session.completed');
 
     // Enrollment finalization — only when metadata signals an enrollment-aware checkout
     const sessionMeta = session.metadata ?? {};
@@ -145,18 +155,21 @@ export class StripeWebhookService {
     }
   }
 
-  private async onCustomerSubscription(subscription: WebhookSubscriptionPayload): Promise<void> {
+  private async onCustomerSubscription(
+    subscription: WebhookSubscriptionPayload,
+    stripeEventType: string,
+  ): Promise<void> {
     const md = readTriplet(subscription.metadata);
-    await this.upsertSubscriptionFromStripe(subscription, md);
+    await this.upsertSubscriptionFromStripe(subscription, md, stripeEventType);
   }
 
   private async upsertSubscriptionFromStripe(
     sub: WebhookSubscriptionPayload,
     sessionOrRootMetadata: { userId?: string; studioId?: string; planId?: string },
+    stripeEventType: string,
   ): Promise<void> {
     const md = { ...readTriplet(sub.metadata), ...sessionOrRootMetadata };
 
-    // Resolve userId: from metadata → Stripe customer lookup
     let userId = md.userId ?? null;
     const customerId =
       typeof sub.customer === 'string'
@@ -169,40 +182,30 @@ export class StripeWebhookService {
       userId = user?.id ?? null;
     }
 
-    // Resolve studioId + planId from metadata, fallback to stripePriceId lookup
     let studioId = md.studioId ?? null;
-    let planId = md.planId ?? null;
+    const currentStripePriceId = readCurrentStripePriceId(sub);
+    let fallbackPlanId = md.planId ?? null;
 
-    if ((!planId || !studioId) && sub.items?.data.length) {
+    if ((!fallbackPlanId || !studioId) && sub.items?.data.length) {
       const stripePriceId = sub.items.data[0]?.price?.id ?? null;
       if (stripePriceId) {
         const byPrice = await this.prisma.membershipPlan.findFirst({
           where: { stripePriceId, deletedAt: null },
         });
         if (byPrice) {
-          planId = planId ?? byPrice.id;
+          fallbackPlanId = fallbackPlanId ?? byPrice.id;
           studioId = studioId ?? byPrice.studioId;
         }
       }
     }
 
-    if (!userId || !studioId || !planId) {
+    if (!userId || !studioId) {
       this.logger.warn(`Subscription ${sub.id} missing metadata; skipping DB upsert`);
-      return;
-    }
-
-    const plan = await this.prisma.membershipPlan.findFirst({
-      where: { id: planId, studioId, deletedAt: null },
-    });
-    if (!plan) {
-      this.logger.warn(`Plan ${planId} not found for studio ${studioId}; skipping subscription upsert`);
       return;
     }
 
     const status = mapStripeSubscriptionStatus(sub.status);
 
-    // Billing period from subscription.items.data[0] — the canonical source in
-    // Stripe's basil API (2025-08-27.basil) which removed root-level period fields.
     const currentPeriodStart = parseStripePeriodDate(sub.items?.data?.[0]?.current_period_start);
     const currentPeriodEnd   = parseStripePeriodDate(sub.items?.data?.[0]?.current_period_end);
     const periodData =
@@ -212,24 +215,84 @@ export class StripeWebhookService {
         ? { currentPeriodStart, currentPeriodEnd }
         : {};
 
-    await this.prisma.subscription.upsert({
-      where: { stripeSubscriptionId: sub.id },
-      create: {
-        studioId,
-        userId,
-        membershipPlanId: planId,
-        status,
-        stripeSubscriptionId: sub.id,
-        cancelAtPeriodEnd: sub.cancel_at_period_end,
-        ...periodData,
-      },
-      update: {
-        status,
-        cancelAtPeriodEnd: sub.cancel_at_period_end,
-        membershipPlanId: planId,
-        ...periodData,
-      },
+    const saved = await this.prisma.$transaction(async (tx) => {
+      const { membershipPlanId, pendingMembershipPlanId } =
+        await this.subscriptionLifecycle.reconcileSubscriptionPlansFromStripe(tx, {
+          stripeSubscriptionId: sub.id,
+          stripePriceId: currentStripePriceId,
+          metadata: sub.metadata,
+          fallbackPlanId,
+        });
+
+      if (!membershipPlanId) {
+        this.logger.warn(
+          `Subscription ${sub.id} could not resolve effective plan; skipping DB upsert`,
+        );
+        return null;
+      }
+
+      const plan = await tx.membershipPlan.findFirst({
+        where: { id: membershipPlanId, studioId, deletedAt: null },
+      });
+      if (!plan) {
+        this.logger.warn(
+          `Plan ${membershipPlanId} not found for studio ${studioId}; skipping subscription upsert`,
+        );
+        return null;
+      }
+
+      const row = await tx.subscription.upsert({
+        where: { stripeSubscriptionId: sub.id },
+        create: {
+          studioId,
+          userId,
+          membershipPlanId,
+          pendingMembershipPlanId,
+          status,
+          stripeSubscriptionId: sub.id,
+          cancelAtPeriodEnd: sub.cancel_at_period_end,
+          ...periodData,
+        },
+        update: {
+          status,
+          cancelAtPeriodEnd: sub.cancel_at_period_end,
+          membershipPlanId,
+          pendingMembershipPlanId,
+          ...periodData,
+        },
+      });
+
+      if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
+        await this.subscriptionLifecycle.auditDuplicateRenewableSubscriptions(tx, {
+          studioId,
+          userId,
+          keepSubscriptionId: row.id,
+          keepStripeSubscriptionId: sub.id,
+          source: 'webhook',
+          stripeEventType,
+        });
+      }
+
+      return row;
     });
+
+    if (!saved) return;
+
+    if (
+      readPendingPlanIdFromMetadata(sub.metadata) &&
+      saved.pendingMembershipPlanId &&
+      saved.membershipPlanId !== saved.pendingMembershipPlanId
+    ) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'scheduled_plan_change_pending',
+          stripeSubscriptionId: sub.id,
+          effectivePlanId: saved.membershipPlanId,
+          pendingPlanId: saved.pendingMembershipPlanId,
+          currentPeriodEnd: saved.currentPeriodEnd?.toISOString() ?? null,
+        }),
+      );
+    }
   }
 
   /**

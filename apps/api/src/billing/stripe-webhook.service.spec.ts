@@ -131,7 +131,15 @@ function makeMocks() {
 
   const enrollment = {} as unknown as EnrollmentService;
 
-  const service = new StripeWebhookService(prisma, stripe, enrollment);
+  const subscriptionLifecycle = {
+    auditDuplicateRenewableSubscriptions: jest.fn(),
+    reconcileSubscriptionPlansFromStripe: jest.fn().mockResolvedValue({
+      membershipPlanId: 'plan_1',
+      pendingMembershipPlanId: null,
+    }),
+  };
+
+  const service = new StripeWebhookService(prisma, stripe, enrollment, subscriptionLifecycle as never);
 
   jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -299,5 +307,178 @@ describe('StripeWebhookService — payment write', () => {
     expect(parsed['invoiceId']).toBe('in_basil');
     expect(parsed['customerId']).toBe('cus_test');
     expect(parsed['stripeSubscriptionIdBasil']).toBe('sub_basil');
+  });
+});
+
+// ── Part 4: subscription webhook plan reconciliation ─────────────────────────
+
+type SubscriptionWebhookService = {
+  upsertSubscriptionFromStripe: (
+    sub: {
+      id: string;
+      status: string;
+      customer: string;
+      metadata: Record<string, string> | null;
+      cancel_at_period_end: boolean;
+      items: {
+        data: Array<{
+          price: { id: string };
+          current_period_start?: number;
+          current_period_end?: number;
+        }>;
+      };
+    },
+    md: { userId?: string; studioId?: string; planId?: string },
+    stripeEventType: string,
+  ) => Promise<void>;
+};
+
+function makeSubscriptionWebhookMocks() {
+  const upsertCalls: Array<Record<string, unknown>> = [];
+
+  const prisma = {
+    user: { findFirst: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+    membershipPlan: {
+      findFirst: jest.fn().mockImplementation(async (args: { where: { id?: string; stripePriceId?: string } }) => {
+        if (args.where.stripePriceId === 'price_full') return { id: 'plan-full', studioId: 'studio_1' };
+        if (args.where.stripePriceId === 'price_basic') return { id: 'plan-basic', studioId: 'studio_1' };
+        if (args.where.id === 'plan-full') return { id: 'plan-full', studioId: 'studio_1', deletedAt: null };
+        if (args.where.id === 'plan-basic') return { id: 'plan-basic', studioId: 'studio_1', deletedAt: null };
+        return null;
+      }),
+    },
+    $transaction: jest.fn().mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        membershipPlan: prisma.membershipPlan,
+        subscription: {
+          upsert: jest.fn().mockImplementation(async ({ update, create }: { update: Record<string, unknown>; create: Record<string, unknown> }) => {
+            const row = { id: 'sub-local-1', ...create, ...update };
+            upsertCalls.push(row);
+            return row;
+          }),
+        },
+      }),
+    ),
+  } as unknown as PrismaService;
+
+  const subscriptionLifecycle = {
+    reconcileSubscriptionPlansFromStripe: jest.fn(),
+    auditDuplicateRenewableSubscriptions: jest.fn(),
+  };
+
+  const service = new StripeWebhookService(
+    prisma,
+    {} as StripeService,
+    {} as EnrollmentService,
+    subscriptionLifecycle as never,
+  );
+
+  jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+  jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+  return {
+    service: service as unknown as SubscriptionWebhookService,
+    subscriptionLifecycle,
+    upsertCalls,
+  };
+}
+
+describe('StripeWebhookService — subscription plan lifecycle', () => {
+  const baseSub = {
+    id: 'sub_stripe_1',
+    status: 'active',
+    customer: 'cus_test',
+    cancel_at_period_end: false,
+    items: {
+      data: [
+        {
+          price: { id: 'price_full' },
+          current_period_start: 1_722_489_600,
+          current_period_end: 1_725_168_000,
+        },
+      ],
+    },
+  };
+
+  it('keeps Full effective with pending Basic before scheduled downgrade activates', async () => {
+    const { service, subscriptionLifecycle, upsertCalls } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: 'plan-basic',
+    });
+
+    await service.upsertSubscriptionFromStripe(
+      { ...baseSub, metadata: { pendingPlanId: 'plan-basic', userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.updated',
+    );
+
+    expect(upsertCalls[0]).toMatchObject({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: 'plan-basic',
+    });
+    expect(subscriptionLifecycle.auditDuplicateRenewableSubscriptions).toHaveBeenCalled();
+  });
+
+  it('activates Basic effective plan when Stripe price transitions at period end', async () => {
+    const { service, subscriptionLifecycle, upsertCalls } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+    });
+
+    await service.upsertSubscriptionFromStripe(
+      {
+        ...baseSub,
+        metadata: { userId: 'user_1', studioId: 'studio_1' },
+        items: {
+          data: [{ price: { id: 'price_basic' }, current_period_start: 1_725_168_000, current_period_end: 1_727_846_400 }],
+        },
+      },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.updated',
+    );
+
+    expect(upsertCalls[0]).toMatchObject({
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+    });
+  });
+
+  it('audits unknown historical duplicates without Stripe cancellation', async () => {
+    const { service, subscriptionLifecycle } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+
+    await service.upsertSubscriptionFromStripe(
+      { ...baseSub, metadata: { userId: 'user_1', studioId: 'studio_1', planId: 'plan-full' } },
+      { userId: 'user_1', studioId: 'studio_1', planId: 'plan-full' },
+      'customer.subscription.updated',
+    );
+
+    expect(subscriptionLifecycle.auditDuplicateRenewableSubscriptions).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        source: 'webhook',
+        stripeEventType: 'customer.subscription.updated',
+      }),
+    );
+  });
+
+  it('is idempotent on webhook replay', async () => {
+    const { service, subscriptionLifecycle, upsertCalls } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+
+    const payload = { ...baseSub, metadata: { userId: 'user_1', studioId: 'studio_1', planId: 'plan-full' } };
+    await service.upsertSubscriptionFromStripe(payload, { userId: 'user_1', studioId: 'studio_1' }, 'customer.subscription.updated');
+    await service.upsertSubscriptionFromStripe(payload, { userId: 'user_1', studioId: 'studio_1' }, 'customer.subscription.updated');
+
+    expect(upsertCalls).toHaveLength(2);
+    expect(upsertCalls[0]).toEqual(upsertCalls[1]);
   });
 });

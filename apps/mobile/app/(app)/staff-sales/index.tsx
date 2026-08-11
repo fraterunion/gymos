@@ -741,7 +741,14 @@ export default function StaffSalesScreen() {
     setError(null);
     try {
       const res = await createStaffCheckoutSession(studioId, selectedMember.user.id, selectedPlanId);
-      setCheckoutUrl(res.checkoutUrl);
+      if (res.action === 'plan_changed') {
+        setCheckoutUrl(res.paymentUrl ?? null);
+        setPaymentOutcome(res.requiresPayment ? 'pending' : 'succeeded');
+        setError(res.message);
+        setStep(5);
+        return;
+      }
+      setCheckoutUrl(res.url);
       setPaymentOutcome('pending');
       setActiveUntil(null);
       setMembershipCheckHint(null);
