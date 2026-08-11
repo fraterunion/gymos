@@ -87,6 +87,13 @@ export class StripeWebhookService {
       await this.dispatch(event);
     } catch (err) {
       this.logger.error(`Stripe webhook handler failed for ${event.type} ${event.id}`, err);
+      // Persist the error message so dead-letter detection has a human-readable cause.
+      // Slice to 500 chars to avoid unbounded column growth on noisy stack traces.
+      const lastError = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+      await this.prisma.stripeWebhookEvent.updateMany({
+        where: { stripeEventId: event.id, processed: false },
+        data: { lastError },
+      });
       throw err;
     }
     await markStripeWebhookEventProcessed(this.prisma, event.id);

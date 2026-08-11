@@ -207,4 +207,21 @@ export class StripeService {
       { apiVersion: stripeApiVersion },
     );
   }
+
+  /**
+   * List all Stripe subscriptions for a customer across all statuses.
+   * Used by the reconciliation layer to detect orphaned or duplicate subscriptions.
+   * Callers are responsible for filtering by studioId via subscription metadata.
+   */
+  async listSubscriptionsForCustomer(customerId: string): Promise<Stripe.Subscription[]> {
+    const stripe = this.getClient();
+    const results: Stripe.Subscription[] = [];
+    for await (const sub of stripe.subscriptions.list({
+      customer: customerId,
+      limit: 100,
+    })) {
+      results.push(sub as Stripe.Subscription);
+    }
+    return results;
+  }
 }

@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { SubscriptionStatus } from '@prisma/client';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { STRIPE_IMMEDIATE_UPGRADE_PARAMS } from './subscription-plan-resolution.utils';
@@ -386,6 +386,135 @@ describe('SubscriptionLifecycleService', () => {
     expect(stripe.cancelSubscription).not.toHaveBeenCalled();
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalled();
+  });
+
+  // ── Reconciliation safety gate ────────────────────────────────────────────
+
+  it('blocks plan change with ConflictException when reconciliation detects duplicate_renewable', async () => {
+    prisma.subscription.findFirst.mockResolvedValue({
+      id: 'sub-local-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+      membershipPlan: { id: 'plan-basic', name: 'Basic', priceCents: 1300, currency: 'mxn', billingInterval: 'MONTHLY' },
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-full',
+      name: 'Full Access',
+      priceCents: 1500,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+    });
+
+    const reconciliation = {
+      assertHealthyForPlanChange: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: 'BILLING_STATE_REQUIRES_RECONCILIATION',
+          reconciliationStatus: 'duplicate_renewable',
+          issues: ['duplicate_renewable', 'stripe_orphan'],
+        }),
+      ),
+    };
+
+    const serviceWithReconciliation = new SubscriptionLifecycleService(
+      prisma as never,
+      stripe as never,
+      reconciliation as never,
+    );
+
+    await expect(
+      serviceWithReconciliation.initiateMembershipPurchase({
+        targetUserId: 'user-1',
+        studioId: 'studio-1',
+        planId: 'plan-full',
+        newStripePriceId: 'price_full',
+        createCheckout: jest.fn(),
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(reconciliation.assertHealthyForPlanChange).toHaveBeenCalledWith('studio-1', 'user-1');
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it('reconciliation gate runs before checkout path — stripe_orphan with no local sub blocks checkout creation', async () => {
+    // Critical regression test: Stripe has an active subscription but local DB has no row.
+    // findPrimaryStripeSubscription returns null → without the early gate, checkout
+    // would be created and the member would end up with two concurrent Stripe subscriptions.
+    prisma.subscription.findFirst.mockResolvedValue(null);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-full',
+      name: 'Full Access',
+      priceCents: 1500,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+    });
+
+    const reconciliation = {
+      assertHealthyForPlanChange: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: 'BILLING_STATE_REQUIRES_RECONCILIATION',
+          reconciliationStatus: 'stripe_orphan',
+          issues: ['stripe_orphan'],
+        }),
+      ),
+    };
+
+    const createCheckout = jest.fn().mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.com/x' });
+
+    const serviceWithReconciliation = new SubscriptionLifecycleService(
+      prisma as never,
+      stripe as never,
+      reconciliation as never,
+    );
+
+    await expect(
+      serviceWithReconciliation.initiateMembershipPurchase({
+        targetUserId: 'user-1',
+        studioId: 'studio-1',
+        planId: 'plan-full',
+        newStripePriceId: 'price_full',
+        createCheckout,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    // The gate ran and aborted before createCheckout was ever called
+    expect(reconciliation.assertHealthyForPlanChange).toHaveBeenCalledWith('studio-1', 'user-1');
+    expect(createCheckout).not.toHaveBeenCalled();
+  });
+
+  it('reconciliation gate passes for healthy new member — proceeds to checkout', async () => {
+    prisma.subscription.findFirst.mockResolvedValue(null);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-full',
+      name: 'Full Access',
+      priceCents: 1500,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+    });
+
+    const reconciliation = {
+      assertHealthyForPlanChange: jest.fn().mockResolvedValue(undefined), // healthy
+    };
+
+    const createCheckout = jest.fn().mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.com/x' });
+
+    const serviceWithReconciliation = new SubscriptionLifecycleService(
+      prisma as never,
+      stripe as never,
+      reconciliation as never,
+    );
+
+    const result = await serviceWithReconciliation.initiateMembershipPurchase({
+      targetUserId: 'user-1',
+      studioId: 'studio-1',
+      planId: 'plan-full',
+      newStripePriceId: 'price_full',
+      createCheckout,
+    });
+
+    expect(result).toMatchObject({ action: 'checkout' });
+    expect(reconciliation.assertHealthyForPlanChange).toHaveBeenCalledWith('studio-1', 'user-1');
+    expect(createCheckout).toHaveBeenCalled();
   });
 
   it('throws when selecting the same active plan', async () => {

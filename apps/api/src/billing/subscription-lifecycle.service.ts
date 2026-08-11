@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -15,6 +16,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
+import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
 import {
   buildImmediateUpgradeUpdateParams,
   readCurrentStripePriceId,
@@ -52,6 +54,7 @@ export class SubscriptionLifecycleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
+    @Optional() private readonly reconciliation?: SubscriptionReconciliationService,
   ) {}
 
   async findCurrentRenewableSubscription(
@@ -154,6 +157,15 @@ export class SubscriptionLifecycleService {
     }) => Promise<{ checkoutUrl: string }>;
   }): Promise<MembershipCheckoutResponse> {
     const targetPlan = await this.loadActivePlan(params.studioId, params.planId);
+
+    // Reconciliation safety gate runs BEFORE the local-DB lookup so that Stripe
+    // orphans (active Stripe sub with no local row) block the checkout path too.
+    // Without this ordering, findPrimaryStripeSubscription returns null → checkout
+    // is created → member ends up with two concurrent Stripe subscriptions.
+    if (this.reconciliation) {
+      await this.reconciliation.assertHealthyForPlanChange(params.studioId, params.targetUserId);
+    }
+
     const stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.targetUserId);
 
     if (!stripeSub?.stripeSubscriptionId) {

@@ -47,6 +47,9 @@ function createMockPrisma(store = new Map<string, Row>()) {
           return { count: row ? 1 : 0 };
         },
       ),
+      update: jest.fn(async ({ where }: { where: { stripeEventId: string } }) => {
+        return store.get(where.stripeEventId) ?? null;
+      }),
     },
   };
 }

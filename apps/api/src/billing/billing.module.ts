@@ -5,6 +5,7 @@ import { EnrollmentModule } from '../enrollment/enrollment.module';
 import { WaiverModule } from '../waiver/waiver.module';
 import { BillingService } from './billing.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
+import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
 import { StripeWebhookService } from './stripe-webhook.service';
 import { StudioBillingController } from './studio-billing.controller';
@@ -12,7 +13,12 @@ import { StudioBillingController } from './studio-billing.controller';
 @Module({
   imports: [PrismaModule, StripeModule, EnrollmentModule, WaiverModule],
   controllers: [StudioBillingController, StripeWebhookController],
-  providers: [BillingService, SubscriptionLifecycleService, StripeWebhookService],
-  exports: [BillingService, SubscriptionLifecycleService, StripeModule],
+  providers: [
+    BillingService,
+    SubscriptionLifecycleService,
+    SubscriptionReconciliationService,
+    StripeWebhookService,
+  ],
+  exports: [BillingService, SubscriptionLifecycleService, SubscriptionReconciliationService, StripeModule],
 })
 export class BillingModule {}
