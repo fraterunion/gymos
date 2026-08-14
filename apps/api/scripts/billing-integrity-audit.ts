@@ -170,7 +170,7 @@ async function run() {
       stripePriceId: { not: null },
       ...(studioFilter ? { studioId: studioFilter } : {}),
     },
-    select: { id: true, name: true, studioId: true, priceCents: true, stripePriceId: true },
+    select: { id: true, name: true, studioId: true, priceCents: true, stripePriceId: true, currency: true, billingInterval: true },
   });
 
   for (const plan of plans) {
@@ -427,7 +427,7 @@ async function run() {
   const dupRows = await prisma.$queryRaw<Array<{ studio_id: string; user_id: string; cnt: bigint }>>`
     SELECT studio_id, user_id, COUNT(*) AS cnt
     FROM subscriptions
-    WHERE status = ANY(ARRAY['ACTIVE','TRIALING','PAST_DUE','PAUSED'])
+    WHERE status = ANY(ARRAY['ACTIVE','TRIALING','PAST_DUE','PAUSED']::"SubscriptionStatus"[])
       AND stripe_subscription_id IS NOT NULL
       ${studioClause}
     GROUP BY studio_id, user_id
