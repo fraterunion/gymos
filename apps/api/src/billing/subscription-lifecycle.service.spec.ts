@@ -672,6 +672,143 @@ describe('SubscriptionLifecycleService', () => {
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
+  // ── getPlanChangePreview — Stripe-authoritative pricing (Task 1) ─────────
+
+  describe('getPlanChangePreview — Stripe-authoritative pricing', () => {
+    const basePlan = (overrides: object = {}) => ({
+      id: 'plan-basic',
+      name: 'Basic Access',
+      priceCents: 1000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      stripePriceId: 'price_basic',
+      active: true,
+      deletedAt: null,
+      studioId: 'studio-1',
+      ...overrides,
+    });
+    const fullPlan = (overrides: object = {}) => ({
+      id: 'plan-full',
+      name: 'Full Access',
+      priceCents: 1500,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      stripePriceId: 'price_full',
+      active: true,
+      deletedAt: null,
+      studioId: 'studio-1',
+      ...overrides,
+    });
+    const basicSub = (overrides: object = {}) => ({
+      id: 'sub-local-1',
+      studioId: 'studio-1',
+      userId: 'user-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+      status: 'ACTIVE',
+      source: 'STRIPE',
+      membershipPlan: basePlan(),
+      ...overrides,
+    });
+
+    it('A: Stripe prices agree with local — upgrade Basic→Full is immediate', async () => {
+      // local Basic=1000, Stripe Basic=1300; local Full=1500, Stripe Full=1500
+      // Stripe sees 1300→1500 = upgrade → immediate
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce(fullPlan());
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(basicSub())
+        .mockResolvedValueOnce(basicSub());
+      stripe.retrievePrice.mockImplementation(async (id: string) =>
+        id === 'price_basic' ? { unit_amount: 1300 } : { unit_amount: 1500 },
+      );
+
+      const result = await service.getPlanChangePreview({ userId: 'user-1', studioId: 'studio-1', targetPlanId: 'plan-full' });
+
+      expect(result.effective).toBe('immediate');
+      expect(stripe.retrievePrice).toHaveBeenCalledWith('price_basic');
+      expect(stripe.retrievePrice).toHaveBeenCalledWith('price_full');
+    });
+
+    it('B: Stripe says downgrade even though local priceCents says upgrade → next_period', async () => {
+      // local Basic=800, Full=1500 → local isUpgrade(800,1500)=true
+      // Stripe Basic=2000, Full=1500 → Stripe isUpgrade(2000,1500)=false → downgrade
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce(fullPlan());
+      const sub = basicSub({ membershipPlan: basePlan({ priceCents: 800 }) });
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(sub)
+        .mockResolvedValueOnce(sub);
+      stripe.retrievePrice.mockImplementation(async (id: string) =>
+        id === 'price_basic' ? { unit_amount: 2000 } : { unit_amount: 1500 },
+      );
+
+      const result = await service.getPlanChangePreview({ userId: 'user-1', studioId: 'studio-1', targetPlanId: 'plan-full' });
+
+      expect(result.effective).toBe('next_period');
+    });
+
+    it('C: Stripe says upgrade even though local priceCents says downgrade → immediate', async () => {
+      // local Full=2000, Basic=1500 → local isUpgrade(2000,1500)=false (downgrade)
+      // Stripe Full=500, Basic=1500 → Stripe isUpgrade(500,1500)=true (upgrade)
+      const hiFullPlan = fullPlan({ priceCents: 2000 });
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce(basePlan({ priceCents: 1500 }));
+      const sub = basicSub({
+        membershipPlanId: 'plan-full',
+        membershipPlan: hiFullPlan,
+        stripeSubscriptionId: 'sub_stripe_1',
+      });
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(sub)
+        .mockResolvedValueOnce(sub);
+      stripe.retrievePrice.mockImplementation(async (id: string) =>
+        id === 'price_full' ? { unit_amount: 500 } : { unit_amount: 1500 },
+      );
+
+      const result = await service.getPlanChangePreview({ userId: 'user-1', studioId: 'studio-1', targetPlanId: 'plan-basic' });
+
+      expect(result.effective).toBe('immediate');
+    });
+
+    it('D: Stripe unit_amount=null → falls back to local priceCents (1300→1500 = upgrade)', async () => {
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce(fullPlan());
+      const sub = basicSub({ membershipPlan: basePlan({ priceCents: 1300 }) });
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(sub)
+        .mockResolvedValueOnce(sub);
+      stripe.retrievePrice.mockResolvedValue({ unit_amount: null });
+
+      const result = await service.getPlanChangePreview({ userId: 'user-1', studioId: 'studio-1', targetPlanId: 'plan-full' });
+
+      expect(result.effective).toBe('immediate');
+    });
+
+    it('E: plan has no stripePriceId → falls back to local priceCents without calling retrievePrice', async () => {
+      // When either plan lacks a stripePriceId, fall back gracefully
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce(fullPlan({ stripePriceId: null }));
+      const sub = basicSub({ membershipPlan: basePlan({ priceCents: 1300, stripePriceId: null }) });
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(sub)
+        .mockResolvedValueOnce(sub);
+
+      // local: 1300→1500 = upgrade
+      const result = await service.getPlanChangePreview({ userId: 'user-1', studioId: 'studio-1', targetPlanId: 'plan-full' });
+
+      expect(result.effective).toBe('immediate');
+      expect(stripe.retrievePrice).not.toHaveBeenCalled();
+    });
+
+    it('F: no current subscription → effective=checkout, Stripe prices NOT consulted', async () => {
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce(fullPlan());
+      prisma.subscription.findFirst.mockResolvedValue(null);
+
+      const result = await service.getPlanChangePreview({ userId: 'user-1', studioId: 'studio-1', targetPlanId: 'plan-full' });
+
+      expect(result.effective).toBe('checkout');
+      expect(result.hasCurrentMembership).toBe(false);
+      expect(stripe.retrievePrice).not.toHaveBeenCalled();
+    });
+  });
+
   it('falls back to local priceCents when Stripe retrievePrice returns null unit_amount', async () => {
     stripe.retrieveSubscription.mockResolvedValue({
       id: 'sub_stripe_1',

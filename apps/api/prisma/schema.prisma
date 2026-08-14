@@ -634,10 +634,15 @@ model StripeWebhookEvent {
   lastAttemptAt DateTime? @map("last_attempt_at")
   lastError     String?   @map("last_error")
   createdAt     DateTime  @default(now()) @map("created_at")
+  /// Operator/reconciliation set when handler historically failed but replay is not required.
+  /// Distinct from processed=true (handler actually ran to completion).
+  resolvedAt    DateTime? @map("resolved_at")
+  resolutionNote String?  @map("resolution_note")
 
   @@index([processed])
   @@index([processed, createdAt])
   @@index([createdAt])
+  @@index([resolvedAt])
   @@map("stripe_webhook_events")
 }
 

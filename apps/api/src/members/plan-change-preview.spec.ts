@@ -39,7 +39,12 @@ function makeService(overrides: {
     },
   };
 
-  const stripe = {};
+  const stripe = {
+    // retrievePrice is only reached when stripePrimary.membershipPlan has a stripePriceId.
+    // Test 1 currentSub/stripeSub don't include stripePriceId so this won't be called —
+    // but it must exist so the method lookup doesn't throw.
+    retrievePrice: jest.fn().mockResolvedValue({ unit_amount: null }),
+  };
   return new SubscriptionLifecycleService(prisma as never, stripe as never);
 }
 
@@ -110,7 +115,12 @@ describe('plan-change-preview: Full → Basic downgrade', () => {
       },
     };
 
-    const service = new SubscriptionLifecycleService(prisma as never, {} as never);
+    const stripe = {
+      retrievePrice: jest.fn().mockImplementation(async (id: string) =>
+        id === 'price_full' ? { unit_amount: 200000 } : { unit_amount: 100000 },
+      ),
+    };
+    const service = new SubscriptionLifecycleService(prisma as never, stripe as never);
 
     const result = await service.getPlanChangePreview({
       studioId: STUDIO_ID,
@@ -144,6 +154,7 @@ describe('plan-change-preview: same plan raises BadRequestException', () => {
       },
     };
 
+    // same plan throws before reaching the Stripe price lookup
     const service = new SubscriptionLifecycleService(prisma as never, {} as never);
 
     await expect(
@@ -214,7 +225,12 @@ describe('plan-change-preview: cancelAtPeriodEnd member upgrading', () => {
       },
     };
 
-    const service = new SubscriptionLifecycleService(prisma as never, {} as never);
+    const stripe = {
+      retrievePrice: jest.fn().mockImplementation(async (id: string) =>
+        id === 'price_basic' ? { unit_amount: 100000 } : { unit_amount: 200000 },
+      ),
+    };
+    const service = new SubscriptionLifecycleService(prisma as never, stripe as never);
     const result = await service.getPlanChangePreview({ studioId: STUDIO_ID, userId: MEMBER_ID, targetPlanId: 'plan-full' });
 
     expect(result.effective).toBe('immediate');

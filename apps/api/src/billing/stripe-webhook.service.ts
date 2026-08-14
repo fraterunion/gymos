@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DayPassStatus, PaymentMethod, PaymentStatus, Prisma, SubscriptionStatus } from '@prisma/client';
+import { DayPassStatus, PaymentMethod, PaymentStatus, Prisma, Subscription, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
+import { subscriptionLockKey } from './subscription-lifecycle.utils';
 import {
   readCurrentStripePriceId,
   readPendingPlanIdFromMetadata,
@@ -94,8 +95,14 @@ export class StripeWebhookService {
         where: { stripeEventId: event.id, processed: false },
         data: { lastError },
       });
+      // Re-throw: event stays processed=false, resolvedAt=null → actionable dead letter.
+      // An operator must inspect and either replay or set resolvedAt.
       throw err;
     }
+    // processed=true means the handler ran to completion — including deliberate
+    // business-logic acknowledgments (e.g. handleWebhookActiveConflict Cases B and C).
+    // It is NOT the same as resolvedAt: that field covers historical handler failures
+    // where the underlying state was reconciled externally without the handler running.
     await markStripeWebhookEventProcessed(this.prisma, event.id);
   }
 
@@ -223,6 +230,10 @@ export class StripeWebhookService {
         : {};
 
     const saved = await this.prisma.$transaction(async (tx) => {
+      // Serialise concurrent webhook deliveries for the same member/studio, preventing
+      // races where two deliveries both pass the conflict check and both try to CREATE.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscriptionLockKey(studioId, userId)}))`;
+
       const { membershipPlanId, pendingMembershipPlanId } =
         await this.subscriptionLifecycle.reconcileSubscriptionPlansFromStripe(tx, {
           stripeSubscriptionId: sub.id,
@@ -246,6 +257,33 @@ export class StripeWebhookService {
           `Plan ${membershipPlanId} not found for studio ${studioId}; skipping subscription upsert`,
         );
         return null;
+      }
+
+      // Guard against violating the partial unique index on (studio_id, user_id) WHERE status='ACTIVE'.
+      // Only the CREATE branch of upsert can conflict; the UPDATE branch targets the existing row by
+      // stripeSubscriptionId and never inserts a second ACTIVE row.
+      if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
+        const existingRowForThisSub = await tx.subscription.findUnique({
+          where: { stripeSubscriptionId: sub.id },
+        });
+        if (!existingRowForThisSub) {
+          const conflictingRow = await tx.subscription.findFirst({
+            where: { studioId, userId, status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } },
+          });
+          if (conflictingRow) {
+            return this.handleWebhookActiveConflict(tx, {
+              conflictingRow,
+              incomingSub: sub,
+              incomingStatus: status,
+              incomingMembershipPlanId: membershipPlanId,
+              incomingPendingMembershipPlanId: pendingMembershipPlanId,
+              incomingPeriodData: periodData,
+              studioId,
+              userId,
+              stripeEventType,
+            });
+          }
+        }
       }
 
       const row = await tx.subscription.upsert({
@@ -300,6 +338,113 @@ export class StripeWebhookService {
         }),
       );
     }
+  }
+
+  /**
+   * Called when a new Stripe subscription webhook arrives for a user/studio that already has
+   * an ACTIVE local subscription under a different (or no) stripeSubscriptionId — a state
+   * that would violate the partial unique index on (studio_id, user_id) WHERE status='ACTIVE'.
+   *
+   * Decision matrix:
+   *
+   *  A. Conflicting row is CASH and its service period has definitively ended
+   *     (source=CASH, currentPeriodEnd < now):
+   *     → Safe supersede. CANCEL the stale CASH row, CREATE the incoming Stripe-backed row.
+   *     → Represents: member purchased a new Stripe subscription after an expired offline period.
+   *
+   *  B. Conflicting row is Stripe-backed (has a different stripeSubscriptionId):
+   *     → Potential duplicate renewable Stripe subscriptions. Auto-cancellation is forbidden.
+   *     → Acknowledge webhook (return null → processed=true), log structured error.
+   *     → The reconciliation service will surface the incoming sub as a stripe_orphan.
+   *
+   *  C. Conflicting row is CASH with an active service period:
+   *     → Cannot auto-supersede without cancelling a member's still-valid access.
+   *     → Acknowledge webhook (return null → processed=true), log structured error.
+   *     → The reconciliation service will surface the incoming sub as a stripe_orphan.
+   *
+   * Returning null commits the outer transaction cleanly — no P2002 is thrown and Stripe
+   * stops retrying. Returning a Subscription row commits the safe supersede.
+   */
+  private async handleWebhookActiveConflict(
+    tx: Prisma.TransactionClient,
+    params: {
+      conflictingRow: Subscription;
+      incomingSub: WebhookSubscriptionPayload;
+      incomingStatus: SubscriptionStatus;
+      incomingMembershipPlanId: string;
+      incomingPendingMembershipPlanId: string | null;
+      incomingPeriodData: { currentPeriodStart?: Date; currentPeriodEnd?: Date };
+      studioId: string;
+      userId: string;
+      stripeEventType: string;
+    },
+  ): Promise<Subscription | null> {
+    const { conflictingRow, incomingSub, studioId, userId, stripeEventType } = params;
+
+    // Case A: the conflicting row is a CASH subscription whose service period has ended.
+    // The member has since purchased a real Stripe subscription — safe to supersede.
+    const isExpiredCash =
+      conflictingRow.source === SubscriptionSource.CASH &&
+      conflictingRow.currentPeriodEnd !== null &&
+      conflictingRow.currentPeriodEnd < new Date();
+
+    if (isExpiredCash) {
+      await tx.subscription.update({
+        where: { id: conflictingRow.id },
+        data: { status: SubscriptionStatus.CANCELED },
+      });
+      this.logger.log(
+        JSON.stringify({
+          event: 'webhook_superseded_expired_cash_subscription',
+          canceledLocalId: conflictingRow.id,
+          incomingStripeSubId: incomingSub.id,
+          stripeEventType,
+          studioId,
+          userId,
+        }),
+      );
+      return tx.subscription.create({
+        data: {
+          studioId,
+          userId,
+          membershipPlanId: params.incomingMembershipPlanId,
+          pendingMembershipPlanId: params.incomingPendingMembershipPlanId,
+          status: params.incomingStatus,
+          stripeSubscriptionId: incomingSub.id,
+          cancelAtPeriodEnd: incomingSub.cancel_at_period_end,
+          ...params.incomingPeriodData,
+        },
+      });
+    }
+
+    // Cases B and C: cannot auto-resolve without risking incorrect financial decisions.
+    // Acknowledge the webhook (no throw → no Stripe retry storm) and log for operators.
+    // The incoming Stripe subscription becomes a detectable stripe_orphan for the
+    // reconciliation service to surface on the next reconciliation check.
+    const conflictKind =
+      conflictingRow.stripeSubscriptionId !== null
+        ? 'stripe_backed_conflict'
+        : 'active_cash_conflict';
+
+    this.logger.error(
+      JSON.stringify({
+        event: 'webhook_subscription_conflict_acknowledged',
+        conflictKind,
+        incomingStripeSubId: incomingSub.id,
+        existingLocalId: conflictingRow.id,
+        existingLocalStatus: conflictingRow.status,
+        existingLocalSource: conflictingRow.source,
+        existingLocalStripeSubId: conflictingRow.stripeSubscriptionId ?? null,
+        existingPeriodEnd: conflictingRow.currentPeriodEnd?.toISOString() ?? null,
+        stripeEventType,
+        studioId,
+        userId,
+        action: 'acknowledged_no_local_mutation',
+        resolution: 'manual_reconciliation_required',
+      }),
+    );
+
+    return null;
   }
 
   /**

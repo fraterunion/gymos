@@ -319,10 +319,14 @@ export class SubscriptionReconciliationService {
       }
     }
 
-    // 7. Detect permanently-failed (dead-letter) webhook events
+    // 7. Detect actionable dead-letter webhook events.
+    // "Actionable" = processed=false AND resolvedAt IS NULL (not yet manually reconciled).
+    // Events with resolvedAt set are historical resolved failures — visible in audit history
+    // but excluded from the actionable queue.
     const deadLetters = await this.prisma.stripeWebhookEvent.findMany({
       where: {
         processed: false,
+        resolvedAt: null,
         createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
       },
       orderBy: { createdAt: 'desc' },
@@ -429,5 +433,80 @@ export class SubscriptionReconciliationService {
       }
     }
     return { applied };
+  }
+
+  /**
+   * Studio-wide reconciliation audit — aggregates reconcile() across all members
+   * who have a stripeCustomerId and a studio membership.
+   *
+   * READ-ONLY: never mutates Stripe or local DB.
+   * Used by the /billing/reconciliation-audit HTTP endpoint and the nightly cron.
+   */
+  async auditStudio(studioId: string): Promise<StudioReconciliationAudit> {
+    const membersWithStripe = await this.prisma.user.findMany({
+      where: {
+        studioMemberships: { some: { studioId, deletedAt: null } },
+        stripeCustomerId: { not: null },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+      },
+    });
+
+    const findings: StudioReconciliationFinding[] = [];
+
+    for (const member of membersWithStripe) {
+      const result = await this.reconcile({ studioId, userId: member.id });
+      for (const issue of result.issues) {
+        findings.push({
+          userId: member.id,
+          memberName: [member.firstName, member.lastName].filter(Boolean).join(' ') || member.email,
+          issue: issue.kind,
+          severity: issueSeverity(issue.kind),
+          requiresManualResolution: result.requiresManualResolution,
+        });
+      }
+    }
+
+    const actionable = findings.filter((f) => f.requiresManualResolution);
+    return {
+      status: actionable.length > 0 ? 'attention_required' : 'healthy',
+      checkedMembers: membersWithStripe.length,
+      findings,
+    };
+  }
+}
+
+export type StudioReconciliationFinding = {
+  userId: string;
+  memberName: string;
+  issue: ReconciliationIssue['kind'];
+  severity: 'critical' | 'warning' | 'info';
+  requiresManualResolution: boolean;
+};
+
+export type StudioReconciliationAudit = {
+  status: 'healthy' | 'attention_required';
+  checkedMembers: number;
+  findings: StudioReconciliationFinding[];
+};
+
+function issueSeverity(kind: ReconciliationIssue['kind']): 'critical' | 'warning' | 'info' {
+  switch (kind) {
+    case 'duplicate_renewable':
+    case 'stripe_orphan':
+    case 'local_orphan':
+      return 'critical';
+    case 'status_drift':
+    case 'cancel_at_period_end_drift':
+    case 'period_drift':
+    case 'dead_letter_webhook':
+      return 'warning';
+    case 'price_drift':
+      return 'info';
   }
 }

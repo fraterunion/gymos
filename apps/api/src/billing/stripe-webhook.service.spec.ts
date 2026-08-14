@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { PaymentMethod, PaymentStatus } from '@prisma/client';
+import { PaymentMethod, PaymentStatus, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import { StripeWebhookService } from './stripe-webhook.service';
 import type { WebhookInvoicePayload } from './stripe-webhook-payloads';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -335,6 +335,25 @@ type SubscriptionWebhookService = {
 
 function makeSubscriptionWebhookMocks() {
   const upsertCalls: Array<Record<string, unknown>> = [];
+  const createCalls: Array<Record<string, unknown>> = [];
+
+  const txSubscription = {
+    upsert: jest.fn().mockImplementation(async ({ update, create }: { update: Record<string, unknown>; create: Record<string, unknown> }) => {
+      const row = { id: 'sub-local-1', ...create, ...update };
+      upsertCalls.push(row);
+      return row;
+    }),
+    // Default: incoming sub not yet in DB (conflict check enters the CREATE branch)
+    findUnique: jest.fn().mockResolvedValue(null),
+    // Default: no conflicting ACTIVE row (conflict check finds nothing to conflict with)
+    findFirst: jest.fn().mockResolvedValue(null),
+    update: jest.fn().mockResolvedValue({ id: 'sub-local-cash-1', status: 'CANCELED' }),
+    create: jest.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      const row = { id: 'sub-local-new', ...data };
+      createCalls.push(row);
+      return row;
+    }),
+  };
 
   const prisma = {
     user: { findFirst: jest.fn().mockResolvedValue({ id: 'user_1' }) },
@@ -350,13 +369,8 @@ function makeSubscriptionWebhookMocks() {
     $transaction: jest.fn().mockImplementation(async (fn: (tx: unknown) => unknown) =>
       fn({
         membershipPlan: prisma.membershipPlan,
-        subscription: {
-          upsert: jest.fn().mockImplementation(async ({ update, create }: { update: Record<string, unknown>; create: Record<string, unknown> }) => {
-            const row = { id: 'sub-local-1', ...create, ...update };
-            upsertCalls.push(row);
-            return row;
-          }),
-        },
+        $executeRaw: jest.fn().mockResolvedValue(undefined),
+        subscription: txSubscription,
       }),
     ),
   } as unknown as PrismaService;
@@ -380,6 +394,8 @@ function makeSubscriptionWebhookMocks() {
     service: service as unknown as SubscriptionWebhookService,
     subscriptionLifecycle,
     upsertCalls,
+    createCalls,
+    txSubscription,
   };
 }
 
@@ -597,5 +613,426 @@ describe('StripeWebhookService — handleIncomingWebhook error observability', (
     );
     expect(call).toBeDefined();
     expect((call![0] as { data: { lastError: string } }).data.lastError).toHaveLength(500);
+  });
+});
+
+// ── Part 6: Active-subscription conflict handling ─────────────────────────────
+//
+// These tests cover the new handleWebhookActiveConflict logic introduced to prevent
+// P2002 violations on the partial unique index: (studio_id, user_id) WHERE status='ACTIVE'.
+//
+// Scenario matrix:
+//  A. No conflicting row           → normal upsert (CREATE or UPDATE)
+//  B. Expired CASH row             → safe supersede (CANCEL cash, CREATE stripe row)
+//  C. Active CASH row              → acknowledge without mutation, log error
+//  D. Stripe-backed row (different)→ acknowledge without mutation, log error
+//  E. Same stripeSubscriptionId    → normal upsert (UPDATE path, no conflict check)
+
+describe('StripeWebhookService — active subscription conflict handling', () => {
+  const activeSub = {
+    id: 'sub_incoming',
+    status: 'active',
+    customer: 'cus_test',
+    cancel_at_period_end: false,
+    metadata: { userId: 'user_1', studioId: 'studio_1', planId: 'plan-full' },
+    items: {
+      data: [
+        {
+          price: { id: 'price_full' },
+          current_period_start: 1_754_265_600,  // 2026-08-03
+          current_period_end:   1_756_944_000,  // 2026-09-03
+        },
+      ],
+    },
+  };
+
+  // Expired CASH row: period ended in the past
+  const expiredCashRow = {
+    id: 'local-cash-expired',
+    status: SubscriptionStatus.ACTIVE,
+    source: SubscriptionSource.CASH,
+    stripeSubscriptionId: null,
+    currentPeriodEnd: new Date('2026-08-04T00:00:00Z'),  // 10 days ago
+    currentPeriodStart: new Date('2026-07-03T00:00:00Z'),
+    cancelAtPeriodEnd: true,
+    membershipPlanId: 'plan-full',
+    studioId: 'studio_1',
+    userId: 'user_1',
+  };
+
+  // Still-active CASH row: period ends in the future
+  const activeCashRow = {
+    ...expiredCashRow,
+    id: 'local-cash-active',
+    currentPeriodEnd: new Date('2026-09-14T00:00:00Z'),  // future
+    currentPeriodStart: new Date('2026-08-14T00:00:00Z'),
+  };
+
+  // Stripe-backed row pointing to a DIFFERENT Stripe subscription
+  const stripeBackedRow = {
+    id: 'local-stripe-other',
+    status: SubscriptionStatus.ACTIVE,
+    source: SubscriptionSource.STRIPE,
+    stripeSubscriptionId: 'sub_different_existing',
+    currentPeriodEnd: new Date('2026-09-14T00:00:00Z'),
+    currentPeriodStart: new Date('2026-08-14T00:00:00Z'),
+    cancelAtPeriodEnd: false,
+    membershipPlanId: 'plan-full',
+    studioId: 'studio_1',
+    userId: 'user_1',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // 1. First Stripe subscription, no local membership → normal upsert
+  it('1. first Stripe subscription with no existing local row: proceeds normally via upsert', async () => {
+    const { service, subscriptionLifecycle, upsertCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    // No existing local row for this sub, no conflicting row
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue(null);
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.created',
+    );
+
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0]).toMatchObject({ membershipPlanId: 'plan-full', status: 'ACTIVE' });
+    expect(txSubscription.update).not.toHaveBeenCalled();
+    expect(txSubscription.create).not.toHaveBeenCalled();
+  });
+
+  // 2. Expired CASH row + incoming Stripe → safe supersede
+  it('2. expired CASH local row is canceled and Stripe-backed row is created (safe supersede)', async () => {
+    const { service, subscriptionLifecycle, upsertCalls, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue(expiredCashRow);
+
+    const logSpy = jest.spyOn(Logger.prototype, 'log');
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.created',
+    );
+
+    // CASH row must be CANCELED
+    expect(txSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: expiredCashRow.id },
+        data: { status: SubscriptionStatus.CANCELED },
+      }),
+    );
+    // New Stripe-backed row must be CREATED
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]).toMatchObject({
+      status: SubscriptionStatus.ACTIVE,
+      stripeSubscriptionId: activeSub.id,
+      membershipPlanId: 'plan-full',
+    });
+    // Upsert must NOT be called (CREATE path replaced by explicit create)
+    expect(upsertCalls).toHaveLength(0);
+    // Supersede logged
+    const supersededLog = logSpy.mock.calls.find(
+      (args) => typeof args[0] === 'string' && (args[0] as string).includes('webhook_superseded_expired_cash_subscription'),
+    );
+    expect(supersededLog).toBeDefined();
+    expect(JSON.parse(supersededLog![0] as string)).toMatchObject({
+      event: 'webhook_superseded_expired_cash_subscription',
+      canceledLocalId: expiredCashRow.id,
+      incomingStripeSubId: activeSub.id,
+    });
+  });
+
+  // 3. Same scenario: cancelAtPeriodEnd can be false — period expiry is what counts
+  it('3. expired CASH row with cancelAtPeriodEnd=false is still superseded when period ended', async () => {
+    const { service, subscriptionLifecycle, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue({ ...expiredCashRow, cancelAtPeriodEnd: false });
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.created',
+    );
+
+    expect(txSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: SubscriptionStatus.CANCELED } }),
+    );
+    expect(createCalls).toHaveLength(1);
+  });
+
+  // 4. Active CASH row whose service period is NOT over → must not destroy current access
+  it('4. CASH row with still-active period: webhook acknowledged without mutation, error logged', async () => {
+    const { service, subscriptionLifecycle, upsertCalls, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue(activeCashRow);
+
+    const errorSpy = jest.spyOn(Logger.prototype, 'error');
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.created',
+    );
+
+    // Must NOT mutate local DB
+    expect(txSubscription.update).not.toHaveBeenCalled();
+    expect(createCalls).toHaveLength(0);
+    expect(upsertCalls).toHaveLength(0);
+    // Must log structured error
+    const errLog = errorSpy.mock.calls.find(
+      (args) => typeof args[0] === 'string' && (args[0] as string).includes('webhook_subscription_conflict_acknowledged'),
+    );
+    expect(errLog).toBeDefined();
+    const parsed = JSON.parse(errLog![0] as string) as Record<string, unknown>;
+    expect(parsed['conflictKind']).toBe('active_cash_conflict');
+    expect(parsed['action']).toBe('acknowledged_no_local_mutation');
+    expect(parsed['incomingStripeSubId']).toBe(activeSub.id);
+  });
+
+  // 5. Two renewable Stripe subscriptions: no auto-cancel, no auto-winner
+  it('5. existing Stripe-backed row with a different sub ID: no automatic winner, error logged', async () => {
+    const { service, subscriptionLifecycle, upsertCalls, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue(stripeBackedRow);
+
+    const errorSpy = jest.spyOn(Logger.prototype, 'error');
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.created',
+    );
+
+    // Absolutely no Stripe mutations simulated — and no local mutations either
+    expect(txSubscription.update).not.toHaveBeenCalled();
+    expect(createCalls).toHaveLength(0);
+    expect(upsertCalls).toHaveLength(0);
+    // Conflict kind must identify it as a stripe_backed conflict
+    const errLog = errorSpy.mock.calls.find(
+      (args) => typeof args[0] === 'string' && (args[0] as string).includes('webhook_subscription_conflict_acknowledged'),
+    );
+    expect(errLog).toBeDefined();
+    const parsed = JSON.parse(errLog![0] as string) as Record<string, unknown>;
+    expect(parsed['conflictKind']).toBe('stripe_backed_conflict');
+    expect(parsed['existingLocalStripeSubId']).toBe('sub_different_existing');
+    expect(parsed['incomingStripeSubId']).toBe(activeSub.id);
+    expect(parsed['action']).toBe('acknowledged_no_local_mutation');
+  });
+
+  // 6. Incoming webhook is for the same stripeSubscriptionId that already exists locally → UPDATE path
+  it('6. existing local row for the same stripeSubscriptionId: normal UPDATE via upsert, no conflict check', async () => {
+    const { service, subscriptionLifecycle, upsertCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    // The row already exists locally — findUnique returns it
+    txSubscription.findUnique.mockResolvedValue({ id: 'sub-local-existing', stripeSubscriptionId: activeSub.id });
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.updated',
+    );
+
+    // findFirst (conflict check) must NOT be called — we detected UPDATE path via findUnique
+    expect(txSubscription.findFirst).not.toHaveBeenCalled();
+    // Upsert must run normally
+    expect(upsertCalls).toHaveLength(1);
+  });
+
+  // 7. customer.subscription.deleted: CANCELED status — conflict check skipped (not renewable)
+  it('7. customer.subscription.deleted does not trigger conflict check (CANCELED is not renewable)', async () => {
+    const { service, subscriptionLifecycle, upsertCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, status: 'canceled', metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.deleted',
+    );
+
+    // Neither findUnique nor findFirst should be called — the status is not renewable
+    expect(txSubscription.findUnique).not.toHaveBeenCalled();
+    expect(txSubscription.findFirst).not.toHaveBeenCalled();
+    // Normal upsert runs
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0]).toMatchObject({ status: 'CANCELED' });
+  });
+
+  // 8. After a safe supersede, the unique index invariant is satisfied (one ACTIVE row)
+  it('8. after safe supersede the transaction produces exactly one ACTIVE row (no concurrent active rows)', async () => {
+    const { service, subscriptionLifecycle, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue(expiredCashRow);
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.created',
+    );
+
+    // Old ACTIVE CASH row canceled first, then new ACTIVE Stripe row created:
+    // update(CANCELED) is called before create(ACTIVE) — order within the transaction.
+    expect(txSubscription.update.mock.invocationCallOrder[0]).toBeLessThan(
+      txSubscription.create.mock.invocationCallOrder[0],
+    );
+    expect(createCalls[0]).toMatchObject({ status: SubscriptionStatus.ACTIVE });
+  });
+
+  // 9. Conflict handler failure → lastError populated, webhook retryable
+  it('9. conflict handler internal failure propagates correctly and does not silently swallow the error', async () => {
+    const { service, subscriptionLifecycle, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue(expiredCashRow);
+    // Simulate DB failure during the CASH row update
+    txSubscription.update.mockRejectedValue(new Error('connection timeout'));
+
+    await expect(
+      service.upsertSubscriptionFromStripe(
+        { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+        { userId: 'user_1', studioId: 'studio_1' },
+        'customer.subscription.created',
+      ),
+    ).rejects.toThrow('connection timeout');
+  });
+
+  // 10. Acknowledged conflict does not throw → webhook is marked processed=true by the caller
+  it('10. acknowledged conflict (active CASH) returns without throwing so the webhook can be marked processed', async () => {
+    const { service, subscriptionLifecycle, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue(activeCashRow);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    // Must resolve (not reject) so the outer handleIncomingWebhook marks processed=true
+    await expect(
+      service.upsertSubscriptionFromStripe(
+        { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+        { userId: 'user_1', studioId: 'studio_1' },
+        'customer.subscription.created',
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  // 11. Emilia historical scenario: active Basic (Stripe-backed) + incoming Full → stripe_backed_conflict
+  //     (In practice Emilia's Basic was Stripe-backed, not CASH — the webhook acknowledges without mutation)
+  it('11. Emilia historical scenario: Stripe-backed Basic + incoming Full → acknowledged, no auto-cancel', async () => {
+    const { service, subscriptionLifecycle, upsertCalls, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue({
+      id: 'local-basic-emilia',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.STRIPE,
+      stripeSubscriptionId: 'sub_1TqKw5GuUoCXNOREO80x7acx',  // Emilia's Basic
+      currentPeriodEnd: new Date('2026-09-06T00:00:00Z'),
+      cancelAtPeriodEnd: false,
+      membershipPlanId: 'plan-basic',
+    });
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await service.upsertSubscriptionFromStripe(
+      {
+        ...activeSub,
+        id: 'sub_1TyBahGuUoCXNOREC0n7bQF8',  // Emilia's Full Access
+        metadata: { userId: 'cmr27x7vc0004m60rgy4bqjpq', studioId: 'cmp33m0gp0000qomlj9p42ia5' },
+      },
+      { userId: 'cmr27x7vc0004m60rgy4bqjpq', studioId: 'cmp33m0gp0000qomlj9p42ia5' },
+      'customer.subscription.created',
+    );
+
+    // No auto-cancellation of either subscription
+    expect(txSubscription.update).not.toHaveBeenCalled();
+    expect(createCalls).toHaveLength(0);
+    expect(upsertCalls).toHaveLength(0);
+  });
+
+  // 12. Carlo historical scenario: expired CASH Full + incoming Stripe Full → safe supersede
+  it('12. Carlo historical scenario: expired CASH Full → superseded by incoming Stripe Full', async () => {
+    const { service, subscriptionLifecycle, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findFirst.mockResolvedValue({
+      id: 'cmr5e5tl3002hm60r9s2d08cc',  // Carlo's CASH sub
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      stripeSubscriptionId: null,
+      currentPeriodEnd: new Date('2026-08-04T05:59:59Z'),  // expired Aug 4
+      currentPeriodStart: new Date('2026-07-03T18:00:00Z'),
+      cancelAtPeriodEnd: true,
+      membershipPlanId: 'plan-full',
+    });
+
+    await service.upsertSubscriptionFromStripe(
+      {
+        ...activeSub,
+        id: 'sub_1U0LZeGuUoCXNOREKzoRfHBa',  // Carlo's Stripe sub
+        metadata: {
+          userId: 'cmqzsizk9004rqo0rtq4hvgvm',
+          studioId: 'cmp33m0gp0000qomlj9p42ia5',
+          planId: 'plan-full',
+        },
+      },
+      { userId: 'cmqzsizk9004rqo0rtq4hvgvm', studioId: 'cmp33m0gp0000qomlj9p42ia5' },
+      'customer.subscription.created',
+    );
+
+    expect(txSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'cmr5e5tl3002hm60r9s2d08cc' },
+        data: { status: SubscriptionStatus.CANCELED },
+      }),
+    );
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]).toMatchObject({
+      status: SubscriptionStatus.ACTIVE,
+      stripeSubscriptionId: 'sub_1U0LZeGuUoCXNOREKzoRfHBa',
+    });
   });
 });

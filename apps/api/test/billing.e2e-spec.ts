@@ -286,3 +286,126 @@ describe('Billing / Stripe (e2e)', () => {
     expect(rows).toHaveLength(1);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /studios/:studioId/billing/reconciliation-audit — permission + safety (Tests 11-15)
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('GET /studios/:studioId/billing/reconciliation-audit', () => {
+  let app: INestApplication;
+  let prisma: PrismaService;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    prisma = app.get(PrismaService);
+  });
+
+  beforeEach(async () => {
+    await truncateAll(prisma);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  async function loginAs(email: string, password: string): Promise<string> {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email, password })
+      .expect(201);
+    return (res.body as { accessToken: string }).accessToken;
+  }
+
+  // Test 11: OWNER allowed
+  it('returns 200 for OWNER', async () => {
+    const studio = await createStudio(prisma);
+    const { id: userId, email, password } = await createUserWithPassword(prisma, {
+      email: 'owner-audit@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, userId, studio.id, Role.OWNER);
+    const token = await loginAs(email, password);
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/billing/reconciliation-audit`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = res.body as { status: string; checkedMembers: number; findings: unknown[] };
+    expect(body.status).toBe('healthy');
+    expect(body.checkedMembers).toBe(0);
+    expect(body.findings).toHaveLength(0);
+  });
+
+  // Test 12: ADMIN allowed
+  it('returns 200 for ADMIN', async () => {
+    const studio = await createStudio(prisma);
+    const { id: userId, email, password } = await createUserWithPassword(prisma, {
+      email: 'admin-audit@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, userId, studio.id, Role.ADMIN);
+    const token = await loginAs(email, password);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/billing/reconciliation-audit`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+  });
+
+  // Test 13: STAFF forbidden
+  it('returns 403 for STAFF', async () => {
+    const studio = await createStudio(prisma);
+    const { id: userId, email, password } = await createUserWithPassword(prisma, {
+      email: 'staff-audit@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, userId, studio.id, Role.STAFF);
+    const token = await loginAs(email, password);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/billing/reconciliation-audit`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(403);
+  });
+
+  // Test 14: FRONT_DESK forbidden
+  it('returns 403 for FRONT_DESK', async () => {
+    const studio = await createStudio(prisma);
+    const { id: userId, email, password } = await createUserWithPassword(prisma, {
+      email: 'frontdesk-audit@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, userId, studio.id, Role.FRONT_DESK);
+    const token = await loginAs(email, password);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/billing/reconciliation-audit`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(403);
+  });
+
+  // Test 15: endpoint performs zero mutation — no subscriptions or webhook events modified
+  it('performs zero DB mutations (read-only endpoint)', async () => {
+    const studio = await createStudio(prisma);
+    const { id: userId, email, password } = await createUserWithPassword(prisma, {
+      email: 'readonly-audit@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, userId, studio.id, Role.OWNER);
+    const token = await loginAs(email, password);
+
+    // Baseline counts before
+    const subsBefore = await prisma.subscription.count();
+    const webhooksBefore = await prisma.stripeWebhookEvent.count();
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/billing/reconciliation-audit`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    // Counts must be identical after — endpoint made no writes
+    expect(await prisma.subscription.count()).toBe(subsBefore);
+    expect(await prisma.stripeWebhookEvent.count()).toBe(webhooksBefore);
+  });
+});

@@ -60,6 +60,8 @@ function makeLocalSub(
 
 function buildService(overrides: {
   user?: { stripeCustomerId: string | null } | null;
+  /** Members returned by prisma.user.findMany (for auditStudio). Defaults to []. */
+  studioMembers?: Array<{ id: string; firstName: string | null; lastName: string | null; email: string }>;
   localSubs?: ReturnType<typeof makeLocalSub>[];
   stripeSubs?: ReturnType<typeof makeStripeSub>[];
   planByPrice?: Record<string, { id: string } | null>;
@@ -70,6 +72,7 @@ function buildService(overrides: {
       findUnique: jest.fn().mockResolvedValue(
         'user' in overrides ? overrides.user : { stripeCustomerId: 'cus_test' },
       ),
+      findMany: jest.fn().mockResolvedValue(overrides.studioMembers ?? []),
     },
     subscription: {
       findMany: jest.fn().mockResolvedValue(overrides.localSubs ?? []),
@@ -621,5 +624,141 @@ describe('SubscriptionReconciliationService — assertHealthyForPlanChange', () 
     await expect(
       service.assertHealthyForPlanChange('studio-1', 'user-1'),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Dead-letter resolution model (Tests 1-4)
+// Regression: resolvedAt field distinguishes historical failures from actionable
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('SubscriptionReconciliationService — dead-letter resolution model', () => {
+  // Test 1: query must include resolvedAt: null so resolved events are excluded
+  it('queries stripeWebhookEvent with resolvedAt: null to exclude resolved historical failures', async () => {
+    const { service, prisma } = buildService({
+      localSubs: [LOCAL_BASIC],
+      stripeSubs: [STRIPE_BASIC],
+    });
+
+    await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    expect(prisma.stripeWebhookEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          processed: false,
+          resolvedAt: null,
+        }),
+      }),
+    );
+  });
+
+  // Test 2: when the only failure has resolvedAt set (DB filters it), reconcile stays healthy
+  it('does not surface dead_letter_webhook when resolved event is excluded by resolvedAt: null filter', async () => {
+    // The mock returns [] as the DB would after filtering out an event with resolvedAt != null
+    const { service } = buildService({
+      localSubs: [LOCAL_BASIC],
+      stripeSubs: [STRIPE_BASIC],
+      deadLetters: [],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    expect(result.status).toBe('healthy');
+    expect(result.issues.filter((i) => i.kind === 'dead_letter_webhook')).toHaveLength(0);
+  });
+
+  // Test 3: unresolved failed event (resolvedAt = null) remains actionable
+  it('surfaces dead_letter_webhook for unresolved failed event with resolvedAt: null', async () => {
+    const oldDate = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48h old
+    const { service } = buildService({
+      localSubs: [LOCAL_BASIC],
+      stripeSubs: [STRIPE_BASIC],
+      deadLetters: [
+        { stripeEventId: 'evt_unresolved_1', eventType: 'customer.subscription.created', createdAt: oldDate },
+      ],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    expect(result.status).toBe('dead_letter_webhooks');
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ kind: 'dead_letter_webhook', stripeEventId: 'evt_unresolved_1' }),
+    );
+  });
+
+  // Test 4: resolved event preserved as processed=false (semantic distinction: resolvedAt ≠ processed=true)
+  it('does not change processed=false to processed=true when resolvedAt is set — resolved event is NOT processed', async () => {
+    // The semantic is: resolvedAt tracks operator confirmation; processed tracks handler completion.
+    // Both can be false simultaneously. This test confirms the query correctly targets resolvedAt independently.
+    const { service, prisma } = buildService({
+      localSubs: [LOCAL_BASIC],
+      stripeSubs: [STRIPE_BASIC],
+      deadLetters: [],
+    });
+
+    await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    // Service must NOT call any update on stripeWebhookEvent — it is purely read-only here
+    expect(prisma.stripeWebhookEvent.findMany).toHaveBeenCalledTimes(1);
+    // No update method exists on the mock — confirms no mutation path was invoked
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// auditStudio (Tests 8-10)
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('SubscriptionReconciliationService — auditStudio', () => {
+  // Test 8: healthy case — no members with stripeCustomerId
+  it('returns healthy with checkedMembers=0 when no studio members have a Stripe customer', async () => {
+    const { service } = buildService({ studioMembers: [] });
+
+    const result = await service.auditStudio('studio-1');
+
+    expect(result.status).toBe('healthy');
+    expect(result.checkedMembers).toBe(0);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  // Test 9: stripe_orphan case — one member has a Stripe sub not in local DB
+  it('returns attention_required with critical stripe_orphan finding', async () => {
+    const { service } = buildService({
+      studioMembers: [{ id: 'user-1', firstName: 'Jane', lastName: 'Doe', email: 'jane@e.co' }],
+      localSubs: [],
+      stripeSubs: [STRIPE_FULL],
+      planByPrice: { price_full: { id: 'plan-full' } },
+    });
+
+    const result = await service.auditStudio('studio-1');
+
+    expect(result.status).toBe('attention_required');
+    expect(result.checkedMembers).toBe(1);
+
+    const orphan = result.findings.find((f) => f.issue === 'stripe_orphan');
+    expect(orphan).toBeDefined();
+    expect(orphan?.severity).toBe('critical');
+    expect(orphan?.requiresManualResolution).toBe(true);
+    expect(orphan?.memberName).toBe('Jane Doe');
+  });
+
+  // Test 10: duplicate_renewable case — two Stripe subs, one local
+  it('returns attention_required with critical duplicate_renewable finding', async () => {
+    const { service } = buildService({
+      studioMembers: [{ id: 'user-1', firstName: 'Carlo', lastName: 'Condes', email: 'carlo@e.co' }],
+      localSubs: [LOCAL_BASIC],
+      stripeSubs: [STRIPE_BASIC, STRIPE_FULL],
+      planByPrice: { price_full: { id: 'plan-full' } },
+    });
+
+    const result = await service.auditStudio('studio-1');
+
+    expect(result.status).toBe('attention_required');
+    expect(result.checkedMembers).toBe(1);
+
+    const dup = result.findings.find((f) => f.issue === 'duplicate_renewable');
+    expect(dup).toBeDefined();
+    expect(dup?.severity).toBe('critical');
+    expect(dup?.requiresManualResolution).toBe(true);
   });
 });

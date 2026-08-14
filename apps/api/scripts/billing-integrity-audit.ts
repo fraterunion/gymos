@@ -47,17 +47,24 @@ type PlanDriftStatus =
   | 'INACTIVE_STRIPE_PRICE'
   | 'FETCH_ERROR';
 
+type DeadLetterEntry = {
+  stripeEventId: string;
+  eventType: string;
+  attemptCount: number;
+  createdAt: Date;
+  ageDays: number;
+  resolvedAt: Date | null;
+  resolutionNote: string | null;
+};
+
 type AuditReport = {
   runAt: string;
   totalMembersScanned: number;
   issues: AuditIssue[];
-  deadLetterWebhooks: Array<{
-    stripeEventId: string;
-    eventType: string;
-    attemptCount: number;
-    createdAt: Date;
-    ageDays: number;
-  }>;
+  /** Unresolved failures that require operator action. */
+  actionableDeadLetters: DeadLetterEntry[];
+  /** Historical failures where state was reconciled manually. Preserved for audit trail. */
+  resolvedHistoricalDeadLetters: DeadLetterEntry[];
   priceDriftPlans: Array<{
     planId: string;
     planName: string;
@@ -113,32 +120,45 @@ async function run() {
     runAt: isoNow(),
     totalMembersScanned: 0,
     issues: [],
-    deadLetterWebhooks: [],
+    actionableDeadLetters: [],
+    resolvedHistoricalDeadLetters: [],
     priceDriftPlans: [],
   };
 
   // ── 1. Dead-letter webhook events ──────────────────────────────────────────
 
   console.log('Scanning dead-letter webhook events...');
-  const deadLetters = await prisma.stripeWebhookEvent.findMany({
+  const allDeadLetters = await prisma.stripeWebhookEvent.findMany({
     where: {
       processed: false,
+      attemptCount: { gt: 0 },
       createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
     },
     orderBy: { createdAt: 'asc' },
   });
 
-  for (const dl of deadLetters) {
-    report.deadLetterWebhooks.push({
+  for (const dl of allDeadLetters) {
+    const entry: DeadLetterEntry = {
       stripeEventId: dl.stripeEventId,
       eventType: dl.eventType,
-      attemptCount: (dl as any).attemptCount ?? 0,
+      attemptCount: dl.attemptCount,
       createdAt: dl.createdAt,
       ageDays: ageDays(dl.createdAt),
-    });
+      resolvedAt: dl.resolvedAt,
+      resolutionNote: dl.resolutionNote,
+    };
+    if (dl.resolvedAt) {
+      report.resolvedHistoricalDeadLetters.push(entry);
+    } else {
+      report.actionableDeadLetters.push(entry);
+    }
   }
 
-  console.log(`  Found ${deadLetters.length} dead-letter webhook event(s)\n`);
+  console.log(
+    `  Found ${allDeadLetters.length} dead-letter event(s): ` +
+    `${report.actionableDeadLetters.length} actionable, ` +
+    `${report.resolvedHistoricalDeadLetters.length} resolved historical\n`,
+  );
 
   // ── 2. Membership plan price drift ────────────────────────────────────────
 
@@ -432,21 +452,36 @@ async function run() {
   console.log('  AUDIT RESULTS');
   console.log(`${'═'.repeat(70)}\n`);
 
-  console.log(`Members scanned:        ${report.totalMembersScanned}`);
-  console.log(`Dead-letter webhooks:   ${report.deadLetterWebhooks.length}`);
-  console.log(`Plan price mismatches:  ${report.priceDriftPlans.length}`);
+  console.log(`Members scanned:                   ${report.totalMembersScanned}`);
+  console.log(`Webhook health`);
+  console.log(`  Actionable failures:             ${report.actionableDeadLetters.length}`);
+  console.log(`  Resolved historical failures:    ${report.resolvedHistoricalDeadLetters.length}`);
+  console.log(`Plan price mismatches:             ${report.priceDriftPlans.length}`);
   console.log(
-    `Billing issues found:   ${report.issues.length} (` +
+    `Billing issues:                    ${report.issues.length} (` +
       `${report.issues.filter((i) => i.severity === 'CRITICAL').length} critical, ` +
       `${report.issues.filter((i) => i.severity === 'WARNING').length} warning)\n`,
   );
 
-  if (report.deadLetterWebhooks.length > 0) {
-    console.log('── DEAD-LETTER WEBHOOK EVENTS ──');
-    for (const dl of report.deadLetterWebhooks) {
+  if (report.actionableDeadLetters.length > 0) {
+    console.log('── ACTIONABLE DEAD-LETTER WEBHOOKS (requires operator action) ──');
+    for (const dl of report.actionableDeadLetters) {
       console.log(
         `  [${dl.ageDays}d old] ${dl.stripeEventId}  type=${dl.eventType}  attempts=${dl.attemptCount}`,
       );
+    }
+    console.log();
+  }
+
+  if (report.resolvedHistoricalDeadLetters.length > 0) {
+    console.log('── RESOLVED HISTORICAL WEBHOOK FAILURES (audit trail) ──');
+    for (const dl of report.resolvedHistoricalDeadLetters) {
+      console.log(
+        `  [resolved ${dl.resolvedAt?.toISOString().slice(0, 10)}] ${dl.stripeEventId}  type=${dl.eventType}`,
+      );
+      if (dl.resolutionNote) {
+        console.log(`    ${dl.resolutionNote.slice(0, 100)}...`);
+      }
     }
     console.log();
   }
@@ -481,8 +516,23 @@ async function run() {
     console.log();
   }
 
-  if (report.issues.length === 0 && report.deadLetterWebhooks.length === 0 && report.priceDriftPlans.length === 0) {
-    console.log('✅ No billing integrity issues found.');
+  if (
+    report.issues.length === 0 &&
+    report.actionableDeadLetters.length === 0 &&
+    report.priceDriftPlans.length === 0
+  ) {
+    console.log('✅ No actionable billing integrity issues found.');
+    if (report.resolvedHistoricalDeadLetters.length > 0) {
+      console.log(`   (${report.resolvedHistoricalDeadLetters.length} historical resolved failures on record)`);
+    }
+  }
+
+  // Exit non-zero when actionable issues exist (enables Railway cron alerting)
+  const hasActionable =
+    report.issues.filter((i) => i.severity === 'CRITICAL').length > 0 ||
+    report.actionableDeadLetters.length > 0;
+  if (hasActionable) {
+    process.exitCode = 1;
   }
 
   console.log(`\n${'═'.repeat(70)}\n`);

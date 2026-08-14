@@ -124,7 +124,21 @@ export class SubscriptionLifecycleService {
     }
 
     const stripePrimary = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
-    const upgrade = isUpgrade(current.membershipPlan.priceCents, targetPlan.priceCents);
+    let upgrade: boolean;
+    if (
+      stripePrimary &&
+      stripePrimary.membershipPlan.stripePriceId &&
+      targetPlan.stripePriceId
+    ) {
+      upgrade = await this.resolveStripeUpgrade(
+        stripePrimary.membershipPlan.stripePriceId,
+        targetPlan.stripePriceId,
+        current.membershipPlan.priceCents,
+        targetPlan.priceCents,
+      );
+    } else {
+      upgrade = isUpgrade(current.membershipPlan.priceCents, targetPlan.priceCents);
+    }
     const effective =
       stripePrimary && !upgrade ? ('next_period' as const) : ('immediate' as const);
 
@@ -217,17 +231,11 @@ export class SubscriptionLifecycleService {
         ? subscriptionItem.price
         : subscriptionItem.price.id;
 
-    // Fetch both Stripe prices to get authoritative unit amounts.
-    // Local priceCents may diverge from Stripe's billing amount (e.g., ARES Basic Access:
-    // local=1000 MXN but Stripe=1300 MXN). Using stale local values would produce the
-    // wrong Stripe API call — an immediate charge when it should be scheduled, or vice versa.
-    const [currentStripePrice, targetStripePrice] = await Promise.all([
-      this.stripe.retrievePrice(currentPriceId),
-      this.stripe.retrievePrice(newStripePriceId),
-    ]);
-    const upgrade = isUpgrade(
-      currentStripePrice.unit_amount ?? localSubscription.membershipPlan.priceCents,
-      targetStripePrice.unit_amount ?? targetPlan.priceCents,
+    const upgrade = await this.resolveStripeUpgrade(
+      currentPriceId,
+      newStripePriceId,
+      localSubscription.membershipPlan.priceCents,
+      targetPlan.priceCents,
     );
     const baseMetadata = {
       userId: params.userId,
@@ -471,6 +479,29 @@ export class SubscriptionLifecycleService {
   }): Date | null {
     const raw = sub.items?.data?.[0]?.current_period_end;
     return raw && raw > 0 ? new Date(raw * 1000) : null;
+  }
+
+  /**
+   * Retrieve both Stripe Prices and classify the move as an upgrade (true) or
+   * downgrade (false).  Falls back to local priceCents when Stripe returns
+   * unit_amount=null (metered / usage-based prices).
+   * Shared by getPlanChangePreview and changeStripeSubscriptionPlan so the two
+   * paths can never drift apart.
+   */
+  private async resolveStripeUpgrade(
+    currentPriceId: string,
+    targetPriceId: string,
+    currentFallbackCents: number,
+    targetFallbackCents: number,
+  ): Promise<boolean> {
+    const [currentPrice, targetPrice] = await Promise.all([
+      this.stripe.retrievePrice(currentPriceId),
+      this.stripe.retrievePrice(targetPriceId),
+    ]);
+    return isUpgrade(
+      currentPrice.unit_amount ?? currentFallbackCents,
+      targetPrice.unit_amount ?? targetFallbackCents,
+    );
   }
 
   private mapLocalStatus(stripeStatus: string): SubscriptionStatus {
