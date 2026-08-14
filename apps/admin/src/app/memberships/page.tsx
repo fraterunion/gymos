@@ -9,6 +9,7 @@ import {
   createMembershipPlan,
   fetchMembershipPlans,
   fetchMembershipsOverview,
+  fetchPlanBillingIntegrity,
   fetchSubscriptions,
   setCancelAtPeriodEnd,
   updateMembershipPlan,
@@ -17,6 +18,7 @@ import {
   type MembershipPlanDto,
   type MembershipPlanInput,
   type MembershipsOverview,
+  type PlanIntegrityResult,
   type SubscriptionListItem,
   type SubscriptionStatus,
 } from "@/lib/api/memberships";
@@ -111,10 +113,14 @@ function formatPlanAccessSummary(plan: MembershipPlanDto): string {
 
 function PlanCard({
   plan,
+  integrity,
+  integrityAvailable,
   onEdit,
   onArchive,
 }: {
   plan: MembershipPlanDto;
+  integrity?: PlanIntegrityResult;
+  integrityAvailable: boolean;
   onEdit: (p: MembershipPlanDto) => void;
   onArchive: (p: MembershipPlanDto) => void;
 }) {
@@ -174,15 +180,36 @@ function PlanCard({
       </div>
 
       <div className="mt-3 flex items-center gap-2 text-xs text-zinc-400">
-        {plan.stripeProductId ? (
-          <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-600">
-            Stripe synced
+        {integrity ? (
+          integrity.status === "healthy" ? (
+            <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-600">
+              Stripe synced ✓
+            </span>
+          ) : integrity.status === "price_mismatch" ? (
+            <span
+              className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700"
+              title={`GymOS: ${formatCents(integrity.localPriceCents, integrity.localCurrency)} / Stripe: ${formatCents(integrity.stripeUnitAmount ?? 0, integrity.stripeCurrency ?? integrity.localCurrency)}`}
+            >
+              Pricing mismatch ⚠
+            </span>
+          ) : integrity.status === "no_stripe_price" ? (
+            <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-500">
+              No Stripe price
+            </span>
+          ) : integrity.status === "inactive_stripe_price" ? (
+            <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600">
+              Stripe price inactive
+            </span>
+          ) : (
+            <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">
+              {integrity.status.replace(/_/g, " ")} ⚠
+            </span>
+          )
+        ) : !integrityAvailable ? (
+          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-400">
+            Stripe status unavailable
           </span>
-        ) : (
-          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-500">
-            No Stripe ID
-          </span>
-        )}
+        ) : null}
       </div>
 
       <div className="mt-4 flex gap-2">
@@ -826,6 +853,8 @@ export default function MembershipsPage() {
 
   const [overview, setOverview] = useState<MembershipsOverview | null>(null);
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
+  const [planIntegrity, setPlanIntegrity] = useState<Map<string, PlanIntegrityResult>>(new Map());
+  const [integrityAvailable, setIntegrityAvailable] = useState(true);
   const [subs, setSubs] = useState<SubscriptionListItem[]>([]);
   const [subsTotal, setSubsTotal] = useState(0);
   const [subsPage, setSubsPage] = useState(1);
@@ -847,8 +876,20 @@ export default function MembershipsPage() {
     if (!selectedStudioId) return;
     setLoadingPlans(true);
     try {
-      const data = await fetchMembershipPlans(selectedStudioId, true);
+      const [data, integrityResult] = await Promise.all([
+        fetchMembershipPlans(selectedStudioId, true),
+        fetchPlanBillingIntegrity(selectedStudioId)
+          .then((r) => ({ ok: true as const, data: r }))
+          .catch(() => ({ ok: false as const, data: [] as PlanIntegrityResult[] })),
+      ]);
       setPlans(data);
+      if (integrityResult.ok) {
+        setPlanIntegrity(new Map(integrityResult.data.map((r) => [r.planId, r])));
+        setIntegrityAvailable(true);
+      } else {
+        setPlanIntegrity(new Map());
+        setIntegrityAvailable(false);
+      }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load plans.");
     } finally {
@@ -1007,6 +1048,8 @@ export default function MembershipsPage() {
               <PlanCard
                 key={plan.id}
                 plan={plan}
+                integrity={planIntegrity.get(plan.id)}
+                integrityAvailable={integrityAvailable}
                 onEdit={(p) => { setEditingPlan(p); setShowPlanModal(true); }}
                 onArchive={handleArchivePlan}
               />

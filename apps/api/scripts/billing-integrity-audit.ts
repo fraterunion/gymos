@@ -40,6 +40,13 @@ type AuditIssue = {
   details: Record<string, unknown>;
 };
 
+type PlanDriftStatus =
+  | 'PRICE_MISMATCH'
+  | 'CURRENCY_MISMATCH'
+  | 'INTERVAL_MISMATCH'
+  | 'INACTIVE_STRIPE_PRICE'
+  | 'FETCH_ERROR';
+
 type AuditReport = {
   runAt: string;
   totalMembersScanned: number;
@@ -56,8 +63,14 @@ type AuditReport = {
     planName: string;
     studioId: string;
     localPriceCents: number;
+    localCurrency: string;
+    localBillingInterval: string;
     stripePriceId: string;
     stripeUnitAmount: number | null;
+    stripeCurrency: string | null;
+    stripeInterval: string | null;
+    stripeActive: boolean | null;
+    driftStatus: PlanDriftStatus;
   }>;
 };
 
@@ -145,18 +158,60 @@ async function run() {
     try {
       const price = await stripe.prices.retrieve(plan.stripePriceId);
       const stripeAmount = price.unit_amount;
-      if (stripeAmount != null && stripeAmount !== plan.priceCents) {
+      const stripeCurrency = price.currency ?? null;
+      const stripeInterval = price.recurring?.interval ?? null;
+
+      const localInterval = (() => {
+        switch (plan.billingInterval) {
+          case 'MONTHLY': return 'month';
+          case 'YEARLY': return 'year';
+          case 'WEEKLY': return 'week';
+          default: return null;
+        }
+      })();
+
+      let driftStatus: PlanDriftStatus | null = null;
+      if (!price.active) {
+        driftStatus = 'INACTIVE_STRIPE_PRICE';
+      } else if (stripeAmount !== plan.priceCents) {
+        driftStatus = 'PRICE_MISMATCH';
+      } else if (stripeCurrency && stripeCurrency.toLowerCase() !== plan.currency.toLowerCase()) {
+        driftStatus = 'CURRENCY_MISMATCH';
+      } else if (stripeInterval && localInterval && stripeInterval !== localInterval) {
+        driftStatus = 'INTERVAL_MISMATCH';
+      }
+
+      if (driftStatus) {
         report.priceDriftPlans.push({
           planId: plan.id,
           planName: plan.name,
           studioId: plan.studioId,
           localPriceCents: plan.priceCents,
+          localCurrency: plan.currency,
+          localBillingInterval: plan.billingInterval,
           stripePriceId: plan.stripePriceId,
           stripeUnitAmount: stripeAmount,
+          stripeCurrency,
+          stripeInterval,
+          stripeActive: price.active,
+          driftStatus,
         });
       }
     } catch {
-      // Price might be archived or unavailable — skip
+      report.priceDriftPlans.push({
+        planId: plan.id,
+        planName: plan.name,
+        studioId: plan.studioId,
+        localPriceCents: plan.priceCents,
+        localCurrency: plan.currency,
+        localBillingInterval: plan.billingInterval,
+        stripePriceId: plan.stripePriceId,
+        stripeUnitAmount: null,
+        stripeCurrency: null,
+        stripeInterval: null,
+        stripeActive: null,
+        driftStatus: 'FETCH_ERROR',
+      });
     }
   }
 
@@ -399,11 +454,19 @@ async function run() {
   if (report.priceDriftPlans.length > 0) {
     console.log('── PLAN PRICE DRIFT ──');
     for (const p of report.priceDriftPlans) {
-      const localFormatted = (p.localPriceCents / 100).toFixed(2);
-      const stripeFormatted = p.stripeUnitAmount ? (p.stripeUnitAmount / 100).toFixed(2) : '?';
-      console.log(
-        `  ${p.planName} (${p.planId})  studio=${p.studioId}  local=${localFormatted}  stripe=${stripeFormatted}`,
-      );
+      const localAmt = (p.localPriceCents / 100).toFixed(2);
+      const stripeAmt = p.stripeUnitAmount != null ? (p.stripeUnitAmount / 100).toFixed(2) : '?';
+      console.log(`  [${p.driftStatus}] ${p.planName} (${p.planId})`);
+      console.log(`    studio=${p.studioId}  price_id=${p.stripePriceId}`);
+      if (p.driftStatus === 'PRICE_MISMATCH') {
+        console.log(`    amount: local=${p.localCurrency.toUpperCase()} ${localAmt}  stripe=${(p.stripeCurrency ?? p.localCurrency).toUpperCase()} ${stripeAmt}`);
+      }
+      if (p.driftStatus === 'CURRENCY_MISMATCH') {
+        console.log(`    currency: local=${p.localCurrency}  stripe=${p.stripeCurrency}`);
+      }
+      if (p.driftStatus === 'INTERVAL_MISMATCH') {
+        console.log(`    interval: local=${p.localBillingInterval}  stripe=${p.stripeInterval}`);
+      }
     }
     console.log();
   }

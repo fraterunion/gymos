@@ -14,6 +14,7 @@ describe('subscription-lifecycle.utils', () => {
 describe('SubscriptionLifecycleService', () => {
   const stripe = {
     retrieveSubscription: jest.fn(),
+    retrievePrice: jest.fn(),
     updateSubscription: jest.fn(),
     scheduleSubscriptionPriceChangeAtPeriodEnd: jest.fn(),
     resolveHostedInvoiceUrl: jest.fn(),
@@ -42,6 +43,12 @@ describe('SubscriptionLifecycleService', () => {
       if (args.where.stripePriceId === 'price_basic') return { id: 'plan-basic' };
       if (args.where.stripePriceId === 'price_full') return { id: 'plan-full' };
       return null;
+    });
+    // Default retrievePrice: return unit_amounts aligned with test priceCents values.
+    stripe.retrievePrice.mockImplementation(async (priceId: string) => {
+      if (priceId === 'price_basic') return { unit_amount: 1300 };
+      if (priceId === 'price_full') return { unit_amount: 1500 };
+      return { unit_amount: 1000 };
     });
   });
 
@@ -542,5 +549,160 @@ describe('SubscriptionLifecycleService', () => {
         createCheckout: jest.fn(),
       }),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  // ── Stripe-authoritative isUpgrade (Phase 4 fix) ──────────────────────────
+
+  it('uses Stripe unit_amounts (not stale local priceCents) for upgrade/downgrade determination', async () => {
+    // Scenario: local priceCents says Basic=1600, Full=1500 → isUpgrade would return false
+    // (downgrade), scheduling at period end. But Stripe says Basic=1300, Full=1500 → it is
+    // actually an upgrade and should fire immediately. Stripe amounts must win.
+    stripe.retrieveSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ id: 'si_1', price: { id: 'price_basic_stale' } }] },
+    });
+    stripe.updateSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ id: 'si_1', price: { id: 'price_full' } }] },
+    });
+    // Stripe says: Basic=1300, Full=1500 → upgrade
+    stripe.retrievePrice.mockImplementation(async (priceId: string) => {
+      if (priceId === 'price_basic_stale') return { unit_amount: 1300 };
+      if (priceId === 'price_full') return { unit_amount: 1500 };
+      return { unit_amount: 0 };
+    });
+    prisma.membershipPlan.findFirst.mockImplementation(async (args: { where: { id?: string; stripePriceId?: string } }) => {
+      if (args.where.stripePriceId === 'price_full') return { id: 'plan-full' };
+      if (args.where.stripePriceId === 'price_basic_stale') return { id: 'plan-basic' };
+      return null;
+    });
+
+    const result = await service.changeStripeSubscriptionPlan({
+      studioId: 'studio-1',
+      userId: 'user-1',
+      localSubscription: {
+        id: 'sub-local-1',
+        stripeSubscriptionId: 'sub_stripe_1',
+        membershipPlanId: 'plan-basic',
+        pendingMembershipPlanId: null,
+        membershipPlan: {
+          id: 'plan-basic',
+          name: 'Basic Access',
+          priceCents: 1600,  // stale — would classify as downgrade if used
+          currency: 'mxn',
+          billingInterval: 'MONTHLY',
+        },
+      } as never,
+      targetPlan: {
+        id: 'plan-full',
+        name: 'Full Access',
+        priceCents: 1500,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+      } as never,
+      newStripePriceId: 'price_full',
+    });
+
+    // Stripe amounts say upgrade (1300→1500) → must use updateSubscription (immediate)
+    expect(result.effective).toBe('immediate');
+    expect(stripe.updateSubscription).toHaveBeenCalled();
+    expect(stripe.scheduleSubscriptionPriceChangeAtPeriodEnd).not.toHaveBeenCalled();
+  });
+
+  it('correctly classifies as downgrade using Stripe amounts even when local priceCents would say upgrade', async () => {
+    // Local: Full=1000, Basic=1500 → isUpgrade(1000, 1500) = true (upgrade) — WRONG
+    // Stripe: Full=1500, Basic=1300 → isUpgrade(1500, 1300) = false (downgrade) — CORRECT
+    stripe.retrieveSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ id: 'si_1', price: { id: 'price_full' }, current_period_end: 1_702_592_000 }] },
+    });
+    stripe.scheduleSubscriptionPriceChangeAtPeriodEnd.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      metadata: { pendingPlanId: 'plan-basic' },
+      items: { data: [{ id: 'si_1', price: { id: 'price_full' }, current_period_end: 1_702_592_000 }] },
+    });
+    stripe.retrievePrice.mockImplementation(async (priceId: string) => {
+      if (priceId === 'price_full') return { unit_amount: 1500 };
+      if (priceId === 'price_basic') return { unit_amount: 1300 };
+      return { unit_amount: 0 };
+    });
+    prisma.membershipPlan.findFirst.mockImplementation(async (args: { where: { id?: string; stripePriceId?: string } }) => {
+      if (args.where.stripePriceId === 'price_full') return { id: 'plan-full' };
+      if (args.where.stripePriceId === 'price_basic') return { id: 'plan-basic' };
+      return null;
+    });
+
+    const result = await service.changeStripeSubscriptionPlan({
+      studioId: 'studio-1',
+      userId: 'user-1',
+      localSubscription: {
+        id: 'sub-local-1',
+        stripeSubscriptionId: 'sub_stripe_1',
+        membershipPlanId: 'plan-full',
+        pendingMembershipPlanId: null,
+        membershipPlan: {
+          id: 'plan-full',
+          name: 'Full Access',
+          priceCents: 1000,  // stale — would classify as upgrade if used for isUpgrade
+          currency: 'mxn',
+          billingInterval: 'MONTHLY',
+        },
+      } as never,
+      targetPlan: {
+        id: 'plan-basic',
+        name: 'Basic Access',
+        priceCents: 1500,  // stale — higher than local Full, so old code would say "upgrade"
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+      } as never,
+      newStripePriceId: 'price_basic',
+    });
+
+    // Stripe amounts say downgrade (1500→1300) → must schedule at period end
+    expect(result.effective).toBe('next_period');
+    expect(stripe.scheduleSubscriptionPriceChangeAtPeriodEnd).toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it('falls back to local priceCents when Stripe retrievePrice returns null unit_amount', async () => {
+    stripe.retrieveSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ id: 'si_1', price: { id: 'price_basic' } }] },
+    });
+    stripe.updateSubscription.mockResolvedValue({
+      id: 'sub_stripe_1',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ id: 'si_1', price: { id: 'price_full' } }] },
+    });
+    // Stripe returns null unit_amount → falls back to local priceCents (1300 vs 1500 → upgrade)
+    stripe.retrievePrice.mockResolvedValue({ unit_amount: null });
+
+    const result = await service.changeStripeSubscriptionPlan({
+      studioId: 'studio-1',
+      userId: 'user-1',
+      localSubscription: {
+        id: 'sub-local-1',
+        stripeSubscriptionId: 'sub_stripe_1',
+        membershipPlanId: 'plan-basic',
+        pendingMembershipPlanId: null,
+        membershipPlan: { id: 'plan-basic', name: 'Basic', priceCents: 1300, currency: 'mxn', billingInterval: 'MONTHLY' },
+      } as never,
+      targetPlan: { id: 'plan-full', name: 'Full', priceCents: 1500, currency: 'mxn', billingInterval: 'MONTHLY' } as never,
+      newStripePriceId: 'price_full',
+    });
+
+    expect(result.effective).toBe('immediate');
+    expect(stripe.updateSubscription).toHaveBeenCalled();
   });
 });

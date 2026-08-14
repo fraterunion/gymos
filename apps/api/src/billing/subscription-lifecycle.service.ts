@@ -217,7 +217,18 @@ export class SubscriptionLifecycleService {
         ? subscriptionItem.price
         : subscriptionItem.price.id;
 
-    const upgrade = isUpgrade(localSubscription.membershipPlan.priceCents, targetPlan.priceCents);
+    // Fetch both Stripe prices to get authoritative unit amounts.
+    // Local priceCents may diverge from Stripe's billing amount (e.g., ARES Basic Access:
+    // local=1000 MXN but Stripe=1300 MXN). Using stale local values would produce the
+    // wrong Stripe API call — an immediate charge when it should be scheduled, or vice versa.
+    const [currentStripePrice, targetStripePrice] = await Promise.all([
+      this.stripe.retrievePrice(currentPriceId),
+      this.stripe.retrievePrice(newStripePriceId),
+    ]);
+    const upgrade = isUpgrade(
+      currentStripePrice.unit_amount ?? localSubscription.membershipPlan.priceCents,
+      targetStripePrice.unit_amount ?? targetPlan.priceCents,
+    );
     const baseMetadata = {
       userId: params.userId,
       studioId: params.studioId,

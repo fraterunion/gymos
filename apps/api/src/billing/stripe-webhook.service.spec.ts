@@ -514,3 +514,88 @@ describe('StripeWebhookService — subscription plan lifecycle', () => {
     expect(upsertCalls[0]).toMatchObject({ cancelAtPeriodEnd: true });
   });
 });
+
+// ── Part 5: handleIncomingWebhook — error observability ───────────────────────
+
+describe('StripeWebhookService — handleIncomingWebhook error observability', () => {
+  function makeWebhookHandlerMocks() {
+    const updateManyMock = jest.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      stripeWebhookEvent: {
+        create: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: updateManyMock,
+      },
+    } as unknown as PrismaService;
+
+    const stripe = {
+      constructWebhookEvent: jest.fn().mockReturnValue({
+        id: 'evt_obs_1',
+        type: 'customer.subscription.created',
+        data: { object: {} },
+      }),
+    } as unknown as StripeService;
+
+    const service = new StripeWebhookService(prisma, stripe, {} as EnrollmentService, {} as never);
+    return { service, prisma, stripe, updateManyMock };
+  }
+
+  it('persists lastError via updateMany when dispatch throws', async () => {
+    const { service, updateManyMock } = makeWebhookHandlerMocks();
+
+    jest.spyOn(service as never, 'dispatch').mockRejectedValue(new Error('DB connection lost'));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      service.handleIncomingWebhook(Buffer.from('{}'), 'sig'),
+    ).rejects.toThrow('DB connection lost');
+
+    expect(updateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { stripeEventId: 'evt_obs_1', processed: false },
+        data: expect.objectContaining({ lastError: 'DB connection lost' }),
+      }),
+    );
+  });
+
+  it('does not persist lastError when dispatch succeeds — only processed=true is written', async () => {
+    const { service, updateManyMock } = makeWebhookHandlerMocks();
+
+    jest.spyOn(service as never, 'dispatch').mockResolvedValue(undefined);
+
+    await service.handleIncomingWebhook(Buffer.from('{}'), 'sig');
+
+    // updateMany should only be called by markStripeWebhookEventProcessed
+    expect(updateManyMock).toHaveBeenCalledTimes(1);
+    expect(updateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ processed: true }),
+      }),
+    );
+    // lastError must NOT appear
+    expect(updateManyMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ lastError: expect.anything() }),
+      }),
+    );
+  });
+
+  it('truncates lastError to 500 chars for pathologically long error messages', async () => {
+    const { service, updateManyMock } = makeWebhookHandlerMocks();
+    const longError = 'X'.repeat(600);
+
+    jest.spyOn(service as never, 'dispatch').mockRejectedValue(new Error(longError));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      service.handleIncomingWebhook(Buffer.from('{}'), 'sig'),
+    ).rejects.toThrow();
+
+    const call = updateManyMock.mock.calls.find(
+      (args: Array<{ data?: { lastError?: string } }>) => args[0]?.data?.lastError,
+    );
+    expect(call).toBeDefined();
+    expect((call![0] as { data: { lastError: string } }).data.lastError).toHaveLength(500);
+  });
+});

@@ -37,6 +37,13 @@ export class MembershipPlansController {
     return this.membershipPlansService.listActivePlans(studioId);
   }
 
+  @Get('billing-integrity')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  billingIntegrity(@Param('studioId') studioId: string) {
+    return this.billingService.checkPlanPricingIntegrity(studioId);
+  }
+
   @Get(':planId/checkout-preview')
   @UseGuards(RolesGuard)
   @Roles(Role.MEMBER)

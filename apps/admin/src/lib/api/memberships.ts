@@ -94,6 +94,38 @@ export type SubscriptionListResponse = {
   limit: number;
 };
 
+// ── Plan billing integrity ───────────────────────────────────────────────────
+
+export type PlanIntegrityStatus =
+  | "healthy"
+  | "price_mismatch"
+  | "currency_mismatch"
+  | "interval_mismatch"
+  | "no_stripe_price"
+  | "inactive_stripe_price"
+  | "fetch_error";
+
+export type PlanIntegrityResult = {
+  planId: string;
+  planName: string;
+  stripePriceId: string | null;
+  localPriceCents: number;
+  localCurrency: string;
+  localBillingInterval: BillingInterval;
+  stripeUnitAmount: number | null;
+  stripeCurrency: string | null;
+  stripeInterval: string | null;
+  status: PlanIntegrityStatus;
+};
+
+export function fetchPlanBillingIntegrity(
+  studioId: string,
+): Promise<PlanIntegrityResult[]> {
+  return apiRequest<PlanIntegrityResult[]>(
+    `/studios/${studioId}/membership-plans/billing-integrity`,
+  );
+}
+
 // ── Plan CRUD ───────────────────────────────────────────────────────────────
 
 export function fetchMembershipPlans(

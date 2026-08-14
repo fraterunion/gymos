@@ -5,14 +5,35 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { BillingInterval } from '@prisma/client';
 import { Role } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { WaiverService } from '../waiver/waiver.service';
-import { billingIntervalToStripeRecurring, stripeIntervalToBillingInterval } from './stripe-plan-interval';
+import { billingIntervalToStripeRecurring } from './stripe-plan-interval';
+
+export type PlanIntegrityStatus =
+  | 'healthy'
+  | 'price_mismatch'
+  | 'currency_mismatch'
+  | 'interval_mismatch'
+  | 'no_stripe_price'
+  | 'inactive_stripe_price'
+  | 'fetch_error';
+
+export type PlanIntegrityResult = {
+  planId: string;
+  planName: string;
+  stripePriceId: string | null;
+  localPriceCents: number;
+  localCurrency: string;
+  localBillingInterval: string;
+  stripeUnitAmount: number | null;
+  stripeCurrency: string | null;
+  stripeInterval: string | null;
+  status: PlanIntegrityStatus;
+};
 import {
   SubscriptionLifecycleService,
   type MembershipCheckoutResponse,
@@ -275,16 +296,9 @@ export class BillingService {
     }
 
     let priceId = plan.stripePriceId;
-    const needsNewPrice =
-      !priceId ||
-      (await this.membershipPlanPriceOutOfSync({
-        planPriceCents: plan.priceCents,
-        planBillingInterval: plan.billingInterval,
-        planCurrency: plan.currency,
-        stripePriceId: priceId,
-      }));
 
-    if (needsNewPrice) {
+    if (!priceId) {
+      // No Stripe Price exists yet — create one from local metadata.
       const { interval } = billingIntervalToStripeRecurring(plan.billingInterval);
       const price = await this.stripe.createRecurringPrice({
         productId,
@@ -298,6 +312,10 @@ export class BillingService {
         data: { stripePriceId: priceId, stripeProductId: productId },
       });
     }
+    // If a Stripe Price already exists, trust it unconditionally.
+    // Stripe is authoritative for Stripe-backed plans; local priceCents is a
+    // display field only. Replacing the existing price because local data diverged
+    // would silently bill future subscribers the wrong amount.
 
     if (!productId || !priceId) {
       throw new Error('Stripe product/price sync failed to persist ids');
@@ -306,30 +324,62 @@ export class BillingService {
     return { priceId, productId };
   }
 
-  private async membershipPlanPriceOutOfSync(params: {
-    planPriceCents: number;
-    planBillingInterval: BillingInterval;
-    planCurrency: string;
-    stripePriceId: string;
-  }): Promise<boolean> {
-    try {
-      const price = await this.stripe.retrievePrice(params.stripePriceId);
-      if (price.unit_amount !== params.planPriceCents) {
-        return true;
-      }
-      if (!price.recurring?.interval) {
-        return true;
-      }
-      const mapped = stripeIntervalToBillingInterval(price.recurring.interval);
-      if (mapped !== params.planBillingInterval) {
-        return true;
-      }
-      if ((price.currency ?? 'usd').toLowerCase() !== params.planCurrency.toLowerCase()) {
-        return true;
-      }
-      return false;
-    } catch {
-      return true;
-    }
+  async checkPlanPricingIntegrity(studioId: string): Promise<PlanIntegrityResult[]> {
+    const plans = await this.prisma.membershipPlan.findMany({
+      where: { studioId, deletedAt: null, active: true },
+      select: {
+        id: true,
+        name: true,
+        priceCents: true,
+        currency: true,
+        billingInterval: true,
+        stripePriceId: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return Promise.all(
+      plans.map(async (plan): Promise<PlanIntegrityResult> => {
+        const base: Omit<PlanIntegrityResult, 'stripeUnitAmount' | 'stripeCurrency' | 'stripeInterval' | 'status'> = {
+          planId: plan.id,
+          planName: plan.name,
+          stripePriceId: plan.stripePriceId,
+          localPriceCents: plan.priceCents,
+          localCurrency: plan.currency,
+          localBillingInterval: plan.billingInterval,
+        };
+
+        if (!plan.stripePriceId) {
+          return { ...base, stripeUnitAmount: null, stripeCurrency: null, stripeInterval: null, status: 'no_stripe_price' };
+        }
+
+        try {
+          const price = await this.stripe.retrievePrice(plan.stripePriceId);
+          const stripeInterval = price.recurring?.interval ?? null;
+          const localInterval = billingIntervalToStripeRecurring(plan.billingInterval).interval;
+
+          let status: PlanIntegrityStatus = 'healthy';
+          if (!price.active) {
+            status = 'inactive_stripe_price';
+          } else if (price.unit_amount !== plan.priceCents) {
+            status = 'price_mismatch';
+          } else if ((price.currency ?? '').toLowerCase() !== plan.currency.toLowerCase()) {
+            status = 'currency_mismatch';
+          } else if (stripeInterval && stripeInterval !== localInterval) {
+            status = 'interval_mismatch';
+          }
+
+          return {
+            ...base,
+            stripeUnitAmount: price.unit_amount,
+            stripeCurrency: price.currency ?? null,
+            stripeInterval,
+            status,
+          };
+        } catch {
+          return { ...base, stripeUnitAmount: null, stripeCurrency: null, stripeInterval: null, status: 'fetch_error' };
+        }
+      }),
+    );
   }
 }
