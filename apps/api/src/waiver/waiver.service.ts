@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Role, WaiverAcceptanceMethod } from '@prisma/client';
+import { Prisma, Role, WaiverAcceptanceMethod } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type PublicWaiverDto = {
@@ -178,6 +178,62 @@ export class WaiverService {
     }
 
     return this.prisma.waiverAcceptance.create({
+      data: {
+        studioId: params.studioId,
+        userId: params.userId,
+        waiverDocumentId: doc.id,
+        waiverVersion: doc.version,
+        method: WaiverAcceptanceMethod.SELF,
+        ipAddress: params.ipAddress ?? null,
+        userAgent: params.userAgent ?? null,
+      },
+    });
+  }
+
+  /**
+   * Transactional variant of createSelfAcceptance for use inside a Prisma $transaction.
+   *
+   * Intentionally does NOT re-check isActive on the document: the caller already validated
+   * the waiverDocumentId against the active document before the transaction began. Removing
+   * the isActive re-query closes the TOCTOU window where an admin deactivating a waiver
+   * between validateRegistrationWaiver() and the transaction would cause a partial
+   * registration (user+membership committed but acceptance rolled back with 400).
+   *
+   * Consistency rule: if waiverDocumentId=X was valid at validation time, the acceptance
+   * for X is committed atomically with the user and membership, regardless of X's isActive
+   * state at transaction commit time.
+   */
+  async createSelfAcceptanceInTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      studioId: string;
+      userId: string;
+      waiverDocumentId: string;
+      ipAddress?: string;
+      userAgent?: string;
+    },
+  ): Promise<void> {
+    const doc = await tx.studioWaiverDocument.findFirst({
+      where: { id: params.waiverDocumentId, studioId: params.studioId },
+      select: { id: true, version: true },
+    });
+    if (!doc) {
+      // Should never happen: validated before the transaction started.
+      throw new BadRequestException('La Carta Responsiva no fue encontrada.');
+    }
+
+    const existing = await tx.waiverAcceptance.findUnique({
+      where: {
+        studioId_userId_waiverDocumentId: {
+          studioId: params.studioId,
+          userId: params.userId,
+          waiverDocumentId: doc.id,
+        },
+      },
+    });
+    if (existing) return;
+
+    await tx.waiverAcceptance.create({
       data: {
         studioId: params.studioId,
         userId: params.userId,

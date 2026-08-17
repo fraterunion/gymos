@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -34,6 +35,8 @@ export type AuthBundle = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -60,12 +63,18 @@ export class AuthService {
         throw new BadRequestException('Studio not found');
       }
 
+      // Validate the waiver BEFORE the transaction. If valid, we get back the specific
+      // waiverDocumentId that was active at validation time. We pass this exact ID into
+      // the transaction so createSelfAcceptanceInTx does not need to re-query isActive,
+      // eliminating the TOCTOU window between validation and acceptance creation.
       const waiver = await this.waiverService.validateRegistrationWaiver({
         studioId: studio.id,
         waiverDocumentId: dto.waiverDocumentId,
         waiverAccepted: dto.waiverAccepted,
       });
 
+      // Atomic registration: user + membership + waiver acceptance all commit together
+      // or all roll back. An email can never be consumed without a complete registration.
       const user = await this.prisma.$transaction(async (tx) => {
         const created = await tx.user.create({
           data: {
@@ -80,18 +89,27 @@ export class AuthService {
           create: { userId: created.id, studioId: studio.id, role: Role.MEMBER },
           update: { role: Role.MEMBER, deletedAt: null },
         });
+        if (waiver) {
+          await this.waiverService.createSelfAcceptanceInTx(tx, {
+            studioId: studio.id,
+            userId: created.id,
+            waiverDocumentId: waiver.waiverDocumentId,
+            ipAddress: clientMeta?.ipAddress,
+            userAgent: clientMeta?.userAgent,
+          });
+        }
         return created;
       });
 
-      if (waiver) {
-        await this.waiverService.createSelfAcceptance({
-          studioId: studio.id,
+      this.logger.log(
+        JSON.stringify({
+          event: 'registration_complete',
           userId: user.id,
-          waiverDocumentId: waiver.waiverDocumentId,
-          ipAddress: clientMeta?.ipAddress,
-          userAgent: clientMeta?.userAgent,
-        });
-      }
+          studioId: studio.id,
+          waiverAccepted: Boolean(waiver),
+          waiverDocumentId: waiver?.waiverDocumentId ?? null,
+        }),
+      );
 
       return this.issueAuthBundle(user.id, user.email);
     }

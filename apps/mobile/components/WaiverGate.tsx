@@ -21,6 +21,12 @@ import {
   type PublicWaiverDto,
   type WaiverStatusDto,
 } from '@/lib/api/waiverApi';
+import { TimeoutError } from '@/lib/api/errors';
+import { computeLoadedPhase, type GatePhase } from '@/lib/waiver/gateStateMachine';
+import {
+  logWaiverInvariantViolation,
+  logWaiverLoadFailed,
+} from '@/lib/waiver/waiverDiagnostics';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Space } from '@/constants/Theme';
 
@@ -36,31 +42,65 @@ type WaiverGateProps = {
   style?: ViewStyle;
 };
 
+/**
+ * WaiverGate enforces the waiver acceptance invariant before rendering children.
+ *
+ * A member can only be in one of these states:
+ *   LOADING      — fetching current status + document (shows spinner)
+ *   PASSED       — waiver not required or already accepted (renders children)
+ *   WAIVER_REQUIRED — document available, user can read and accept (form enabled)
+ *   SUBMITTING   — acceptance in flight (form disabled, spinner)
+ *   RECOVERABLE_ERROR — load failed or invariant violation (retry available)
+ *
+ * The state "required=true, accepted=false, waiver=null" is NOT representable.
+ * Any API response that would produce it is classified as RECOVERABLE_ERROR.
+ */
 export function WaiverGate({ studioId, studioSlug, children }: WaiverGateProps) {
   const C = getColors();
   const { primaryColor } = useBranding();
   const { logout } = useAuth();
-  const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState<WaiverStatusDto | null>(null);
-  const [waiver, setWaiver] = useState<PublicWaiverDto | null>(null);
+
+  const [phase, setPhase] = useState<GatePhase>({ tag: 'LOADING' });
   const [checked, setChecked] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setPhase({ tag: 'LOADING' });
+    setChecked(false);
+    setSubmitError(null);
     try {
       const [waiverStatus, publicWaiver] = await Promise.all([
         fetchMyWaiverStatus(studioId),
         fetchPublicWaiver(studioSlug),
       ]);
-      setStatus(waiverStatus);
-      setWaiver(publicWaiver);
+
+      const next = computeLoadedPhase(waiverStatus, publicWaiver);
+
+      if (next.tag === 'RECOVERABLE_ERROR') {
+        logWaiverInvariantViolation({
+          studioId,
+          studioSlug,
+          waiverStatusRequired: waiverStatus.required,
+          waiverStatusAccepted: waiverStatus.accepted,
+          publicWaiverNull: publicWaiver === null,
+        });
+      }
+
+      setPhase(next);
     } catch (e) {
-      setError(userFacingApiMessage(e, 'No pudimos cargar la Carta Responsiva.'));
-    } finally {
-      setLoading(false);
+      const isTimeout = e instanceof TimeoutError;
+      logWaiverLoadFailed({
+        studioId,
+        studioSlug,
+        errorName: e instanceof Error ? e.name : 'UnknownError',
+        errorMessage: e instanceof Error ? e.message : String(e),
+      });
+      setPhase({
+        tag: 'RECOVERABLE_ERROR',
+        message: isTimeout
+          ? 'La conexión tardó demasiado. Verifica tu red e inténtalo de nuevo.'
+          : userFacingApiMessage(e, 'No pudimos cargar la Carta Responsiva.'),
+      });
     }
   }, [studioId, studioSlug]);
 
@@ -68,21 +108,23 @@ export function WaiverGate({ studioId, studioSlug, children }: WaiverGateProps) 
     void load();
   }, [load]);
 
-  const handleAccept = async () => {
-    if (!waiver || !checked) return;
-    setSubmitting(true);
-    setError(null);
+  const handleAccept = useCallback(async () => {
+    if (phase.tag !== 'WAIVER_REQUIRED' || !checked) return;
+    const { waiver } = phase;
+    setPhase({ tag: 'SUBMITTING', waiver });
+    setSubmitError(null);
     try {
       await acceptWaiver(studioId, waiver.id);
+      // Re-fetch authoritative server state after acceptance.
       await load();
     } catch (e) {
-      setError(userFacingApiMessage(e, 'No pudimos registrar tu aceptación.'));
-    } finally {
-      setSubmitting(false);
+      setSubmitError(userFacingApiMessage(e, 'No pudimos registrar tu aceptación.'));
+      setPhase({ tag: 'WAIVER_REQUIRED', waiver });
     }
-  };
+  }, [phase, checked, studioId, load]);
 
-  if (loading) {
+  // ── LOADING ──────────────────────────────────────────────────────────────
+  if (phase.tag === 'LOADING') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         <ScreenLoader />
@@ -90,12 +132,66 @@ export function WaiverGate({ studioId, studioSlug, children }: WaiverGateProps) 
     );
   }
 
-  if (!status?.required || status.accepted) {
+  // ── PASSED ───────────────────────────────────────────────────────────────
+  if (phase.tag === 'PASSED') {
     return <>{children}</>;
   }
 
+  // ── RECOVERABLE ERROR ────────────────────────────────────────────────────
+  if (phase.tag === 'RECOVERABLE_ERROR') {
+    return (
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: C.bg, paddingHorizontal: Space.screenH }}
+        edges={['top', 'left', 'right', 'bottom']}
+      >
+        <View style={{ flex: 1, justifyContent: 'center', gap: 24 }}>
+          <Text
+            style={{
+              fontSize: 20,
+              fontWeight: '700',
+              color: C.text,
+              textAlign: 'center',
+              lineHeight: 28,
+            }}
+          >
+            No pudimos verificar tu carta responsiva
+          </Text>
+          <Text
+            style={{
+              fontSize: 15,
+              color: C.textSub,
+              textAlign: 'center',
+              lineHeight: 22,
+            }}
+          >
+            {phase.message}
+          </Text>
+          <BrandButton
+            label="Reintentar"
+            accentColor={primaryColor}
+            onPress={() => void load()}
+          />
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void logout()}
+            style={{ alignItems: 'center', paddingVertical: 12 }}
+          >
+            <Text style={{ fontSize: 15, color: C.textSub }}>Cerrar sesión</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── WAIVER_REQUIRED or SUBMITTING ─────────────────────────────────────────
+  const isSubmitting = phase.tag === 'SUBMITTING';
+  const waiver = phase.waiver;
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: C.bg }}
+      edges={['top', 'left', 'right', 'bottom']}
+    >
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: Space.screenH,
@@ -145,7 +241,7 @@ export function WaiverGate({ studioId, studioSlug, children }: WaiverGateProps) 
                 lineHeight: 22,
               }}
             >
-              {waiver?.bodyMarkdown ?? 'No hay una Carta Responsiva activa disponible.'}
+              {waiver.bodyMarkdown}
             </Text>
           </ScrollView>
         </View>
@@ -153,12 +249,14 @@ export function WaiverGate({ studioId, studioSlug, children }: WaiverGateProps) 
         <Pressable
           accessibilityRole="checkbox"
           accessibilityState={{ checked }}
+          disabled={isSubmitting}
           onPress={() => setChecked((v) => !v)}
           style={{
             flexDirection: 'row',
             alignItems: 'flex-start',
             gap: 12,
             marginBottom: 20,
+            opacity: isSubmitting ? 0.5 : 1,
           }}
         >
           <View
@@ -181,17 +279,19 @@ export function WaiverGate({ studioId, studioSlug, children }: WaiverGateProps) 
           </Text>
         </Pressable>
 
-        {error ? (
-          <Text style={{ fontSize: 14, color: C.negative, marginBottom: 16, lineHeight: 20 }}>
-            {error}
+        {submitError ? (
+          <Text
+            style={{ fontSize: 14, color: C.negative, marginBottom: 16, lineHeight: 20 }}
+          >
+            {submitError}
           </Text>
         ) : null}
 
         <BrandButton
-          label={WAIVER_ACCEPT_BUTTON}
+          label={isSubmitting ? 'Registrando…' : WAIVER_ACCEPT_BUTTON}
           accentColor={primaryColor}
-          loading={submitting}
-          disabled={!checked || !waiver}
+          loading={isSubmitting}
+          disabled={!checked || isSubmitting}
           onPress={() => void handleAccept()}
         />
 
@@ -206,6 +306,8 @@ export function WaiverGate({ studioId, studioSlug, children }: WaiverGateProps) 
     </SafeAreaView>
   );
 }
+
+// ─── WaiverRegisterSection ──────────────────────────────────────────────────
 
 type WaiverRegisterSectionProps = {
   waiver: PublicWaiverDto | null;

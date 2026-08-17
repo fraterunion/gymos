@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { fetchPublicWaiver, type PublicWaiverDto } from '@/lib/api/waiverApi';
 import { getStudioSlug } from '@/lib/env';
+import { logRegisterWaiverLoadFailed } from '@/lib/waiver/waiverDiagnostics';
 import { getColors, Space } from '@/constants/Theme';
 
 function searchParam(value: string | string[] | undefined): string | undefined {
@@ -24,6 +25,22 @@ function searchParam(value: string | string[] | undefined): string | undefined {
 }
 
 const PASSWORDS_MISMATCH = 'Las contraseñas no coinciden.';
+
+/**
+ * Explicit states for the register-screen waiver discovery.
+ *
+ * LOADING  — fetch in flight; do not allow form submission
+ * NONE     — server confirmed no active waiver; proceed without it
+ * LOADED   — active waiver document available; must be accepted before submit
+ * ERROR    — fetch failed; do not allow submission until user retries
+ *
+ * "no waiver" and "failed to determine" are deliberately distinct states.
+ */
+type WaiverLoadState =
+  | { phase: 'LOADING' }
+  | { phase: 'NONE' }
+  | { phase: 'LOADED'; waiver: PublicWaiverDto }
+  | { phase: 'ERROR' };
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -49,25 +66,38 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const [confirmTouched, setConfirmTouched] = useState(false);
-  const [waiver, setWaiver] = useState<PublicWaiverDto | null>(null);
-  const [waiverLoading, setWaiverLoading] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
+  const [waiverLoadState, setWaiverLoadState] = useState<WaiverLoadState>({ phase: 'LOADING' });
 
   const studioSlug = getStudioSlug();
 
-  useEffect(() => {
+  const loadWaiver = useCallback(async () => {
     if (!studioSlug) {
-      setWaiver(null);
+      setWaiverLoadState({ phase: 'NONE' });
       return;
     }
-    setWaiverLoading(true);
-    void fetchPublicWaiver(studioSlug)
-      .then((doc) => setWaiver(doc))
-      .catch(() => setWaiver(null))
-      .finally(() => setWaiverLoading(false));
+    setWaiverLoadState({ phase: 'LOADING' });
+    setWaiverAccepted(false);
+    try {
+      const doc = await fetchPublicWaiver(studioSlug);
+      setWaiverLoadState(doc ? { phase: 'LOADED', waiver: doc } : { phase: 'NONE' });
+    } catch (e) {
+      logRegisterWaiverLoadFailed({
+        studioSlug,
+        errorName: e instanceof Error ? e.name : 'UnknownError',
+        errorMessage: e instanceof Error ? e.message : String(e),
+      });
+      setWaiverLoadState({ phase: 'ERROR' });
+    }
   }, [studioSlug]);
 
-  const waiverRequired = Boolean(studioSlug && waiver);
+  useEffect(() => {
+    void loadWaiver();
+  }, [loadWaiver]);
+
+  const waiverRequired = waiverLoadState.phase === 'LOADED';
+  const waiverBlocked =
+    waiverLoadState.phase === 'LOADING' || waiverLoadState.phase === 'ERROR';
 
   const passwordsMismatch = useMemo(
     () => confirmPassword.length > 0 && password !== confirmPassword,
@@ -82,6 +112,7 @@ export default function RegisterScreen() {
 
   const canSubmit =
     !busy &&
+    !waiverBlocked &&
     firstName.trim().length > 0 &&
     lastName.trim().length > 0 &&
     email.trim().length > 0 &&
@@ -126,10 +157,17 @@ export default function RegisterScreen() {
       setLocalError(PASSWORDS_MISMATCH);
       return;
     }
-    if (waiverRequired && (!waiverAccepted || !waiver)) {
+    // Guard: registration cannot proceed until waiver status is known.
+    if (waiverBlocked) {
+      setLocalError('Cargando la carta responsiva, espera un momento.');
+      return;
+    }
+    if (waiverRequired && !waiverAccepted) {
       setLocalError('Debes aceptar la Carta Responsiva para crear tu cuenta.');
       return;
     }
+
+    const waiver = waiverLoadState.phase === 'LOADED' ? waiverLoadState.waiver : null;
 
     try {
       await register({
@@ -149,6 +187,11 @@ export default function RegisterScreen() {
 
   const combinedError =
     localError && localError !== PASSWORDS_MISMATCH ? localError : error;
+
+  // Derive display props from state for child components
+  const waiverForSection =
+    waiverLoadState.phase === 'LOADED' ? waiverLoadState.waiver : null;
+  const waiverLoading = waiverLoadState.phase === 'LOADING';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
@@ -255,11 +298,26 @@ export default function RegisterScreen() {
             />
 
             <WaiverRegisterSection
-              waiver={waiver}
+              waiver={waiverForSection}
               checked={waiverAccepted}
               onCheckedChange={setWaiverAccepted}
               loading={waiverLoading}
             />
+
+            {/* Explicit error + retry when waiver discovery fails */}
+            {waiverLoadState.phase === 'ERROR' ? (
+              <View style={{ marginBottom: 16, gap: 8 }}>
+                <Text style={{ fontSize: 14, color: C.negative, lineHeight: 20, textAlign: 'center' }}>
+                  No pudimos cargar la carta responsiva. Verifica tu conexión.
+                </Text>
+                <BrandButton
+                  label="Reintentar"
+                  variant="ghost"
+                  accentColor={primaryColor}
+                  onPress={() => void loadWaiver()}
+                />
+              </View>
+            ) : null}
 
             {combinedError ? (
               <Text

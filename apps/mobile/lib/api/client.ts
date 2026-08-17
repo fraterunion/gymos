@@ -1,5 +1,5 @@
 import { getApiV1BaseUrl } from '@/lib/env';
-import { ApiError } from '@/lib/api/errors';
+import { ApiError, TimeoutError } from '@/lib/api/errors';
 import {
   clearRefreshTokenFromStore,
   emitSessionInvalidated,
@@ -14,6 +14,10 @@ type RequestOptions = RequestInit & {
   /** Internal: avoid infinite 401 → refresh loops. */
   _didRefresh?: boolean;
 };
+
+/** Default timeout for all API requests. Prevents infinite loading when the server
+ *  is unreachable or stalls mid-response. */
+const REQUEST_TIMEOUT_MS = 15_000;
 
 let refreshInFlight: Promise<boolean> | null = null;
 
@@ -76,32 +80,70 @@ export async function apiRequest<T>(path: string, init: RequestOptions = {}): Pr
     }
   }
 
-  const res = await fetch(url, { ...init, headers });
+  // Bail immediately if the caller already signalled an abort before we started.
+  const callerSignal = init.signal;
+  if (callerSignal?.aborted) {
+    throw new ApiError('Request aborted', 0);
+  }
 
-  if (res.status === 401 && !init.skipAuth && !init._didRefresh) {
-    const refreshed = await refreshAccessTokenSingleFlight();
-    if (refreshed) {
-      return apiRequest<T>(path, { ...init, _didRefresh: true });
+  // Create a per-request AbortController for the timeout.
+  // We forward any abort from the caller's signal into ours so both can cancel the fetch.
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
+
+  function forwardCallerAbort() {
+    // Propagate the caller's abort reason into our controller.
+    timeoutController.abort(callerSignal?.reason);
+  }
+  if (callerSignal) {
+    callerSignal.addEventListener('abort', forwardCallerAbort);
+  }
+
+  let timedOut = false;
+  try {
+    const res = await fetch(url, { ...init, headers, signal: timeoutController.signal });
+
+    if (res.status === 401 && !init.skipAuth && !init._didRefresh) {
+      const refreshed = await refreshAccessTokenSingleFlight();
+      if (refreshed) {
+        return apiRequest<T>(path, { ...init, _didRefresh: true });
+      }
+      await clearSessionAfterAuthFailure();
+      throw new ApiError('Session expired', 401, await safeJson(res));
     }
-    await clearSessionAfterAuthFailure();
-    throw new ApiError('Session expired', 401, await safeJson(res));
-  }
 
-  if (res.status === 401 && init._didRefresh) {
-    await clearSessionAfterAuthFailure();
-    throw new ApiError('Session expired', 401, await safeJson(res));
-  }
+    if (res.status === 401 && init._didRefresh) {
+      await clearSessionAfterAuthFailure();
+      throw new ApiError('Session expired', 401, await safeJson(res));
+    }
 
-  if (res.status === 204) {
-    return undefined as T;
-  }
+    if (res.status === 204) {
+      return undefined as T;
+    }
 
-  const json = await safeJson(res);
-  if (!res.ok) {
-    const msg = formatErrorMessage(json, res.statusText);
-    throw new ApiError(msg || 'Request failed', res.status, json);
+    const json = await safeJson(res);
+    if (!res.ok) {
+      const msg = formatErrorMessage(json, res.statusText);
+      throw new ApiError(msg || 'Request failed', res.status, json);
+    }
+    return json as T;
+  } catch (e) {
+    // Distinguish our timeout from a caller-initiated abort:
+    // if the controller was aborted but the caller did NOT abort, it was our timer.
+    const isAbortError = e instanceof Error && e.name === 'AbortError';
+    if (isAbortError && !callerSignal?.aborted) {
+      timedOut = true;
+      throw new TimeoutError();
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (callerSignal) {
+      callerSignal.removeEventListener('abort', forwardCallerAbort);
+    }
+    // Suppress the unused-variable warning; timedOut is read by type-checkers.
+    void timedOut;
   }
-  return json as T;
 }
 
 function formatErrorMessage(json: unknown, fallback: string): string {

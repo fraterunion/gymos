@@ -8,3 +8,13 @@ export class ApiError extends Error {
     this.name = 'ApiError';
   }
 }
+
+export class TimeoutError extends ApiError {
+  constructor() {
+    super(
+      'La solicitud tardó demasiado. Verifica tu conexión e inténtalo de nuevo.',
+      0,
+    );
+    this.name = 'TimeoutError';
+  }
+}
