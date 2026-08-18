@@ -251,6 +251,12 @@ export class StripeWebhookService {
 
       const plan = await tx.membershipPlan.findFirst({
         where: { id: membershipPlanId, studioId, deletedAt: null },
+        select: {
+          id: true,
+          name: true,
+          billingInterval: true,
+          entitlementDays: true,
+        },
       });
       if (!plan) {
         this.logger.warn(
@@ -258,6 +264,14 @@ export class StripeWebhookService {
         );
         return null;
       }
+
+      // For fixed-duration plans (entitlementDays set), compute the GymOS entitlement end
+      // from the Stripe period start. This is set ONLY on CREATE and never overwritten on
+      // subsequent webhooks — billing renewal and access window are deliberately decoupled.
+      const entitlementEndsAt =
+        plan.entitlementDays != null && currentPeriodStart
+          ? new Date(currentPeriodStart.getTime() + plan.entitlementDays * 86_400_000)
+          : undefined;
 
       // Guard against violating the partial unique index on (studio_id, user_id) WHERE status='ACTIVE'.
       // Only the CREATE branch of upsert can conflict; the UPDATE branch targets the existing row by
@@ -278,6 +292,7 @@ export class StripeWebhookService {
               incomingMembershipPlanId: membershipPlanId,
               incomingPendingMembershipPlanId: pendingMembershipPlanId,
               incomingPeriodData: periodData,
+              entitlementEndsAt,
               studioId,
               userId,
               stripeEventType,
@@ -297,6 +312,8 @@ export class StripeWebhookService {
           stripeSubscriptionId: sub.id,
           cancelAtPeriodEnd: sub.cancel_at_period_end,
           ...periodData,
+          // entitlementEndsAt is set only at creation — decoupled from Stripe period updates
+          ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
         },
         update: {
           status,
@@ -304,6 +321,7 @@ export class StripeWebhookService {
           membershipPlanId,
           pendingMembershipPlanId,
           ...periodData,
+          // entitlementEndsAt deliberately omitted from update — never overwritten by Stripe
         },
       });
 
@@ -374,6 +392,7 @@ export class StripeWebhookService {
       incomingMembershipPlanId: string;
       incomingPendingMembershipPlanId: string | null;
       incomingPeriodData: { currentPeriodStart?: Date; currentPeriodEnd?: Date };
+      entitlementEndsAt?: Date;
       studioId: string;
       userId: string;
       stripeEventType: string;
@@ -413,6 +432,7 @@ export class StripeWebhookService {
           stripeSubscriptionId: incomingSub.id,
           cancelAtPeriodEnd: incomingSub.cancel_at_period_end,
           ...params.incomingPeriodData,
+          ...(params.entitlementEndsAt !== undefined ? { entitlementEndsAt: params.entitlementEndsAt } : {}),
         },
       });
     }

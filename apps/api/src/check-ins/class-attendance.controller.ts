@@ -35,6 +35,8 @@ export class ClassAttendanceController {
       classId,
       dto.memberId,
       actorUserId,
+      dto.overrideEntitlement,
+      dto.overrideReason,
     );
   }
 }

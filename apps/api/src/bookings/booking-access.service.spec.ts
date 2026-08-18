@@ -1,6 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { ClassCategory, Role } from '@prisma/client';
-import { BookingAccessService } from './booking-access.service';
+import { BookingAccessService, CLASS_TIME_WINDOW_DENIED_MESSAGE } from './booking-access.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE } from '../membership-plans/membership-plan-class-access.utils';
 
@@ -23,10 +23,20 @@ describe('BookingAccessService', () => {
       allowedCategories: ClassCategory[];
       classCredits: number | null;
       allowedTemplateIds: string[];
+      entitlementEndsAt?: Date | null;
     } | null;
     templateCategory?: ClassCategory | null;
+    templateTimeWindow?: { start: string; end: string } | null;
+    /** Whether the class template is in the DayPassClassAccess allowlist. Defaults to !!dayPass. */
+    dayPassClassEligible?: boolean;
+    /** Whether the member has an active Day Pass for the booking date. */
     dayPass?: boolean;
   }) {
+    const isEligible =
+      overrides.dayPassClassEligible !== undefined
+        ? overrides.dayPassClassEligible
+        : !!overrides.dayPass;
+
     return {
       subscription: {
         findFirst: jest.fn().mockResolvedValue(
@@ -34,6 +44,7 @@ describe('BookingAccessService', () => {
             ? {
                 currentPeriodStart: new Date('2026-08-01T00:00:00.000Z'),
                 currentPeriodEnd: new Date('2026-09-01T00:00:00.000Z'),
+                entitlementEndsAt: overrides.sub.entitlementEndsAt ?? null,
                 membershipPlan: {
                   allClassesAccess: overrides.sub.allClassesAccess,
                   allowedCategories: overrides.sub.allowedCategories,
@@ -48,8 +59,17 @@ describe('BookingAccessService', () => {
       },
       classTemplate: {
         findUnique: jest.fn().mockResolvedValue({
-          category: overrides.templateCategory !== undefined ? overrides.templateCategory : ClassCategory.STRENGTH,
+          category:
+            overrides.templateCategory !== undefined
+              ? overrides.templateCategory
+              : ClassCategory.STRENGTH,
+          isOpenGymSlot: false,
+          accessWindowStart: overrides.templateTimeWindow?.start ?? null,
+          accessWindowEnd: overrides.templateTimeWindow?.end ?? null,
         }),
+      },
+      dayPassClassAccess: {
+        findFirst: jest.fn().mockResolvedValue(isEligible ? { id: 'dpa-1' } : null),
       },
       dayPass: {
         findFirst: jest.fn().mockResolvedValue(overrides.dayPass ? { id: 'pass-1' } : null),
@@ -58,7 +78,7 @@ describe('BookingAccessService', () => {
   }
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('allows staff without checking membership', async () => {
@@ -300,4 +320,135 @@ describe('BookingAccessService', () => {
       expect(tx.subscription.findFirst).not.toHaveBeenCalled();
     },
   );
+
+  describe('time-window enforcement', () => {
+    // Use Etc/GMT+6 (UTC-6, no DST) for stable timezone arithmetic.
+    // 10:00 local = 16:00 UTC, 07:00 local = 13:00 UTC, 17:00 local = 23:00 UTC.
+    const withinWindow = new Date('2026-08-10T16:00:00.000Z'); // 10:00 local
+    const beforeWindow = new Date('2026-08-10T13:00:00.000Z'); // 07:00 local
+    const atWindowEnd  = new Date('2026-08-10T23:00:00.000Z'); // 17:00 local (closed, end is exclusive)
+
+    const openGymSub = {
+      allClassesAccess: false,
+      allowedCategories: [] as ClassCategory[],
+      classCredits: null,
+      allowedTemplateIds: ['tpl-open-gym'],
+    };
+
+    it('allows booking within time window', async () => {
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, withinWindow, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).resolves.toBeUndefined();
+    });
+
+    it('denies booking before time window opens', async () => {
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, beforeWindow, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).rejects.toThrow(CLASS_TIME_WINDOW_DENIED_MESSAGE);
+    });
+
+    it('denies booking at the exact window end time (end is exclusive)', async () => {
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, atWindowEnd, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).rejects.toThrow(CLASS_TIME_WINDOW_DENIED_MESSAGE);
+    });
+
+    it('does not enforce time window when template has none', async () => {
+      const tx = makeTx({
+        sub: { allClassesAccess: true, allowedCategories: [], classCredits: null, allowedTemplateIds: [] },
+      });
+      // classStartsAt is at 18:00 UTC — any time, no window set → no enforcement
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'Etc/GMT+6', classTemplateId, scheduledClassId),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('Day Pass allowlist (DayPassClassAccess)', () => {
+    it('Day Pass cannot book a class not in the allowlist (e.g. Booty Lab)', async () => {
+      const tx = makeTx({ sub: null, dayPass: true, dayPassClassEligible: false });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', 'tpl-booty-lab', scheduledClassId),
+      ).rejects.toThrow('Active membership or Day Pass required to book this class.');
+      expect(tx.dayPassClassAccess.findFirst).toHaveBeenCalledWith({
+        where: { studioId, classTemplateId: 'tpl-booty-lab' },
+        select: { id: true },
+      });
+      expect(tx.dayPass.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('Day Pass can book a class in the allowlist', async () => {
+      const tx = makeTx({ sub: null, dayPass: true, dayPassClassEligible: true });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+      ).resolves.toBeUndefined();
+    });
+
+    it('Day Pass allowlist check runs even when subscription is restricted', async () => {
+      const tx = makeTx({
+        sub: { allClassesAccess: false, allowedCategories: [], classCredits: null, allowedTemplateIds: ['tpl-other'] },
+        dayPass: true,
+        dayPassClassEligible: true,
+      });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+      ).resolves.toBeUndefined();
+      expect(tx.dayPassClassAccess.findFirst).toHaveBeenCalled();
+    });
+  });
+
+  describe('fixed-duration entitlement (entitlementEndsAt)', () => {
+    it('uses entitlementEndsAt as effective period end for credit checks', async () => {
+      const entitlementEndsAt = new Date('2026-10-02T00:00:00.000Z');
+      const tx = makeTx({
+        sub: {
+          allClassesAccess: true,
+          allowedCategories: [],
+          classCredits: 4,
+          allowedTemplateIds: [],
+          entitlementEndsAt,
+        },
+      });
+      await service.assertAccess(
+        tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId,
+      );
+      expect(membershipUsage.assertCreditAvailableForClass).toHaveBeenCalledWith(
+        tx,
+        studioId,
+        userId,
+        scheduledClassId,
+        classStartsAt,
+        expect.objectContaining({ currentPeriodEnd: entitlementEndsAt }),
+        { errorType: 'forbidden' },
+      );
+    });
+
+    it('falls back to currentPeriodEnd when entitlementEndsAt is null', async () => {
+      const currentPeriodEnd = new Date('2026-09-01T00:00:00.000Z');
+      const tx = makeTx({
+        sub: {
+          allClassesAccess: true,
+          allowedCategories: [],
+          classCredits: 4,
+          allowedTemplateIds: [],
+          entitlementEndsAt: null,
+        },
+      });
+      await service.assertAccess(
+        tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId,
+      );
+      expect(membershipUsage.assertCreditAvailableForClass).toHaveBeenCalledWith(
+        tx,
+        studioId,
+        userId,
+        scheduledClassId,
+        classStartsAt,
+        expect.objectContaining({ currentPeriodEnd }),
+        { errorType: 'forbidden' },
+      );
+    });
+  });
 });

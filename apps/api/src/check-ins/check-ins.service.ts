@@ -25,6 +25,12 @@ import { MANUAL_ATTENDANCE_ROLES } from '../auth/desk-roles';
 import { acquireMembershipUsageAdvisoryLock } from '../membership-usage/membership-usage-advisory-lock';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { assertEligibleForCheckIn } from './check-in-eligibility';
+import {
+  isClassIncludedInPlan,
+  MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
+} from '../membership-plans/membership-plan-class-access.utils';
+
+const ENTITLEMENT_OVERRIDE_ROLES: ReadonlySet<Role> = new Set([Role.ADMIN, Role.OWNER]);
 
 const QR_TTL_SECONDS = 5 * 60;
 
@@ -355,6 +361,8 @@ export class CheckInsService {
     scheduledClassId: string,
     memberId: string,
     actorUserId: string,
+    overrideEntitlement?: boolean,
+    overrideReason?: string,
   ): Promise<AttendanceSummary> {
     this.logger.log(
       JSON.stringify({
@@ -373,6 +381,7 @@ export class CheckInsService {
         this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.lock' }));
         await acquireMembershipUsageAdvisoryLock(tx, studioId, memberId);
 
+        const now = new Date();
         const [membership, scheduledClass, activeSubscription] = await Promise.all([
           tx.studioMembership.findFirst({
             where: {
@@ -387,17 +396,31 @@ export class CheckInsService {
           }),
           tx.scheduledClass.findFirst({
             where: { id: scheduledClassId, studioId },
+            include: { classTemplate: { select: { id: true, name: true, category: true } } },
           }),
           tx.subscription.findFirst({
             where: {
               studioId,
               userId: memberId,
-              status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+              OR: [
+                { status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] } },
+                { status: SubscriptionStatus.CANCELED, entitlementEndsAt: { gt: now } },
+              ],
             },
             select: {
               currentPeriodStart: true,
               currentPeriodEnd: true,
-              membershipPlan: { select: { classCredits: true } },
+              entitlementEndsAt: true,
+              membershipPlan: {
+                select: {
+                  id: true,
+                  name: true,
+                  classCredits: true,
+                  allClassesAccess: true,
+                  allowedCategories: true,
+                  classTemplateAccess: { select: { classTemplateId: true } },
+                },
+              },
             },
           }),
         ]);
@@ -449,14 +472,78 @@ export class CheckInsService {
           throw new ConflictException('Attendance already registered.');
         }
 
+        // Class template entitlement check — must happen before credit check.
+        // Staff cannot silently book an incompatible plan member into a restricted class.
+        const { allClassesAccess, allowedCategories, classTemplateAccess, id: planId, name: planName } =
+          activeSubscription.membershipPlan;
+        const allowedTemplateIds = classTemplateAccess.map((a) => a.classTemplateId);
+
+        const hasTemplateAccess = isClassIncludedInPlan({
+          allClassesAccess,
+          allowedTemplateIds,
+          allowedCategories,
+          classTemplateId: scheduledClass.classTemplate.id,
+          templateCategory: scheduledClass.classTemplate.category,
+        });
+
+        if (!hasTemplateAccess) {
+          if (!overrideEntitlement) {
+            throw new ForbiddenException(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE);
+          }
+
+          // Override: ADMIN or OWNER only, mandatory reason, audit log.
+          const actor = await tx.studioMembership.findFirst({
+            where: { studioId, userId: actorUserId, deletedAt: null },
+          });
+          if (!actor || !ENTITLEMENT_OVERRIDE_ROLES.has(actor.role)) {
+            throw new ForbiddenException('Entitlement override requires ADMIN or OWNER role.');
+          }
+          if (!overrideReason?.trim()) {
+            throw new BadRequestException('overrideReason is required when overriding class entitlement.');
+          }
+
+          await tx.auditLog.create({
+            data: {
+              studioId,
+              actorUserId,
+              action: 'ENTITLEMENT_OVERRIDE_MANUAL_ATTENDANCE',
+              targetUserId: memberId,
+              entityType: 'ScheduledClass',
+              entityId: scheduledClassId,
+              metadata: {
+                reason: overrideReason,
+                classTemplateId: scheduledClass.classTemplate.id,
+                classTemplateName: scheduledClass.classTemplate.name,
+                membershipPlanId: planId,
+                membershipPlanName: planName,
+              },
+            },
+          });
+
+          this.logger.log(
+            JSON.stringify({
+              event: 'registerManualClassAttendance.entitlementOverride',
+              actorUserId,
+              memberId,
+              scheduledClassId,
+              membershipPlanId: planId,
+            }),
+          );
+        }
+
         this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.assertCredits' }));
+        // Use entitlementEndsAt as the effective period end for fixed-duration plans.
+        const subForCredits = {
+          ...activeSubscription,
+          currentPeriodEnd: activeSubscription.entitlementEndsAt ?? activeSubscription.currentPeriodEnd,
+        };
         await this.membershipUsage.assertCreditAvailableForClass(
           tx,
           studioId,
           memberId,
           scheduledClassId,
           scheduledClass.startsAt,
-          activeSubscription,
+          subForCredits,
           { errorType: 'bad_request' },
         );
 

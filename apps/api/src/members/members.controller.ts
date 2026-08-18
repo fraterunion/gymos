@@ -138,8 +138,16 @@ export class MembersController {
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
     @Body() dto: StaffBookingDto,
+    @CurrentUser('sub') actorUserId: string,
   ) {
-    return this.membersService.staffCreateBooking(studioId, userId, dto.scheduledClassId);
+    return this.membersService.staffCreateBooking(
+      studioId,
+      userId,
+      dto.scheduledClassId,
+      actorUserId,
+      dto.overrideEntitlement,
+      dto.overrideReason,
+    );
   }
 
   @Delete(':userId/bookings/:bookingId')

@@ -92,6 +92,26 @@ export function addDaysToDateKey(dateKey: string, deltaDays: number): string {
 }
 
 /**
+ * Returns the studio-local time as an 'HH:mm' string (24-hour, zero-padded) for
+ * a given UTC instant. Used to enforce time-window restrictions (e.g., Open Gym 10:00–17:00).
+ *
+ * @param date     - UTC instant (e.g., a class startsAt)
+ * @param timezone - IANA timezone string from studio.timezone
+ */
+export function getStudioLocalHHmm(date: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const h = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  const m = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  return `${h}:${m}`;
+}
+
+/**
  * Converts a studio-local 'YYYY-MM-DD' + 'HH:MM' pair to a UTC Date.
  *
  * Builds on studioLocalDateKeyToUtcAnchor (local midnight → UTC), then adds the

@@ -1,4 +1,4 @@
-import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { GYMOS_CUID_PATTERN } from '../../common/validation/gymos-id.validation';
 
 /** Body for walk-in attendance — `memberId` is the member's User.id (Prisma cuid). */
@@ -10,4 +10,13 @@ export class ManualClassAttendanceDto {
     message: 'memberId must be a valid user id',
   })
   memberId!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  overrideEntitlement?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  overrideReason?: string;
 }

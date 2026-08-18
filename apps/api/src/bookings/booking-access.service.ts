@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import {
   getStudioLocalDateKey,
+  getStudioLocalHHmm,
   studioLocalDateKeyToUtcAnchor,
 } from '../common/date/studio-local-date';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
@@ -25,16 +26,21 @@ const bypassRoles: ReadonlySet<Role> = new Set([
   Role.OWNER,
 ]);
 
+const ACTIVE_SUBSCRIPTION_STATUSES = [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING];
+
+export const CLASS_TIME_WINDOW_DENIED_MESSAGE =
+  'This class is not available during this time. Please check the allowed access hours.';
+
 /**
  * Shared booking access guard used by BookingsService (direct booking) and
- * WaitlistService (waitlist join + promotion). A single canonical path enforcing
- * membership class access (template + legacy category), class credit limits, and
- * Day Pass access.
+ * WaitlistService (waitlist join + promotion). Single canonical path enforcing:
+ *   1. Role bypass (STAFF/INSTRUCTOR/ADMIN/OWNER)
+ *   2. Time-window enforcement for restricted templates (e.g., Open Gym 10:00–17:00)
+ *   3. Subscription class-template access (deny-by-default; allClassesAccess=false)
+ *   4. Credit limits (classCredits; uses entitlementEndsAt for fixed-duration plans)
+ *   5. Day Pass fallback (explicit allowlist; Booty Lab is NOT in it)
  *
- * Staff manual attendance bypasses this service entirely.
- *
- * Receives a Prisma transaction client so callers control the transaction
- * boundary — no PrismaService injection needed here.
+ * Staff manual attendance uses a separate entitlement check with explicit override.
  */
 @Injectable()
 export class BookingAccessService {
@@ -54,16 +60,43 @@ export class BookingAccessService {
       return;
     }
 
+    // Always fetch template metadata — needed for time-window and category checks.
+    const template = await tx.classTemplate.findUnique({
+      where: { id: classTemplateId },
+      select: { category: true, isOpenGymSlot: true, accessWindowStart: true, accessWindowEnd: true },
+    });
+
+    // Time-window enforcement: applies to all members, before subscription and Day Pass checks.
+    // No role can bypass this here — bypassRoles returned early above.
+    if (template?.accessWindowStart && template.accessWindowEnd) {
+      const localHHmm = getStudioLocalHHmm(classStartsAt, studioTimezone);
+      if (localHHmm < template.accessWindowStart || localHHmm >= template.accessWindowEnd) {
+        throw new ForbiddenException(CLASS_TIME_WINDOW_DENIED_MESSAGE);
+      }
+    }
+
+    const now = new Date();
+
+    // Find the member's effective subscription: active/trialing, OR cancelled with a
+    // valid GymOS entitlement window (fixed-duration products like Booty Lab 45-day).
     const sub = await tx.subscription.findFirst({
       where: {
         userId,
         studioId,
-        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+        OR: [
+          { status: { in: ACTIVE_SUBSCRIPTION_STATUSES } },
+          {
+            status: SubscriptionStatus.CANCELED,
+            entitlementEndsAt: { gt: now },
+          },
+        ],
       },
       orderBy: { createdAt: 'desc' },
       select: {
+        status: true,
         currentPeriodStart: true,
         currentPeriodEnd: true,
+        entitlementEndsAt: true,
         membershipPlan: {
           select: {
             allClassesAccess: true,
@@ -85,11 +118,6 @@ export class BookingAccessService {
         sub.membershipPlan;
       const allowedTemplateIds = classTemplateAccess.map((row) => row.classTemplateId);
 
-      const template = await tx.classTemplate.findUnique({
-        where: { id: classTemplateId },
-        select: { category: true },
-      });
-
       if (
         !isClassIncludedInPlan({
           allClassesAccess,
@@ -103,7 +131,15 @@ export class BookingAccessService {
       }
 
       if (!subscriptionRestricted && classCredits !== null) {
-        if (sub.currentPeriodStart && sub.currentPeriodEnd) {
+        // For fixed-duration plans, entitlementEndsAt is the actual access window end.
+        // Use it as the effective period end so credits count across the full entitlement.
+        const effectivePeriodEnd = sub.entitlementEndsAt ?? sub.currentPeriodEnd;
+        const effectiveSub = {
+          ...sub,
+          currentPeriodEnd: effectivePeriodEnd,
+        };
+
+        if (effectiveSub.currentPeriodStart && effectiveSub.currentPeriodEnd) {
           try {
             await this.membershipUsage.assertCreditAvailableForClass(
               tx,
@@ -111,7 +147,7 @@ export class BookingAccessService {
               userId,
               scheduledClassId,
               classStartsAt,
-              sub,
+              effectiveSub,
               { errorType: 'forbidden' },
             );
           } catch (e) {
@@ -129,18 +165,28 @@ export class BookingAccessService {
       }
     }
 
-    const dateKey = getStudioLocalDateKey(classStartsAt, studioTimezone);
-    const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, studioTimezone);
-
-    const pass = await tx.dayPass.findFirst({
-      where: {
-        studioId,
-        userId,
-        status: DayPassStatus.ACTIVE,
-        validForDate,
-      },
+    // Day Pass fallback.
+    // The class template must be in the explicit DayPassClassAccess allowlist.
+    // Booty Lab and Open Gym sessions are NOT in this list → Day Pass cannot book them.
+    const dayPassEligible = await tx.dayPassClassAccess.findFirst({
+      where: { studioId, classTemplateId },
+      select: { id: true },
     });
-    if (pass) return;
+
+    if (dayPassEligible) {
+      const dateKey = getStudioLocalDateKey(classStartsAt, studioTimezone);
+      const validForDate = studioLocalDateKeyToUtcAnchor(dateKey, studioTimezone);
+
+      const pass = await tx.dayPass.findFirst({
+        where: {
+          studioId,
+          userId,
+          status: DayPassStatus.ACTIVE,
+          validForDate,
+        },
+      });
+      if (pass) return;
+    }
 
     if (subscriptionRestricted) {
       throw new ForbiddenException(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE);

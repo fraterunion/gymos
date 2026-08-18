@@ -13,6 +13,7 @@ import {
   ClassStatus,
   PaymentStatus,
   Prisma,
+  Role,
   SubscriptionStatus,
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
@@ -22,10 +23,16 @@ import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
+import {
+  isClassIncludedInPlan,
+  MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
+} from '../membership-plans/membership-plan-class-access.utils';
 import type { ListMembersQueryDto } from './dto/list-members-query.dto';
 import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
 import type { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
+
+const ENTITLEMENT_OVERRIDE_ROLES: ReadonlySet<Role> = new Set([Role.ADMIN, Role.OWNER]);
 
 const publicUserSelect = {
   id: true,
@@ -480,6 +487,9 @@ export class MembersService {
     studioId: string,
     targetUserId: string,
     scheduledClassId: string,
+    actorUserId: string,
+    overrideEntitlement?: boolean,
+    overrideReason?: string,
   ) {
     return this.prisma.$transaction(
       async (tx) => {
@@ -492,6 +502,7 @@ export class MembersService {
           }),
           tx.scheduledClass.findFirst({
             where: { id: scheduledClassId, studioId },
+            include: { classTemplate: { select: { id: true, name: true, category: true } } },
           }),
         ]);
 
@@ -503,6 +514,80 @@ export class MembersService {
         }
         if (scheduledClass.status !== ClassStatus.SCHEDULED) {
           throw new ConflictException('This class is not open for booking');
+        }
+
+        // Entitlement check: verify the member's active subscription covers this class.
+        // If it does not, an explicit override (ADMIN/OWNER only + mandatory reason) is required.
+        const now = new Date();
+        const memberSub = await tx.subscription.findFirst({
+          where: {
+            studioId,
+            userId: targetUserId,
+            OR: [
+              { status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] } },
+              { status: SubscriptionStatus.CANCELED, entitlementEndsAt: { gt: now } },
+            ],
+          },
+          select: {
+            membershipPlan: {
+              select: {
+                id: true,
+                name: true,
+                allClassesAccess: true,
+                allowedCategories: true,
+                classTemplateAccess: { select: { classTemplateId: true } },
+              },
+            },
+          },
+        });
+
+        if (memberSub) {
+          const { allClassesAccess, allowedCategories, classTemplateAccess, id: planId, name: planName } =
+            memberSub.membershipPlan;
+          const allowedTemplateIds = classTemplateAccess.map((a) => a.classTemplateId);
+
+          const hasAccess = isClassIncludedInPlan({
+            allClassesAccess,
+            allowedTemplateIds,
+            allowedCategories,
+            classTemplateId: scheduledClass.classTemplateId,
+            templateCategory: scheduledClass.classTemplate.category,
+          });
+
+          if (!hasAccess) {
+            if (!overrideEntitlement) {
+              throw new ForbiddenException(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE);
+            }
+
+            // Override: ADMIN or OWNER only, with a mandatory reason.
+            const actor = await tx.studioMembership.findFirst({
+              where: { studioId, userId: actorUserId, deletedAt: null },
+            });
+            if (!actor || !ENTITLEMENT_OVERRIDE_ROLES.has(actor.role)) {
+              throw new ForbiddenException('Entitlement override requires ADMIN or OWNER role.');
+            }
+            if (!overrideReason?.trim()) {
+              throw new BadRequestException('overrideReason is required when overriding class entitlement.');
+            }
+
+            await tx.auditLog.create({
+              data: {
+                studioId,
+                actorUserId,
+                action: 'ENTITLEMENT_OVERRIDE_STAFF_BOOKING',
+                targetUserId,
+                entityType: 'ScheduledClass',
+                entityId: scheduledClassId,
+                metadata: {
+                  reason: overrideReason,
+                  classTemplateId: scheduledClass.classTemplateId,
+                  classTemplateName: scheduledClass.classTemplate.name,
+                  membershipPlanId: planId,
+                  membershipPlanName: planName,
+                },
+              },
+            });
+          }
         }
 
         const confirmedCount = await tx.booking.count({
@@ -645,13 +730,20 @@ export class MembersService {
 
     const now = new Date();
     const periodEnd = new Date(now);
-    if (plan.billingInterval === 'MONTHLY') {
+    if (plan.entitlementDays != null) {
+      // Fixed-duration product: entitlementDays overrides billingInterval for period length.
+      periodEnd.setTime(now.getTime() + plan.entitlementDays * 86_400_000);
+    } else if (plan.billingInterval === 'MONTHLY') {
       periodEnd.setMonth(periodEnd.getMonth() + 1);
     } else if (plan.billingInterval === 'YEARLY') {
       periodEnd.setFullYear(periodEnd.getFullYear() + 1);
     } else if (plan.billingInterval === 'WEEKLY') {
       periodEnd.setDate(periodEnd.getDate() + 7);
     }
+
+    // For fixed-duration plans, entitlementEndsAt is the access anchor (same as periodEnd here,
+    // since manual subscriptions have no separate Stripe billing cycle to worry about).
+    const entitlementEndsAt = plan.entitlementDays != null ? periodEnd : undefined;
 
     return this.prisma.subscription.create({
       data: {
@@ -662,6 +754,7 @@ export class MembersService {
         stripeSubscriptionId: stripeSubscriptionId ?? null,
         currentPeriodStart: now,
         currentPeriodEnd: periodEnd,
+        ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
       },
       include: {
         membershipPlan: { select: { id: true, name: true, billingInterval: true, priceCents: true, currency: true, allowedCategories: true } },

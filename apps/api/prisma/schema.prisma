@@ -256,6 +256,7 @@ model Studio {
   salesSettings              StudioSalesSettings?
   memberOperationalNotes     MemberOperationalNote[]
   planClassAccess            MembershipPlanClassAccess[]
+  dayPassClassAccess         DayPassClassAccess[]
 
   @@map("studios")
 }
@@ -345,6 +346,9 @@ model MembershipPlan {
   allowedCategories ClassCategory[] @default([]) @map("allowed_categories")
   /// When true, member may book any active class template. Explicit unrestricted flag.
   allClassesAccess    Boolean         @default(true) @map("all_classes_access")
+  /// When set, overrides billingInterval for subscription period length in days.
+  /// Billing cycle and entitlement duration are decoupled for fixed-duration products.
+  entitlementDays  Int?            @map("entitlement_days")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   deletedAt        DateTime?       @map("deleted_at")
@@ -374,6 +378,10 @@ model Subscription {
   currentPeriodStart   DateTime?            @map("current_period_start")
   currentPeriodEnd     DateTime?            @map("current_period_end")
   cancelAtPeriodEnd    Boolean              @default(false) @map("cancel_at_period_end")
+  /// GymOS-controlled entitlement end. Set at creation for plans with entitlementDays.
+  /// Never overwritten by Stripe webhooks — access checks use this over currentPeriodEnd
+  /// when present, decoupling Stripe billing renewal from the member's access window.
+  entitlementEndsAt    DateTime?            @map("entitlement_ends_at")
   createdByUserId      String?              @map("created_by_user_id")
   notes                String?
   createdAt            DateTime             @default(now()) @map("created_at")
@@ -417,6 +425,12 @@ model ClassTemplate {
   caloriesEstimateMax    Int?            @map("calories_estimate_max")
   cancellationWindowHours Int?           @map("cancellation_window_hours")
   waitlistCapacity       Int?            @map("waitlist_capacity")
+  /// When true, this template represents unstructured Open Gym access — not a coached class.
+  isOpenGymSlot          Boolean         @default(false) @map("is_open_gym_slot")
+  /// Local time window for booking (HH:mm, 24h, studio timezone). When set, the class
+  /// startsAt must fall within [accessWindowStart, accessWindowEnd) to be bookable by members.
+  accessWindowStart      String?         @map("access_window_start")
+  accessWindowEnd        String?         @map("access_window_end")
 
   createdAt            DateTime        @default(now()) @map("created_at")
   updatedAt            DateTime        @updatedAt @map("updated_at")
@@ -427,6 +441,7 @@ model ClassTemplate {
   classes            ScheduledClass[]
   scheduleTemplates  ScheduleTemplate[]
   planClassAccess    MembershipPlanClassAccess[]
+  dayPassClassAccess DayPassClassAccess[]
 
   @@index([studioId])
   @@index([studioId, category])
@@ -452,6 +467,24 @@ model MembershipPlanClassAccess {
   @@index([membershipPlanId])
   @@index([classTemplateId])
   @@map("membership_plan_class_access")
+}
+
+/// Explicit Day Pass class-template allowlist (deny-by-default for Day Passes).
+/// A class template must appear here for a Day Pass holder to book it.
+/// New class templates are NOT eligible for Day Pass until explicitly added.
+model DayPassClassAccess {
+  id              String   @id @default(cuid())
+  studioId        String   @map("studio_id")
+  classTemplateId String   @map("class_template_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  studio        Studio        @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  classTemplate ClassTemplate @relation(fields: [classTemplateId], references: [id], onDelete: Cascade)
+
+  @@unique([studioId, classTemplateId])
+  @@index([studioId])
+  @@index([classTemplateId])
+  @@map("day_pass_class_access")
 }
 
 model ScheduledClass {
