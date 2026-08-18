@@ -54,6 +54,9 @@ export function resolveAresPlanBenefits(planName: string): string[] {
       'Créditos no acumulables',
     ];
   }
+  if (lower.includes('pro')) {
+    return ['5 clases por período', 'Regaderas incluidas'];
+  }
 
   return [];
 }

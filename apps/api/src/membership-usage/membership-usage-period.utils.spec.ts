@@ -34,4 +34,27 @@ describe('resolveBillingPeriodForClassDate', () => {
       ),
     ).toBeNull();
   });
+
+  it('walks forward one period for a future September class', () => {
+    const classStartsAt = new Date('2025-09-15T12:00:00.000Z');
+    const periodMs = currentEnd.getTime() - currentStart.getTime();
+    const period = resolveBillingPeriodForClassDate(
+      { currentPeriodStart: currentStart, currentPeriodEnd: currentEnd },
+      classStartsAt,
+    );
+    expect(period).toEqual({
+      start: currentEnd,
+      end: new Date(currentEnd.getTime() + periodMs),
+    });
+  });
+
+  it('returns null when class is more than 24 periods away', () => {
+    const farFuture = new Date('2040-01-01T00:00:00.000Z');
+    expect(
+      resolveBillingPeriodForClassDate(
+        { currentPeriodStart: currentStart, currentPeriodEnd: currentEnd },
+        farFuture,
+      ),
+    ).toBeNull();
+  });
 });

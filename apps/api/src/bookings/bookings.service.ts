@@ -12,6 +12,7 @@ import {
   Role,
 } from '@prisma/client';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
+import { acquireMembershipUsageAdvisoryLock } from '../membership-usage/membership-usage-advisory-lock';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   type BookingCancellationResult,
@@ -82,6 +83,10 @@ export class BookingsService {
         const now = new Date();
         if (scheduledClass.startsAt <= now) {
           throw new ConflictException('Cannot book a class that has already started');
+        }
+
+        if (!bypassSubscriptionRoles.has(membership.role)) {
+          await acquireMembershipUsageAdvisoryLock(tx, studioId, actorUserId);
         }
 
         await this.bookingAccess.assertAccess(

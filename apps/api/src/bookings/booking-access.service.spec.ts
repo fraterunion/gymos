@@ -48,7 +48,7 @@ describe('BookingAccessService', () => {
       },
       classTemplate: {
         findUnique: jest.fn().mockResolvedValue({
-          category: overrides.templateCategory ?? ClassCategory.STRENGTH,
+          category: overrides.templateCategory !== undefined ? overrides.templateCategory : ClassCategory.STRENGTH,
         }),
       },
       dayPass: {
@@ -224,4 +224,80 @@ describe('BookingAccessService', () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  it('no subscription + no day pass → ForbiddenException with generic message', async () => {
+    const tx = makeTx({ sub: null, dayPass: false });
+    await expect(
+      service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+    ).rejects.toThrow('Active membership or Day Pass required to book this class.');
+  });
+
+  it('no subscription + valid day pass → allowed', async () => {
+    const tx = makeTx({ sub: null, dayPass: true });
+    await expect(
+      service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+    ).resolves.toBeUndefined();
+  });
+
+  it('day pass overrides exhausted credits', async () => {
+    const tx = makeTx({
+      sub: {
+        allClassesAccess: true,
+        allowedCategories: [],
+        classCredits: 5,
+        allowedTemplateIds: [],
+      },
+      dayPass: true,
+    });
+    (membershipUsage.assertCreditAvailableForClass as jest.Mock).mockRejectedValue(
+      new ForbiddenException('Membership class credits exhausted.'),
+    );
+    await expect(
+      service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+    ).resolves.toBeUndefined();
+  });
+
+  it('credits exhausted + no day pass → ForbiddenException with credit message', async () => {
+    const tx = makeTx({
+      sub: {
+        allClassesAccess: true,
+        allowedCategories: [],
+        classCredits: 5,
+        allowedTemplateIds: [],
+      },
+      dayPass: false,
+    });
+    (membershipUsage.assertCreditAvailableForClass as jest.Mock).mockRejectedValue(
+      new ForbiddenException('Membership class credits exhausted.'),
+    );
+    await expect(
+      service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+    ).rejects.toThrow('Membership class credits exhausted.');
+  });
+
+  it('category-restricted plan denies when template category is null', async () => {
+    const tx = makeTx({
+      sub: {
+        allClassesAccess: false,
+        allowedCategories: [ClassCategory.STRENGTH],
+        classCredits: null,
+        allowedTemplateIds: [],
+      },
+      templateCategory: null,
+    });
+    await expect(
+      service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+    ).rejects.toThrow(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE);
+  });
+
+  it.each([Role.INSTRUCTOR, Role.ADMIN, Role.OWNER])(
+    'bypasses access check for %s role without querying subscription',
+    async (role) => {
+      const tx = makeTx({ sub: null });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, role, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
+      ).resolves.toBeUndefined();
+      expect(tx.subscription.findFirst).not.toHaveBeenCalled();
+    },
+  );
 });

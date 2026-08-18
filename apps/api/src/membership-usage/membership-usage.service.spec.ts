@@ -1,6 +1,10 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BookingStatus } from '@prisma/client';
 import { MembershipUsageService } from './membership-usage.service';
-import { MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE } from './membership-usage.constants';
+import {
+  CREDIT_CONSUMING_BOOKING_STATUSES,
+  MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE,
+} from './membership-usage.constants';
 
 describe('MembershipUsageService', () => {
   const prisma = {
@@ -90,6 +94,30 @@ describe('MembershipUsageService', () => {
       creditsUsed: 3,
       creditsRemaining: 5,
       period: { start: periodStart, end: periodEnd },
+    });
+  });
+
+  // ─── Credit-consuming status contract ──────────────────────────────────────
+
+  describe('CREDIT_CONSUMING_BOOKING_STATUSES contract', () => {
+    it('includes CONFIRMED', () => {
+      expect(CREDIT_CONSUMING_BOOKING_STATUSES).toContain(BookingStatus.CONFIRMED);
+    });
+
+    it('includes COMPLETED', () => {
+      expect(CREDIT_CONSUMING_BOOKING_STATUSES).toContain(BookingStatus.COMPLETED);
+    });
+
+    it('does NOT include CANCELLED (credit returns on cancellation)', () => {
+      expect(CREDIT_CONSUMING_BOOKING_STATUSES).not.toContain(BookingStatus.CANCELLED);
+    });
+
+    it('does NOT include NO_SHOW (attendance-only path uses UNION deduplication)', () => {
+      expect(CREDIT_CONSUMING_BOOKING_STATUSES).not.toContain(BookingStatus.NO_SHOW);
+    });
+
+    it('does NOT include PENDING (not yet confirmed)', () => {
+      expect(CREDIT_CONSUMING_BOOKING_STATUSES).not.toContain(BookingStatus.PENDING);
     });
   });
 
