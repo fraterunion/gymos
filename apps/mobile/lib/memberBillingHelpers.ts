@@ -123,7 +123,11 @@ export function membershipStatusPill(sub: MemberProfileDto['activeSubscription']
     const C = getColors();
     return { label: 'Sin membresía', bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
   }
-  const cfg = statusConfig(sub.status, sub.cancelAtPeriodEnd);
+  const cfg = statusConfig(
+    sub.status,
+    sub.cancelAtPeriodEnd,
+    sub.entitlementEndsAt ?? sub.currentPeriodEnd,
+  );
   return { label: cfg.label, bg: cfg.bg, textColor: cfg.textColor };
 }
 

@@ -8,8 +8,20 @@ export type MembershipStatusCfg = {
 };
 
 /** Maps subscription status → label + colors (shared by Membership and Profile tabs). */
-export function statusConfig(status: string, cancelAtPeriodEnd: boolean): MembershipStatusCfg {
+export function statusConfig(
+  status: string,
+  cancelAtPeriodEnd: boolean,
+  effectiveEnd?: string | null,
+  now = new Date(),
+): MembershipStatusCfg {
   const C = getColors();
+  if (
+    effectiveEnd &&
+    (status === 'ACTIVE' || status === 'TRIALING' || status === 'CANCELED') &&
+    now >= new Date(effectiveEnd)
+  ) {
+    return { label: 'Vencida', dotColor: C.negative, bg: 'rgba(248,113,113,0.12)', textColor: C.negative };
+  }
   if (status === 'ACTIVE' && cancelAtPeriodEnd) {
     return { label: 'Termina pronto', dotColor: C.caution, bg: 'rgba(251,191,36,0.12)', textColor: C.caution };
   }

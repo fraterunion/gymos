@@ -34,6 +34,7 @@ export type MemberProfileDto = {
     status: SubStatus;
     currentPeriodStart: string | null;
     currentPeriodEnd: string | null;
+    entitlementEndsAt: string | null;
     cancelAtPeriodEnd: boolean;
     plan: MemberPlanDto;
     creditsUsed: number | null;

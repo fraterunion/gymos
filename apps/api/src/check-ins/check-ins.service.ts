@@ -24,6 +24,7 @@ import { WaiverService } from '../waiver/waiver.service';
 import { MANUAL_ATTENDANCE_ROLES } from '../auth/desk-roles';
 import { acquireMembershipUsageAdvisoryLock } from '../membership-usage/membership-usage-advisory-lock';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
+import { currentlyEntitledSubscriptionWhere, MEMBERSHIP_EXPIRED_MESSAGE } from '../memberships/membership-entitlement';
 import { assertEligibleForCheckIn } from './check-in-eligibility';
 import {
   isClassIncludedInPlan,
@@ -402,10 +403,7 @@ export class CheckInsService {
             where: {
               studioId,
               userId: memberId,
-              OR: [
-                { status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] } },
-                { status: SubscriptionStatus.CANCELED, entitlementEndsAt: { gt: now } },
-              ],
+              ...currentlyEntitledSubscriptionWhere(now),
             },
             select: {
               currentPeriodStart: true,
@@ -448,7 +446,7 @@ export class CheckInsService {
 
         if (!activeSubscription) {
           throw new BadRequestException(
-            'Cannot register attendance because this membership is inactive.',
+            MEMBERSHIP_EXPIRED_MESSAGE,
           );
         }
         this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.foundSubscription' }));

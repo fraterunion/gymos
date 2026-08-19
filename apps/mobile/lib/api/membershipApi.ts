@@ -33,6 +33,7 @@ export type MyMemberProfileDto = {
     status: string;
     currentPeriodStart: string;
     currentPeriodEnd: string;
+    entitlementEndsAt: string | null;
     cancelAtPeriodEnd: boolean;
     creditsUsed: number | null;
     creditsRemaining: number | null;

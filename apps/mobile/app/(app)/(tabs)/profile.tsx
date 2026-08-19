@@ -328,6 +328,7 @@ export default function ProfileScreen() {
                 <MembershipStatusPill
                   status={sub.status}
                   cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
+                  currentPeriodEnd={sub.entitlementEndsAt ?? sub.currentPeriodEnd}
                 />
               </View>
             ) : null}
@@ -401,6 +402,7 @@ export default function ProfileScreen() {
                 <MembershipStatusPill
                   status={sub.status}
                   cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
+                  currentPeriodEnd={sub.entitlementEndsAt ?? sub.currentPeriodEnd}
                 />
               </View>
 

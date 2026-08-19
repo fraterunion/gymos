@@ -18,6 +18,10 @@ import {
   isClassIncludedInPlan,
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
 } from '../membership-plans/membership-plan-class-access.utils';
+import {
+  currentlyEntitledSubscriptionWhere,
+  MEMBERSHIP_EXPIRED_MESSAGE,
+} from '../memberships/membership-entitlement';
 
 const bypassRoles: ReadonlySet<Role> = new Set([
   Role.STAFF,
@@ -25,8 +29,6 @@ const bypassRoles: ReadonlySet<Role> = new Set([
   Role.ADMIN,
   Role.OWNER,
 ]);
-
-const ACTIVE_SUBSCRIPTION_STATUSES = [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING];
 
 export const CLASS_TIME_WINDOW_DENIED_MESSAGE =
   'This class is not available during this time. Please check the allowed access hours.';
@@ -83,13 +85,7 @@ export class BookingAccessService {
       where: {
         userId,
         studioId,
-        OR: [
-          { status: { in: ACTIVE_SUBSCRIPTION_STATUSES } },
-          {
-            status: SubscriptionStatus.CANCELED,
-            entitlementEndsAt: { gt: now },
-          },
-        ],
+        ...currentlyEntitledSubscriptionWhere(now),
       },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -193,6 +189,21 @@ export class BookingAccessService {
     }
     if (creditsExhausted) {
       throw new ForbiddenException(MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE);
+    }
+    const expiredSubscription = await tx.subscription.findFirst({
+      where: {
+        userId,
+        studioId,
+        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+        OR: [
+          { entitlementEndsAt: { lte: now } },
+          { entitlementEndsAt: null, currentPeriodEnd: { lte: now } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (expiredSubscription) {
+      throw new ForbiddenException(MEMBERSHIP_EXPIRED_MESSAGE);
     }
     throw new ForbiddenException('Active membership or Day Pass required to book this class.');
   }

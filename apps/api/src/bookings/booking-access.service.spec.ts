@@ -3,6 +3,7 @@ import { ClassCategory, Role } from '@prisma/client';
 import { BookingAccessService, CLASS_TIME_WINDOW_DENIED_MESSAGE } from './booking-access.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE } from '../membership-plans/membership-plan-class-access.utils';
+import { MEMBERSHIP_EXPIRED_MESSAGE } from '../memberships/membership-entitlement';
 
 describe('BookingAccessService', () => {
   const membershipUsage = {
@@ -120,6 +121,54 @@ describe('BookingAccessService', () => {
         scheduledClassId,
       ),
     ).resolves.toBeUndefined();
+  });
+
+  it('denies a stale ACTIVE subscription whose effective period has expired', async () => {
+    const tx = makeTx({ sub: null });
+    tx.subscription.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'expired-sub' });
+
+    await expect(
+      service.assertAccess(
+        tx as never,
+        studioId,
+        userId,
+        Role.MEMBER,
+        classStartsAt,
+        'America/Mexico_City',
+        classTemplateId,
+        scheduledClassId,
+      ),
+    ).rejects.toThrow(MEMBERSHIP_EXPIRED_MESSAGE);
+  });
+
+  it('selects entitlement with a strict end-exclusive database predicate', async () => {
+    const tx = makeTx({ sub: null });
+    await expect(
+      service.assertAccess(
+        tx as never,
+        studioId,
+        userId,
+        Role.MEMBER,
+        classStartsAt,
+        'America/Mexico_City',
+        classTemplateId,
+        scheduledClassId,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(tx.subscription.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({ currentPeriodEnd: expect.objectContaining({ gt: expect.any(Date) }) }),
+            expect.objectContaining({ entitlementEndsAt: expect.objectContaining({ gt: expect.any(Date) }) }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it('allows member to book allowed template', async () => {

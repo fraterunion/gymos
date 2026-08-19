@@ -23,6 +23,7 @@ import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
+import { currentlyEntitledSubscriptionWhere, MEMBERSHIP_EXPIRED_MESSAGE } from '../memberships/membership-entitlement';
 import {
   isClassIncludedInPlan,
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
@@ -256,7 +257,7 @@ export class MembersService {
         where: {
           studioId,
           userId,
-          status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
+          ...currentlyEntitledSubscriptionWhere(new Date()),
         },
         orderBy: { createdAt: 'desc' },
         include: {
@@ -346,6 +347,7 @@ export class MembersService {
             status: activeSubscription.status,
             currentPeriodStart: activeSubscription.currentPeriodStart,
             currentPeriodEnd: activeSubscription.currentPeriodEnd,
+            entitlementEndsAt: activeSubscription.entitlementEndsAt,
             cancelAtPeriodEnd: activeSubscription.cancelAtPeriodEnd,
             plan: {
               id: activeSubscription.membershipPlan.id,
@@ -549,10 +551,7 @@ export class MembersService {
           where: {
             studioId,
             userId: targetUserId,
-            OR: [
-              { status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] } },
-              { status: SubscriptionStatus.CANCELED, entitlementEndsAt: { gt: now } },
-            ],
+            ...currentlyEntitledSubscriptionWhere(now),
           },
           select: {
             membershipPlan: {
@@ -566,6 +565,38 @@ export class MembersService {
             },
           },
         });
+
+        if (!memberSub && !overrideEntitlement) {
+          throw new ForbiddenException(MEMBERSHIP_EXPIRED_MESSAGE);
+        }
+
+        if (!memberSub && overrideEntitlement) {
+          const actor = await tx.studioMembership.findFirst({
+            where: { studioId, userId: actorUserId, deletedAt: null },
+          });
+          if (!actor || !ENTITLEMENT_OVERRIDE_ROLES.has(actor.role)) {
+            throw new ForbiddenException('Entitlement override requires ADMIN or OWNER role.');
+          }
+          if (!overrideReason?.trim()) {
+            throw new BadRequestException('overrideReason is required when overriding class entitlement.');
+          }
+          await tx.auditLog.create({
+            data: {
+              studioId,
+              actorUserId,
+              action: 'ENTITLEMENT_OVERRIDE_STAFF_BOOKING',
+              targetUserId,
+              entityType: 'ScheduledClass',
+              entityId: scheduledClassId,
+              metadata: {
+                reason: overrideReason,
+                classTemplateId: scheduledClass.classTemplateId,
+                classTemplateName: scheduledClass.classTemplate.name,
+                denialReason: MEMBERSHIP_EXPIRED_MESSAGE,
+              },
+            },
+          });
+        }
 
         if (memberSub) {
           const { allClassesAccess, allowedCategories, classTemplateAccess, id: planId, name: planName } =

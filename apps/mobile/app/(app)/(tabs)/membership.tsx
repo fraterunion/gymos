@@ -170,6 +170,7 @@ function MembershipCard({
   status,
   cancelAtPeriodEnd,
   renewsAt,
+  currentPeriodEnd,
   classCredits,
   creditsUsed,
   creditsRemaining,
@@ -181,6 +182,7 @@ function MembershipCard({
   status: string;
   cancelAtPeriodEnd: boolean;
   renewsAt: string;
+  currentPeriodEnd: string | null;
   classCredits: number | null;
   creditsUsed: number | null;
   creditsRemaining: number | null;
@@ -189,7 +191,7 @@ function MembershipCard({
   portalBusy: boolean;
 }) {
   const C = getColors();
-  const cfg = statusConfig(status, cancelAtPeriodEnd);
+  const cfg = statusConfig(status, cancelAtPeriodEnd, currentPeriodEnd);
   const accentBarColor = (status === 'ACTIVE' || status === 'TRIALING') ? primaryColor : C.surface3;
   const creditDisplay = membershipCreditDisplay(classCredits, creditsUsed, creditsRemaining);
 
@@ -1509,6 +1511,7 @@ export default function MembershipScreen() {
             planName={sub.plan.name}
             status={sub.status}
             cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
+            currentPeriodEnd={sub.entitlementEndsAt ?? sub.currentPeriodEnd}
             renewsAt={renewsLabel}
             classCredits={sub.plan.classCredits}
             creditsUsed={sub.creditsUsed}

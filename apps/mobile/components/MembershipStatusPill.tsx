@@ -5,10 +5,11 @@ import { statusConfig } from '@/lib/membershipStatus';
 type Props = {
   status: string;
   cancelAtPeriodEnd: boolean;
+  currentPeriodEnd?: string | null;
 };
 
-export function MembershipStatusPill({ status, cancelAtPeriodEnd }: Props) {
-  const cfg = statusConfig(status, cancelAtPeriodEnd);
+export function MembershipStatusPill({ status, cancelAtPeriodEnd, currentPeriodEnd }: Props) {
+  const cfg = statusConfig(status, cancelAtPeriodEnd, currentPeriodEnd);
 
   return (
     <View
