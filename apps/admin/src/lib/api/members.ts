@@ -4,6 +4,9 @@ import { apiRequest } from "@/lib/api/client";
 
 export type SubStatus = "ACTIVE" | "PAST_DUE" | "CANCELED" | "TRIALING" | "PAUSED";
 export type LifecycleStatus = SubStatus | "ENDING" | "SCHEDULED" | "EXPIRED";
+export type LifecycleFilter = LifecycleStatus | "NONE";
+export type PaymentSource = "STRIPE" | "CASH" | "MANUAL" | "NONE";
+export type ActivityFilter = "VISITED_7D" | "VISITED_30D" | "NO_VISIT_14D" | "NO_VISIT_30D" | "NEVER_ATTENDED" | "HAS_NO_SHOWS" | "HAS_FUTURE_BOOKING" | "NO_FUTURE_BOOKING" | "ENDING_7D";
 export type BookingStatus = "PENDING" | "CONFIRMED" | "CANCELLED" | "NO_SHOW" | "COMPLETED";
 export type PaymentStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "REFUNDED" | "PARTIALLY_REFUNDED";
 export type MemberRole = "MEMBER" | "INSTRUCTOR" | "STAFF" | "ADMIN" | "OWNER";
@@ -33,6 +36,9 @@ export type MemberSubscriptionSummary = {
   currentPeriodEnd: string | null;
   effectiveEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  source: Exclude<PaymentSource, "NONE">;
+  classCredits: number | null;
+  currentPeriodStart: string | null;
 };
 
 export type MemberListItem = {
@@ -53,6 +59,9 @@ export type MemberListItem = {
   totalBookings: number;
   noShowCount: number;
   lastAttendanceAt: string | null;
+  nextBooking: { id: string; classId: string; startsAt: string; className: string } | null;
+  usage: { limit: number | null; used: number | null; remaining: number | null } | null;
+  lastPayment: { status: PaymentStatus; paymentMethod: string; amountCents: number; currency: string; paidAt: string | null; createdAt: string } | null;
   subscription: MemberSubscriptionSummary | null;
 };
 
@@ -61,12 +70,16 @@ export type MemberListResponse = {
   total: number;
   page: number;
   limit: number;
+  summary: { active: number; ending: number; expired: number; pastDue: number; noMembership: number; inactive30d: number; noShows: number };
 };
 
 export type MemberListQuery = {
   search?: string;
   role?: MemberRole;
-  subStatus?: SubStatus;
+  lifecycleStatus?: LifecycleFilter;
+  planId?: string;
+  paymentSource?: PaymentSource;
+  activity?: ActivityFilter;
   hasNoShows?: boolean;
   sortBy?: "joinDate" | "lastAttendance" | "totalBookings" | "name";
   sortDir?: "asc" | "desc";
@@ -83,12 +96,14 @@ export type TimelineEventType =
   | "MEMBERSHIP_ASSIGNED"
   | "PAYMENT_SUCCEEDED"
   | "PAYMENT_FAILED"
-  | "CRM_UPDATED";
+  | "CRM_UPDATED"
+  | "NOTE_CREATED";
 
 export type TimelineEvent = {
   type: TimelineEventType;
   title: string;
   description?: string | null;
+  actor?: string | null;
   occurredAt: string;
 };
 
@@ -166,6 +181,32 @@ export type MemberProfile = {
     attendedCount: number;
     noShowCount: number;
     cancelledCount: number;
+  };
+  currentMembership: ({
+    id: string;
+    status: SubStatus;
+    source: Exclude<PaymentSource, "NONE">;
+    accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
+    lifecycleStatus: LifecycleStatus;
+    isEntitled: boolean;
+    currentPeriodStart: string | null;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd: boolean;
+    effectiveEnd: string | null;
+    entitlementEndsAt: string | null;
+    plan: MemberPlan & { allowedCategories: string[]; allClassesAccess: boolean; allowedTemplateIds: string[] };
+    pendingPlan: Pick<MemberPlan, "id" | "name" | "billingInterval" | "priceCents" | "currency"> | null;
+    creditsUsed: number | null;
+    creditsRemaining: number | null;
+  }) | null;
+  operations: {
+    lastVisit: { checkedInAt: string; method: string; scheduledClass: { id: string; startsAt: string; classTemplate: { name: string } } } | null;
+    nextBooking: { id: string; scheduledClass: { id: string; startsAt: string; classTemplate: { name: string } } } | null;
+    lastPayment: (MemberPayment & { paymentMethod: string; membershipPlan: { id: string; name: string } | null }) | null;
+    recentNoShows: number;
+    attendanceRate: number | null;
+    attentionItems: Array<{ code: string; priority: "critical" | "warning" | "informational"; message: string; action: string | null }>;
+    segments: string[];
   };
   activeSubscription: {
     id: string;
@@ -253,6 +294,10 @@ export type MemberPayment = {
   amountCents: number;
   currency: string;
   status: PaymentStatus;
+  paymentMethod: "STRIPE" | "CASH" | "CARD" | "BANK_TRANSFER" | string;
+  membershipPlanId: string | null;
+  membershipPlan?: { id: string; name: string } | null;
+  recordedBy?: { firstName: string; lastName: string } | null;
   stripePaymentIntentId: string | null;
   stripeInvoiceId: string | null;
   paidAt: string | null;
@@ -284,7 +329,10 @@ export async function fetchMembers(
   const params = new URLSearchParams();
   if (query.search) params.set("search", query.search);
   if (query.role) params.set("role", query.role);
-  if (query.subStatus) params.set("subStatus", query.subStatus);
+  if (query.lifecycleStatus) params.set("lifecycleStatus", query.lifecycleStatus);
+  if (query.planId) params.set("planId", query.planId);
+  if (query.paymentSource) params.set("paymentSource", query.paymentSource);
+  if (query.activity) params.set("activity", query.activity);
   if (query.hasNoShows) params.set("hasNoShows", "true");
   if (query.sortBy) params.set("sortBy", query.sortBy);
   if (query.sortDir) params.set("sortDir", query.sortDir);
@@ -297,6 +345,7 @@ export async function fetchMembers(
     total: number;
     page: number;
     limit: number;
+    summary: MemberListResponse["summary"];
   }>(`/studios/${studioId}/members${qs ? `?${qs}` : ""}`, { method: "GET" });
   return {
     ...res,

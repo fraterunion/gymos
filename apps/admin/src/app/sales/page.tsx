@@ -213,6 +213,9 @@ export default function WalkInSalesPage() {
         totalBookings: 0,
         noShowCount: 0,
         lastAttendanceAt: null,
+        nextBooking: null,
+        usage: null,
+        lastPayment: null,
         subscription: null,
       };
       setSelectedMember(asListItem);

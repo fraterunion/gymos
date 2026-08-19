@@ -9,10 +9,13 @@ import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import {
   fetchMembers,
+  type ActivityFilter,
+  type LifecycleFilter,
   type MemberListItem,
   type MemberListQuery,
-  type SubStatus,
+  type PaymentSource,
 } from "@/lib/api/members";
+import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import {
   adminInput,
   adminSecondaryBtn,
@@ -45,7 +48,28 @@ function fmtRelative(iso: string | null | undefined) {
   return `Hace ${Math.floor(days / 365)}a`;
 }
 
-const SUB_STATUS_LABELS: Record<SubStatus, string> = {
+function fmtNextEvent(iso: string | null | undefined) {
+  if (!iso) return "Sin reserva";
+  const date = new Date(iso);
+  const today = new Date();
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const day = sameDay(date, today) ? "Hoy" : sameDay(date, tomorrow) ? "Mañana" : date.toLocaleDateString("es-MX", { weekday: "short", day: "numeric" });
+  return `${day} · ${date.toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function attentionLabel(member: MemberListItem) {
+  if (member.subscription?.lifecycleStatus === "EXPIRED") return "Renovar";
+  if (member.subscription?.lifecycleStatus === "PAST_DUE") return "Pago pendiente";
+  if (member.usage?.remaining === 0) return "Sin créditos";
+  if (member.noShowCount > 0) return `${member.noShowCount} no-show${member.noShowCount === 1 ? "" : "s"}`;
+  if (!member.lastAttendanceAt || daysBetween(member.lastAttendanceAt) >= 30) return "Sin actividad 30d";
+  return "—";
+}
+
+function daysBetween(iso: string) { return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000); }
+
+const SUB_STATUS_LABELS = {
   ACTIVE: "Activa",
   TRIALING: "Prueba",
   PAST_DUE: "Pago pendiente",
@@ -60,7 +84,7 @@ const LIFECYCLE_LABELS = {
   EXPIRED: "Vencida",
 } as const;
 
-const SUB_STATUS_COLORS: Record<SubStatus, string> = {
+const SUB_STATUS_COLORS = {
   ACTIVE: "bg-emerald-100 text-emerald-800",
   TRIALING: "bg-sky-100 text-sky-800",
   PAST_DUE: "bg-amber-100 text-amber-800",
@@ -78,7 +102,7 @@ const LIFECYCLE_COLORS = {
 function RowSkeleton() {
   return (
     <tr className="border-b border-zinc-100">
-      {[...Array(6)].map((_, i) => (
+      {[...Array(8)].map((_, i) => (
         <td key={i} className="px-4 py-3.5">
           <div className="h-4 rounded bg-zinc-200 animate-pulse" style={{ width: `${60 + (i * 17) % 40}%` }} />
         </td>
@@ -157,6 +181,7 @@ function MemberCard({ member }: { member: MemberListItem }) {
       </div>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
         <span>{member.subscription?.planName ?? "—"}</span>
+        <span>{member.usage?.limit === null ? "Ilimitada" : member.usage ? `${member.usage.used} / ${member.usage.limit} usadas` : "—"}</span>
         <span>Última visita: {fmtRelative(member.lastAttendanceAt)}</span>
       </div>
     </Link>
@@ -168,12 +193,16 @@ export default function MembersPage() {
 
   const [members, setMembers] = useState<MemberListItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState({ active: 0, ending: 0, expired: 0, pastDue: 0, noMembership: 0, inactive30d: 0, noShows: 0 });
+  const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [subStatus, setSubStatus] = useState<SubStatus | "">("");
-  const [hasNoShows, setHasNoShows] = useState(false);
+  const [lifecycleStatus, setLifecycleStatus] = useState<LifecycleFilter | "">("");
+  const [planId, setPlanId] = useState("");
+  const [paymentSource, setPaymentSource] = useState<PaymentSource | "">("");
+  const [activity, setActivity] = useState<ActivityFilter | "">("");
   const [sortBy, setSortBy] = useState<SortKey>("joinDate");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -190,6 +219,30 @@ export default function MembersPage() {
     };
   }, [search]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setSearch(params.get("q") ?? "");
+    setLifecycleStatus((params.get("status") as LifecycleFilter | null) ?? "");
+    setPlanId(params.get("plan") ?? "");
+    setPaymentSource((params.get("source") as PaymentSource | null) ?? "");
+    setActivity((params.get("activity") as ActivityFilter | null) ?? "");
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (search) params.set("q", search);
+    if (lifecycleStatus) params.set("status", lifecycleStatus);
+    if (planId) params.set("plan", planId);
+    if (paymentSource) params.set("source", paymentSource);
+    if (activity) params.set("activity", activity);
+    window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+  }, [search, lifecycleStatus, planId, paymentSource, activity]);
+
+  useEffect(() => {
+    if (!selectedStudioId) return;
+    void fetchMembershipPlans(selectedStudioId, true).then(setPlans).catch(() => setPlans([]));
+  }, [selectedStudioId]);
+
   const load = useCallback(async () => {
     if (!selectedStudioId) return;
     setLoading(true);
@@ -198,8 +251,10 @@ export default function MembersPage() {
       const res = await fetchMembers(selectedStudioId, {
         role: "MEMBER",
         search: debouncedSearch || undefined,
-        subStatus: (subStatus as SubStatus) || undefined,
-        hasNoShows: hasNoShows || undefined,
+        lifecycleStatus: lifecycleStatus || undefined,
+        planId: planId || undefined,
+        paymentSource: paymentSource || undefined,
+        activity: activity || undefined,
         sortBy,
         sortDir,
         page,
@@ -207,12 +262,13 @@ export default function MembersPage() {
       });
       setMembers(res.data);
       setTotal(res.total);
+      setSummary(res.summary);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No se pudieron cargar los miembros");
     } finally {
       setLoading(false);
     }
-  }, [selectedStudioId, debouncedSearch, subStatus, hasNoShows, sortBy, sortDir, page, limit]);
+  }, [selectedStudioId, debouncedSearch, lifecycleStatus, planId, paymentSource, activity, sortBy, sortDir, page, limit]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
@@ -222,7 +278,7 @@ export default function MembersPage() {
   useEffect(() => {
     const t = setTimeout(() => setPage(1), 0);
     return () => clearTimeout(t);
-  }, [debouncedSearch, subStatus, hasNoShows, sortBy, sortDir]);
+  }, [debouncedSearch, lifecycleStatus, planId, paymentSource, activity, sortBy, sortDir]);
 
   function handleSort(field: SortKey) {
     if (field === sortBy) {
@@ -234,7 +290,7 @@ export default function MembersPage() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
-  const hasFilters = Boolean(search || subStatus || hasNoShows);
+  const hasFilters = Boolean(search || lifecycleStatus || planId || paymentSource || activity);
 
   return (
     <div className="space-y-6">
@@ -247,6 +303,21 @@ export default function MembersPage() {
         }
       />
 
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {[
+          { label: "Activos", value: summary.active, status: "ACTIVE" as LifecycleFilter },
+          { label: "Terminan pronto", value: summary.ending, status: "ENDING" as LifecycleFilter },
+          { label: "Vencidos", value: summary.expired, status: "EXPIRED" as LifecycleFilter },
+          { label: "Pago pendiente", value: summary.pastDue, status: "PAST_DUE" as LifecycleFilter },
+          { label: "Sin membresía", value: summary.noMembership, status: "NONE" as LifecycleFilter },
+        ].map((item) => (
+          <button key={item.status} type="button" onClick={() => setLifecycleStatus(item.status)} className={`rounded-xl border px-4 py-3 text-left transition ${lifecycleStatus === item.status ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white hover:border-zinc-300"}`}>
+            <span className="block text-2xl font-semibold tabular-nums">{item.value}</span>
+            <span className={`text-xs ${lifecycleStatus === item.status ? "text-zinc-300" : "text-zinc-500"}`}>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="search"
@@ -256,41 +327,36 @@ export default function MembersPage() {
           className={`${adminInput} w-full max-w-xs`}
         />
         <select
-          value={subStatus}
-          onChange={(e) => {
-            setSubStatus(e.target.value as SubStatus | "");
-            setHasNoShows(false);
-          }}
+          value={lifecycleStatus}
+          onChange={(e) => setLifecycleStatus(e.target.value as LifecycleFilter | "")}
           className={adminSelect}
         >
           <option value="">Todos los estados</option>
-          {(Object.keys(SUB_STATUS_LABELS) as SubStatus[]).map((s) => (
-            <option key={s} value={s}>
-              {SUB_STATUS_LABELS[s]}
-            </option>
-          ))}
+          <option value="ACTIVE">Activa</option><option value="ENDING">Termina pronto</option><option value="EXPIRED">Vencida</option>
+          <option value="TRIALING">Prueba</option><option value="PAST_DUE">Pago pendiente</option><option value="PAUSED">Pausada</option>
+          <option value="CANCELED">Cancelada</option><option value="SCHEDULED">Programada</option><option value="NONE">Sin membresía</option>
         </select>
-        <button
-          type="button"
-          onClick={() => {
-            setHasNoShows((v) => !v);
-            setSubStatus("");
-          }}
-          className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
-            hasNoShows
-              ? "border-amber-300 bg-amber-50 text-amber-800"
-              : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
-          }`}
-        >
-          No-shows
-        </button>
+        <select value={planId} onChange={(e) => setPlanId(e.target.value)} className={adminSelect}>
+          <option value="">Todos los planes</option>
+          {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+        </select>
+        <select value={paymentSource} onChange={(e) => setPaymentSource(e.target.value as PaymentSource | "")} className={adminSelect}>
+          <option value="">Todos los cobros</option><option value="STRIPE">Stripe</option><option value="CASH">Efectivo</option><option value="MANUAL">Manual</option><option value="NONE">Sin membresía</option>
+        </select>
+        <select value={activity} onChange={(e) => setActivity(e.target.value as ActivityFilter | "")} className={adminSelect}>
+          <option value="">Toda la actividad</option><option value="VISITED_7D">Visitó últimos 7 días</option><option value="VISITED_30D">Visitó últimos 30 días</option>
+          <option value="NO_VISIT_14D">Sin visita 14+ días</option><option value="NO_VISIT_30D">Sin visita 30+ días</option><option value="NEVER_ATTENDED">Nunca ha asistido</option>
+          <option value="HAS_NO_SHOWS">Con no-shows</option><option value="HAS_FUTURE_BOOKING">Con reserva futura</option><option value="NO_FUTURE_BOOKING">Sin reserva futura</option><option value="ENDING_7D">Termina en 7 días</option>
+        </select>
         {hasFilters ? (
           <button
             type="button"
             onClick={() => {
               setSearch("");
-              setSubStatus("");
-              setHasNoShows(false);
+              setLifecycleStatus("");
+              setPlanId("");
+              setPaymentSource("");
+              setActivity("");
             }}
             className={adminSecondaryBtn}
           >
@@ -331,12 +397,13 @@ export default function MembersPage() {
             <thead className="bg-zinc-50/80">
               <tr>
                 <SortTh label="Miembro" field="name" current={sortBy} dir={sortDir} onSort={handleSort} className="pl-4 min-w-[220px]" />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Teléfono</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Plan</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Membresía</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Estado</th>
-                <SortTh label="Reservas" field="totalBookings" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Uso</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Próximo evento</th>
                 <SortTh label="Última visita" field="lastAttendance" current={sortBy} dir={sortDir} onSort={handleSort} />
-                <SortTh label="Alta" field="joinDate" current={sortBy} dir={sortDir} onSort={handleSort} />
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Pago</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Atención</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
@@ -345,7 +412,7 @@ export default function MembersPage() {
                 : members.length === 0
                   ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-sm text-zinc-600">
+                      <td colSpan={8} className="px-4 py-12 text-center text-sm text-zinc-600">
                         {hasFilters
                           ? "Ningún miembro coincide con tus filtros."
                           : "Aún no hay miembros registrados."}
@@ -367,11 +434,8 @@ export default function MembersPage() {
                           </div>
                         </Link>
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-zinc-600">
-                        {m.user.phone ?? <span className="text-zinc-400">—</span>}
-                      </td>
                       <td className="px-4 py-3.5 text-sm text-zinc-700">
-                        {m.subscription?.planName ?? <span className="text-zinc-400">—</span>}
+                        {m.subscription?.planName ?? <span className="text-zinc-400">Sin plan</span>}
                       </td>
                       <td className="px-4 py-3.5">
                         {m.subscription ? (
@@ -380,16 +444,11 @@ export default function MembersPage() {
                           <span className="text-xs text-zinc-400">Sin plan</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-sm tabular-nums text-zinc-700">
-                        <span>{m.totalBookings.toLocaleString("es-MX")}</span>
-                        {m.noShowCount > 0 ? (
-                          <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                            {m.noShowCount} NS
-                          </span>
-                        ) : null}
-                      </td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-700">{m.usage?.limit === null ? "Ilimitada" : m.usage ? <><span className="font-medium">{m.usage.used} / {m.usage.limit}</span><span className="block text-xs text-zinc-400">{m.usage.remaining} restantes</span></> : "—"}</td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-600"><span className="block">{fmtNextEvent(m.nextBooking?.startsAt)}</span>{m.nextBooking ? <span className="block max-w-36 truncate text-xs text-zinc-400">{m.nextBooking.className}</span> : null}</td>
                       <td className="px-4 py-3.5 text-sm text-zinc-600">{fmtRelative(m.lastAttendanceAt)}</td>
-                      <td className="px-4 py-3.5 text-sm text-zinc-600">{fmtDate(m.joinedAt)}</td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-600">{m.subscription ? <><span className="block">{m.subscription.source === "CASH" ? "Efectivo" : m.subscription.source === "STRIPE" ? "Stripe" : "Manual"}</span><span className="text-xs text-zinc-400">{m.subscription.lifecycleStatus === "PAST_DUE" ? "Pago pendiente" : m.subscription.lifecycleStatus === "EXPIRED" ? `Venció ${fmtDate(m.subscription.effectiveEnd)}` : m.lastPayment?.status === "SUCCEEDED" ? "Al corriente" : "Sin pago reciente"}</span></> : "No aplica"}</td>
+                      <td className="px-4 py-3.5 text-sm font-medium text-zinc-700">{attentionLabel(m)}</td>
                     </tr>
                   ))}
             </tbody>

@@ -1,4 +1,4 @@
-import { Role, SubscriptionStatus } from '@prisma/client';
+import { Role, SubscriptionSource } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
@@ -21,8 +21,20 @@ export class ListMembersQueryDto {
   role?: Role;
 
   @IsOptional()
-  @IsEnum(SubscriptionStatus)
-  subStatus?: SubscriptionStatus;
+  @IsIn(['ACTIVE', 'TRIALING', 'ENDING', 'EXPIRED', 'PAST_DUE', 'PAUSED', 'CANCELED', 'SCHEDULED', 'NONE'])
+  lifecycleStatus?: 'ACTIVE' | 'TRIALING' | 'ENDING' | 'EXPIRED' | 'PAST_DUE' | 'PAUSED' | 'CANCELED' | 'SCHEDULED' | 'NONE';
+
+  @IsOptional()
+  @IsString()
+  planId?: string;
+
+  @IsOptional()
+  @IsIn([SubscriptionSource.STRIPE, SubscriptionSource.CASH, SubscriptionSource.MANUAL, 'NONE'])
+  paymentSource?: SubscriptionSource | 'NONE';
+
+  @IsOptional()
+  @IsIn(['VISITED_7D', 'VISITED_30D', 'NO_VISIT_14D', 'NO_VISIT_30D', 'NEVER_ATTENDED', 'HAS_NO_SHOWS', 'HAS_FUTURE_BOOKING', 'NO_FUTURE_BOOKING', 'ENDING_7D'])
+  activity?: 'VISITED_7D' | 'VISITED_30D' | 'NO_VISIT_14D' | 'NO_VISIT_30D' | 'NEVER_ATTENDED' | 'HAS_NO_SHOWS' | 'HAS_FUTURE_BOOKING' | 'NO_FUTURE_BOOKING' | 'ENDING_7D';
 
   @IsOptional()
   @IsIn(['joinDate', 'lastAttendance', 'totalBookings', 'name'])
