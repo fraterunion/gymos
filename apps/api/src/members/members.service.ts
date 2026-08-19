@@ -27,6 +27,8 @@ import {
   isClassIncludedInPlan,
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
 } from '../membership-plans/membership-plan-class-access.utils';
+import { getStudioLocalHHmm } from '../common/date/studio-local-date';
+import { CLASS_TIME_WINDOW_DENIED_MESSAGE } from '../bookings/booking-access.service';
 import type { ListMembersQueryDto } from './dto/list-members-query.dto';
 import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
@@ -495,14 +497,22 @@ export class MembersService {
       async (tx) => {
         await acquireBookingClassAdvisoryLock(tx, scheduledClassId);
 
-        const [membership, scheduledClass] = await Promise.all([
+        const [membership, scheduledClass, studio] = await Promise.all([
           tx.studioMembership.findFirst({
             where: { studioId, userId: targetUserId, deletedAt: null },
             include: { user: { select: { deletedAt: true } } },
           }),
           tx.scheduledClass.findFirst({
             where: { id: scheduledClassId, studioId },
-            include: { classTemplate: { select: { id: true, name: true, category: true } } },
+            include: {
+              classTemplate: {
+                select: { id: true, name: true, category: true, accessWindowStart: true, accessWindowEnd: true },
+              },
+            },
+          }),
+          tx.studio.findUnique({
+            where: { id: studioId },
+            select: { timezone: true },
           }),
         ]);
 
@@ -514,6 +524,22 @@ export class MembersService {
         }
         if (scheduledClass.status !== ClassStatus.SCHEDULED) {
           throw new ConflictException('This class is not open for booking');
+        }
+
+        // Time-window enforcement: Open Gym (and any template with accessWindowStart/End) is a
+        // hard product constraint — not a frontend hint — so it applies to staff bookings too.
+        if (
+          scheduledClass.classTemplate.accessWindowStart &&
+          scheduledClass.classTemplate.accessWindowEnd &&
+          studio
+        ) {
+          const localHHmm = getStudioLocalHHmm(scheduledClass.startsAt, studio.timezone);
+          if (
+            localHHmm < scheduledClass.classTemplate.accessWindowStart ||
+            localHHmm >= scheduledClass.classTemplate.accessWindowEnd
+          ) {
+            throw new ForbiddenException(CLASS_TIME_WINDOW_DENIED_MESSAGE);
+          }
         }
 
         // Entitlement check: verify the member's active subscription covers this class.

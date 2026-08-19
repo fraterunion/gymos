@@ -248,6 +248,13 @@ export class SalesService {
       ? new Date(dto.periodEnd)
       : this.defaultPeriodEnd(periodStart, plan.billingInterval);
 
+    // For fixed-duration plans (e.g. Booty Lab 45-day), anchor the GymOS entitlement
+    // window at periodStart — the same formula the Stripe webhook uses for online purchases.
+    const entitlementEndsAt =
+      plan.entitlementDays != null
+        ? new Date(periodStart.getTime() + plan.entitlementDays * 86_400_000)
+        : null;
+
     if (Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime())) {
       throw new BadRequestException('Invalid period dates');
     }
@@ -284,6 +291,7 @@ export class SalesService {
           cancelAtPeriodEnd: true,
           createdByUserId: actorUserId,
           notes: combinedNotes,
+          ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
         },
         include: {
           membershipPlan: {

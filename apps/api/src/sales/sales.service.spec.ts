@@ -249,4 +249,93 @@ describe('SalesService', () => {
       }),
     ).rejects.toThrow(ForbiddenException);
   });
+
+  describe('createOfflineSubscription — fixed-duration plan (entitlementDays)', () => {
+    const periodStart = new Date('2026-08-18T18:00:00.000Z');
+
+    beforeEach(() => {
+      mockActor(Role.ADMIN);
+      prisma.subscription.count.mockResolvedValue(0);
+      prisma.membershipPlan.findFirst.mockResolvedValue({
+        id: 'plan-booty',
+        studioId: 'studio-1',
+        priceCents: 80000,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+        name: 'Booty Lab',
+        entitlementDays: 45,
+      });
+      prisma.subscription.create.mockResolvedValue({
+        id: 'sub-booty',
+        status: SubscriptionStatus.ACTIVE,
+        source: SubscriptionSource.CASH,
+        currentPeriodEnd: new Date('2026-09-18T18:00:00.000Z'),
+        membershipPlan: { id: 'plan-booty', name: 'Booty Lab' },
+      });
+      prisma.payment.create.mockResolvedValue({ id: 'pay-1' });
+    });
+
+    it('sets entitlementEndsAt = periodStart + entitlementDays when plan has entitlementDays', async () => {
+      await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-booty',
+        amountCents: 80000,
+        paymentMethod: 'CASH',
+        periodStart: periodStart.toISOString(),
+      });
+
+      const expectedEntitlementEndsAt = new Date(
+        periodStart.getTime() + 45 * 86_400_000,
+      );
+
+      expect(prisma.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            entitlementEndsAt: expectedEntitlementEndsAt,
+          }),
+        }),
+      );
+    });
+
+    it('does not set entitlementEndsAt when plan has no entitlementDays', async () => {
+      prisma.membershipPlan.findFirst.mockResolvedValue({
+        id: 'plan-regular',
+        studioId: 'studio-1',
+        priceCents: 150000,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+        name: 'Monthly',
+        entitlementDays: null,
+      });
+      prisma.subscription.create.mockResolvedValue({
+        id: 'sub-1',
+        status: SubscriptionStatus.ACTIVE,
+        source: SubscriptionSource.CASH,
+        currentPeriodEnd: new Date('2026-09-18T00:00:00.000Z'),
+        membershipPlan: { id: 'plan-regular', name: 'Monthly' },
+      });
+
+      await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-regular',
+        amountCents: 150000,
+        paymentMethod: 'CASH',
+      });
+
+      const createCall = prisma.subscription.create.mock.calls[0][0];
+      expect(createCall.data).not.toHaveProperty('entitlementEndsAt');
+    });
+
+    it('always sets cancelAtPeriodEnd=true for offline subscriptions', async () => {
+      await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-booty',
+        amountCents: 80000,
+        paymentMethod: 'CASH',
+      });
+
+      expect(prisma.subscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ cancelAtPeriodEnd: true }),
+        }),
+      );
+    });
+  });
 });

@@ -67,7 +67,7 @@ export class BookingAccessService {
     });
 
     // Time-window enforcement: applies to all members, before subscription and Day Pass checks.
-    // No role can bypass this here — bypassRoles returned early above.
+    // bypassRoles (STAFF/INSTRUCTOR/ADMIN/OWNER) return early above and never reach this check.
     if (template?.accessWindowStart && template.accessWindowEnd) {
       const localHHmm = getStudioLocalHHmm(classStartsAt, studioTimezone);
       if (localHHmm < template.accessWindowStart || localHHmm >= template.accessWindowEnd) {

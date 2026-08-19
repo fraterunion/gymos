@@ -229,6 +229,9 @@ export class StripeWebhookService {
         ? { currentPeriodStart, currentPeriodEnd }
         : {};
 
+    // Captured inside the transaction and read after it commits.
+    let planEntitlementDays: number | null = null;
+
     const saved = await this.prisma.$transaction(async (tx) => {
       // Serialise concurrent webhook deliveries for the same member/studio, preventing
       // races where two deliveries both pass the conflict check and both try to CREATE.
@@ -264,6 +267,8 @@ export class StripeWebhookService {
         );
         return null;
       }
+      // Capture for post-transaction Stripe auto-cancel logic.
+      planEntitlementDays = plan.entitlementDays ?? null;
 
       // For fixed-duration plans (entitlementDays set), compute the GymOS entitlement end
       // from the Stripe period start. This is set ONLY on CREATE and never overwritten on
@@ -340,6 +345,42 @@ export class StripeWebhookService {
     });
 
     if (!saved) return;
+
+    // For fixed-duration plans (entitlementDays set), automatically prevent Stripe from
+    // charging for an unintended renewal at the end of the billing period. This runs after
+    // the DB transaction so a Stripe API failure doesn't roll back the local subscription row.
+    // Idempotent: if cancelAtPeriodEnd is already true on the Stripe object, this is a no-op.
+    if (
+      planEntitlementDays != null &&
+      RENEWABLE_SUBSCRIPTION_STATUSES.includes(status) &&
+      !sub.cancel_at_period_end
+    ) {
+      try {
+        await this.stripe.updateSubscription(sub.id, { cancel_at_period_end: true });
+        await this.prisma.subscription.update({
+          where: { id: saved.id },
+          data: { cancelAtPeriodEnd: true },
+        });
+        this.logger.log(
+          JSON.stringify({
+            event: 'fixed_duration_plan_auto_cancel_set',
+            stripeSubscriptionId: sub.id,
+            subscriptionId: saved.id,
+            entitlementDays: planEntitlementDays,
+          }),
+        );
+      } catch (e) {
+        // Log and continue — the local subscription row is already committed. The next
+        // webhook delivery will retry because cancelAtPeriodEnd will still be false on Stripe.
+        this.logger.error(
+          JSON.stringify({
+            event: 'fixed_duration_plan_auto_cancel_failed',
+            stripeSubscriptionId: sub.id,
+            error: String(e),
+          }),
+        );
+      }
+    }
 
     if (
       readPendingPlanIdFromMetadata(sub.metadata) &&

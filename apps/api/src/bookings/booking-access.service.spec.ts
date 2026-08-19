@@ -365,6 +365,48 @@ describe('BookingAccessService', () => {
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'Etc/GMT+6', classTemplateId, scheduledClassId),
       ).resolves.toBeUndefined();
     });
+
+    // ── Boundary conditions (09:59 / 10:00 / 16:59 / 17:00 / 17:01 local) ──────
+    // All in Etc/GMT+6 (UTC-6, no DST). Window: 10:00–17:00, 17:00 exclusive.
+    it('denies at 09:59 local (boundary: one minute before window opens)', async () => {
+      const at0959 = new Date('2026-08-10T15:59:00.000Z'); // 09:59 Etc/GMT+6
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at0959, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).rejects.toThrow(CLASS_TIME_WINDOW_DENIED_MESSAGE);
+    });
+
+    it('allows at 10:00 local (window open, inclusive)', async () => {
+      const at1000 = new Date('2026-08-10T16:00:00.000Z'); // 10:00 Etc/GMT+6
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1000, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).resolves.toBeUndefined();
+    });
+
+    it('allows at 16:59 local (one minute before window closes)', async () => {
+      const at1659 = new Date('2026-08-10T22:59:00.000Z'); // 16:59 Etc/GMT+6
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1659, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).resolves.toBeUndefined();
+    });
+
+    it('denies at 17:00 local (window end is exclusive)', async () => {
+      const at1700 = new Date('2026-08-10T23:00:00.000Z'); // 17:00 Etc/GMT+6
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1700, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).rejects.toThrow(CLASS_TIME_WINDOW_DENIED_MESSAGE);
+    });
+
+    it('denies at 17:01 local (past window end)', async () => {
+      const at1701 = new Date('2026-08-10T23:01:00.000Z'); // 17:01 Etc/GMT+6
+      const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1701, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
+      ).rejects.toThrow(CLASS_TIME_WINDOW_DENIED_MESSAGE);
+    });
   });
 
   describe('Day Pass allowlist (DayPassClassAccess)', () => {
