@@ -66,6 +66,10 @@ function membershipPill(member: MemberListItem) {
     const C = getColors();
     return { label: 'Sin membresía', bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
   }
+  if (sub.lifecycleStatus === 'EXPIRED') {
+    const C = getColors();
+    return { label: 'Vencida', bg: 'rgba(248,113,113,0.12)', textColor: C.negative };
+  }
   const cfg = statusConfig(sub.status, sub.cancelAtPeriodEnd, sub.currentPeriodEnd);
   return { label: cfg.label, bg: cfg.bg, textColor: cfg.textColor };
 }

@@ -3,6 +3,7 @@ import { apiRequest } from "@/lib/api/client";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type SubStatus = "ACTIVE" | "PAST_DUE" | "CANCELED" | "TRIALING" | "PAUSED";
+export type LifecycleStatus = SubStatus | "ENDING" | "SCHEDULED" | "EXPIRED";
 export type BookingStatus = "PENDING" | "CONFIRMED" | "CANCELLED" | "NO_SHOW" | "COMPLETED";
 export type PaymentStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "REFUNDED" | "PARTIALLY_REFUNDED";
 export type MemberRole = "MEMBER" | "INSTRUCTOR" | "STAFF" | "ADMIN" | "OWNER";
@@ -24,9 +25,13 @@ export type MemberDto = {
 export type MemberSubscriptionSummary = {
   id: string;
   status: SubStatus;
+  accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
+  lifecycleStatus: LifecycleStatus;
+  isEntitled: boolean;
   planName: string;
   planId: string;
   currentPeriodEnd: string | null;
+  effectiveEnd: string | null;
   cancelAtPeriodEnd: boolean;
 };
 
@@ -124,6 +129,10 @@ export type MemberPlan = {
 export type MemberSubscription = {
   id: string;
   status: SubStatus;
+  accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
+  lifecycleStatus: LifecycleStatus;
+  isEntitled: boolean;
+  effectiveEnd: string | null;
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;

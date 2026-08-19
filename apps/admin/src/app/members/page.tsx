@@ -48,10 +48,17 @@ function fmtRelative(iso: string | null | undefined) {
 const SUB_STATUS_LABELS: Record<SubStatus, string> = {
   ACTIVE: "Activa",
   TRIALING: "Prueba",
-  PAST_DUE: "Vencida",
+  PAST_DUE: "Pago pendiente",
   PAUSED: "Pausada",
   CANCELED: "Cancelada",
 };
+
+const LIFECYCLE_LABELS = {
+  ...SUB_STATUS_LABELS,
+  ENDING: "Termina pronto",
+  SCHEDULED: "Programada",
+  EXPIRED: "Vencida",
+} as const;
 
 const SUB_STATUS_COLORS: Record<SubStatus, string> = {
   ACTIVE: "bg-emerald-100 text-emerald-800",
@@ -60,6 +67,13 @@ const SUB_STATUS_COLORS: Record<SubStatus, string> = {
   PAUSED: "bg-zinc-100 text-zinc-600",
   CANCELED: "bg-red-100 text-red-700",
 };
+
+const LIFECYCLE_COLORS = {
+  ...SUB_STATUS_COLORS,
+  ENDING: "bg-amber-100 text-amber-800",
+  SCHEDULED: "bg-sky-100 text-sky-800",
+  EXPIRED: "bg-red-100 text-red-700",
+} as const;
 
 function RowSkeleton() {
   return (
@@ -108,10 +122,10 @@ function SortTh({
   );
 }
 
-function MemberStatusPill({ status }: { status: SubStatus }) {
+function MemberStatusPill({ status }: { status: keyof typeof LIFECYCLE_LABELS }) {
   return (
-    <span className={`${adminStatusPill} ${SUB_STATUS_COLORS[status]}`}>
-      {SUB_STATUS_LABELS[status]}
+    <span className={`${adminStatusPill} ${LIFECYCLE_COLORS[status]}`}>
+      {LIFECYCLE_LABELS[status]}
     </span>
   );
 }
@@ -136,7 +150,7 @@ function MemberCard({ member }: { member: MemberListItem }) {
           ) : null}
         </div>
         {member.subscription ? (
-          <MemberStatusPill status={member.subscription.status} />
+          <MemberStatusPill status={member.subscription.lifecycleStatus} />
         ) : (
           <span className="text-xs text-zinc-400">Sin plan</span>
         )}
@@ -361,7 +375,7 @@ export default function MembersPage() {
                       </td>
                       <td className="px-4 py-3.5">
                         {m.subscription ? (
-                          <MemberStatusPill status={m.subscription.status} />
+                          <MemberStatusPill status={m.subscription.lifecycleStatus} />
                         ) : (
                           <span className="text-xs text-zinc-400">Sin plan</span>
                         )}

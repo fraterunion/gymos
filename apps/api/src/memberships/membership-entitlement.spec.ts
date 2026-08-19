@@ -1,6 +1,7 @@
 import { SubscriptionStatus } from '@prisma/client';
 import {
   currentlyEntitledSubscriptionWhere,
+  deriveMembershipLifecycle,
   isSubscriptionCurrentlyEntitled,
 } from './membership-entitlement';
 
@@ -8,6 +9,7 @@ describe('canonical membership entitlement', () => {
   const end = new Date('2026-08-19T12:00:00.000Z');
   const subscription = {
     status: SubscriptionStatus.ACTIVE,
+    currentPeriodStart: new Date('2026-07-19T12:00:00.000Z'),
     currentPeriodEnd: end,
     entitlementEndsAt: null,
   };
@@ -40,6 +42,7 @@ describe('canonical membership entitlement', () => {
   it('uses the fixed-duration entitlement end instead of the Stripe billing period', () => {
     const fixed = {
       status: SubscriptionStatus.CANCELED,
+      currentPeriodStart: new Date('2026-07-01T00:00:00.000Z'),
       currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
       entitlementEndsAt: end,
     };
@@ -47,12 +50,55 @@ describe('canonical membership entitlement', () => {
     expect(isSubscriptionCurrentlyEntitled(fixed, end)).toBe(false);
   });
 
+  it('does not activate a future entitlement early', () => {
+    const future = {
+      ...subscription,
+      currentPeriodStart: new Date('2026-08-20T12:00:00.000Z'),
+      currentPeriodEnd: new Date('2026-09-20T12:00:00.000Z'),
+    };
+    expect(isSubscriptionCurrentlyEntitled(future, end)).toBe(false);
+    expect(deriveMembershipLifecycle(future, end)).toMatchObject({
+      accessState: 'NOT_STARTED',
+      lifecycleStatus: 'SCHEDULED',
+    });
+  });
+
+  it('keeps payment problems and pauses distinct from expiration', () => {
+    expect(
+      deriveMembershipLifecycle({ ...subscription, status: SubscriptionStatus.PAST_DUE }, end),
+    ).toMatchObject({ accessState: 'INACTIVE', lifecycleStatus: 'PAST_DUE' });
+    expect(
+      deriveMembershipLifecycle({ ...subscription, status: SubscriptionStatus.PAUSED }, end),
+    ).toMatchObject({ accessState: 'INACTIVE', lifecycleStatus: 'PAUSED' });
+  });
+
+  it('derives ENDING before cancel-at-period-end and EXPIRED at the boundary', () => {
+    const ending = { ...subscription, cancelAtPeriodEnd: true };
+    expect(deriveMembershipLifecycle(ending, new Date(end.getTime() - 1))).toMatchObject({
+      accessState: 'ENTITLED',
+      lifecycleStatus: 'ENDING',
+    });
+    expect(deriveMembershipLifecycle(ending, end)).toMatchObject({
+      accessState: 'EXPIRED',
+      lifecycleStatus: 'EXPIRED',
+    });
+  });
+
   it('builds a strict greater-than database predicate for both effective end types', () => {
     expect(currentlyEntitledSubscriptionWhere(end)).toEqual(
       expect.objectContaining({
-        OR: expect.arrayContaining([
-          expect.objectContaining({ currentPeriodEnd: { gt: end } }),
-          expect.objectContaining({ entitlementEndsAt: { gt: end } }),
+        AND: expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([
+              expect.objectContaining({ currentPeriodStart: { lte: end } }),
+            ]),
+          }),
+          expect.objectContaining({
+            OR: expect.arrayContaining([
+              expect.objectContaining({ currentPeriodEnd: { gt: end } }),
+              expect.objectContaining({ entitlementEndsAt: { gt: end } }),
+            ]),
+          }),
         ]),
       }),
     );

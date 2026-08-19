@@ -31,6 +31,9 @@ export type MyMemberProfileDto = {
   activeSubscription: {
     id: string;
     status: string;
+    accessState: 'ENTITLED' | 'NOT_STARTED' | 'EXPIRED' | 'INACTIVE';
+    lifecycleStatus: string;
+    isEntitled: boolean;
     currentPeriodStart: string;
     currentPeriodEnd: string;
     entitlementEndsAt: string | null;

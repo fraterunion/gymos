@@ -32,6 +32,9 @@ export type MemberProfileDto = {
   activeSubscription: {
     id: string;
     status: SubStatus;
+    accessState: 'ENTITLED' | 'NOT_STARTED' | 'EXPIRED' | 'INACTIVE';
+    lifecycleStatus: SubStatus | 'ENDING' | 'SCHEDULED' | 'EXPIRED';
+    isEntitled: boolean;
     currentPeriodStart: string | null;
     currentPeriodEnd: string | null;
     entitlementEndsAt: string | null;
@@ -45,6 +48,10 @@ export type MemberProfileDto = {
 export type MemberSubscriptionDto = {
   id: string;
   status: SubStatus;
+  accessState: 'ENTITLED' | 'NOT_STARTED' | 'EXPIRED' | 'INACTIVE';
+  lifecycleStatus: SubStatus | 'ENDING' | 'SCHEDULED' | 'EXPIRED';
+  isEntitled: boolean;
+  effectiveEnd: string | null;
   source: 'STRIPE' | 'MANUAL' | 'CASH' | string;
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;

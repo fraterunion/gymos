@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
+import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
 import {
   buildImmediateUpgradeUpdateParams,
   readCurrentStripePriceId,
@@ -62,11 +63,21 @@ export class SubscriptionLifecycleService {
     userId: string,
     tx: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<SubscriptionWithPlan | null> {
+    const now = new Date();
     return tx.subscription.findFirst({
       where: {
         studioId,
         userId,
-        status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+        OR: [
+          {
+            stripeSubscriptionId: { not: null },
+            status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+          },
+          {
+            stripeSubscriptionId: null,
+            ...currentlyEntitledSubscriptionWhere(now),
+          },
+        ],
       },
       orderBy: [{ createdAt: 'desc' }],
       include: { membershipPlan: true },

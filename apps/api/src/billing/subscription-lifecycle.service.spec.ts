@@ -52,6 +52,23 @@ describe('SubscriptionLifecycleService', () => {
     });
   });
 
+  it('treats local CASH/MANUAL rows as current only inside their entitlement window', async () => {
+    prisma.subscription.findFirst.mockResolvedValue(null);
+
+    await service.findCurrentRenewableSubscription('studio-1', 'user-1');
+
+    expect(prisma.subscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({ stripeSubscriptionId: { not: null } }),
+            expect.objectContaining({ stripeSubscriptionId: null, AND: expect.any(Array) }),
+          ]),
+        }),
+      }),
+    );
+  });
+
   it('routes first purchase to checkout when no Stripe subscription exists', async () => {
     prisma.subscription.findFirst.mockResolvedValue(null);
     prisma.membershipPlan.findFirst.mockResolvedValue({

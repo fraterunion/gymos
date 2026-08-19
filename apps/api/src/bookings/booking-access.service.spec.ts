@@ -162,9 +162,8 @@ describe('BookingAccessService', () => {
       1,
       expect.objectContaining({
         where: expect.objectContaining({
-          OR: expect.arrayContaining([
-            expect.objectContaining({ currentPeriodEnd: expect.objectContaining({ gt: expect.any(Date) }) }),
-            expect.objectContaining({ entitlementEndsAt: expect.objectContaining({ gt: expect.any(Date) }) }),
+          AND: expect.arrayContaining([
+            expect.objectContaining({ OR: expect.any(Array) }),
           ]),
         }),
       }),

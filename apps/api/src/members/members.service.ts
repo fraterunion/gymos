@@ -14,6 +14,7 @@ import {
   PaymentStatus,
   Prisma,
   Role,
+  SubscriptionSource,
   SubscriptionStatus,
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
@@ -23,7 +24,11 @@ import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
-import { currentlyEntitledSubscriptionWhere, MEMBERSHIP_EXPIRED_MESSAGE } from '../memberships/membership-entitlement';
+import {
+  currentlyEntitledSubscriptionWhere,
+  deriveMembershipLifecycle,
+  MEMBERSHIP_EXPIRED_MESSAGE,
+} from '../memberships/membership-entitlement';
 import {
   isClassIncludedInPlan,
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
@@ -177,8 +182,10 @@ export class MembersService {
       if (!subMap.has(sub.userId)) subMap.set(sub.userId, sub);
     }
 
+    const lifecycleNow = new Date();
     let enriched = memberships.map((m) => {
       const sub = subMap.get(m.userId);
+      const lifecycle = sub ? deriveMembershipLifecycle(sub, lifecycleNow) : null;
       return {
         membershipId: m.id,
         role: m.role,
@@ -191,9 +198,13 @@ export class MembersService {
           ? {
               id: sub.id,
               status: sub.status,
+              accessState: lifecycle!.accessState,
+              lifecycleStatus: lifecycle!.lifecycleStatus,
+              isEntitled: lifecycle!.isEntitled,
               planName: sub.membershipPlan.name,
               planId: sub.membershipPlan.id,
               currentPeriodEnd: sub.currentPeriodEnd,
+              effectiveEnd: lifecycle!.effectiveEnd,
               cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
             }
           : null,
@@ -249,6 +260,7 @@ export class MembersService {
       throw new NotFoundException('Member not found');
     }
 
+    const profileNow = new Date();
     const [attendanceTotal, activeSubscription, bookingGroups] = await Promise.all([
       this.prisma.attendance.count({
         where: { studioId, userId },
@@ -257,7 +269,7 @@ export class MembersService {
         where: {
           studioId,
           userId,
-          ...currentlyEntitledSubscriptionWhere(new Date()),
+          ...currentlyEntitledSubscriptionWhere(profileNow),
         },
         orderBy: { createdAt: 'desc' },
         include: {
@@ -345,6 +357,9 @@ export class MembersService {
         ? {
             id: activeSubscription.id,
             status: activeSubscription.status,
+            accessState: 'ENTITLED',
+            lifecycleStatus: deriveMembershipLifecycle(activeSubscription, profileNow).lifecycleStatus,
+            isEntitled: true,
             currentPeriodStart: activeSubscription.currentPeriodStart,
             currentPeriodEnd: activeSubscription.currentPeriodEnd,
             entitlementEndsAt: activeSubscription.entitlementEndsAt,
@@ -457,7 +472,7 @@ export class MembersService {
 
   async getMemberSubscriptions(studioId: string, userId: string) {
     await this.assertMembership(studioId, userId);
-    return this.prisma.subscription.findMany({
+    const rows = await this.prisma.subscription.findMany({
       where: { studioId, userId },
       include: {
         membershipPlan: {
@@ -483,6 +498,11 @@ export class MembersService {
       },
       orderBy: { createdAt: 'desc' },
     });
+    const now = new Date();
+    return rows.map((subscription) => ({
+      ...subscription,
+      ...deriveMembershipLifecycle(subscription, now),
+    }));
   }
 
   // ── Staff booking operations ───────────────────────────────────────────────
@@ -808,6 +828,7 @@ export class MembersService {
         userId,
         membershipPlanId: planId,
         status: SubscriptionStatus.ACTIVE,
+        source: stripeSubscriptionId ? SubscriptionSource.STRIPE : SubscriptionSource.MANUAL,
         stripeSubscriptionId: stripeSubscriptionId ?? null,
         currentPeriodStart: now,
         currentPeriodEnd: periodEnd,

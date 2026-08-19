@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MembershipPlansService } from '../membership-plans/membership-plans.service';
+import { deriveMembershipLifecycle } from './membership-entitlement';
 
 export type MembershipsOverview = {
   totalActivePlans: number;
@@ -13,6 +14,10 @@ export type MembershipsOverview = {
 export type SubscriptionListItem = {
   id: string;
   status: string;
+  accessState: string;
+  lifecycleStatus: string;
+  isEntitled: boolean;
+  effectiveEnd: Date | null;
   stripeSubscriptionId: string | null;
   currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
@@ -41,13 +46,9 @@ export class MembershipsService {
   ) {}
 
   async getOverview(studioId: string): Promise<MembershipsOverview> {
-    const [plans, statusGroups] = await Promise.all([
+    const [plans, subscriptions] = await Promise.all([
       this.plansService.listAllPlans(studioId, true),
-      this.prisma.subscription.groupBy({
-        by: ['status'],
-        where: { studioId },
-        _count: { _all: true },
-      }),
+      this.prisma.subscription.findMany({ where: { studioId } }),
     ]);
 
     const activePlans = plans.filter((p) => p.active && !p.deletedAt);
@@ -55,8 +56,9 @@ export class MembershipsService {
     const totalMrrCents = activePlans.reduce((sum, p) => sum + p.mrrCents, 0);
 
     const byStatus: Record<string, number> = {};
-    for (const g of statusGroups) {
-      byStatus[g.status] = g._count._all;
+    for (const subscription of subscriptions) {
+      const lifecycleStatus = deriveMembershipLifecycle(subscription, new Date()).lifecycleStatus;
+      byStatus[lifecycleStatus] = (byStatus[lifecycleStatus] ?? 0) + 1;
     }
 
     return {
@@ -106,6 +108,12 @@ export class MembershipsService {
       this.prisma.subscription.count({ where }),
     ]);
 
-    return { data: rows as SubscriptionListItem[], total, page, limit };
+    const now = new Date();
+    return {
+      data: rows.map((row) => ({ ...row, ...deriveMembershipLifecycle(row, now) })) as SubscriptionListItem[],
+      total,
+      page,
+      limit,
+    };
   }
 }

@@ -3,9 +3,12 @@ import { apiRequest } from '@/lib/api/client';
 export type MemberSubscriptionSummary = {
   id: string;
   status: string;
+  lifecycleStatus: string;
+  isEntitled: boolean;
   planName: string;
   planId: string;
   currentPeriodEnd: string | null;
+  effectiveEnd: string | null;
   cancelAtPeriodEnd: boolean;
 };
 

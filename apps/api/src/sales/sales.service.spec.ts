@@ -223,6 +223,57 @@ describe('SalesService', () => {
     expect(result.subscription.id).toBe('sub-1');
   });
 
+  it('renews an expired cash membership with a new isolated entitlement period', async () => {
+    mockActor(Role.ADMIN);
+    prisma.subscription.count.mockResolvedValue(1);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      priceCents: 150000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Monthly',
+      entitlementDays: null,
+    });
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-renewed',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodEnd: new Date('2026-09-19T18:00:00.000Z'),
+      membershipPlan: { id: 'plan-1', name: 'Monthly' },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-renewed' });
+    const renewedStart = new Date('2026-08-19T18:00:00.000Z');
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-1',
+      amountCents: 150000,
+      paymentMethod: 'CASH',
+      periodStart: renewedStart.toISOString(),
+    });
+
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+      where: {
+        studioId: 'studio-1',
+        userId: 'member-1',
+        status: { in: expect.arrayContaining([SubscriptionStatus.ACTIVE]) },
+      },
+      data: { status: SubscriptionStatus.CANCELED },
+    });
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          currentPeriodStart: renewedStart,
+          currentPeriodEnd: new Date('2026-09-19T18:00:00.000Z'),
+          status: SubscriptionStatus.ACTIVE,
+        }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ subscriptionId: 'sub-renewed' }) }),
+    );
+  });
+
   it('denies cash for front desk by default', async () => {
     mockActor(Role.FRONT_DESK);
 

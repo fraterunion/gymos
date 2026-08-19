@@ -7,6 +7,7 @@ export type SubscriptionStatus =
   | "CANCELED"
   | "TRIALING"
   | "PAUSED";
+export type LifecycleStatus = SubscriptionStatus | "ENDING" | "SCHEDULED" | "EXPIRED";
 
 export type ClassAccessTemplateDto = {
   id: string;
@@ -67,6 +68,10 @@ export type MembershipsOverview = {
 export type SubscriptionListItem = {
   id: string;
   status: SubscriptionStatus;
+  accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
+  lifecycleStatus: LifecycleStatus;
+  isEntitled: boolean;
+  effectiveEnd: string | null;
   stripeSubscriptionId: string | null;
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;

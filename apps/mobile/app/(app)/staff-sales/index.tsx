@@ -640,9 +640,12 @@ export default function StaffSalesScreen() {
             ? {
                 id: p.activeSubscription.id,
                 status: p.activeSubscription.status,
+                lifecycleStatus: p.activeSubscription.lifecycleStatus,
+                isEntitled: p.activeSubscription.isEntitled,
                 planName: p.activeSubscription.plan.name,
                 planId: p.activeSubscription.plan.id,
                 currentPeriodEnd: p.activeSubscription.currentPeriodEnd,
+                effectiveEnd: p.activeSubscription.entitlementEndsAt ?? p.activeSubscription.currentPeriodEnd,
                 cancelAtPeriodEnd: p.activeSubscription.cancelAtPeriodEnd,
               }
             : null,

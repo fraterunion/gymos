@@ -95,6 +95,20 @@ const SUB_STATUS_COLORS: Record<SubStatus, string> = {
   CANCELED: "bg-red-100 text-red-700",
 };
 
+const LIFECYCLE_LABELS = {
+  ...SUB_STATUS_LABELS,
+  ENDING: "Termina pronto",
+  SCHEDULED: "Programada",
+  EXPIRED: "Vencida",
+} as const;
+
+const LIFECYCLE_COLORS = {
+  ...SUB_STATUS_COLORS,
+  ENDING: "bg-amber-100 text-amber-800",
+  SCHEDULED: "bg-sky-100 text-sky-800",
+  EXPIRED: "bg-red-100 text-red-700",
+} as const;
+
 const BOOKING_STATUS_COLORS: Record<string, string> = {
   CONFIRMED: "bg-emerald-100 text-emerald-800",
   CANCELLED: "bg-red-100 text-red-700",
@@ -1052,7 +1066,9 @@ function MembershipTab({
               <div>
                 <div className="flex items-center gap-2">
                   <p className="font-semibold text-zinc-900">{s.membershipPlan.name}</p>
-                  <SubStatusBadge status={s.status} />
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${LIFECYCLE_COLORS[s.lifecycleStatus]}`}>
+                    {LIFECYCLE_LABELS[s.lifecycleStatus]}
+                  </span>
                 </div>
                 <p className="mt-0.5 text-sm text-zinc-500">
                   {fmtPlanPrice(s.membershipPlan.priceCents, s.membershipPlan.currency, s.membershipPlan.billingInterval)}
@@ -1066,7 +1082,7 @@ function MembershipTab({
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
-                {canChangePlan && (s.status === "ACTIVE" || s.status === "TRIALING" || s.status === "PAST_DUE") && (
+                {canChangePlan && (s.isEntitled || s.lifecycleStatus === "EXPIRED" || s.status === "PAST_DUE") && (
                   <button
                     onClick={() => setChangePlanSub(s)}
                     disabled={actionLoading === s.id}
@@ -1075,7 +1091,7 @@ function MembershipTab({
                     Change plan
                   </button>
                 )}
-                {s.status === "ACTIVE" && (
+                {s.isEntitled && s.status === "ACTIVE" && (
                   <>
                     <button onClick={() => void handleStatusChange(s.id, "PAUSED")} disabled={actionLoading === s.id}
                       className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50">
@@ -1102,7 +1118,7 @@ function MembershipTab({
               </div>
               <div>
                 <p className="text-xs text-zinc-400">Period end</p>
-                <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodEnd)}</p>
+                <p className="text-sm text-zinc-700">{fmtDate(s.effectiveEnd)}</p>
               </div>
               <div>
                 <p className="text-xs text-zinc-400">Credits</p>

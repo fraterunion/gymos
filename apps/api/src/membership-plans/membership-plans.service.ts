@@ -7,6 +7,7 @@ import type { MembershipPlan, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
 import type { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
+import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
 import {
   buildPlanClassAccessDto,
   dedupeTemplateIds,
@@ -94,7 +95,7 @@ export class MembershipPlansService {
         _count: {
           select: {
             subscriptions: {
-              where: { status: { in: ['ACTIVE', 'TRIALING', 'PAUSED'] } },
+              where: currentlyEntitledSubscriptionWhere(new Date()),
             },
           },
         },

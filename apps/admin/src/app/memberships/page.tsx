@@ -68,10 +68,24 @@ const STATUS_COLORS: Record<SubscriptionStatus, string> = {
   CANCELED: "bg-red-100 text-red-700",
 };
 
+const LIFECYCLE_LABELS = {
+  ...STATUS_LABELS,
+  ENDING: "Ending soon",
+  SCHEDULED: "Scheduled",
+  EXPIRED: "Expired",
+} as const;
+
+const LIFECYCLE_COLORS = {
+  ...STATUS_COLORS,
+  ENDING: "bg-amber-100 text-amber-800",
+  SCHEDULED: "bg-sky-100 text-sky-800",
+  EXPIRED: "bg-red-100 text-red-700",
+} as const;
+
 // ── Overview stats bar ────────────────────────────────────────────────────────
 
 function OverviewBar({ data }: { data: MembershipsOverview }) {
-  const active = data.byStatus["ACTIVE"] ?? 0;
+  const active = (data.byStatus["ACTIVE"] ?? 0) + (data.byStatus["ENDING"] ?? 0);
   const trialing = data.byStatus["TRIALING"] ?? 0;
   const pastDue = data.byStatus["PAST_DUE"] ?? 0;
   const paused = data.byStatus["PAUSED"] ?? 0;
@@ -743,6 +757,7 @@ function SubRow({
   onCancelAtPeriodEnd: (sub: SubscriptionListItem, cancel: boolean) => void;
 }) {
   const status = sub.status as SubscriptionStatus;
+  const lifecycleStatus = sub.lifecycleStatus;
   const isStripeLinked = !!sub.stripeSubscriptionId;
 
   return (
@@ -762,9 +777,9 @@ function SubRow({
       <td className="px-4 py-3">
         <div className="flex flex-col gap-1">
           <span
-            className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_COLORS[status]}`}
+            className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-semibold ${LIFECYCLE_COLORS[lifecycleStatus]}`}
           >
-            {STATUS_LABELS[status]}
+            {LIFECYCLE_LABELS[lifecycleStatus]}
           </span>
           {isStripeLinked ? (
             <span className="inline-flex w-fit items-center gap-1 text-xs text-indigo-600">
@@ -780,8 +795,8 @@ function SubRow({
         </div>
       </td>
       <td className="px-4 py-3 text-zinc-500">
-        {fmtDate(sub.currentPeriodEnd)}
-        {sub.cancelAtPeriodEnd && (
+        {fmtDate(sub.effectiveEnd)}
+        {sub.lifecycleStatus === "ENDING" && (
           <p className="mt-0.5 text-xs font-medium text-amber-500">
             Cancels at period end
           </p>
@@ -792,7 +807,7 @@ function SubRow({
       </td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap gap-1.5">
-          {status === "ACTIVE" && !sub.cancelAtPeriodEnd && (
+          {sub.isEntitled && status === "ACTIVE" && !sub.cancelAtPeriodEnd && (
             <button
               onClick={() => onCancelAtPeriodEnd(sub, true)}
               className="rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100"
@@ -800,7 +815,7 @@ function SubRow({
               Cancel at period end
             </button>
           )}
-          {status === "ACTIVE" && sub.cancelAtPeriodEnd && (
+          {sub.isEntitled && status === "ACTIVE" && sub.cancelAtPeriodEnd && (
             <button
               onClick={() => onCancelAtPeriodEnd(sub, false)}
               className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
@@ -808,7 +823,7 @@ function SubRow({
               Keep active
             </button>
           )}
-          {status === "ACTIVE" && (
+          {sub.isEntitled && status === "ACTIVE" && (
             <button
               onClick={() => onAction(sub, "PAUSED")}
               className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
@@ -816,7 +831,7 @@ function SubRow({
               Pause
             </button>
           )}
-          {status === "ACTIVE" && (
+          {sub.isEntitled && status === "ACTIVE" && (
             <button
               onClick={() => onAction(sub, "CANCELED")}
               className="rounded px-2 py-1 text-xs bg-red-50 text-red-600 hover:bg-red-100"
