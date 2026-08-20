@@ -125,6 +125,23 @@ describe('BillingService.ensureMembershipPlanStripePrice', () => {
     );
   });
 
+  it('creates a 45-day recurring Price for a fixed-duration renewable plan', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-booty', name: 'Booty Lab', priceCents: 80000, currency: 'mxn',
+      billingInterval: 'MONTHLY', entitlementDays: 45,
+      stripeProductId: 'prod_booty', stripePriceId: null, deletedAt: null, active: true,
+    });
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_booty_45d' });
+    prisma.membershipPlan.update.mockResolvedValue({});
+
+    const result = await buildService().ensureMembershipPlanStripePrice('plan-booty');
+
+    expect(stripe.createRecurringPrice).toHaveBeenCalledWith(expect.objectContaining({
+      unitAmount: 80000, currency: 'mxn', interval: 'day', intervalCount: 45,
+    }));
+    expect(result.priceId).toBe('price_booty_45d');
+  });
+
   it('creates both product and price when neither exists', async () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-brand-new',

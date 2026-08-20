@@ -22,7 +22,8 @@ describe('SalesService', () => {
     studioMembership: { findFirst: jest.Mock; create: jest.Mock };
     user: { findFirst: jest.Mock; create: jest.Mock };
     membershipPlan: { findFirst: jest.Mock };
-    subscription: { create: jest.Mock };
+    subscription: { create: jest.Mock; update: jest.Mock; count: jest.Mock; updateMany: jest.Mock; findFirst: jest.Mock };
+    membershipEntitlementCycle: { create: jest.Mock };
     payment: { create: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -52,7 +53,8 @@ describe('SalesService', () => {
       },
       user: { findFirst: jest.fn(), create: jest.fn() },
       membershipPlan: { findFirst: jest.fn() },
-      subscription: { create: jest.fn(), count: jest.fn(), updateMany: jest.fn() },
+      subscription: { create: jest.fn(), update: jest.fn(), count: jest.fn(), updateMany: jest.fn(), findFirst: jest.fn() },
+      membershipEntitlementCycle: { create: jest.fn().mockResolvedValue({ id: 'cycle-1' }) },
       payment: { create: jest.fn() },
       $transaction: jest.fn(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)),
     };
@@ -315,6 +317,7 @@ describe('SalesService', () => {
         billingInterval: 'MONTHLY',
         name: 'Booty Lab',
         entitlementDays: 45,
+        classCredits: 4,
       });
       prisma.subscription.create.mockResolvedValue({
         id: 'sub-booty',
@@ -387,6 +390,45 @@ describe('SalesService', () => {
           data: expect.objectContaining({ cancelAtPeriodEnd: true }),
         }),
       );
+    });
+
+    it('queues a cash renewal after the current 45-day cycle without overlap', async () => {
+      const currentEnd = new Date('2026-10-02T18:00:00.000Z');
+      prisma.subscription.count.mockResolvedValue(1);
+      prisma.subscription.findFirst.mockResolvedValue({
+        id: 'sub-current-booty',
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: currentEnd,
+        entitlementEndsAt: currentEnd,
+      });
+      prisma.subscription.update.mockResolvedValue({
+        id: 'sub-current-booty',
+        status: SubscriptionStatus.ACTIVE,
+        source: SubscriptionSource.CASH,
+        membershipPlan: { id: 'plan-booty', name: 'Booty Lab' },
+      });
+
+      await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-booty', amountCents: 80000, paymentMethod: 'CASH',
+      });
+
+      expect(prisma.membershipEntitlementCycle.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startsAt: currentEnd,
+          endsAt: new Date(currentEnd.getTime() + 45 * 86_400_000),
+          creditLimit: 4,
+        }),
+      });
+      expect(prisma.subscription.create).not.toHaveBeenCalled();
+      expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+      expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'sub-current-booty' },
+        data: expect.objectContaining({
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodStart: periodStart,
+          entitlementEndsAt: new Date(currentEnd.getTime() + 45 * 86_400_000),
+        }),
+      }));
     });
   });
 });

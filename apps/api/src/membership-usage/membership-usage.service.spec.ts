@@ -9,6 +9,7 @@ import {
 describe('MembershipUsageService', () => {
   const prisma = {
     $queryRaw: jest.fn(),
+    membershipEntitlementCycle: { findFirst: jest.fn() },
   };
 
   const service = new MembershipUsageService(prisma as never);
@@ -58,6 +59,15 @@ describe('MembershipUsageService', () => {
         { errorType: 'bad_request' },
       ),
     ).rejects.toThrow(new BadRequestException(MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE));
+  });
+
+  it('fixed-duration membership denies a class outside every paid cycle', async () => {
+    prisma.membershipEntitlementCycle.findFirst.mockResolvedValue(null);
+    await expect(service.assertCreditAvailableForClass(
+      prisma as never, 'studio-1', 'user-1', 'class-future',
+      new Date('2025-10-10T12:00:00.000Z'),
+      { ...subscription, id: 'sub-fixed', membershipPlan: { classCredits: 4, entitlementDays: 45 } },
+    )).rejects.toThrow('No paid entitlement cycle covers this class');
   });
 
   it('assertCreditAvailableForClass is idempotent when class already consumed', async () => {

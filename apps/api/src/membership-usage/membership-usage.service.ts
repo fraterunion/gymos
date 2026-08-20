@@ -158,9 +158,10 @@ export class MembershipUsageService {
     scheduledClassId: string,
     classStartsAt: Date,
     subscription: {
+      id?: string;
       currentPeriodStart: Date | null;
       currentPeriodEnd: Date | null;
-      membershipPlan: { classCredits: number | null };
+      membershipPlan: { classCredits: number | null; entitlementDays?: number | null };
     },
     options?: { errorType?: 'forbidden' | 'bad_request' },
   ): Promise<void> {
@@ -169,7 +170,22 @@ export class MembershipUsageService {
       return;
     }
 
-    const period = this.resolveBillingPeriodForClassDate(subscription, classStartsAt);
+    const storedCycle = subscription.id
+      ? await client.membershipEntitlementCycle.findFirst({
+          where: {
+            subscriptionId: subscription.id,
+            startsAt: { lte: classStartsAt },
+            endsAt: { gt: classStartsAt },
+          },
+          orderBy: { startsAt: 'desc' },
+        })
+      : null;
+    if (subscription.id && subscription.membershipPlan.entitlementDays && !storedCycle) {
+      throw new ForbiddenException('No paid entitlement cycle covers this class');
+    }
+    const period = storedCycle
+      ? { start: storedCycle.startsAt, end: storedCycle.endsAt }
+      : this.resolveBillingPeriodForClassDate(subscription, classStartsAt);
     if (!period) {
       return;
     }

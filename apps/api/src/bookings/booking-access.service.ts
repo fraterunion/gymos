@@ -89,6 +89,7 @@ export class BookingAccessService {
       },
       orderBy: { createdAt: 'desc' },
       select: {
+        id: true,
         status: true,
         currentPeriodStart: true,
         currentPeriodEnd: true,
@@ -98,6 +99,7 @@ export class BookingAccessService {
             allClassesAccess: true,
             allowedCategories: true,
             classCredits: true,
+            entitlementDays: true,
             classTemplateAccess: {
               select: { classTemplateId: true },
             },
@@ -147,7 +149,10 @@ export class BookingAccessService {
               { errorType: 'forbidden' },
             );
           } catch (e) {
-            if (e instanceof ForbiddenException) {
+            if (
+              e instanceof ForbiddenException &&
+              e.message === MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE
+            ) {
               creditsExhausted = true;
             } else {
               throw e;

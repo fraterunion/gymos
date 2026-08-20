@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
+import { buildPaidFixedEntitlementCycle } from './fixed-entitlement-cycle';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { subscriptionLockKey } from './subscription-lifecycle.utils';
 import {
@@ -229,9 +230,6 @@ export class StripeWebhookService {
         ? { currentPeriodStart, currentPeriodEnd }
         : {};
 
-    // Captured inside the transaction and read after it commits.
-    let planEntitlementDays: number | null = null;
-
     const saved = await this.prisma.$transaction(async (tx) => {
       // Serialise concurrent webhook deliveries for the same member/studio, preventing
       // races where two deliveries both pass the conflict check and both try to CREATE.
@@ -267,16 +265,9 @@ export class StripeWebhookService {
         );
         return null;
       }
-      // Capture for post-transaction Stripe auto-cancel logic.
-      planEntitlementDays = plan.entitlementDays ?? null;
-
-      // For fixed-duration plans (entitlementDays set), compute the GymOS entitlement end
-      // from the Stripe period start. This is set ONLY on CREATE and never overwritten on
-      // subsequent webhooks — billing renewal and access window are deliberately decoupled.
-      const entitlementEndsAt =
-        plan.entitlementDays != null && currentPeriodStart
-          ? new Date(currentPeriodStart.getTime() + plan.entitlementDays * 86_400_000)
-          : undefined;
+      // Fixed-duration entitlement is granted only by invoice.paid. Subscription events
+      // may arrive before payment and therefore must never create an access window.
+      const entitlementEndsAt = undefined;
 
       // Guard against violating the partial unique index on (studio_id, user_id) WHERE status='ACTIVE'.
       // Only the CREATE branch of upsert can conflict; the UPDATE branch targets the existing row by
@@ -306,14 +297,15 @@ export class StripeWebhookService {
         }
       }
 
-      const row = await tx.subscription.upsert({
+      let row = await tx.subscription.upsert({
         where: { stripeSubscriptionId: sub.id },
         create: {
           studioId,
           userId,
           membershipPlanId,
           pendingMembershipPlanId,
-          status,
+          // A fixed-duration row is not entitled until its paid invoice creates a cycle.
+          status: plan.entitlementDays != null ? SubscriptionStatus.PAST_DUE : status,
           stripeSubscriptionId: sub.id,
           cancelAtPeriodEnd: sub.cancel_at_period_end,
           ...periodData,
@@ -330,6 +322,24 @@ export class StripeWebhookService {
         },
       });
 
+      if (plan.entitlementDays != null) {
+        const paidCycle = await tx.membershipEntitlementCycle.findFirst({
+          where: { subscriptionId: row.id },
+          orderBy: { endsAt: 'desc' },
+        });
+        row = await tx.subscription.update({
+          where: { id: row.id },
+          data: paidCycle
+            ? {
+                status,
+                currentPeriodStart: paidCycle.startsAt,
+                currentPeriodEnd: paidCycle.endsAt,
+                entitlementEndsAt: paidCycle.endsAt,
+              }
+            : { status: SubscriptionStatus.PAST_DUE, entitlementEndsAt: null },
+        });
+      }
+
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
         await this.subscriptionLifecycle.auditDuplicateRenewableSubscriptions(tx, {
           studioId,
@@ -345,42 +355,6 @@ export class StripeWebhookService {
     });
 
     if (!saved) return;
-
-    // For fixed-duration plans (entitlementDays set), automatically prevent Stripe from
-    // charging for an unintended renewal at the end of the billing period. This runs after
-    // the DB transaction so a Stripe API failure doesn't roll back the local subscription row.
-    // Idempotent: if cancelAtPeriodEnd is already true on the Stripe object, this is a no-op.
-    if (
-      planEntitlementDays != null &&
-      RENEWABLE_SUBSCRIPTION_STATUSES.includes(status) &&
-      !sub.cancel_at_period_end
-    ) {
-      try {
-        await this.stripe.updateSubscription(sub.id, { cancel_at_period_end: true });
-        await this.prisma.subscription.update({
-          where: { id: saved.id },
-          data: { cancelAtPeriodEnd: true },
-        });
-        this.logger.log(
-          JSON.stringify({
-            event: 'fixed_duration_plan_auto_cancel_set',
-            stripeSubscriptionId: sub.id,
-            subscriptionId: saved.id,
-            entitlementDays: planEntitlementDays,
-          }),
-        );
-      } catch (e) {
-        // Log and continue — the local subscription row is already committed. The next
-        // webhook delivery will retry because cancelAtPeriodEnd will still be false on Stripe.
-        this.logger.error(
-          JSON.stringify({
-            event: 'fixed_duration_plan_auto_cancel_failed',
-            stripeSubscriptionId: sub.id,
-            error: String(e),
-          }),
-        );
-      }
-    }
 
     if (
       readPendingPlanIdFromMetadata(sub.metadata) &&
@@ -670,6 +644,84 @@ export class StripeWebhookService {
         membershipPlanId: ctx.membershipPlanId ?? undefined,
         paidAt,
       },
+    });
+
+    await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice);
+  }
+
+  private async grantFixedDurationCycleForPaidInvoice(
+    ctx: { userId: string; studioId: string; dbSubscriptionId: string | null; membershipPlanId: string | null },
+    invoice: WebhookInvoicePayload,
+  ): Promise<void> {
+    if (!ctx.dbSubscriptionId) {
+      const plan = ctx.membershipPlanId
+        ? await this.prisma.membershipPlan.findUnique({ where: { id: ctx.membershipPlanId } })
+        : null;
+      if (plan?.entitlementDays) {
+        throw new Error(`Paid fixed-duration invoice ${invoice.id} arrived before its local subscription`);
+      }
+      return;
+    }
+
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { id: ctx.dbSubscriptionId },
+      include: { membershipPlan: true },
+    });
+    if (!subscription?.membershipPlan.entitlementDays) return;
+
+    const line = invoice.lines?.data.find((candidate) =>
+      candidate.price?.id === subscription.membershipPlan.stripePriceId,
+    ) ?? invoice.lines?.data[0];
+    const startsAt = line?.period?.start ? new Date(line.period.start * 1000) : null;
+    const endsAt = line?.period?.end ? new Date(line.period.end * 1000) : null;
+    if (!startsAt || !endsAt) {
+      throw new Error(`Paid invoice ${invoice.id} is missing subscription line period bounds`);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      // Serialize every grant for this subscription, including different invoice
+      // events delivered concurrently. The database trigger independently enforces
+      // the same immutable, non-overlapping ledger invariant.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscription.id}))`;
+      const existingCycle = await tx.membershipEntitlementCycle.findUnique({
+        where: { stripeInvoiceId: invoice.id },
+      });
+      if (existingCycle) return;
+
+      const previousCycle = await tx.membershipEntitlementCycle.findFirst({
+        where: { subscriptionId: subscription.id },
+        orderBy: { endsAt: 'desc' },
+      });
+      const cycle = buildPaidFixedEntitlementCycle({
+        periodStart: startsAt,
+        periodEnd: endsAt,
+        entitlementDays: subscription.membershipPlan.entitlementDays!,
+        creditLimit: subscription.membershipPlan.classCredits,
+        previousCycleEnd: previousCycle?.endsAt,
+      });
+
+      await tx.membershipEntitlementCycle.create({
+        data: {
+          studioId: subscription.studioId,
+          userId: subscription.userId,
+          subscriptionId: subscription.id,
+          membershipPlanId: subscription.membershipPlanId,
+          startsAt: cycle.startsAt,
+          endsAt: cycle.endsAt,
+          creditLimit: cycle.creditLimit,
+          source: subscription.source,
+          stripeInvoiceId: invoice.id,
+        },
+      });
+      await tx.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodStart: cycle.startsAt,
+          currentPeriodEnd: cycle.endsAt,
+          entitlementEndsAt: cycle.endsAt,
+        },
+      });
     });
   }
 

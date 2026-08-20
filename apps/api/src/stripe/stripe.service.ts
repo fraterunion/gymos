@@ -88,12 +88,16 @@ export class StripeService {
     unitAmount: number;
     currency: string;
     interval: Stripe.PriceCreateParams.Recurring.Interval;
+    intervalCount?: number;
   }): Promise<Stripe.Price> {
     return this.getClient().prices.create({
       product: params.productId,
       unit_amount: params.unitAmount,
       currency: params.currency.toLowerCase(),
-      recurring: { interval: params.interval },
+      recurring: {
+        interval: params.interval,
+        ...(params.intervalCount ? { interval_count: params.intervalCount } : {}),
+      },
     });
   }
 

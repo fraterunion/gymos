@@ -42,7 +42,10 @@ export type WebhookInvoicePayload = {
   total: number | null;
   status_transitions: { paid_at: number | null } | null;
   lines: {
-    data: Array<{ price: { id: string } | null }>;
+    data: Array<{
+      price: { id: string } | null;
+      period?: { start: number | null; end: number | null } | null;
+    }>;
   } | null;
   // Invoice collection-window timestamps — NOT the subscription billing period.
   // Do NOT use these for currentPeriodStart/currentPeriodEnd.

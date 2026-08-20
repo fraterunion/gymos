@@ -406,6 +406,7 @@ export class CheckInsService {
               ...currentlyEntitledSubscriptionWhere(now),
             },
             select: {
+              id: true,
               currentPeriodStart: true,
               currentPeriodEnd: true,
               entitlementEndsAt: true,
@@ -414,6 +415,7 @@ export class CheckInsService {
                   id: true,
                   name: true,
                   classCredits: true,
+                  entitlementDays: true,
                   allClassesAccess: true,
                   allowedCategories: true,
                   classTemplateAccess: { select: { classTemplateId: true } },

@@ -234,6 +234,7 @@ model Studio {
   memberships    StudioMembership[]
   plans          MembershipPlan[]
   subscriptions  Subscription[]
+  entitlementCycles MembershipEntitlementCycle[]
   classTemplates ClassTemplate[]
   classes        ScheduledClass[]
   bookings       Booking[]
@@ -276,6 +277,7 @@ model User {
 
   studioMemberships StudioMembership[]
   subscriptions     Subscription[]     @relation("SubscriptionMember")
+  entitlementCycles MembershipEntitlementCycle[]
   bookings            Booking[]
   waitlistEntries     WaitlistEntry[]
   attendances         Attendance[]
@@ -346,8 +348,7 @@ model MembershipPlan {
   allowedCategories ClassCategory[] @default([]) @map("allowed_categories")
   /// When true, member may book any active class template. Explicit unrestricted flag.
   allClassesAccess    Boolean         @default(true) @map("all_classes_access")
-  /// When set, overrides billingInterval for subscription period length in days.
-  /// Billing cycle and entitlement duration are decoupled for fixed-duration products.
+  /// When set, fixed-duration Stripe Prices and GymOS entitlement cycles both use this day count.
   entitlementDays  Int?            @map("entitlement_days")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
@@ -358,6 +359,7 @@ model MembershipPlan {
   pendingSubscriptions Subscription[] @relation("SubscriptionPendingPlan")
   payments             Payment[]
   classTemplateAccess  MembershipPlanClassAccess[]
+  entitlementCycles    MembershipEntitlementCycle[]
 
   @@index([studioId])
   @@index([studioId, active])
@@ -393,6 +395,7 @@ model Subscription {
   pendingMembershipPlan MembershipPlan? @relation("SubscriptionPendingPlan", fields: [pendingMembershipPlanId], references: [id], onDelete: SetNull)
   createdBy      User?          @relation("SubscriptionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   payments       Payment[]
+  entitlementCycles MembershipEntitlementCycle[]
 
   @@index([studioId])
   @@index([studioId, userId])
@@ -400,6 +403,32 @@ model Subscription {
   @@index([membershipPlanId])
   @@index([status])
   @@map("subscriptions")
+}
+
+/// Immutable entitlement/credit window created only after a successful payment.
+/// Fixed-duration renewable plans use these rows as their historical source of truth.
+model MembershipEntitlementCycle {
+  id                String             @id @default(cuid())
+  studioId          String             @map("studio_id")
+  userId            String             @map("user_id")
+  subscriptionId    String             @map("subscription_id")
+  membershipPlanId  String             @map("membership_plan_id")
+  startsAt          DateTime           @map("starts_at")
+  endsAt            DateTime           @map("ends_at")
+  creditLimit       Int?               @map("credit_limit")
+  source            SubscriptionSource
+  stripeInvoiceId   String?            @unique @map("stripe_invoice_id")
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  studio          Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user            User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subscription    Subscription   @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  membershipPlan  MembershipPlan @relation(fields: [membershipPlanId], references: [id], onDelete: Restrict)
+
+  @@unique([subscriptionId, startsAt, endsAt])
+  @@index([studioId, userId, startsAt, endsAt])
+  @@index([subscriptionId, startsAt])
+  @@map("membership_entitlement_cycles")
 }
 
 model ClassTemplate {

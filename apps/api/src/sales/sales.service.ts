@@ -243,10 +243,37 @@ export class SalesService {
       }
     }
 
-    const periodStart = dto.periodStart ? new Date(dto.periodStart) : new Date();
+    const now = new Date();
+    const renewableCashSubscription = plan.entitlementDays != null
+      ? await this.prisma.subscription.findFirst({
+        where: {
+          studioId,
+          userId: targetUserId,
+          membershipPlanId: plan.id,
+          source: SubscriptionSource.CASH,
+          status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          currentPeriodStart: true,
+          currentPeriodEnd: true,
+          entitlementEndsAt: true,
+        },
+      })
+      : null;
+
+    let periodStart = dto.periodStart ? new Date(dto.periodStart) : now;
+    if (renewableCashSubscription && !dto.periodStart) {
+      const currentEnd = renewableCashSubscription.entitlementEndsAt
+        ?? renewableCashSubscription.currentPeriodEnd;
+      if (currentEnd && currentEnd > periodStart) periodStart = currentEnd;
+    }
     const periodEnd = dto.periodEnd
       ? new Date(dto.periodEnd)
-      : this.defaultPeriodEnd(periodStart, plan.billingInterval);
+      : plan.entitlementDays != null
+        ? new Date(periodStart.getTime() + plan.entitlementDays * 86_400_000)
+        : this.defaultPeriodEnd(periodStart, plan.billingInterval);
 
     // For fixed-duration plans (e.g. Booty Lab 45-day), anchor the GymOS entitlement
     // window at periodStart — the same formula the Stripe webhook uses for online purchases.
@@ -267,7 +294,7 @@ export class SalesService {
       .join(' | ') || null;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      if (existingRenewable > 0) {
+      if (existingRenewable > 0 && !renewableCashSubscription) {
         await tx.subscription.updateMany({
           where: {
             studioId,
@@ -278,7 +305,31 @@ export class SalesService {
         });
       }
 
-      const subscription = await tx.subscription.create({
+      const subscription = renewableCashSubscription
+        ? await tx.subscription.update({
+          where: { id: renewableCashSubscription.id },
+          data: {
+            status: SubscriptionStatus.ACTIVE,
+            currentPeriodStart:
+              periodStart <= now
+                ? periodStart
+                : renewableCashSubscription.currentPeriodStart,
+            currentPeriodEnd: entitlementEndsAt!,
+            entitlementEndsAt: entitlementEndsAt!,
+          },
+          include: {
+            membershipPlan: {
+              select: {
+                id: true,
+                name: true,
+                billingInterval: true,
+                priceCents: true,
+                currency: true,
+              },
+            },
+          },
+        })
+        : await tx.subscription.create({
         data: {
           studioId,
           userId: targetUserId,
@@ -304,7 +355,22 @@ export class SalesService {
             },
           },
         },
-      });
+        });
+
+      if (plan.entitlementDays != null) {
+        await tx.membershipEntitlementCycle.create({
+          data: {
+            studioId,
+            userId: targetUserId,
+            subscriptionId: subscription.id,
+            membershipPlanId: plan.id,
+            startsAt: periodStart,
+            endsAt: entitlementEndsAt!,
+            creditLimit: plan.classCredits,
+            source: SubscriptionSource.CASH,
+          },
+        });
+      }
 
       const payment = await tx.payment.create({
         data: {

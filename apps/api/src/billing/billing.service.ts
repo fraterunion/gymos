@@ -299,12 +299,14 @@ export class BillingService {
 
     if (!priceId) {
       // No Stripe Price exists yet — create one from local metadata.
-      const { interval } = billingIntervalToStripeRecurring(plan.billingInterval);
+      const recurring = plan.entitlementDays != null
+        ? { interval: 'day' as const, intervalCount: plan.entitlementDays }
+        : billingIntervalToStripeRecurring(plan.billingInterval);
       const price = await this.stripe.createRecurringPrice({
         productId,
         unitAmount: plan.priceCents,
         currency: plan.currency,
-        interval,
+        ...recurring,
       });
       priceId = price.id;
       await this.prisma.membershipPlan.update({

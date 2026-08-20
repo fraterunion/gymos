@@ -96,10 +96,12 @@ function makeMocks() {
       findFirst: jest.fn().mockResolvedValue(user),
     },
     subscription: {
-      findUnique: jest.fn().mockResolvedValue(dbSubscription),
+      findUnique: jest.fn().mockImplementation(async (args: { where: { id?: string; stripeSubscriptionId?: string } }) =>
+        args.where.id ? null : dbSubscription),
     },
     membershipPlan: {
       findFirst: jest.fn().mockResolvedValue(plan),
+      findUnique: jest.fn().mockResolvedValue(null),
     },
     studioMembership: {
       findFirst: jest.fn().mockResolvedValue(membership),
@@ -232,6 +234,50 @@ describe('StripeWebhookService — context resolution via onInvoicePaid', () => 
     const { service, payments } = makeMocks();
     await service.onInvoicePaid(basilInvoice({ status: 'open' }));
     expect(payments.size).toBe(0);
+  });
+});
+
+describe('StripeWebhookService — fixed entitlement cycle grants', () => {
+  it('duplicate paid invoice creates exactly one 45-day cycle', async () => {
+    const cycles = new Map<string, { endsAt: Date }>();
+    const subscription = {
+      id: 'db_booty', studioId: 'studio_1', userId: 'user_1', membershipPlanId: 'plan_booty',
+      source: SubscriptionSource.STRIPE,
+      membershipPlan: { entitlementDays: 45, classCredits: 4, stripePriceId: 'price_booty_45d' },
+    };
+    const prisma = {
+      subscription: {
+        findUnique: jest.fn().mockResolvedValue(subscription),
+        update: jest.fn(),
+      },
+      membershipEntitlementCycle: {
+        findUnique: jest.fn(async ({ where }: { where: { stripeInvoiceId: string } }) => cycles.get(where.stripeInvoiceId) ?? null),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(async ({ data }: { data: { stripeInvoiceId: string; endsAt: Date } }) => {
+          cycles.set(data.stripeInvoiceId, { endsAt: data.endsAt });
+          return data;
+        }),
+      },
+      $executeRaw: jest.fn(),
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+    };
+    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never);
+    const grant = (service as unknown as {
+      grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
+    }).grantFixedDurationCycleForPaidInvoice.bind(service);
+    const periodStart = Math.floor(new Date('2026-10-02T18:00:00.000Z').getTime() / 1000);
+    const invoice = basilInvoice({
+      id: 'in_booty_renewal',
+      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: periodStart, end: periodStart + 45 * 86400 } }] },
+    });
+    const ctx = { userId: 'user_1', studioId: 'studio_1', dbSubscriptionId: 'db_booty', membershipPlanId: 'plan_booty' };
+
+    await grant(ctx, invoice);
+    await grant(ctx, invoice);
+
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(prisma.membershipEntitlementCycle.create).toHaveBeenCalledTimes(1);
+    expect(prisma.subscription.update).toHaveBeenCalledTimes(1);
   });
 });
 
