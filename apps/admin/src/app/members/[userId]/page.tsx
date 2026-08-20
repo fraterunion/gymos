@@ -34,7 +34,7 @@ import {
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/sales";
 import { ApiError } from "@/lib/api/errors";
-import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, primaryStatus, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
+import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -1578,7 +1578,7 @@ export default function MemberProfilePage() {
                   <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
                     {profile.role}
                   </span>
-                  {profile.currentMembership ? <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${PRIMARY_STATUS_COLORS[primaryStatus(profile.currentMembership.lifecycleStatus)]}`}>{PRIMARY_STATUS_LABELS[primaryStatus(profile.currentMembership.lifecycleStatus)]}</span> : <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-500">Sin membresía</span>}
+                  {profile.currentMembership ? <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${PRIMARY_STATUS_COLORS[profile.currentMembership.primaryStatus]}`}>{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]}</span> : <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-500">Sin membresía</span>}
                   {badges.map((b) => (
                     <span key={b.label} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${b.color}`}>
                       {b.label}
@@ -1648,7 +1648,7 @@ export default function MemberProfilePage() {
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-zinc-900">Estado de membresía</h2>
                   <p className="mt-3 text-lg font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin plan"}</p>
-                  {profile.currentMembership ? <><p className="text-sm text-zinc-500">{LIFECYCLE_LABELS[profile.currentMembership.lifecycleStatus]} · {studioDate(profile.currentMembership.currentPeriodStart)} → {studioDate(profile.currentMembership.effectiveEnd)}</p><p className="mt-3 text-sm text-zinc-700">{profile.currentMembership.plan.allClassesAccess ? "Acceso a todas las clases" : `${profile.currentMembership.plan.allowedTemplateIds.length} clases permitidas`}</p><p className="text-sm font-medium text-zinc-700">{profileRenewal?.title}</p><p className="text-sm text-zinc-500">{profileRenewal?.detail}</p></> : null}
+                  {profile.currentMembership ? <><p className="text-sm text-zinc-500">{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]} · {studioDate(profile.currentMembership.currentPeriodStart)} → {studioDate(profile.currentMembership.effectiveEnd)}</p><p className="mt-3 text-sm text-zinc-700">{profile.currentMembership.plan.allClassesAccess ? "Acceso a todas las clases" : `${profile.currentMembership.plan.allowedTemplateIds.length} clases permitidas`}</p><p className="text-sm font-medium text-zinc-700">{profileRenewal?.title}</p><p className="text-sm text-zinc-500">{profileRenewal?.detail}</p></> : null}
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
                   <h2 className="mb-4 text-sm font-semibold text-zinc-900">Información del miembro</h2>
@@ -1675,7 +1675,7 @@ export default function MemberProfilePage() {
                         <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Current plan</dt>
                         <dd className="mt-1 flex items-center gap-2 text-sm text-zinc-900">
                           {profile.currentMembership.plan.name}
-                          <span className={`rounded-full px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[profile.currentMembership.lifecycleStatus]}`}>{LIFECYCLE_LABELS[profile.currentMembership.lifecycleStatus]}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs ${PRIMARY_STATUS_COLORS[profile.currentMembership.primaryStatus]}`}>{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]}</span>
                         </dd>
                       </div>
                       <div>

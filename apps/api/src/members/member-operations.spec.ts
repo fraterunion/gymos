@@ -22,6 +22,16 @@ describe('member operations directory filters', () => {
     expect(matchesLifecycleFilter('ENDING', 'ACTIVE')).toBe(true);
     expect(matchesActivityFilter({ ...base, lifecycleStatus: 'ENDING', effectiveEnd: new Date('2026-08-25') }, 'ENDING_7D', now)).toBe(true);
   });
+  it('presents provider TRIALING as ACTIVE only with a current paid entitlement cycle', () => {
+    expect(toPrimaryMembershipStatus('TRIALING', { isEntitled: true, hasCurrentPaidEntitlementCycle: true })).toBe('ACTIVE');
+    expect(toPrimaryMembershipStatus('TRIALING', { isEntitled: true, hasCurrentPaidEntitlementCycle: false })).toBe('TRIALING');
+    expect(matchesLifecycleFilter('ACTIVE', 'ACTIVE')).toBe(true);
+    expect(matchesLifecycleFilter('ACTIVE', 'TRIALING')).toBe(false);
+  });
+  it('preserves ordinary active and expired operational states', () => {
+    expect(toPrimaryMembershipStatus('ACTIVE', { isEntitled: true, hasCurrentPaidEntitlementCycle: true })).toBe('ACTIVE');
+    expect(toPrimaryMembershipStatus('EXPIRED', { isEntitled: false, hasCurrentPaidEntitlementCycle: true })).toBe('EXPIRED');
+  });
   it.each([SubscriptionSource.STRIPE, SubscriptionSource.CASH, SubscriptionSource.MANUAL])('filters payment source %s', (source) => {
     expect(matchesPaymentSource(source, source)).toBe(true);
     expect(matchesPaymentSource(source, 'NONE')).toBe(false);

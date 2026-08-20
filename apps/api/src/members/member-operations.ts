@@ -18,8 +18,16 @@ export type MemberAttention = {
   action: 'REVIEW_BILLING' | 'RENEW' | null;
 } | null;
 
-export function toPrimaryMembershipStatus(status: MembershipLifecycleStatus): MemberPrimaryStatus {
-  return status === 'ENDING' ? 'ACTIVE' : status;
+export function toPrimaryMembershipStatus(
+  status: MembershipLifecycleStatus,
+  evidence: { isEntitled: boolean; hasCurrentPaidEntitlementCycle: boolean } = {
+    isEntitled: false,
+    hasCurrentPaidEntitlementCycle: false,
+  },
+): MemberPrimaryStatus {
+  if (status === 'ENDING') return 'ACTIVE';
+  if (status === 'TRIALING' && evidence.isEntitled && evidence.hasCurrentPaidEntitlementCycle) return 'ACTIVE';
+  return status;
 }
 
 export function matchesLifecycleFilter(status: MembershipLifecycleStatus | null, filter?: MemberLifecycleFilter): boolean {

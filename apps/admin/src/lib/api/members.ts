@@ -193,6 +193,7 @@ export type MemberProfile = {
     source: Exclude<PaymentSource, "NONE">;
     accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
     lifecycleStatus: LifecycleStatus;
+    primaryStatus: PrimaryLifecycleStatus;
     isEntitled: boolean;
     currentPeriodStart: string | null;
     currentPeriodEnd: string | null;

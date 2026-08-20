@@ -173,6 +173,11 @@ export class MembersService {
         where: { studioId, userId: { in: userIds } },
         include: {
           membershipPlan: { select: { id: true, name: true, classCredits: true, entitlementDays: true } },
+          entitlementCycles: {
+            where: { startsAt: { lte: directoryNow }, endsAt: { gt: directoryNow } },
+            select: { id: true },
+            take: 1,
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -246,7 +251,12 @@ export class MembersService {
       const remaining = !sub || sub.membershipPlan.classCredits === null ? null : Math.max(sub.membershipPlan.classCredits - (used ?? 0), 0);
       const nextBooking = nextBookingMap.get(m.userId);
       const lastPayment = paymentMap.get(m.userId);
-      const primaryStatus = lifecycle ? toPrimaryMembershipStatus(lifecycle.lifecycleStatus) : null;
+      const primaryStatus = lifecycle
+        ? toPrimaryMembershipStatus(lifecycle.lifecycleStatus, {
+            isEntitled: lifecycle.isEntitled,
+            hasCurrentPaidEntitlementCycle: sub!.entitlementCycles.length > 0,
+          })
+        : null;
       const attention = selectHighestMemberAttention({ lifecycleStatus: lifecycle?.lifecycleStatus ?? null, effectiveEnd: lifecycle?.effectiveEnd ?? null, creditsRemaining: remaining, waiverPending: Boolean(activeWaiver) && !waiverAcceptedUserIds.has(m.userId), noShowCount: noShowCountMap.get(m.userId) ?? 0, lastAttendanceAt: lastAttendanceMap.get(m.userId) ?? null }, directoryNow);
       return {
         membershipId: m.id,
@@ -293,7 +303,13 @@ export class MembersService {
       noShows: enriched.filter((m) => m.noShowCount > 0).length,
     };
 
-    if (query.lifecycleStatus) enriched = enriched.filter((m) => matchesLifecycleFilter(m.subscription?.lifecycleStatus ?? null, query.lifecycleStatus));
+    if (query.lifecycleStatus) {
+      const operationalFilter = query.lifecycleStatus === 'ACTIVE' || query.lifecycleStatus === 'TRIALING';
+      enriched = enriched.filter((m) => matchesLifecycleFilter(
+        operationalFilter ? m.subscription?.primaryStatus ?? null : m.subscription?.lifecycleStatus ?? null,
+        query.lifecycleStatus,
+      ));
+    }
     if (query.planId) enriched = enriched.filter((m) => m.subscription?.planId === query.planId);
     if (query.paymentSource) enriched = enriched.filter((m) => matchesPaymentSource(m.subscription?.source ?? null, query.paymentSource));
 
@@ -379,6 +395,11 @@ export class MembersService {
               currency: true,
             },
           },
+          entitlementCycles: {
+            where: { startsAt: { lte: profileNow }, endsAt: { gt: profileNow } },
+            select: { id: true },
+            take: 1,
+          },
         },
       }),
       this.prisma.booking.groupBy({
@@ -413,6 +434,12 @@ export class MembersService {
     let creditsRemaining: number | null = null;
 
     const latestLifecycle = latestSubscription ? deriveMembershipLifecycle(latestSubscription, profileNow) : null;
+    const latestPrimaryStatus = latestLifecycle && latestSubscription
+      ? toPrimaryMembershipStatus(latestLifecycle.lifecycleStatus, {
+          isEntitled: latestLifecycle.isEntitled,
+          hasCurrentPaidEntitlementCycle: latestSubscription.entitlementCycles.length > 0,
+        })
+      : null;
     const activeSubscription = latestSubscription && latestLifecycle?.isEntitled ? latestSubscription : null;
 
     if (latestSubscription) {
@@ -444,6 +471,7 @@ export class MembersService {
           source: latestSubscription.source,
           accessState: latestLifecycle!.accessState,
           lifecycleStatus: latestLifecycle!.lifecycleStatus,
+          primaryStatus: latestPrimaryStatus!,
           isEntitled: latestLifecycle!.isEntitled,
           effectiveEnd: latestLifecycle!.effectiveEnd,
           currentPeriodStart: latestSubscription.currentPeriodStart,

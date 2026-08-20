@@ -60,14 +60,14 @@ export function renewalPresentation(subscription: RenewalMembership, now = new D
     return {
       title: `Renueva ${studioDate(subscription.currentPeriodEnd ?? end)}`,
       detail: subscription.entitlementDays
-        ? `Ciclo de ${subscription.entitlementDays} días · vigencia hasta ${studioDate(end)}`
+        ? `Cada ${subscription.entitlementDays} días`
         : "Automática",
     };
   }
   const detail = subscription.source === "STRIPE" && subscription.cancelAtPeriodEnd
     ? "No renovará"
     : subscription.entitlementDays
-      ? `Renovación manual · ciclo de ${subscription.entitlementDays} días`
+      ? `Programa de ${subscription.entitlementDays} días`
       : "Renovación manual";
   return { title: `Vence ${studioDate(end)}`, detail };
 }

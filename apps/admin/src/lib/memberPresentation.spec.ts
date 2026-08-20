@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { PAYMENT_SOURCE_PRESENTATION, renewalPresentation } from "./memberPresentation.ts";
+import { PAYMENT_SOURCE_PRESENTATION, primaryStatus, renewalPresentation } from "./memberPresentation.ts";
 
 const base = {
   lifecycleStatus: "ACTIVE" as const,
@@ -36,11 +36,22 @@ test("scheduled membership says Inicia", () => {
   assert.deepEqual(renewalPresentation({ ...base, lifecycleStatus: "SCHEDULED" }), { title: "Inicia 18 ago", detail: null });
 });
 
-test("recurring custom entitlement shows billing renewal and entitlement window", () => {
+test("renewable fixed-duration Stripe membership shows its cadence", () => {
   assert.deepEqual(renewalPresentation({ ...base, effectiveEnd: "2026-10-02T18:00:00.000Z", entitlementDays: 45 }), {
     title: "Renueva 18 sep",
-    detail: "Ciclo de 45 días · vigencia hasta 2 oct",
+    detail: "Cada 45 días",
   });
+});
+
+test("cash fixed-duration membership is a program, not an automatic renewal", () => {
+  assert.deepEqual(renewalPresentation({ ...base, source: "CASH", effectiveEnd: "2026-10-02T18:00:00.000Z", entitlementDays: 45 }), {
+    title: "Vence 2 oct",
+    detail: "Programa de 45 días",
+  });
+});
+
+test("ENDING remains ACTIVE in client-side primary presentation", () => {
+  assert.equal(primaryStatus("ENDING"), "ACTIVE");
 });
 
 test("Booty Lab scheduled to stop uses its entitlement end", () => {
@@ -61,8 +72,26 @@ test("payment source badges use canonical labels and distinct treatments", () =>
 
 test("member directory has eight operational columns and no Atención column", () => {
   const source = readFileSync(new URL("../app/members/page.tsx", import.meta.url), "utf8");
+  const expectedColumns = ["Miembro", "Plan", "Estado", "Pago", "Renovación / vencimiento", "Uso", "Última visita", "Próxima clase"];
   const headers = [...source.matchAll(/<th[^>]*>([^<]+)<\/th>/g)].map((match) => match[1].trim());
+  for (const column of expectedColumns) assert.match(source, new RegExp(`(?:label=\\"${column}\\"|>${column}<)`));
   assert.equal(headers.includes("Atención"), false);
+  assert.doesNotMatch(source, /m\.attention|member\.attention/);
   assert.match(source, /colSpan=\{8\}/);
   assert.match(source, /\[\.\.\.Array\(8\)\]/);
+});
+
+test("directory and profile render the API operational primary status", () => {
+  const directory = readFileSync(new URL("../app/members/page.tsx", import.meta.url), "utf8");
+  const profile = readFileSync(new URL("../app/members/[userId]/page.tsx", import.meta.url), "utf8");
+  assert.match(directory, /subscription\.primaryStatus/);
+  assert.match(profile, /currentMembership\.primaryStatus/);
+  assert.doesNotMatch(profile, /primaryStatus\(profile\.currentMembership\.lifecycleStatus\)/);
+});
+
+test("directory renders payment sources through compact badge styling", () => {
+  const source = readFileSync(new URL("../app/members/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /function PaymentSourceBadge/);
+  assert.match(source, /adminStatusPill/);
+  assert.match(source, /<PaymentSourceBadge source=\{m\.subscription\.source\}/);
 });
