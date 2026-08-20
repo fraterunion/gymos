@@ -79,12 +79,14 @@ export type SubscriptionListItem = {
   status: SubscriptionStatus;
   accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
   lifecycleStatus: LifecycleStatus;
+  primaryStatus: Exclude<LifecycleStatus, "ENDING">;
   isEntitled: boolean;
   effectiveEnd: string | null;
   stripeSubscriptionId: string | null;
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  source: "STRIPE" | "CASH" | "MANUAL";
   createdAt: string;
   user: {
     id: string;
@@ -98,6 +100,8 @@ export type SubscriptionListItem = {
     billingInterval: BillingInterval;
     priceCents: number;
     currency: string;
+    classCredits: number | null;
+    entitlementDays: number | null;
   };
 };
 

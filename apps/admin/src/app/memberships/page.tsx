@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
@@ -24,6 +25,7 @@ import {
 } from "@/lib/api/memberships";
 import {
   fetchClassTemplates,
+  updateClassTemplate,
   type ClassTemplateDto,
 } from "@/lib/api/classTemplates";
 import {
@@ -35,8 +37,10 @@ import {
 import {
   planAccessSummary,
   planCycleLabel,
+  planHealth,
   planUsageLabel,
-  planWarnings,
+  operationalOverview,
+  subscriptionActions,
 } from "@/lib/membershipPlanSummary";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,6 +53,35 @@ function formatCents(cents: number, currency = "usd") {
   }).format(cents / 100);
 }
 
+function OpenGymPanel({ studioId, template, plans, onSaved }: { studioId: string; template?: ClassTemplateDto; plans: MembershipPlanDto[]; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [start, setStart] = useState(template?.accessWindowStart ?? "");
+  const [end, setEnd] = useState(template?.accessWindowEnd ?? "");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setStart(template?.accessWindowStart ?? ""); setEnd(template?.accessWindowEnd ?? ""); }, [template]);
+  if (!template) return null;
+  const allowedPlans = plans.filter((plan) => plan.active && !plan.deletedAt && (plan.classAccess.allClasses || plan.classAccess.templates.some((entry) => entry.id === template.id)));
+  async function saveWindow() {
+    if (!template || !start || !end || start >= end) return;
+    setSaving(true);
+    try {
+      await updateClassTemplate(studioId, template.id, { accessWindowStart: start, accessWindowEnd: end });
+      setEditing(false);
+      onSaved();
+    } finally { setSaving(false); }
+  }
+  return (
+    <div className="mb-10 rounded-xl border border-sky-200 bg-sky-50/50 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Open Gym</p><p className="mt-1 text-lg font-semibold text-zinc-900">Horario permitido: {template.accessWindowStart && template.accessWindowEnd ? `${template.accessWindowStart}–${template.accessWindowEnd}` : "sin configurar"}</p><p className="mt-1 text-sm text-zinc-600">Accesible por: {allowedPlans.map((plan) => plan.name).join(", ") || "ningún plan"}</p></div>
+        <button onClick={() => setEditing((value) => !value)} className="rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-800">{editing ? "Cerrar" : "Editar horario"}</button>
+      </div>
+      {editing ? <div className="mt-4 flex flex-wrap items-end gap-3"><label className="text-xs text-zinc-600">Inicio<input type="time" value={start} onChange={(event) => setStart(event.target.value)} className="mt-1 block rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm" /></label><label className="text-xs text-zinc-600">Fin<input type="time" value={end} onChange={(event) => setEnd(event.target.value)} className="mt-1 block rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm" /></label><button disabled={saving || !start || !end || start >= end} onClick={() => void saveWindow()} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{saving ? "Guardando…" : "Guardar horario"}</button></div> : null}
+      <p className="mt-3 text-xs text-zinc-500">Usa la hora local del estudio. Los bypass de staff, instructor y administración conservan exactamente la lógica actual.</p>
+    </div>
+  );
+}
+
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString(undefined, {
@@ -59,17 +92,17 @@ function fmtDate(iso: string | null | undefined) {
 }
 
 const INTERVAL_LABELS: Record<BillingInterval, string> = {
-  MONTHLY: "Monthly",
-  YEARLY: "Yearly",
-  WEEKLY: "Weekly",
+  MONTHLY: "Mes",
+  YEARLY: "Año",
+  WEEKLY: "Semana",
 };
 
 const STATUS_LABELS: Record<SubscriptionStatus, string> = {
-  ACTIVE: "Active",
-  TRIALING: "Trialing",
-  PAST_DUE: "Past due",
-  PAUSED: "Paused",
-  CANCELED: "Canceled",
+  ACTIVE: "Activa",
+  TRIALING: "Prueba",
+  PAST_DUE: "Pago pendiente",
+  PAUSED: "Pausada",
+  CANCELED: "Cancelada",
 };
 
 const STATUS_COLORS: Record<SubscriptionStatus, string> = {
@@ -82,9 +115,9 @@ const STATUS_COLORS: Record<SubscriptionStatus, string> = {
 
 const LIFECYCLE_LABELS = {
   ...STATUS_LABELS,
-  ENDING: "Ending soon",
-  SCHEDULED: "Scheduled",
-  EXPIRED: "Expired",
+  ENDING: "Por vencer",
+  SCHEDULED: "Programada",
+  EXPIRED: "Vencida",
 } as const;
 
 const LIFECYCLE_COLORS = {
@@ -96,22 +129,16 @@ const LIFECYCLE_COLORS = {
 
 // ── Overview stats bar ────────────────────────────────────────────────────────
 
-function OverviewBar({ data }: { data: MembershipsOverview }) {
-  const active = (data.byStatus["ACTIVE"] ?? 0) + (data.byStatus["ENDING"] ?? 0);
-  const trialing = data.byStatus["TRIALING"] ?? 0;
-  const pastDue = data.byStatus["PAST_DUE"] ?? 0;
-  const paused = data.byStatus["PAUSED"] ?? 0;
+function OverviewBar({ data, unhealthyPlanCount }: { data: MembershipsOverview; unhealthyPlanCount: number }) {
+  const summary = operationalOverview({ ...data, unhealthyPlanCount });
 
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-8">
       {[
-        { label: "Active Plans", value: data.totalActivePlans },
-        { label: "Active Members", value: active + trialing },
-        { label: "Past Due / Paused", value: pastDue + paused },
-        {
-          label: "Est. MRR",
-          value: formatCents(data.totalMrrCents),
-        },
+        { label: "Planes activos", value: summary.activePlans },
+        { label: "Miembros activos", value: summary.activeMembers },
+        { label: "Por vencer", value: summary.endingSoon },
+        { label: "Requieren atención", value: summary.requiringAttention },
       ].map(({ label, value }) => (
         <div
           key={label}
@@ -133,18 +160,22 @@ function PlanCard({
   integrityAvailable,
   onEdit,
   onArchive,
+  onViewMembers,
+  onManageAccess,
 }: {
   plan: MembershipPlanDto;
   integrity?: PlanIntegrityResult;
   integrityAvailable: boolean;
   onEdit: (p: MembershipPlanDto) => void;
   onArchive: (p: MembershipPlanDto) => void;
+  onViewMembers: (p: MembershipPlanDto) => void;
+  onManageAccess: (p: MembershipPlanDto) => void;
 }) {
   const archived = !!plan.deletedAt || !plan.active;
   const cycleLabel = planCycleLabel(plan);
   const usageLabel = planUsageLabel(plan);
   const access = planAccessSummary(plan);
-  const warnings = planWarnings(plan);
+  const health = planHealth(plan, integrity?.status);
   return (
     <div
       className={`relative rounded-xl border p-5 ${
@@ -155,7 +186,7 @@ function PlanCard({
     >
       {archived && (
         <span className="absolute right-3 top-3 rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600">
-          Inactive
+          Inactivo
         </span>
       )}
       <div className="flex items-start justify-between gap-2">
@@ -177,9 +208,16 @@ function PlanCard({
         </div>
       </div>
 
-      {warnings.length > 0 && (
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-zinc-100 pt-3">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${health.tone === "healthy" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+          {health.label}
+        </span>
+        <span className="text-xs text-zinc-500">{plan.activeSubscriberCount} miembros activos</span>
+      </div>
+
+      {health.issues.length > 0 && (
         <div className="mt-2 space-y-1">
-          {warnings.map((w) => (
+          {health.issues.slice(0, 2).map((w) => (
             <p
               key={w}
               className="rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800"
@@ -196,41 +234,26 @@ function PlanCard({
         </p>
       )}
 
-      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <p className="text-xs text-zinc-400">Subscribers</p>
-          <p className="font-semibold text-zinc-900">
-            {plan.activeSubscriberCount}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs text-zinc-400">MRR</p>
-          <p className="font-semibold text-zinc-900">
-            {formatCents(plan.mrrCents, plan.currency)}
-          </p>
-        </div>
-      </div>
-
       <div className="mt-3 flex items-center gap-2 text-xs text-zinc-400">
         {integrity ? (
           integrity.status === "healthy" ? (
             <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-600">
-              Stripe synced ✓
+              Stripe sincronizado ✓
             </span>
           ) : integrity.status === "price_mismatch" ? (
             <span
               className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700"
               title={`GymOS: ${formatCents(integrity.localPriceCents, integrity.localCurrency)} / Stripe: ${formatCents(integrity.stripeUnitAmount ?? 0, integrity.stripeCurrency ?? integrity.localCurrency)}`}
             >
-              Pricing mismatch ⚠
+              Stripe desalineado ⚠
             </span>
           ) : integrity.status === "no_stripe_price" ? (
             <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-500">
-              No Stripe price
+              Sin Price de Stripe
             </span>
           ) : integrity.status === "inactive_stripe_price" ? (
             <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600">
-              Stripe price inactive
+              Price de Stripe inactivo
             </span>
           ) : (
             <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">
@@ -239,24 +262,30 @@ function PlanCard({
           )
         ) : !integrityAvailable ? (
           <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-400">
-            Stripe status unavailable
+            Estado de Stripe no disponible
           </span>
         ) : null}
       </div>
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 grid grid-cols-2 gap-2">
         <button
           onClick={() => onEdit(plan)}
           className="flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
         >
-          Edit
+          Editar plan
+        </button>
+        <button onClick={() => onManageAccess(plan)} className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
+          Gestionar acceso
+        </button>
+        <button onClick={() => onViewMembers(plan)} className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
+          Ver miembros
         </button>
         {!archived && (
           <button
             onClick={() => onArchive(plan)}
             className="flex-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
           >
-            Archive
+            Archivar
           </button>
         )}
       </div>
@@ -296,7 +325,7 @@ const emptyForm = (): PlanFormState => ({
   stripeProductId: "",
   stripePriceId: "",
   active: true,
-  allClassesAccess: true,
+  allClassesAccess: false,
   selectedTemplateIds: [],
 });
 
@@ -396,11 +425,13 @@ function PlanModal({
   onClose,
   onSaved,
   studioId,
+  integrity,
 }: {
   editing: MembershipPlanDto | null;
   onClose: () => void;
   onSaved: () => void;
   studioId: string;
+  integrity?: PlanIntegrityResult;
 }) {
   const [form, setForm] = useState<PlanFormState>(() =>
     editing ? planToForm(editing) : emptyForm()
@@ -471,22 +502,6 @@ function PlanModal({
     });
   }
 
-  function selectAllActiveTemplates() {
-    const inactivePreserved = inactiveSavedTemplates
-      .filter((t) => form.selectedTemplateIds.includes(t.id))
-      .map((t) => t.id);
-    set("selectedTemplateIds", [
-      ...new Set([...activeClassTemplateIds(templates), ...inactivePreserved]),
-    ]);
-  }
-
-  function clearActiveTemplateSelection() {
-    const inactivePreserved = inactiveSavedTemplates
-      .filter((t) => form.selectedTemplateIds.includes(t.id))
-      .map((t) => t.id);
-    set("selectedTemplateIds", inactivePreserved);
-  }
-
   const inactiveSavedTemplates =
     editing?.classAccess.templates.filter((t) => !t.active) ?? [];
 
@@ -494,7 +509,7 @@ function PlanModal({
     e.preventDefault();
     const cents = Math.round(parseFloat(form.priceCents) * 100);
     if (isNaN(cents) || cents < 0) {
-      setError("Enter a valid price.");
+      setError("Ingresa un precio válido.");
       return;
     }
     if (!form.allClassesAccess && form.selectedTemplateIds.length === 0) {
@@ -538,7 +553,7 @@ function PlanModal({
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong.");
+      setError(err instanceof ApiError ? err.message : "No se pudo guardar el plan.");
     } finally {
       setSaving(false);
     }
@@ -549,7 +564,7 @@ function PlanModal({
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
           <h2 className="text-base font-semibold text-zinc-900">
-            {editing ? "Edit Plan" : "New Membership Plan"}
+            {editing ? "Editar plan" : "Nuevo plan de membresía"}
           </h2>
           <button
             onClick={onClose}
@@ -560,37 +575,37 @@ function PlanModal({
         </div>
 
         <form onSubmit={(e) => void handleSubmit(e)} className="px-6 py-5 space-y-4 overflow-y-auto max-h-[70vh]">
-          <SectionHeader>Básico</SectionHeader>
+          <SectionHeader>General</SectionHeader>
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600">
-              Plan name *
+              Nombre del plan *
             </label>
             <input
               required
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
               className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
-              placeholder="e.g. Monthly Unlimited"
+              placeholder="Ej. Acceso mensual"
             />
           </div>
 
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600">
-              Description
+              Descripción para miembros
             </label>
             <textarea
               rows={2}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
-              placeholder="What's included…"
+              placeholder="Qué incluye este plan…"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-zinc-600">
-                Price *
+                Precio GymOS *
               </label>
               <input
                 required
@@ -605,7 +620,7 @@ function PlanModal({
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-zinc-600">
-                Currency
+                Moneda
               </label>
               <select
                 value={form.currency}
@@ -624,16 +639,16 @@ function PlanModal({
 
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600">
-              Billing interval
+              Intervalo de facturación
             </label>
             <select
               value={form.billingInterval}
               onChange={(e) => set("billingInterval", e.target.value as BillingInterval)}
               className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
             >
-              <option value="MONTHLY">Monthly</option>
-              <option value="YEARLY">Yearly</option>
-              <option value="WEEKLY">Weekly</option>
+              <option value="MONTHLY">Mensual</option>
+              <option value="YEARLY">Anual</option>
+              <option value="WEEKLY">Semanal</option>
             </select>
           </div>
 
@@ -645,7 +660,7 @@ function PlanModal({
                 onChange={(e) => set("active", e.target.checked)}
                 className="rounded"
               />
-              Plan is active (visible to members)
+              Plan activo y disponible para nuevas ventas
             </label>
           )}
 
@@ -687,7 +702,7 @@ function PlanModal({
                 onChange={(e) => set("unlimitedCredits", e.target.checked)}
                 className="rounded"
               />
-              Unlimited class credits
+              Créditos ilimitados
             </label>
             {!form.unlimitedCredits && (
               <input
@@ -696,7 +711,7 @@ function PlanModal({
                 value={form.classCredits}
                 onChange={(e) => set("classCredits", e.target.value)}
                 className="mt-1 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
-                placeholder="Number of classes per period"
+                placeholder="Clases por ciclo"
               />
             )}
           </div>
@@ -722,24 +737,7 @@ function PlanModal({
                 estudio, incluyendo clases restringidas como Booty Lab u Open Gym. Úsalo solo para
                 planes de acceso total.
               </p>
-            ) : (
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={selectAllActiveTemplates}
-                  className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
-                >
-                  Seleccionar todas
-                </button>
-                <button
-                  type="button"
-                  onClick={clearActiveTemplateSelection}
-                  className="rounded border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
-                >
-                  Quitar todas
-                </button>
-              </div>
-            )}
+            ) : null}
 
             <div>
               <p className="mb-1 text-xs font-medium text-zinc-500">Clases incluidas</p>
@@ -800,14 +798,21 @@ function PlanModal({
           <SectionHeader>Stripe / Billing</SectionHeader>
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-3">
             <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-              Stripe IDs (optional — automation coming soon)
+              Vinculación de cobro
             </p>
             <p className="text-[11px] text-zinc-500">
               Guardar aquí solo actualiza la configuración local de GymOS. Nunca crea, modifica
               ni sincroniza precios o productos en Stripe automáticamente.
             </p>
+            {editing ? (
+              <div className="grid grid-cols-2 gap-2 rounded-lg border border-zinc-200 bg-white p-3 text-xs">
+                <div><p className="text-zinc-400">GymOS</p><p className="mt-1 font-semibold text-zinc-900">{formatCents(editing.priceCents, editing.currency)}</p></div>
+                <div><p className="text-zinc-400">Stripe</p><p className="mt-1 font-semibold text-zinc-900">{integrity?.stripeUnitAmount == null ? "No disponible" : formatCents(integrity.stripeUnitAmount, integrity.stripeCurrency ?? editing.currency)}</p></div>
+                <p className={`col-span-2 font-semibold ${integrity?.status === "healthy" ? "text-emerald-700" : "text-amber-700"}`}>Estado: {integrity?.status === "healthy" ? "Sincronizado" : "Revisar configuración"}</p>
+              </div>
+            ) : null}
             <div>
-              <label className="mb-1 block text-xs text-zinc-500">Stripe Product ID</label>
+              <label className="mb-1 block text-xs text-zinc-500">Product ID de Stripe</label>
               <input
                 value={form.stripeProductId}
                 onChange={(e) => set("stripeProductId", e.target.value)}
@@ -816,7 +821,7 @@ function PlanModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-zinc-500">Stripe Price ID</label>
+              <label className="mb-1 block text-xs text-zinc-500">Price ID de Stripe</label>
               <input
                 value={form.stripePriceId}
                 onChange={(e) => set("stripePriceId", e.target.value)}
@@ -836,14 +841,14 @@ function PlanModal({
               onClick={onClose}
               className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
             >
-              Cancel
+              Cerrar
             </button>
             <button
               type="submit"
               disabled={saving}
               className="flex-1 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-50"
             >
-              {saving ? "Saving…" : editing ? "Save changes" : "Create plan"}
+              {saving ? "Guardando…" : editing ? "Guardar cambios" : "Crear plan"}
             </button>
           </div>
         </form>
@@ -865,38 +870,40 @@ function SubRow({
 }) {
   const status = sub.status as SubscriptionStatus;
   const lifecycleStatus = sub.lifecycleStatus;
-  const isStripeLinked = !!sub.stripeSubscriptionId;
+  const operationalStatus = lifecycleStatus === "ENDING" ? "ENDING" : sub.primaryStatus;
+  const actions = subscriptionActions(sub);
 
   return (
     <tr className="border-b border-zinc-100 text-sm">
       <td className="px-4 py-3 font-medium text-zinc-900">
-        {sub.user.firstName} {sub.user.lastName}
+        <Link href={`/members/${sub.user.id}`} className="hover:underline">{sub.user.firstName} {sub.user.lastName}</Link>
         <p className="text-xs font-normal text-zinc-400">{sub.user.email}</p>
       </td>
       <td className="px-4 py-3 text-zinc-600">
         {sub.membershipPlan.name}
         <p className="text-xs text-zinc-400">
-          Precio del plan:{" "}
-          {formatCents(sub.membershipPlan.priceCents, sub.membershipPlan.currency)} /{" "}
-          {INTERVAL_LABELS[sub.membershipPlan.billingInterval].toLowerCase()}
+          {formatCents(sub.membershipPlan.priceCents, sub.membershipPlan.currency)} · {sub.membershipPlan.entitlementDays ? `${sub.membershipPlan.entitlementDays} días` : INTERVAL_LABELS[sub.membershipPlan.billingInterval].toLowerCase()}
         </p>
       </td>
       <td className="px-4 py-3">
         <div className="flex flex-col gap-1">
           <span
-            className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-semibold ${LIFECYCLE_COLORS[lifecycleStatus]}`}
+            className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-semibold ${LIFECYCLE_COLORS[operationalStatus]}`}
           >
-            {LIFECYCLE_LABELS[lifecycleStatus]}
+            {LIFECYCLE_LABELS[operationalStatus]}
           </span>
-          {isStripeLinked ? (
+          <span className={`inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-medium ${status === "PAST_DUE" ? "bg-amber-50 text-amber-800" : "bg-zinc-100 text-zinc-600"}`}>
+            Pago: {status === "PAST_DUE" ? "Pendiente" : "Al corriente"}
+          </span>
+          {sub.source === "STRIPE" ? (
             <span className="inline-flex w-fit items-center gap-1 text-xs text-indigo-600">
               <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-              Gestionada por Stripe
+              Stripe · {sub.cancelAtPeriodEnd ? "no renovará" : "renovación automática"}
             </span>
           ) : (
             <span className="inline-flex w-fit items-center gap-1 text-xs text-amber-600">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              Cobro presencial
+              Renovación manual
             </span>
           )}
         </div>
@@ -905,63 +912,51 @@ function SubRow({
         {fmtDate(sub.effectiveEnd)}
         {sub.lifecycleStatus === "ENDING" && (
           <p className="mt-0.5 text-xs font-medium text-amber-500">
-            Cancels at period end
+            Finaliza al cierre del periodo
           </p>
         )}
       </td>
-      <td className="px-4 py-3 text-xs text-zinc-400">
-        {fmtDate(sub.createdAt)}
+      <td className="px-4 py-3 text-xs text-zinc-500">
+        {sub.membershipPlan.classCredits === null ? "Ilimitado" : `${sub.membershipPlan.classCredits} créditos por ciclo`}
       </td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap gap-1.5">
-          {sub.isEntitled && status === "ACTIVE" && !sub.cancelAtPeriodEnd && (
+          <Link href={`/members/${sub.user.id}`} className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200">Ver miembro</Link>
+          {actions.includes("cancel_at_period_end") && (
             <button
               onClick={() => onCancelAtPeriodEnd(sub, true)}
               className="rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100"
             >
-              Cancel at period end
+              Cancelar al final
             </button>
           )}
-          {sub.isEntitled && status === "ACTIVE" && sub.cancelAtPeriodEnd && (
+          {actions.includes("reactivate_renewal") && (
             <button
               onClick={() => onCancelAtPeriodEnd(sub, false)}
               className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
             >
-              Keep active
+              Reactivar renovación
             </button>
           )}
-          {sub.isEntitled && status === "ACTIVE" && (
+          {actions.includes("pause") && (
             <button
               onClick={() => onAction(sub, "PAUSED")}
               className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
             >
-              Pause
+              Pausar
             </button>
           )}
-          {sub.isEntitled && status === "ACTIVE" && (
-            <button
-              onClick={() => onAction(sub, "CANCELED")}
-              className="rounded px-2 py-1 text-xs bg-red-50 text-red-600 hover:bg-red-100"
-            >
-              Cancel now
-            </button>
-          )}
-          {(status === "PAUSED" || status === "PAST_DUE") && (
+          {actions.includes("resume") && (
             <button
               onClick={() => onAction(sub, "ACTIVE")}
               className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
             >
-              Reactivate
+              Reanudar
             </button>
           )}
-          {status === "CANCELED" && (
-            <button
-              onClick={() => onAction(sub, "ACTIVE")}
-              className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-            >
-              Reactivate manually
-            </button>
-          )}
+          {actions.includes("renew") ? <Link href={`/members/${sub.user.id}?tab=membership`} className="rounded bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">Renovar</Link> : null}
+          {actions.includes("change_plan") ? <Link href={`/members/${sub.user.id}?tab=membership`} className="rounded bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700">Cambiar plan</Link> : null}
+          {actions.includes("record_cash_payment") ? <Link href={`/members/${sub.user.id}?tab=billing`} className="rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">Registrar efectivo</Link> : null}
         </div>
       </td>
     </tr>
@@ -983,7 +978,7 @@ function DayPassAccessSection({ studioId }: { studioId: string }) {
       const data = await fetchDayPassClassAccess(studioId);
       setTemplates(data);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load Day Pass access.");
+      setError(e instanceof ApiError ? e.message : "No se pudo cargar el acceso de Day Pass.");
     } finally {
       setLoading(false);
     }
@@ -1004,7 +999,7 @@ function DayPassAccessSection({ studioId }: { studioId: string }) {
       }
       await load();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Update failed.");
+      setError(e instanceof ApiError ? e.message : "No se pudo actualizar el acceso.");
     } finally {
       setPendingId(null);
     }
@@ -1014,18 +1009,17 @@ function DayPassAccessSection({ studioId }: { studioId: string }) {
   const zeroAccess = !loading && templates.length > 0 && allowedCount === 0;
 
   return (
-    <section className="mb-10">
+    <section id="day-pass" className="mb-10 scroll-mt-6">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         className="flex w-full items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-5 py-4 text-left"
       >
         <div>
-          <h2 className="text-lg font-semibold text-zinc-900">Day Pass class access</h2>
+          <h2 className="text-lg font-semibold text-zinc-900">Acceso de Day Pass</h2>
           <p className="mt-0.5 text-xs text-zinc-500">
-            Explicit allowlist of classes a one-time Day Pass may book. Deny-by-default: new
-            classes are not eligible until added here.
-            {!loading ? ` · ${allowedCount} of ${templates.length} eligible` : ""}
+            Lista explícita de clases reservables. Las clases nuevas se niegan hasta habilitarlas aquí.
+            {!loading ? ` · ${allowedCount} de ${templates.length} permitidas` : ""}
           </p>
           {zeroAccess && (
             <p className="mt-1 text-xs font-semibold text-red-600">
@@ -1033,7 +1027,7 @@ function DayPassAccessSection({ studioId }: { studioId: string }) {
             </p>
           )}
         </div>
-        <span className="text-sm text-zinc-400">{expanded ? "Hide" : "Manage"}</span>
+        <span className="text-sm text-zinc-400">{expanded ? "Ocultar" : "Gestionar"}</span>
       </button>
 
       {expanded && (
@@ -1042,9 +1036,9 @@ function DayPassAccessSection({ studioId }: { studioId: string }) {
             <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
           )}
           {loading ? (
-            <p className="text-xs text-zinc-500">Loading…</p>
+            <p className="text-xs text-zinc-500">Cargando…</p>
           ) : templates.length === 0 ? (
-            <p className="text-xs text-zinc-500">No class templates in this studio.</p>
+            <p className="text-xs text-zinc-500">No hay plantillas de clase en este estudio.</p>
           ) : (
             <div className="divide-y divide-zinc-100">
               {templates.map((t) => (
@@ -1077,11 +1071,68 @@ function DayPassAccessSection({ studioId }: { studioId: string }) {
   );
 }
 
+function ClassAccessMatrix({
+  plans,
+  templates,
+  dayPass,
+  onManagePlan,
+}: {
+  plans: MembershipPlanDto[];
+  templates: ClassTemplateDto[];
+  dayPass: DayPassClassAccessTemplateDto[];
+  onManagePlan: (plan: MembershipPlanDto) => void;
+}) {
+  const activePlans = plans.filter((plan) => plan.active && !plan.deletedAt);
+  const dayPassById = new Map(dayPass.map((template) => [template.id, template.allowed]));
+  return (
+    <section id="acceso" className="mb-10 scroll-mt-6">
+      <div className="mb-4">
+        <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Acceso y configuración</p>
+        <h2 className="mt-1 text-lg font-semibold text-zinc-900">Matriz de acceso a clases</h2>
+        <p className="mt-1 text-sm text-zinc-500">Fuente canónica: permisos explícitos por plantilla. Los cambios se realizan de uno en uno desde el editor protegido.</p>
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+        <table className="min-w-full text-left text-sm">
+          <thead className="border-b border-zinc-200 bg-zinc-50 text-xs text-zinc-500">
+            <tr>
+              <th className="sticky left-0 bg-zinc-50 px-4 py-3 font-semibold">Clase</th>
+              {activePlans.map((plan) => <th key={plan.id} className="px-3 py-3 font-semibold"><button onClick={() => onManagePlan(plan)} className="hover:text-zinc-900">{plan.name}</button></th>)}
+              <th className="px-3 py-3 font-semibold">Day Pass</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {templates.map((template) => {
+              const entitled = activePlans.filter((plan) => plan.classAccess.allClasses || plan.classAccess.templates.some((allowed) => allowed.id === template.id));
+              const orphan = entitled.length === 0 && !dayPassById.get(template.id);
+              return (
+                <tr key={template.id} className={orphan ? "bg-red-50/60" : ""}>
+                  <td className="sticky left-0 bg-inherit px-4 py-3 font-medium text-zinc-800">
+                    {template.name}
+                    {template.isOpenGymSlot ? <span className="ml-2 block text-[11px] font-normal text-sky-700">Open Gym · {template.accessWindowStart && template.accessWindowEnd ? `${template.accessWindowStart}–${template.accessWindowEnd}` : "sin horario"}</span> : null}
+                    {orphan ? <span className="mt-1 block text-[11px] font-semibold text-red-700">SIN ACCESO</span> : null}
+                  </td>
+                  {activePlans.map((plan) => {
+                    const allowed = plan.classAccess.allClasses || plan.classAccess.templates.some((entry) => entry.id === template.id);
+                    return <td key={plan.id} className="px-3 py-3 text-center"><span className={allowed ? "text-emerald-600" : "text-zinc-300"}>{allowed ? "✓" : "—"}</span></td>;
+                  })}
+                  <td className="px-3 py-3 text-center"><span className={dayPassById.get(template.id) ? "text-emerald-600" : "text-zinc-300"}>{dayPassById.get(template.id) ? "✓" : "—"}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function MembershipsPage() {
   const { selectedStudioId } = useDeskStudio();
 
   const [overview, setOverview] = useState<MembershipsOverview | null>(null);
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
+  const [classTemplates, setClassTemplates] = useState<ClassTemplateDto[]>([]);
+  const [dayPassTemplates, setDayPassTemplates] = useState<DayPassClassAccessTemplateDto[]>([]);
   const [planIntegrity, setPlanIntegrity] = useState<Map<string, PlanIntegrityResult>>(new Map());
   const [integrityAvailable, setIntegrityAvailable] = useState(true);
   const [subs, setSubs] = useState<SubscriptionListItem[]>([]);
@@ -1105,13 +1156,17 @@ export default function MembershipsPage() {
     if (!selectedStudioId) return;
     setLoadingPlans(true);
     try {
-      const [data, integrityResult] = await Promise.all([
+      const [data, integrityResult, templateData, dayPassData] = await Promise.all([
         fetchMembershipPlans(selectedStudioId, true),
         fetchPlanBillingIntegrity(selectedStudioId)
           .then((r) => ({ ok: true as const, data: r }))
           .catch(() => ({ ok: false as const, data: [] as PlanIntegrityResult[] })),
+        fetchClassTemplates(selectedStudioId),
+        fetchDayPassClassAccess(selectedStudioId),
       ]);
       setPlans(data);
+      setClassTemplates(templateData);
+      setDayPassTemplates(dayPassData);
       if (integrityResult.ok) {
         setPlanIntegrity(new Map(integrityResult.data.map((r) => [r.planId, r])));
         setIntegrityAvailable(true);
@@ -1194,13 +1249,13 @@ export default function MembershipsPage() {
 
   async function handleArchivePlan(plan: MembershipPlanDto) {
     if (!selectedStudioId) return;
-    if (!confirm(`Archive "${plan.name}"? Members with active subscriptions won't be affected.`)) return;
+    if (!confirm(`¿Archivar «${plan.name}»? Dejará de venderse, pero conservará sus suscripciones e historial.`)) return;
     try {
       await archiveMembershipPlan(selectedStudioId, plan.id);
       void loadPlans();
       void loadOverview();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Archive failed.");
+      setError(e instanceof ApiError ? e.message : "No se pudo archivar el plan.");
     }
   }
 
@@ -1209,11 +1264,15 @@ export default function MembershipsPage() {
     : plans.filter((p) => p.active && !p.deletedAt);
 
   const totalSubPages = Math.ceil(subsTotal / SUBS_LIMIT);
+  const unhealthyPlanCount = useMemo(
+    () => plans.filter((plan) => plan.active && !plan.deletedAt && planHealth(plan, planIntegrity.get(plan.id)?.status).tone === "warning").length,
+    [plans, planIntegrity],
+  );
 
   if (!selectedStudioId) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="text-sm text-zinc-500">Select a studio to manage memberships.</p>
+        <p className="text-sm text-zinc-500">Selecciona un estudio para gestionar membresías.</p>
       </div>
     );
   }
@@ -1223,33 +1282,39 @@ export default function MembershipsPage() {
       {/* Page header */}
       <div className="mb-8 flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900">Memberships</h1>
+          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Operaciones</p>
+          <h1 className="mt-1 text-2xl font-bold text-zinc-900">Centro de membresías</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Manage plans and member subscriptions.
+            Configura planes, accesos y suscripciones desde una sola superficie segura.
           </p>
         </div>
         <button
           onClick={() => { setEditingPlan(null); setShowPlanModal(true); }}
           className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700"
         >
-          + New plan
+          + Nuevo plan
         </button>
       </div>
 
       {error && (
         <div className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
-          <button onClick={() => setError(null)} className="ml-3 underline">Dismiss</button>
+          <button onClick={() => setError(null)} className="ml-3 underline">Cerrar</button>
         </div>
       )}
 
-      {/* Overview stats */}
-      {overview && <OverviewBar data={overview} />}
+      <nav className="mb-6 flex gap-1 overflow-x-auto rounded-xl border border-zinc-200 bg-white p-1 text-sm">
+        {[{ href: "#planes", label: "Planes" }, { href: "#suscripciones", label: "Suscripciones" }, { href: "#acceso", label: "Acceso a clases" }, { href: "#day-pass", label: "Day Pass" }].map((item) => (
+          <a key={item.href} href={item.href} className="whitespace-nowrap rounded-lg px-3 py-2 font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900">{item.label}</a>
+        ))}
+      </nav>
+
+      {overview && <OverviewBar data={overview} unhealthyPlanCount={unhealthyPlanCount} />}
 
       {/* Plans section */}
-      <section className="mb-10">
+      <section id="planes" className="mb-10 scroll-mt-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-zinc-900">Plans</h2>
+          <div><p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Planes</p><h2 className="mt-1 text-lg font-semibold text-zinc-900">Catálogo y configuración</h2></div>
           <label className="flex items-center gap-2 text-sm text-zinc-500">
             <input
               type="checkbox"
@@ -1257,7 +1322,7 @@ export default function MembershipsPage() {
               onChange={(e) => setShowInactive(e.target.checked)}
               className="rounded"
             />
-            Show inactive
+            Mostrar inactivos
           </label>
         </div>
 
@@ -1269,7 +1334,7 @@ export default function MembershipsPage() {
           </div>
         ) : visiblePlans.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 py-12 text-center">
-            <p className="text-sm text-zinc-500">No plans yet. Create one to get started.</p>
+            <p className="text-sm text-zinc-500">Todavía no hay planes. Crea el primero para comenzar.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1281,19 +1346,24 @@ export default function MembershipsPage() {
                 integrityAvailable={integrityAvailable}
                 onEdit={(p) => { setEditingPlan(p); setShowPlanModal(true); }}
                 onArchive={handleArchivePlan}
+                onViewMembers={(p) => { setPlanFilter(p.id); document.getElementById("suscripciones")?.scrollIntoView({ behavior: "smooth" }); }}
+                onManageAccess={(p) => { setEditingPlan(p); setShowPlanModal(true); }}
               />
             ))}
           </div>
         )}
       </section>
 
+      <ClassAccessMatrix plans={plans} templates={classTemplates} dayPass={dayPassTemplates} onManagePlan={(p) => { setEditingPlan(p); setShowPlanModal(true); }} />
+      <OpenGymPanel studioId={selectedStudioId} template={classTemplates.find((template) => template.isOpenGymSlot)} plans={plans} onSaved={() => void loadPlans()} />
+
       <DayPassAccessSection studioId={selectedStudioId} />
 
       {/* Subscriptions section */}
-      <section>
+      <section id="suscripciones" className="scroll-mt-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-zinc-900">
-            Subscriptions
+            Suscripciones
             {subsTotal > 0 && (
               <span className="ml-2 text-sm font-normal text-zinc-400">
                 ({subsTotal})
@@ -1307,7 +1377,7 @@ export default function MembershipsPage() {
               onChange={(e) => { setStatusFilter(e.target.value as SubscriptionStatus | ""); }}
               className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
             >
-              <option value="">All statuses</option>
+              <option value="">Todos los estados</option>
               {(Object.keys(STATUS_LABELS) as SubscriptionStatus[]).map((s) => (
                 <option key={s} value={s}>{STATUS_LABELS[s]}</option>
               ))}
@@ -1318,7 +1388,7 @@ export default function MembershipsPage() {
               onChange={(e) => setPlanFilter(e.target.value)}
               className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
             >
-              <option value="">All plans</option>
+              <option value="">Todos los planes</option>
               {plans.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
@@ -1334,12 +1404,12 @@ export default function MembershipsPage() {
           <table className="w-full min-w-[640px] text-left">
             <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold uppercase tracking-wide text-zinc-500">
               <tr>
-                <th className="px-4 py-3">Member</th>
+                <th className="px-4 py-3">Miembro</th>
                 <th className="px-4 py-3">Plan</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Period ends</th>
-                <th className="px-4 py-3">Since</th>
-                <th className="px-4 py-3">Actions</th>
+                <th className="px-4 py-3">Estado / pago</th>
+                <th className="px-4 py-3">Vigencia</th>
+                <th className="px-4 py-3">Uso</th>
+                <th className="px-4 py-3">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 bg-white">
@@ -1357,7 +1427,7 @@ export default function MembershipsPage() {
                 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-12 text-center text-sm text-zinc-400">
-                        No subscriptions found.
+                        No se encontraron suscripciones.
                       </td>
                     </tr>
                   )
@@ -1376,7 +1446,7 @@ export default function MembershipsPage() {
         {totalSubPages > 1 && (
           <div className="mt-4 flex items-center justify-between text-sm text-zinc-500">
             <span>
-              Page {subsPage} of {totalSubPages}
+              Página {subsPage} de {totalSubPages}
             </span>
             <div className="flex gap-2">
               <button
@@ -1384,14 +1454,14 @@ export default function MembershipsPage() {
                 onClick={() => void loadSubs(subsPage - 1)}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
               >
-                ← Prev
+                ← Anterior
               </button>
               <button
                 disabled={subsPage >= totalSubPages}
                 onClick={() => void loadSubs(subsPage + 1)}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
               >
-                Next →
+                Siguiente →
               </button>
             </div>
           </div>
@@ -1402,6 +1472,7 @@ export default function MembershipsPage() {
         <PlanModal
           editing={editingPlan}
           studioId={selectedStudioId}
+          integrity={editingPlan ? planIntegrity.get(editingPlan.id) : undefined}
           onClose={() => setShowPlanModal(false)}
           onSaved={() => {
             setShowPlanModal(false);

@@ -5,8 +5,11 @@ import test from "node:test";
 import {
   planAccessSummary,
   planCycleLabel,
+  planHealth,
   planUsageLabel,
   planWarnings,
+  operationalOverview,
+  subscriptionActions,
   type PlanForSummary,
 } from "./membershipPlanSummary.ts";
 
@@ -174,6 +177,42 @@ test("healthy plan (Basic Access shape) has no warnings", () => {
   assert.deepEqual(planWarnings(plan), []);
 });
 
+test("operational overview excludes MRR and counts deterministic attention states", () => {
+  assert.deepEqual(operationalOverview({
+    totalActivePlans: 5,
+    totalActiveSubscribers: 34,
+    byStatus: { ENDING: 7, PAST_DUE: 2, PAUSED: 1, EXPIRED: 3 },
+    unhealthyPlanCount: 2,
+  }), { activePlans: 5, activeMembers: 34, endingSoon: 7, requiringAttention: 8 });
+});
+
+test("plan health combines access and Stripe integrity without changing either", () => {
+  assert.equal(planHealth(basePlan({ classAccess: { allClasses: false, templates: [template()] } }), "healthy").label, "Saludable");
+  assert.deepEqual(planHealth(basePlan({ classAccess: { allClasses: false, templates: [template()] } }), "price_mismatch").issues, [
+    "Configuración de GymOS y Stripe desalineada.",
+  ]);
+});
+
+test("expired CASH exposes renewal operations, never provider cancellation", () => {
+  assert.deepEqual(subscriptionActions({ lifecycleStatus: "EXPIRED", source: "CASH", cancelAtPeriodEnd: false, isEntitled: false }), [
+    "view_member", "renew", "change_plan", "record_cash_payment",
+  ]);
+});
+
+test("active Stripe and ending Stripe get mutually exclusive renewal controls", () => {
+  assert.deepEqual(subscriptionActions({ lifecycleStatus: "ACTIVE", source: "STRIPE", cancelAtPeriodEnd: false, isEntitled: true }), [
+    "view_member", "change_plan", "cancel_at_period_end",
+  ]);
+  assert.deepEqual(subscriptionActions({ lifecycleStatus: "ENDING", source: "STRIPE", cancelAtPeriodEnd: true, isEntitled: true }), [
+    "view_member", "change_plan", "reactivate_renewal",
+  ]);
+});
+
+test("paused subscription only exposes resume and view", () => {
+  assert.deepEqual(subscriptionActions({ lifecycleStatus: "PAUSED", source: "MANUAL", cancelAtPeriodEnd: false, isEntitled: false }), ["view_member", "resume"]);
+  assert.deepEqual(subscriptionActions({ lifecycleStatus: "PAUSED", source: "STRIPE", cancelAtPeriodEnd: false, isEntitled: false }), ["view_member"]);
+});
+
 test("enabling allClassesAccess still requires an explicit confirmation in the plan editor", () => {
   const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
   assert.match(source, /window\.confirm\(/);
@@ -184,4 +223,11 @@ test("plan cards and the day pass panel identify Open Gym without re-deriving it
   const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /name\s*===\s*["']Open Gym["']/);
   assert.match(source, /isOpenGymSlot/);
+});
+
+test("Membership Operations Center has no MRR presentation or unsafe immediate cancel", () => {
+  const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /Est\. MRR|totalMrrCents|Cancel now/);
+  assert.match(source, /Centro de membresías/);
+  assert.match(source, /Matriz de acceso a clases/);
 });

@@ -109,3 +109,84 @@ export function planWarnings(plan: PlanForSummary): string[] {
 
   return warnings;
 }
+
+export type PlanHealth = {
+  label: "Saludable" | "Requiere atención";
+  tone: "healthy" | "warning";
+  issues: string[];
+};
+
+export function planHealth(
+  plan: PlanForSummary,
+  integrityStatus?: string,
+): PlanHealth {
+  const issues = planWarnings(plan);
+  if (integrityStatus && integrityStatus !== "healthy") {
+    issues.push(
+      integrityStatus === "no_stripe_price"
+        ? "Sin Price de Stripe configurado."
+        : "Configuración de GymOS y Stripe desalineada.",
+    );
+  }
+  return issues.length === 0
+    ? { label: "Saludable", tone: "healthy", issues }
+    : { label: "Requiere atención", tone: "warning", issues };
+}
+
+export type OperationalOverview = {
+  activePlans: number;
+  activeMembers: number;
+  endingSoon: number;
+  requiringAttention: number;
+};
+
+export function operationalOverview(input: {
+  totalActivePlans: number;
+  totalActiveSubscribers: number;
+  byStatus: Record<string, number>;
+  unhealthyPlanCount: number;
+}): OperationalOverview {
+  const count = (status: string) => input.byStatus[status] ?? 0;
+  return {
+    activePlans: input.totalActivePlans,
+    activeMembers: input.totalActiveSubscribers,
+    endingSoon: count("ENDING"),
+    requiringAttention:
+      count("PAST_DUE") + count("PAUSED") + count("EXPIRED") + input.unhealthyPlanCount,
+  };
+}
+
+export type SubscriptionForActions = {
+  lifecycleStatus: string;
+  source: "STRIPE" | "CASH" | "MANUAL";
+  cancelAtPeriodEnd: boolean;
+  isEntitled: boolean;
+};
+
+export type SubscriptionAction =
+  | "view_member"
+  | "change_plan"
+  | "renew"
+  | "pause"
+  | "resume"
+  | "cancel_at_period_end"
+  | "reactivate_renewal"
+  | "record_cash_payment";
+
+export function subscriptionActions(sub: SubscriptionForActions): SubscriptionAction[] {
+  const actions: SubscriptionAction[] = ["view_member"];
+  if (sub.lifecycleStatus === "EXPIRED" && sub.source !== "STRIPE") {
+    return [...actions, "renew", "change_plan", "record_cash_payment"];
+  }
+  if (sub.lifecycleStatus === "PAUSED") {
+    return sub.source === "STRIPE" ? actions : [...actions, "resume"];
+  }
+  if (!sub.isEntitled) return actions;
+  actions.push("change_plan");
+  if (sub.source === "STRIPE") {
+    actions.push(sub.cancelAtPeriodEnd ? "reactivate_renewal" : "cancel_at_period_end");
+  } else {
+    actions.push("pause");
+  }
+  return actions;
+}

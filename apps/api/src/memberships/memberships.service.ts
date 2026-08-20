@@ -3,6 +3,8 @@ import { SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MembershipPlansService } from '../membership-plans/membership-plans.service';
 import { deriveMembershipLifecycle } from './membership-entitlement';
+import { toPrimaryMembershipStatus } from '../members/member-operations';
+import { isCurrentImmutableCycle } from '../members/member-360.utils';
 
 export type MembershipsOverview = {
   totalActivePlans: number;
@@ -16,12 +18,14 @@ export type SubscriptionListItem = {
   status: string;
   accessState: string;
   lifecycleStatus: string;
+  primaryStatus: string;
   isEntitled: boolean;
   effectiveEnd: Date | null;
   stripeSubscriptionId: string | null;
   currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
+  source: string;
   createdAt: Date;
   user: {
     id: string;
@@ -35,6 +39,8 @@ export type SubscriptionListItem = {
     billingInterval: string;
     priceCents: number;
     currency: string;
+    classCredits: number | null;
+    entitlementDays: number | null;
   };
 };
 
@@ -98,7 +104,12 @@ export class MembershipsService {
               billingInterval: true,
               priceCents: true,
               currency: true,
+              classCredits: true,
+              entitlementDays: true,
             },
+          },
+          entitlementCycles: {
+            select: { startsAt: true, endsAt: true },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -110,7 +121,17 @@ export class MembershipsService {
 
     const now = new Date();
     return {
-      data: rows.map((row) => ({ ...row, ...deriveMembershipLifecycle(row, now) })) as SubscriptionListItem[],
+      data: rows.map((row) => {
+        const lifecycle = deriveMembershipLifecycle(row, now);
+        return {
+          ...row,
+          ...lifecycle,
+          primaryStatus: toPrimaryMembershipStatus(lifecycle.lifecycleStatus, {
+            isEntitled: lifecycle.isEntitled,
+            hasCurrentPaidEntitlementCycle: row.entitlementCycles.some((cycle) => isCurrentImmutableCycle(cycle, now)),
+          }),
+        };
+      }) as SubscriptionListItem[],
       total,
       page,
       limit,
