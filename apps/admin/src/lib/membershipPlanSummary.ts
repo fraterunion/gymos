@@ -314,6 +314,16 @@ export function subscriptionPaymentSourceLabel(
   }
 }
 
+const HISTORICAL_SUBSCRIPTION_LIFECYCLE_STATUSES = new Set([
+  "REPLACED",
+  "EXPIRED",
+  "CANCELED",
+]);
+
+function formatSubscriptionDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("es-MX", { day: "numeric", month: "short" });
+}
+
 export function subscriptionValidityLines(input: {
   lifecycleStatus: string;
   source: SubscriptionForActions["source"];
@@ -322,12 +332,13 @@ export function subscriptionValidityLines(input: {
   entitlementDays: number | null;
   billingInterval: string;
 }): { primary: string; secondary: string | null } {
-  const end = input.effectiveEnd
-    ? new Date(input.effectiveEnd).toLocaleDateString("es-MX", { day: "numeric", month: "short" })
-    : null;
+  const end = input.effectiveEnd ? formatSubscriptionDate(input.effectiveEnd) : null;
 
-  if (input.lifecycleStatus === "EXPIRED" && end) {
-    return { primary: `Venció ${end}`, secondary: "Renovación manual" };
+  if (HISTORICAL_SUBSCRIPTION_LIFECYCLE_STATUSES.has(input.lifecycleStatus) && end) {
+    return {
+      primary: `Venció ${end}`,
+      secondary: input.lifecycleStatus === "EXPIRED" ? "Renovación manual" : null,
+    };
   }
 
   if (input.cancelAtPeriodEnd && end) {
@@ -351,6 +362,30 @@ export function subscriptionValidityLines(input: {
   }
 
   return { primary: "—", secondary: null };
+}
+
+/** Next automatic billing event — not effective end for manual or historical rows. */
+export function subscriptionNextChargeLabel(input: {
+  lifecycleStatus: string;
+  source: SubscriptionForActions["source"];
+  cancelAtPeriodEnd: boolean;
+  effectiveEnd: string | null;
+  currentPeriodEnd?: string | null;
+}): string {
+  if (HISTORICAL_SUBSCRIPTION_LIFECYCLE_STATUSES.has(input.lifecycleStatus)) {
+    return "—";
+  }
+  if (input.cancelAtPeriodEnd) {
+    return "—";
+  }
+  if (input.source !== "STRIPE") {
+    return "—";
+  }
+  const chargeDate = input.effectiveEnd ?? input.currentPeriodEnd;
+  if (!chargeDate) {
+    return "—";
+  }
+  return formatSubscriptionDate(chargeDate);
 }
 
 export function dayPassHealthLabel(allowedCount: number, totalCount: number): PlanHealth {

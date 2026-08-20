@@ -4,8 +4,12 @@ import {
   isSubscriptionRequiringAttention,
   subscriptionMatchesSearch,
   sortSubscriptionRows,
-  effectiveEndSortKey,
+  compareSubscriptionsByEffectiveEnd,
+  isHistoricalSubscriptionLifecycle,
 } from './memberships.service';
+import type { MembershipLifecycleSnapshot } from './membership-entitlement';
+
+type SortTestRow = { lifecycle: MembershipLifecycleSnapshot };
 
 function mockPrisma(subscriptionRows: unknown[]) {
   return {
@@ -252,19 +256,176 @@ describe('membership KPI filter helpers', () => {
     ).toBe(true);
   });
 
-  it('sorts by effective end with nulls last', () => {
+  it('sorts by effective end with nulls last within current group', () => {
     const now = new Date('2026-08-20T12:00:00.000Z');
-    const rows = sortSubscriptionRows(
+    const rows = sortSubscriptionRows<SortTestRow>(
       [
-        { lifecycle: { effectiveEnd: new Date(now.getTime() + 5 * 86_400_000), isEntitled: true, lifecycleStatus: 'ACTIVE' } as never },
-        { lifecycle: { effectiveEnd: null, isEntitled: true, lifecycleStatus: 'ACTIVE' } as never },
-        { lifecycle: { effectiveEnd: new Date(now.getTime() + 1 * 86_400_000), isEntitled: true, lifecycleStatus: 'ACTIVE' } as never },
+        {
+          lifecycle: {
+            accessState: 'ENTITLED',
+            lifecycleStatus: 'ACTIVE',
+            isEntitled: true,
+            effectiveStart: now,
+            effectiveEnd: new Date(now.getTime() + 5 * 86_400_000),
+          },
+        },
+        {
+          lifecycle: {
+            accessState: 'ENTITLED',
+            lifecycleStatus: 'ACTIVE',
+            isEntitled: true,
+            effectiveStart: now,
+            effectiveEnd: null,
+          },
+        },
+        {
+          lifecycle: {
+            accessState: 'ENTITLED',
+            lifecycleStatus: 'ACTIVE',
+            isEntitled: true,
+            effectiveStart: now,
+            effectiveEnd: new Date(now.getTime() + 1 * 86_400_000),
+          },
+        },
       ],
       'effective_end_asc',
     );
-    expect(effectiveEndSortKey(rows[0].lifecycle)).toBeLessThan(
-      effectiveEndSortKey(rows[1].lifecycle),
+    expect(rows[0].lifecycle.effectiveEnd?.getTime()).toBe(now.getTime() + 1 * 86_400_000);
+    expect(rows[1].lifecycle.effectiveEnd?.getTime()).toBe(now.getTime() + 5 * 86_400_000);
+    expect(rows[2].lifecycle.effectiveEnd).toBeNull();
+  });
+
+  it('1. ACTIVE future sorts before REPLACED past (effective_end_asc)', () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    const active: MembershipLifecycleSnapshot = {
+      accessState: 'ENTITLED',
+      lifecycleStatus: 'ACTIVE',
+      isEntitled: true,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() + 10 * 86_400_000),
+    };
+    const replaced: MembershipLifecycleSnapshot = {
+      accessState: 'INACTIVE',
+      lifecycleStatus: 'REPLACED',
+      isEntitled: false,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() - 4 * 86_400_000),
+    };
+    expect(compareSubscriptionsByEffectiveEnd(active, replaced, 'effective_end_asc')).toBeLessThan(0);
+  });
+
+  it('2. ENDING future sorts before EXPIRED past', () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    const ending: MembershipLifecycleSnapshot = {
+      accessState: 'ENTITLED',
+      lifecycleStatus: 'ENDING',
+      isEntitled: true,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() + 3 * 86_400_000),
+    };
+    const expired: MembershipLifecycleSnapshot = {
+      accessState: 'EXPIRED',
+      lifecycleStatus: 'EXPIRED',
+      isEntitled: false,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() - 15 * 86_400_000),
+    };
+    expect(compareSubscriptionsByEffectiveEnd(ending, expired, 'effective_end_asc')).toBeLessThan(0);
+  });
+
+  it('3. multiple future rows sort effectiveEnd ASC within current group', () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    const sooner: MembershipLifecycleSnapshot = {
+      accessState: 'ENTITLED',
+      lifecycleStatus: 'ACTIVE',
+      isEntitled: true,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() + 2 * 86_400_000),
+    };
+    const later: MembershipLifecycleSnapshot = {
+      accessState: 'ENTITLED',
+      lifecycleStatus: 'ACTIVE',
+      isEntitled: true,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() + 20 * 86_400_000),
+    };
+    expect(compareSubscriptionsByEffectiveEnd(sooner, later, 'effective_end_asc')).toBeLessThan(0);
+  });
+
+  it('4. multiple historical rows sort effectiveEnd DESC within historical group', () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    const recent: MembershipLifecycleSnapshot = {
+      accessState: 'INACTIVE',
+      lifecycleStatus: 'REPLACED',
+      isEntitled: false,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() - 2 * 86_400_000),
+    };
+    const older: MembershipLifecycleSnapshot = {
+      accessState: 'INACTIVE',
+      lifecycleStatus: 'REPLACED',
+      isEntitled: false,
+      effectiveStart: now,
+      effectiveEnd: new Date(now.getTime() - 15 * 86_400_000),
+    };
+    expect(compareSubscriptionsByEffectiveEnd(recent, older, 'effective_end_asc')).toBeLessThan(0);
+  });
+
+  it('5. effective_end_desc keeps current/future before historical and sorts future DESC', () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    const rows = sortSubscriptionRows<SortTestRow>(
+      [
+        {
+          lifecycle: {
+            accessState: 'INACTIVE',
+            lifecycleStatus: 'REPLACED',
+            isEntitled: false,
+            effectiveStart: now,
+            effectiveEnd: new Date(now.getTime() - 2 * 86_400_000),
+          },
+        },
+        {
+          lifecycle: {
+            accessState: 'ENTITLED',
+            lifecycleStatus: 'ACTIVE',
+            isEntitled: true,
+            effectiveStart: now,
+            effectiveEnd: new Date(now.getTime() + 5 * 86_400_000),
+          },
+        },
+        {
+          lifecycle: {
+            accessState: 'ENTITLED',
+            lifecycleStatus: 'ACTIVE',
+            isEntitled: true,
+            effectiveStart: now,
+            effectiveEnd: new Date(now.getTime() + 20 * 86_400_000),
+          },
+        },
+        {
+          lifecycle: {
+            accessState: 'EXPIRED',
+            lifecycleStatus: 'EXPIRED',
+            isEntitled: false,
+            effectiveStart: now,
+            effectiveEnd: new Date(now.getTime() - 15 * 86_400_000),
+          },
+        },
+      ],
+      'effective_end_desc',
     );
-    expect((rows[2].lifecycle as { effectiveEnd: Date | null }).effectiveEnd).toBeNull();
+    expect(rows[0].lifecycle.lifecycleStatus).toBe('ACTIVE');
+    expect(rows[0].lifecycle.effectiveEnd!.getTime()).toBe(now.getTime() + 20 * 86_400_000);
+    expect(rows[1].lifecycle.lifecycleStatus).toBe('ACTIVE');
+    expect(rows[2].lifecycle.lifecycleStatus).toBe('REPLACED');
+    expect(rows[3].lifecycle.lifecycleStatus).toBe('EXPIRED');
+  });
+
+  it('isHistoricalSubscriptionLifecycle identifies REPLACED, EXPIRED, and CANCELED only', () => {
+    expect(isHistoricalSubscriptionLifecycle({ lifecycleStatus: 'REPLACED' } as never)).toBe(true);
+    expect(isHistoricalSubscriptionLifecycle({ lifecycleStatus: 'EXPIRED' } as never)).toBe(true);
+    expect(isHistoricalSubscriptionLifecycle({ lifecycleStatus: 'CANCELED' } as never)).toBe(true);
+    expect(isHistoricalSubscriptionLifecycle({ lifecycleStatus: 'ACTIVE' } as never)).toBe(false);
+    expect(isHistoricalSubscriptionLifecycle({ lifecycleStatus: 'ENDING' } as never)).toBe(false);
   });
 });

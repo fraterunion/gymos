@@ -20,6 +20,7 @@ import {
   subscriptionOperationalStatusLabel,
   subscriptionTransitionPresentation,
   subscriptionPaymentSourceLabel,
+  subscriptionNextChargeLabel,
   subscriptionValidityLines,
   type PlanForSummary,
 } from "./membershipPlanSummary.ts";
@@ -284,4 +285,172 @@ test("transition presentation formats Spanish staff copy", () => {
     }),
     "Cambio de forma de pago · Efectivo → Stripe",
   );
+});
+
+test("4.1.3 REPLACED past uses Venció in validity lines", () => {
+  const lines = subscriptionValidityLines({
+    lifecycleStatus: "REPLACED",
+    source: "CASH",
+    cancelAtPeriodEnd: true,
+    effectiveEnd: "2026-08-02T05:59:59.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(lines.primary, /^Venció /);
+  assert.equal(lines.secondary, null);
+});
+
+test("4.1.3 EXPIRED past uses Venció", () => {
+  const lines = subscriptionValidityLines({
+    lifecycleStatus: "EXPIRED",
+    source: "CASH",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-08-15T05:59:59.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(lines.primary, /^Venció /);
+  assert.equal(lines.secondary, "Renovación manual");
+});
+
+test("4.1.3 CANCELED historical uses Venció", () => {
+  const lines = subscriptionValidityLines({
+    lifecycleStatus: "CANCELED",
+    source: "STRIPE",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-08-09T05:59:59.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(lines.primary, /^Venció /);
+});
+
+test("4.1.3 ACTIVE future cash uses Vence", () => {
+  const lines = subscriptionValidityLines({
+    lifecycleStatus: "ACTIVE",
+    source: "CASH",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-08-21T05:59:59.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(lines.primary, /^Vence /);
+});
+
+test("4.1.3 ACTIVE recurring Stripe uses Renueva", () => {
+  const lines = subscriptionValidityLines({
+    lifecycleStatus: "ACTIVE",
+    source: "STRIPE",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-10-02T16:54:40.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(lines.primary, /^Renueva /);
+});
+
+test("4.1.3 historical REPLACED próximo cobro is em dash", () => {
+  assert.equal(
+    subscriptionNextChargeLabel({
+      lifecycleStatus: "REPLACED",
+      source: "CASH",
+      cancelAtPeriodEnd: true,
+      effectiveEnd: "2026-08-02T05:59:59.000Z",
+    }),
+    "—",
+  );
+});
+
+test("4.1.3 EXPIRED próximo cobro is em dash", () => {
+  assert.equal(
+    subscriptionNextChargeLabel({
+      lifecycleStatus: "EXPIRED",
+      source: "STRIPE",
+      cancelAtPeriodEnd: false,
+      effectiveEnd: "2026-08-15T05:59:59.000Z",
+    }),
+    "—",
+  );
+});
+
+test("4.1.3 active Stripe próximo cobro shows future charge date", () => {
+  const label = subscriptionNextChargeLabel({
+    lifecycleStatus: "ACTIVE",
+    source: "STRIPE",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-09-03T13:06:31.000Z",
+  });
+  assert.match(label, /sep/i);
+  assert.notEqual(label, "—");
+});
+
+test("4.1.3 active CASH próximo cobro is em dash (no automatic charge)", () => {
+  assert.equal(
+    subscriptionNextChargeLabel({
+      lifecycleStatus: "ACTIVE",
+      source: "CASH",
+      cancelAtPeriodEnd: false,
+      effectiveEnd: "2026-09-14T05:59:59.000Z",
+    }),
+    "—",
+  );
+});
+
+test("4.1.3 Carlo-style replaced row keeps Reemplazada label and Venció validity", () => {
+  assert.equal(subscriptionOperationalStatusLabel("REPLACED"), "Reemplazada");
+  const validity = subscriptionValidityLines({
+    lifecycleStatus: "REPLACED",
+    source: "CASH",
+    cancelAtPeriodEnd: true,
+    effectiveEnd: "2026-08-04T05:59:59.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(validity.primary, /^Venció /);
+  assert.equal(
+    subscriptionTransitionPresentation({
+      label: "Cambio de forma de pago",
+      detail: "Efectivo → Stripe",
+    }),
+    "Cambio de forma de pago · Efectivo → Stripe",
+  );
+});
+
+test("4.1.3 Luis-style replaced row keeps Reemplazada and Venció", () => {
+  const validity = subscriptionValidityLines({
+    lifecycleStatus: "REPLACED",
+    source: "CASH",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-08-03T03:59:59.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(validity.primary, /^Venció /);
+  assert.equal(subscriptionOperationalStatusLabel("REPLACED"), "Reemplazada");
+});
+
+test("4.1.3 Emilia-style canceled row stays Cancelada with Venció", () => {
+  assert.equal(subscriptionOperationalStatusLabel("CANCELED"), "Cancelada");
+  const validity = subscriptionValidityLines({
+    lifecycleStatus: "CANCELED",
+    source: "STRIPE",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-09-06T22:24:19.000Z",
+    entitlementDays: null,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(validity.primary, /^Venció /);
+});
+
+test("4.1.3 Maky-style active Stripe shows Renueva oct", () => {
+  const validity = subscriptionValidityLines({
+    lifecycleStatus: "TRIALING",
+    source: "STRIPE",
+    cancelAtPeriodEnd: false,
+    effectiveEnd: "2026-10-02T16:54:40.000Z",
+    entitlementDays: 45,
+    billingInterval: "MONTHLY",
+  });
+  assert.match(validity.primary, /^Renueva /);
+  assert.match(validity.primary, /oct/i);
 });

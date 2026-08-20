@@ -27,6 +27,7 @@ import {
   subscriptionOperationalStatusLabel,
   subscriptionTransitionPresentation,
   subscriptionPaymentSourceLabel,
+  subscriptionNextChargeLabel,
   subscriptionValidityLines,
   type SubscriptionAction,
 } from "@/lib/membershipPlanSummary";
@@ -58,14 +59,6 @@ const LIFECYCLE_COLORS: Record<string, string> = {
   CANCELED: "bg-red-100 text-red-700",
   REPLACED: "bg-blue-100 text-blue-800",
 };
-
-function fmtDate(iso: string | null | undefined) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("es-MX", {
-    day: "numeric",
-    month: "short",
-  });
-}
 
 function OverflowMenu({
   items,
@@ -457,7 +450,15 @@ export function SubRow({
           ? "Ilimitado"
           : `${sub.membershipPlan.classCredits} créditos`}
       </td>
-      <td className="px-4 py-3 text-zinc-500">{fmtDate(sub.effectiveEnd ?? sub.currentPeriodEnd)}</td>
+      <td className="px-4 py-3 text-zinc-500">
+        {subscriptionNextChargeLabel({
+          lifecycleStatus: sub.lifecycleStatus,
+          source: sub.source,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+          effectiveEnd: sub.effectiveEnd,
+          currentPeriodEnd: sub.currentPeriodEnd,
+        })}
+      </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
           <Link

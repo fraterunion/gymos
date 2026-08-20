@@ -245,21 +245,60 @@ export function subscriptionMatchesSearch(user: SubscriptionUser, rawSearch: str
   return haystack.includes(term);
 }
 
+const HISTORICAL_LIFECYCLE_STATUSES = new Set<MembershipLifecycleSnapshot['lifecycleStatus']>([
+  'REPLACED',
+  'EXPIRED',
+  'CANCELED',
+]);
+
+/** Historical ended records — not current/upcoming operational subscriptions. */
+export function isHistoricalSubscriptionLifecycle(
+  lifecycle: MembershipLifecycleSnapshot,
+): boolean {
+  return HISTORICAL_LIFECYCLE_STATUSES.has(lifecycle.lifecycleStatus);
+}
+
 export function effectiveEndSortKey(lifecycle: MembershipLifecycleSnapshot): number {
   return lifecycle.effectiveEnd?.getTime() ?? Number.MAX_SAFE_INTEGER;
+}
+
+function effectiveEndTimestamp(lifecycle: MembershipLifecycleSnapshot): number | null {
+  return lifecycle.effectiveEnd?.getTime() ?? null;
+}
+
+export function compareSubscriptionsByEffectiveEnd(
+  a: MembershipLifecycleSnapshot,
+  b: MembershipLifecycleSnapshot,
+  sort: SubscriptionSort,
+): number {
+  const aHistorical = isHistoricalSubscriptionLifecycle(a);
+  const bHistorical = isHistoricalSubscriptionLifecycle(b);
+
+  if (aHistorical !== bHistorical) {
+    return aHistorical ? 1 : -1;
+  }
+
+  const aTs = effectiveEndTimestamp(a);
+  const bTs = effectiveEndTimestamp(b);
+
+  if (aTs === null && bTs === null) return 0;
+  if (aTs === null) return 1;
+  if (bTs === null) return -1;
+
+  if (aHistorical) {
+    return bTs - aTs;
+  }
+
+  return sort === 'effective_end_asc' ? aTs - bTs : bTs - aTs;
 }
 
 export function sortSubscriptionRows<T extends { lifecycle: MembershipLifecycleSnapshot }>(
   rows: T[],
   sort: SubscriptionSort,
 ): T[] {
-  const sorted = [...rows];
-  sorted.sort((a, b) => {
-    const aKey = effectiveEndSortKey(a.lifecycle);
-    const bKey = effectiveEndSortKey(b.lifecycle);
-    return sort === 'effective_end_asc' ? aKey - bKey : bKey - aKey;
-  });
-  return sorted;
+  return [...rows].sort((a, b) =>
+    compareSubscriptionsByEffectiveEnd(a.lifecycle, b.lifecycle, sort),
+  );
 }
 
 const ATTENTION_LIFECYCLE_STATUSES = new Set(['PAST_DUE', 'PAUSED', 'EXPIRED']);
