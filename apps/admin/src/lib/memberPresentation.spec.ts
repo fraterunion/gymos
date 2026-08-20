@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { PAYMENT_SOURCE_PRESENTATION, primaryStatus, renewalPresentation } from "./memberPresentation.ts";
-import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, usagePresentation } from "./member360.ts";
+import { PAYMENT_SOURCE_PRESENTATION, PRIMARY_STATUS_LABELS, primaryStatus, renewalPresentation } from "./memberPresentation.ts";
+import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, paymentSourceLabel, renewalBehavior, usagePresentation } from "./member360.ts";
 
 const base = {
   lifecycleStatus: "ACTIVE" as const,
@@ -108,18 +108,45 @@ test("Member 360 action center is lifecycle and RBAC aware", () => {
 
 test("Member 360 distinguishes credit, unlimited, and no-membership usage", () => {
   const creditProfile = { currentMembership: { plan: { classCredits: 12 }, creditsUsed: 8, creditsRemaining: 4 }, engagement: { visitsCurrentPeriod: 5, visitsLast30Days: 7 } } as never;
-  assert.deepEqual(usagePresentation(creditProfile), { value: "8 / 12", detail: "4 restantes" });
-  assert.deepEqual(usagePresentation({ currentMembership: { plan: { classCredits: null } }, engagement: { visitsCurrentPeriod: 5, visitsLast30Days: 7 } } as never), { value: "5", detail: "visitas este periodo" });
-  assert.deepEqual(usagePresentation({ currentMembership: null, engagement: { visitsCurrentPeriod: 0, visitsLast30Days: 7 } } as never), { value: "7", detail: "visitas en 30 días" });
+  assert.deepEqual(usagePresentation(creditProfile), { label: "Créditos del periodo", value: "8 / 12", detail: "4 restantes" });
+  assert.deepEqual(usagePresentation({ currentMembership: { plan: { classCredits: null } }, engagement: { visitsCurrentPeriod: 5, visitsLast30Days: 7 } } as never), { label: "Visitas este periodo", value: "5", detail: "membresía ilimitada" });
+  assert.deepEqual(usagePresentation({ currentMembership: null, engagement: { visitsCurrentPeriod: 0, visitsLast30Days: 7 } } as never), { label: "Visitas · 30 días", value: "7", detail: "historial reciente" });
 });
 
 test("Member 360 billing state separates current, past-due, expired, and manual", () => {
   const profile = (currentMembership: unknown) => ({ currentMembership, operations: {} }) as never;
-  assert.equal(billingOperationalState(profile(null)), "Sin membresía");
+  assert.equal(billingOperationalState(profile(null)), "No aplica");
   assert.equal(billingOperationalState(profile({ lifecycleStatus: "PAST_DUE", primaryStatus: "PAST_DUE", source: "STRIPE", cancelAtPeriodEnd: false })), "Pago pendiente");
-  assert.equal(billingOperationalState(profile({ lifecycleStatus: "EXPIRED", primaryStatus: "EXPIRED", source: "CASH", cancelAtPeriodEnd: true })), "Vencida");
-  assert.equal(billingOperationalState(profile({ lifecycleStatus: "ACTIVE", primaryStatus: "ACTIVE", source: "CASH", cancelAtPeriodEnd: false })), "Renovación manual");
+  assert.equal(billingOperationalState(profile({ lifecycleStatus: "EXPIRED", primaryStatus: "EXPIRED", source: "CASH", cancelAtPeriodEnd: true })), "Al corriente");
+  assert.equal(billingOperationalState(profile({ lifecycleStatus: "ACTIVE", primaryStatus: "ACTIVE", source: "CASH", cancelAtPeriodEnd: false })), "Al corriente");
   assert.equal(billingOperationalState(profile({ lifecycleStatus: "ACTIVE", primaryStatus: "ACTIVE", source: "STRIPE", cancelAtPeriodEnd: false })), "Al corriente");
+});
+
+test("membership lifecycle and payment state remain independent for expired CASH", () => {
+  const matias = { lifecycleStatus: "EXPIRED", primaryStatus: "EXPIRED", source: "CASH", cancelAtPeriodEnd: true } as const;
+  assert.equal(PRIMARY_STATUS_LABELS[matias.primaryStatus], "Vencida");
+  assert.equal(billingOperationalState({ currentMembership: matias, operations: {} } as never), "Al corriente");
+  assert.equal(paymentSourceLabel(matias.source), "Efectivo");
+  assert.equal(renewalBehavior(matias), "Requiere renovación manual");
+});
+
+test("renewal behavior is source-aware and never applies Stripe cancellation semantics to CASH", () => {
+  assert.equal(renewalBehavior({ source: "CASH", cancelAtPeriodEnd: true, primaryStatus: "ACTIVE" }), "Manual");
+  assert.equal(renewalBehavior({ source: "MANUAL", cancelAtPeriodEnd: true, primaryStatus: "EXPIRED" }), "Requiere renovación manual");
+  assert.equal(renewalBehavior({ source: "STRIPE", cancelAtPeriodEnd: false, primaryStatus: "ACTIVE" }), "Automática");
+  assert.equal(renewalBehavior({ source: "STRIPE", cancelAtPeriodEnd: true, primaryStatus: "ACTIVE" }), "No renovará");
+});
+
+test("historical successful payment amount is preserved independently from current catalog price", () => {
+  const subscription = { membershipPlan: { priceCents: 150000 }, payments: [{ stripeInvoiceId: "historical", status: "SUCCEEDED", amountCents: 195000, currency: "mxn", paymentMethod: "CASH" }] };
+  assert.equal(cyclePayment(subscription, "historical")?.amountCents, 195000);
+  assert.notEqual(cyclePayment(subscription, "historical")?.amountCents, subscription.membershipPlan.priceCents);
+});
+
+test("paid Booty bridge is operationally active while genuine unpaid trial remains Prueba", () => {
+  assert.equal(primaryStatus("ENDING"), "ACTIVE");
+  assert.equal(primaryStatus("TRIALING"), "TRIALING");
+  assert.equal(PRIMARY_STATUS_LABELS[primaryStatus("TRIALING")], "Prueba");
 });
 
 test("allowed classes use canonical mappings and include Open Gym hours", () => {
@@ -137,7 +164,22 @@ test("cycle ledger links only real successful invoice-backed payments", () => {
 
 test("profile source exposes 360 sections without fabricating a future cycle", () => {
   const source = readFileSync(new URL("../app/members/[userId]/page.tsx", import.meta.url), "utf8");
-  for (const label of ["Uso del periodo", "Actividad reciente", "Historial de ciclos pagados", "Actividad próxima", "Facturación", "Carta Responsiva"]) assert.match(source, new RegExp(label));
+  for (const label of ["usageKpi?.label", "Actividad reciente", "Historial de ciclos pagados", "Actividad próxima", "Facturación", "Carta Responsiva"]) assert.match(source, new RegExp(label.replace(/[?.]/g, "\\$&")));
   assert.match(source, /Los ciclos futuros aparecen únicamente después de un pago válido/);
   assert.doesNotMatch(source, /churn score|riesgo de abandono/i);
+});
+
+test("Member 360 uses Spanish navigation and hides raw provider status from membership facts", () => {
+  const source = readFileSync(new URL("../app/members/[userId]/page.tsx", import.meta.url), "utf8");
+  for (const label of ["Resumen", "Membresía", "Reservas", "Asistencia", "Facturación", "Notas y CRM", "Historial"]) assert.match(source, new RegExp(`label: \\"${label}\\"`));
+  assert.doesNotMatch(source, /Provider \/ pago|Cancel at period end|Period start|Period end|>Credits<|>Unlimited</);
+  assert.doesNotMatch(source, /\{s\.status\} ·/);
+  assert.match(source, /renewalBehavior\(s\)/);
+});
+
+test("header keeps one lifecycle badge and does not append status to plan name", () => {
+  const source = readFileSync(new URL("../app/members/[userId]/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /currentMembership\?\.plan\.name \?\? "Sin membresía"/);
+  assert.doesNotMatch(source, /plan\.name\} · \$\{PRIMARY_STATUS_LABELS/);
+  assert.match(source, /Membresía vencida/);
 });
