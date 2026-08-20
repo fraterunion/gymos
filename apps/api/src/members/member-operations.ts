@@ -7,9 +7,26 @@ export type MemberActivityFilter =
   | 'NEVER_ATTENDED' | 'HAS_NO_SHOWS' | 'HAS_FUTURE_BOOKING'
   | 'NO_FUTURE_BOOKING' | 'ENDING_7D';
 
+export type MemberPrimaryStatus = Exclude<MembershipLifecycleStatus, 'ENDING'>;
+export type MemberAttentionCode =
+  | 'PAST_DUE' | 'EXPIRED' | 'WAIVER' | 'ZERO_CREDITS' | 'ENDING_SOON'
+  | 'NO_SHOWS' | 'INACTIVE';
+
+export type MemberAttention = {
+  code: MemberAttentionCode;
+  label: string;
+  action: 'REVIEW_BILLING' | 'RENEW' | null;
+} | null;
+
+export function toPrimaryMembershipStatus(status: MembershipLifecycleStatus): MemberPrimaryStatus {
+  return status === 'ENDING' ? 'ACTIVE' : status;
+}
+
 export function matchesLifecycleFilter(status: MembershipLifecycleStatus | null, filter?: MemberLifecycleFilter): boolean {
   if (!filter) return true;
-  return filter === 'NONE' ? status === null : status === filter;
+  if (filter === 'NONE') return status === null;
+  if (filter === 'ACTIVE') return status === 'ACTIVE' || status === 'ENDING';
+  return status === filter;
 }
 
 export function matchesPaymentSource(source: SubscriptionSource | null, filter?: SubscriptionSource | 'NONE'): boolean {
@@ -33,4 +50,29 @@ export function matchesActivityFilter(
   if (filter === 'HAS_FUTURE_BOOKING') return member.hasFutureBooking;
   if (filter === 'NO_FUTURE_BOOKING') return !member.hasFutureBooking;
   return member.lifecycleStatus === 'ENDING' && !!member.effectiveEnd && member.effectiveEnd <= new Date(now.getTime() + 7 * 86_400_000);
+}
+
+export function selectHighestMemberAttention(
+  member: {
+    lifecycleStatus: MembershipLifecycleStatus | null;
+    effectiveEnd: Date | null;
+    creditsRemaining: number | null;
+    waiverPending?: boolean;
+    noShowCount: number;
+    lastAttendanceAt: Date | null;
+  },
+  now: Date,
+): MemberAttention {
+  if (member.lifecycleStatus === 'PAST_DUE') return { code: 'PAST_DUE', label: 'Cobro pendiente', action: 'REVIEW_BILLING' };
+  if (member.lifecycleStatus === 'EXPIRED') return { code: 'EXPIRED', label: 'Renovar', action: 'RENEW' };
+  if (member.waiverPending) return { code: 'WAIVER', label: 'Carta pendiente', action: null };
+  if (member.creditsRemaining === 0) return { code: 'ZERO_CREDITS', label: 'Sin créditos', action: 'RENEW' };
+  if (member.lifecycleStatus === 'ENDING' && member.effectiveEnd && member.effectiveEnd <= new Date(now.getTime() + 7 * 86_400_000)) {
+    return { code: 'ENDING_SOON', label: 'Próxima a vencer', action: 'RENEW' };
+  }
+  if (member.noShowCount > 0) return { code: 'NO_SHOWS', label: `${member.noShowCount} no-show${member.noShowCount === 1 ? '' : 's'}`, action: null };
+  if (!member.lastAttendanceAt) return { code: 'INACTIVE', label: 'Sin actividad', action: null };
+  const inactiveDays = Math.floor((now.getTime() - member.lastAttendanceAt.getTime()) / 86_400_000);
+  if (inactiveDays >= 14) return { code: 'INACTIVE', label: `Sin actividad ${inactiveDays}d`, action: null };
+  return null;
 }

@@ -5,6 +5,7 @@ import { apiRequest } from "@/lib/api/client";
 export type SubStatus = "ACTIVE" | "PAST_DUE" | "CANCELED" | "TRIALING" | "PAUSED";
 export type LifecycleStatus = SubStatus | "ENDING" | "SCHEDULED" | "EXPIRED";
 export type LifecycleFilter = LifecycleStatus | "NONE";
+export type PrimaryLifecycleStatus = Exclude<LifecycleStatus, "ENDING">;
 export type PaymentSource = "STRIPE" | "CASH" | "MANUAL" | "NONE";
 export type ActivityFilter = "VISITED_7D" | "VISITED_30D" | "NO_VISIT_14D" | "NO_VISIT_30D" | "NEVER_ATTENDED" | "HAS_NO_SHOWS" | "HAS_FUTURE_BOOKING" | "NO_FUTURE_BOOKING" | "ENDING_7D";
 export type BookingStatus = "PENDING" | "CONFIRMED" | "CANCELLED" | "NO_SHOW" | "COMPLETED";
@@ -30,6 +31,7 @@ export type MemberSubscriptionSummary = {
   status: SubStatus;
   accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
   lifecycleStatus: LifecycleStatus;
+  primaryStatus: PrimaryLifecycleStatus;
   isEntitled: boolean;
   planName: string;
   planId: string;
@@ -38,6 +40,7 @@ export type MemberSubscriptionSummary = {
   cancelAtPeriodEnd: boolean;
   source: Exclude<PaymentSource, "NONE">;
   classCredits: number | null;
+  entitlementDays: number | null;
   currentPeriodStart: string | null;
 };
 
@@ -62,6 +65,7 @@ export type MemberListItem = {
   nextBooking: { id: string; classId: string; startsAt: string; className: string } | null;
   usage: { limit: number | null; used: number | null; remaining: number | null } | null;
   lastPayment: { status: PaymentStatus; paymentMethod: string; amountCents: number; currency: string; paidAt: string | null; createdAt: string } | null;
+  attention: { code: "PAST_DUE" | "EXPIRED" | "WAIVER" | "ZERO_CREDITS" | "ENDING_SOON" | "NO_SHOWS" | "INACTIVE"; label: string; action: "REVIEW_BILLING" | "RENEW" | null } | null;
   subscription: MemberSubscriptionSummary | null;
 };
 
@@ -70,7 +74,7 @@ export type MemberListResponse = {
   total: number;
   page: number;
   limit: number;
-  summary: { active: number; ending: number; expired: number; pastDue: number; noMembership: number; inactive30d: number; noShows: number };
+  summary: { total: number; active: number; ending: number; expired: number; pastDue: number; noMembership: number; inactive30d: number; noShows: number };
 };
 
 export type MemberListQuery = {
@@ -139,6 +143,7 @@ export type MemberPlan = {
   priceCents: number;
   currency: string;
   classCredits: number | null;
+  entitlementDays?: number | null;
 };
 
 export type MemberSubscription = {

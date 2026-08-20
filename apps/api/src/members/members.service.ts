@@ -39,7 +39,7 @@ import type { ListMembersQueryDto } from './dto/list-members-query.dto';
 import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
 import type { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
-import { matchesActivityFilter, matchesLifecycleFilter, matchesPaymentSource } from './member-operations';
+import { matchesActivityFilter, matchesLifecycleFilter, matchesPaymentSource, selectHighestMemberAttention, toPrimaryMembershipStatus } from './member-operations';
 
 const ENTITLEMENT_OVERRIDE_ROLES: ReadonlySet<Role> = new Set([Role.ADMIN, Role.OWNER]);
 
@@ -137,14 +137,14 @@ export class MembersService {
     });
 
     if (memberships.length === 0) {
-      return { data: [], total: 0, page, limit };
+      return { data: [], total: 0, page, limit, summary: { total: 0, active: 0, ending: 0, expired: 0, pastDue: 0, noMembership: 0, inactive30d: 0, noShows: 0 } };
     }
 
     const userIds = memberships.map((m) => m.userId);
 
     const directoryNow = new Date();
     const thirtyDaysAgo = new Date(directoryNow.getTime() - 30 * 86_400_000);
-    const [bookingCounts, noShowCounts, lastAttendances, subscriptions, futureBookings, latestPayments] = await Promise.all([
+    const [bookingCounts, noShowCounts, lastAttendances, subscriptions, futureBookings, latestPayments, activeWaiver, waiverAcceptances] = await Promise.all([
       this.prisma.booking.groupBy({
         by: ['userId'],
         where: {
@@ -172,7 +172,7 @@ export class MembersService {
       this.prisma.subscription.findMany({
         where: { studioId, userId: { in: userIds } },
         include: {
-          membershipPlan: { select: { id: true, name: true, classCredits: true } },
+          membershipPlan: { select: { id: true, name: true, classCredits: true, entitlementDays: true } },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -185,6 +185,14 @@ export class MembersService {
         where: { studioId, userId: { in: userIds } },
         select: { userId: true, status: true, paymentMethod: true, amountCents: true, currency: true, paidAt: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.studioWaiverDocument.findFirst({
+        where: { studioId, isActive: true },
+        select: { id: true },
+      }),
+      this.prisma.waiverAcceptance.findMany({
+        where: { studioId, userId: { in: userIds }, waiverDocument: { isActive: true } },
+        select: { userId: true },
       }),
     ]);
 
@@ -219,6 +227,7 @@ export class MembersService {
     for (const booking of futureBookings) if (!nextBookingMap.has(booking.userId)) nextBookingMap.set(booking.userId, booking);
     const paymentMap = new Map<string, (typeof latestPayments)[0]>();
     for (const payment of latestPayments) if (!paymentMap.has(payment.userId)) paymentMap.set(payment.userId, payment);
+    const waiverAcceptedUserIds = new Set(waiverAcceptances.map((acceptance) => acceptance.userId));
     const usageMap = new Map<string, number>();
     for (const booking of usageBookings) {
       const sub = subMap.get(booking.userId);
@@ -234,8 +243,11 @@ export class MembersService {
       const sub = subMap.get(m.userId);
       const lifecycle = sub ? deriveMembershipLifecycle(sub, lifecycleNow) : null;
       const used = sub?.membershipPlan.classCredits === null ? null : usageMap.get(m.userId) ?? 0;
+      const remaining = !sub || sub.membershipPlan.classCredits === null ? null : Math.max(sub.membershipPlan.classCredits - (used ?? 0), 0);
       const nextBooking = nextBookingMap.get(m.userId);
       const lastPayment = paymentMap.get(m.userId);
+      const primaryStatus = lifecycle ? toPrimaryMembershipStatus(lifecycle.lifecycleStatus) : null;
+      const attention = selectHighestMemberAttention({ lifecycleStatus: lifecycle?.lifecycleStatus ?? null, effectiveEnd: lifecycle?.effectiveEnd ?? null, creditsRemaining: remaining, waiverPending: Boolean(activeWaiver) && !waiverAcceptedUserIds.has(m.userId), noShowCount: noShowCountMap.get(m.userId) ?? 0, lastAttendanceAt: lastAttendanceMap.get(m.userId) ?? null }, directoryNow);
       return {
         membershipId: m.id,
         role: m.role,
@@ -245,18 +257,21 @@ export class MembersService {
         noShowCount: noShowCountMap.get(m.userId) ?? 0,
         lastAttendanceAt: lastAttendanceMap.get(m.userId) ?? null,
         nextBooking: nextBooking ? { id: nextBooking.id, classId: nextBooking.scheduledClass.id, startsAt: nextBooking.scheduledClass.startsAt, className: nextBooking.scheduledClass.classTemplate.name } : null,
-        usage: sub ? { limit: sub.membershipPlan.classCredits, used, remaining: sub.membershipPlan.classCredits === null ? null : Math.max(sub.membershipPlan.classCredits - (used ?? 0), 0) } : null,
+        usage: sub ? { limit: sub.membershipPlan.classCredits, used, remaining } : null,
         lastPayment,
+        attention,
         subscription: sub
           ? {
               id: sub.id,
               status: sub.status,
               accessState: lifecycle!.accessState,
               lifecycleStatus: lifecycle!.lifecycleStatus,
+              primaryStatus,
               isEntitled: lifecycle!.isEntitled,
               planName: sub.membershipPlan.name,
               planId: sub.membershipPlan.id,
               classCredits: sub.membershipPlan.classCredits,
+              entitlementDays: sub.membershipPlan.entitlementDays,
               source: sub.source,
               currentPeriodStart: sub.currentPeriodStart,
               currentPeriodEnd: sub.currentPeriodEnd,
@@ -268,8 +283,9 @@ export class MembersService {
     });
 
     const summary = {
-      active: enriched.filter((m) => m.subscription?.lifecycleStatus === 'ACTIVE').length,
-      ending: enriched.filter((m) => m.subscription?.lifecycleStatus === 'ENDING').length,
+      total: enriched.length,
+      active: enriched.filter((m) => m.subscription?.primaryStatus === 'ACTIVE').length,
+      ending: enriched.filter((m) => matchesActivityFilter({ lastAttendanceAt: m.lastAttendanceAt, noShowCount: m.noShowCount, hasFutureBooking: !!m.nextBooking, lifecycleStatus: m.subscription?.lifecycleStatus ?? null, effectiveEnd: m.subscription?.effectiveEnd ?? null }, 'ENDING_7D', directoryNow)).length,
       expired: enriched.filter((m) => m.subscription?.lifecycleStatus === 'EXPIRED').length,
       pastDue: enriched.filter((m) => m.subscription?.lifecycleStatus === 'PAST_DUE').length,
       noMembership: enriched.filter((m) => !m.subscription).length,
@@ -346,6 +362,7 @@ export class MembersService {
               priceCents: true,
               currency: true,
               classCredits: true,
+              entitlementDays: true,
               allowedCategories: true,
               allClassesAccess: true,
               classTemplateAccess: {
@@ -440,6 +457,7 @@ export class MembersService {
             priceCents: latestSubscription.membershipPlan.priceCents,
             currency: latestSubscription.membershipPlan.currency,
             classCredits: latestSubscription.membershipPlan.classCredits,
+            entitlementDays: latestSubscription.membershipPlan.entitlementDays,
             allowedCategories: latestSubscription.membershipPlan.allowedCategories,
             allClassesAccess: latestSubscription.membershipPlan.allClassesAccess,
             allowedTemplateIds: latestSubscription.membershipPlan.classTemplateAccess.map((row) => row.classTemplateId),
@@ -451,10 +469,10 @@ export class MembersService {
       : null;
     const daysSinceVisit = lastAttendance ? Math.floor((profileNow.getTime() - lastAttendance.checkedInAt.getTime()) / 86_400_000) : null;
     const attentionItems = [];
-    if (latestLifecycle?.lifecycleStatus === 'EXPIRED') attentionItems.push({ code: 'EXPIRED', priority: 'critical', message: `Membresía vencida hace ${Math.max(0, Math.floor((profileNow.getTime() - latestLifecycle.effectiveEnd!.getTime()) / 86_400_000))} días`, action: 'RENEW' });
-    if (latestLifecycle?.lifecycleStatus === 'ENDING') attentionItems.push({ code: 'ENDING', priority: 'warning', message: `Termina en ${Math.max(0, Math.ceil((latestLifecycle.effectiveEnd!.getTime() - profileNow.getTime()) / 86_400_000))} días`, action: 'RENEW' });
     if (latestLifecycle?.lifecycleStatus === 'PAST_DUE') attentionItems.push({ code: 'PAST_DUE', priority: 'critical', message: 'Pago pendiente', action: 'REVIEW_BILLING' });
+    if (latestLifecycle?.lifecycleStatus === 'EXPIRED') attentionItems.push({ code: 'EXPIRED', priority: 'critical', message: `Membresía vencida hace ${Math.max(0, Math.floor((profileNow.getTime() - latestLifecycle.effectiveEnd!.getTime()) / 86_400_000))} días`, action: 'RENEW' });
     if (creditsRemaining === 0) attentionItems.push({ code: 'ZERO_CREDITS', priority: 'warning', message: 'Sin créditos restantes', action: 'RENEW' });
+    if (latestLifecycle?.lifecycleStatus === 'ENDING' && latestLifecycle.effectiveEnd && latestLifecycle.effectiveEnd.getTime() - profileNow.getTime() <= 7 * 86_400_000) attentionItems.push({ code: 'ENDING', priority: 'warning', message: `Termina en ${Math.max(0, Math.ceil((latestLifecycle.effectiveEnd.getTime() - profileNow.getTime()) / 86_400_000))} días`, action: 'RENEW' });
     if (recentNoShows > 0) attentionItems.push({ code: 'NO_SHOWS', priority: 'warning', message: `${recentNoShows} no-show${recentNoShows === 1 ? '' : 's'} en los últimos 30 días`, action: null });
     if (daysSinceVisit === null || daysSinceVisit >= 14) attentionItems.push({ code: 'INACTIVE', priority: 'informational', message: daysSinceVisit === null ? 'Nunca ha asistido' : `Sin visita en ${daysSinceVisit} días`, action: null });
     const segments = [

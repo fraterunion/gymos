@@ -17,6 +17,13 @@ import {
 } from "@/lib/api/members";
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import {
+  nextClassPresentation,
+  PRIMARY_STATUS_COLORS,
+  PRIMARY_STATUS_LABELS,
+  renewalPresentation,
+  visitPresentation,
+} from "@/lib/memberPresentation";
+import {
   adminInput,
   adminSecondaryBtn,
   adminSelect,
@@ -28,81 +35,10 @@ function initials(firstName: string, lastName: string) {
   return `${firstName[0] ?? ""}${lastName[0] ?? ""}`.toUpperCase();
 }
 
-function fmtDate(iso: string | null | undefined) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("es-MX", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function fmtRelative(iso: string | null | undefined) {
-  if (!iso) return "—";
-  const diff = Date.now() - new Date(iso).getTime();
-  const days = Math.floor(diff / 86_400_000);
-  if (days === 0) return "Hoy";
-  if (days === 1) return "Ayer";
-  if (days < 30) return `Hace ${days}d`;
-  if (days < 365) return `Hace ${Math.floor(days / 30)}m`;
-  return `Hace ${Math.floor(days / 365)}a`;
-}
-
-function fmtNextEvent(iso: string | null | undefined) {
-  if (!iso) return "Sin reserva";
-  const date = new Date(iso);
-  const today = new Date();
-  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
-  const day = sameDay(date, today) ? "Hoy" : sameDay(date, tomorrow) ? "Mañana" : date.toLocaleDateString("es-MX", { weekday: "short", day: "numeric" });
-  return `${day} · ${date.toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" })}`;
-}
-
-function attentionLabel(member: MemberListItem) {
-  if (member.subscription?.lifecycleStatus === "EXPIRED") return "Renovar";
-  if (member.subscription?.lifecycleStatus === "PAST_DUE") return "Pago pendiente";
-  if (member.usage?.remaining === 0) return "Sin créditos";
-  if (member.noShowCount > 0) return `${member.noShowCount} no-show${member.noShowCount === 1 ? "" : "s"}`;
-  if (!member.lastAttendanceAt || daysBetween(member.lastAttendanceAt) >= 30) return "Sin actividad 30d";
-  return "—";
-}
-
-function daysBetween(iso: string) { return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000); }
-
-const SUB_STATUS_LABELS = {
-  ACTIVE: "Activa",
-  TRIALING: "Prueba",
-  PAST_DUE: "Pago pendiente",
-  PAUSED: "Pausada",
-  CANCELED: "Cancelada",
-};
-
-const LIFECYCLE_LABELS = {
-  ...SUB_STATUS_LABELS,
-  ENDING: "Termina pronto",
-  SCHEDULED: "Programada",
-  EXPIRED: "Vencida",
-} as const;
-
-const SUB_STATUS_COLORS = {
-  ACTIVE: "bg-emerald-100 text-emerald-800",
-  TRIALING: "bg-sky-100 text-sky-800",
-  PAST_DUE: "bg-amber-100 text-amber-800",
-  PAUSED: "bg-zinc-100 text-zinc-600",
-  CANCELED: "bg-red-100 text-red-700",
-};
-
-const LIFECYCLE_COLORS = {
-  ...SUB_STATUS_COLORS,
-  ENDING: "bg-amber-100 text-amber-800",
-  SCHEDULED: "bg-sky-100 text-sky-800",
-  EXPIRED: "bg-red-100 text-red-700",
-} as const;
-
 function RowSkeleton() {
   return (
     <tr className="border-b border-zinc-100">
-      {[...Array(8)].map((_, i) => (
+      {[...Array(9)].map((_, i) => (
         <td key={i} className="px-4 py-3.5">
           <div className="h-4 rounded bg-zinc-200 animate-pulse" style={{ width: `${60 + (i * 17) % 40}%` }} />
         </td>
@@ -146,10 +82,10 @@ function SortTh({
   );
 }
 
-function MemberStatusPill({ status }: { status: keyof typeof LIFECYCLE_LABELS }) {
+function MemberStatusPill({ status }: { status: keyof typeof PRIMARY_STATUS_LABELS }) {
   return (
-    <span className={`${adminStatusPill} ${LIFECYCLE_COLORS[status]}`}>
-      {LIFECYCLE_LABELS[status]}
+    <span className={`${adminStatusPill} ring-1 ring-inset ${PRIMARY_STATUS_COLORS[status]}`}>
+      {PRIMARY_STATUS_LABELS[status]}
     </span>
   );
 }
@@ -174,15 +110,16 @@ function MemberCard({ member }: { member: MemberListItem }) {
           ) : null}
         </div>
         {member.subscription ? (
-          <MemberStatusPill status={member.subscription.lifecycleStatus} />
+          <MemberStatusPill status={member.subscription.primaryStatus} />
         ) : (
           <span className="text-xs text-zinc-400">Sin plan</span>
         )}
       </div>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
         <span>{member.subscription?.planName ?? "—"}</span>
-        <span>{member.usage?.limit === null ? "Ilimitada" : member.usage ? `${member.usage.used} / ${member.usage.limit} usadas` : "—"}</span>
-        <span>Última visita: {fmtRelative(member.lastAttendanceAt)}</span>
+        <span>{member.subscription ? renewalPresentation(member.subscription).title : "Sin membresía"}</span>
+        <span>{member.usage?.limit === null ? "Ilimitado" : member.usage ? `${member.usage.used} / ${member.usage.limit} usadas` : "—"}</span>
+        <span>Última visita: {visitPresentation(member.lastAttendanceAt).title}</span>
       </div>
     </Link>
   );
@@ -193,7 +130,7 @@ export default function MembersPage() {
 
   const [members, setMembers] = useState<MemberListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState({ active: 0, ending: 0, expired: 0, pastDue: 0, noMembership: 0, inactive30d: 0, noShows: 0 });
+  const [summary, setSummary] = useState({ total: 0, active: 0, ending: 0, expired: 0, pastDue: 0, noMembership: 0, inactive30d: 0, noShows: 0 });
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -298,33 +235,33 @@ export default function MembersPage() {
         title="Miembros"
         subtitle={
           !loading
-            ? `${total.toLocaleString("es-MX")} ${total === 1 ? "miembro" : "miembros"}`
+            ? `${summary.total.toLocaleString("es-MX")} ${summary.total === 1 ? "miembro" : "miembros"} · ${summary.active} activos · ${summary.ending} por vencer · ${summary.expired} vencidos`
             : "Directorio de miembros del estudio"
         }
       />
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="flex flex-wrap items-center gap-1.5">
         {[
-          { label: "Activos", value: summary.active, status: "ACTIVE" as LifecycleFilter },
-          { label: "Terminan pronto", value: summary.ending, status: "ENDING" as LifecycleFilter },
-          { label: "Vencidos", value: summary.expired, status: "EXPIRED" as LifecycleFilter },
-          { label: "Pago pendiente", value: summary.pastDue, status: "PAST_DUE" as LifecycleFilter },
-          { label: "Sin membresía", value: summary.noMembership, status: "NONE" as LifecycleFilter },
+          { label: "Todos", value: summary.total, status: "" as LifecycleFilter | "", activity: "" as ActivityFilter | "" },
+          { label: "Activos", value: summary.active, status: "ACTIVE" as LifecycleFilter, activity: "" as ActivityFilter | "" },
+          { label: "Por vencer", value: summary.ending, status: "" as LifecycleFilter | "", activity: "ENDING_7D" as ActivityFilter },
+          { label: "Vencidos", value: summary.expired, status: "EXPIRED" as LifecycleFilter, activity: "" as ActivityFilter | "" },
+          { label: "Pago pendiente", value: summary.pastDue, status: "PAST_DUE" as LifecycleFilter, activity: "" as ActivityFilter | "" },
         ].map((item) => (
-          <button key={item.status} type="button" onClick={() => setLifecycleStatus(item.status)} className={`rounded-xl border px-4 py-3 text-left transition ${lifecycleStatus === item.status ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white hover:border-zinc-300"}`}>
-            <span className="block text-2xl font-semibold tabular-nums">{item.value}</span>
-            <span className={`text-xs ${lifecycleStatus === item.status ? "text-zinc-300" : "text-zinc-500"}`}>{item.label}</span>
+          <button key={item.label} type="button" onClick={() => { setLifecycleStatus(item.status); setActivity(item.activity); }} className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${lifecycleStatus === item.status && activity === item.activity ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"}`}>
+            {item.label} <span className="ml-1 tabular-nums opacity-70">{item.value}</span>
           </button>
         ))}
       </div>
 
+      <div className="rounded-xl border border-zinc-200 bg-white p-2 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="search"
           placeholder="Buscar nombre, correo o teléfono…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className={`${adminInput} w-full max-w-xs`}
+          className={`${adminInput} min-w-[240px] flex-1 border-0 bg-zinc-50 shadow-none`}
         />
         <select
           value={lifecycleStatus}
@@ -332,21 +269,21 @@ export default function MembersPage() {
           className={adminSelect}
         >
           <option value="">Todos los estados</option>
-          <option value="ACTIVE">Activa</option><option value="ENDING">Termina pronto</option><option value="EXPIRED">Vencida</option>
+          <option value="ACTIVE">Activa</option><option value="EXPIRED">Vencida</option>
           <option value="TRIALING">Prueba</option><option value="PAST_DUE">Pago pendiente</option><option value="PAUSED">Pausada</option>
           <option value="CANCELED">Cancelada</option><option value="SCHEDULED">Programada</option><option value="NONE">Sin membresía</option>
         </select>
         <select value={planId} onChange={(e) => setPlanId(e.target.value)} className={adminSelect}>
-          <option value="">Todos los planes</option>
+          <option value="">Plan</option>
           {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
         </select>
         <select value={paymentSource} onChange={(e) => setPaymentSource(e.target.value as PaymentSource | "")} className={adminSelect}>
-          <option value="">Todos los cobros</option><option value="STRIPE">Stripe</option><option value="CASH">Efectivo</option><option value="MANUAL">Manual</option><option value="NONE">Sin membresía</option>
+          <option value="">Pago</option><option value="STRIPE">Stripe</option><option value="CASH">Efectivo</option><option value="MANUAL">Manual</option><option value="NONE">Sin membresía</option>
         </select>
         <select value={activity} onChange={(e) => setActivity(e.target.value as ActivityFilter | "")} className={adminSelect}>
-          <option value="">Toda la actividad</option><option value="VISITED_7D">Visitó últimos 7 días</option><option value="VISITED_30D">Visitó últimos 30 días</option>
+          <option value="">Actividad</option><option value="VISITED_7D">Visitó últimos 7 días</option><option value="VISITED_30D">Visitó últimos 30 días</option>
           <option value="NO_VISIT_14D">Sin visita 14+ días</option><option value="NO_VISIT_30D">Sin visita 30+ días</option><option value="NEVER_ATTENDED">Nunca ha asistido</option>
-          <option value="HAS_NO_SHOWS">Con no-shows</option><option value="HAS_FUTURE_BOOKING">Con reserva futura</option><option value="NO_FUTURE_BOOKING">Sin reserva futura</option><option value="ENDING_7D">Termina en 7 días</option>
+          <option value="HAS_NO_SHOWS">Con no-shows</option><option value="HAS_FUTURE_BOOKING">Con reserva futura</option><option value="NO_FUTURE_BOOKING">Sin reserva futura</option><option value="ENDING_7D">Por vencer</option>
         </select>
         {hasFilters ? (
           <button
@@ -360,9 +297,16 @@ export default function MembersPage() {
             }}
             className={adminSecondaryBtn}
           >
-            Limpiar
+            Limpiar filtros
           </button>
         ) : null}
+      </div>
+      {hasFilters ? <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2">
+        {lifecycleStatus ? <button type="button" onClick={() => setLifecycleStatus("")} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-700">{lifecycleStatus === "NONE" ? "Sin membresía" : lifecycleStatus === "ENDING" ? "Por vencer" : PRIMARY_STATUS_LABELS[lifecycleStatus]} ×</button> : null}
+        {planId ? <button type="button" onClick={() => setPlanId("")} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-700">{plans.find((plan) => plan.id === planId)?.name ?? "Plan"} ×</button> : null}
+        {paymentSource ? <button type="button" onClick={() => setPaymentSource("")} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-700">{paymentSource === "CASH" ? "Efectivo" : paymentSource === "NONE" ? "Sin membresía" : paymentSource} ×</button> : null}
+        {activity ? <button type="button" onClick={() => setActivity("")} className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-700">{activity === "ENDING_7D" ? "Por vencer" : "Actividad"} ×</button> : null}
+      </div> : null}
       </div>
 
       {error ? (
@@ -397,12 +341,13 @@ export default function MembersPage() {
             <thead className="bg-zinc-50/80">
               <tr>
                 <SortTh label="Miembro" field="name" current={sortBy} dir={sortDir} onSort={handleSort} className="pl-4 min-w-[220px]" />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Membresía</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Plan</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Estado</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Uso</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Próximo evento</th>
-                <SortTh label="Última visita" field="lastAttendance" current={sortBy} dir={sortDir} onSort={handleSort} />
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Pago</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600 min-w-[150px]">Renovación / vencimiento</th>
+                <th className="hidden px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600 lg:table-cell">Uso</th>
+                <SortTh label="Última visita" field="lastAttendance" current={sortBy} dir={sortDir} onSort={handleSort} className="hidden xl:table-cell" />
+                <th className="hidden px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600 xl:table-cell">Próxima clase</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Atención</th>
               </tr>
             </thead>
@@ -412,7 +357,7 @@ export default function MembersPage() {
                 : members.length === 0
                   ? (
                     <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center text-sm text-zinc-600">
+                      <td colSpan={9} className="px-4 py-12 text-center text-sm text-zinc-600">
                         {hasFilters
                           ? "Ningún miembro coincide con tus filtros."
                           : "Aún no hay miembros registrados."}
@@ -439,16 +384,17 @@ export default function MembersPage() {
                       </td>
                       <td className="px-4 py-3.5">
                         {m.subscription ? (
-                          <MemberStatusPill status={m.subscription.lifecycleStatus} />
+                          <MemberStatusPill status={m.subscription.primaryStatus} />
                         ) : (
-                          <span className="text-xs text-zinc-400">Sin plan</span>
+                          <span className={`${adminStatusPill} bg-zinc-100 text-zinc-500 ring-1 ring-inset ring-zinc-500/15`}>Sin membresía</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-zinc-700">{m.usage?.limit === null ? "Ilimitada" : m.usage ? <><span className="font-medium">{m.usage.used} / {m.usage.limit}</span><span className="block text-xs text-zinc-400">{m.usage.remaining} restantes</span></> : "—"}</td>
-                      <td className="px-4 py-3.5 text-sm text-zinc-600"><span className="block">{fmtNextEvent(m.nextBooking?.startsAt)}</span>{m.nextBooking ? <span className="block max-w-36 truncate text-xs text-zinc-400">{m.nextBooking.className}</span> : null}</td>
-                      <td className="px-4 py-3.5 text-sm text-zinc-600">{fmtRelative(m.lastAttendanceAt)}</td>
-                      <td className="px-4 py-3.5 text-sm text-zinc-600">{m.subscription ? <><span className="block">{m.subscription.source === "CASH" ? "Efectivo" : m.subscription.source === "STRIPE" ? "Stripe" : "Manual"}</span><span className="text-xs text-zinc-400">{m.subscription.lifecycleStatus === "PAST_DUE" ? "Pago pendiente" : m.subscription.lifecycleStatus === "EXPIRED" ? `Venció ${fmtDate(m.subscription.effectiveEnd)}` : m.lastPayment?.status === "SUCCEEDED" ? "Al corriente" : "Sin pago reciente"}</span></> : "No aplica"}</td>
-                      <td className="px-4 py-3.5 text-sm font-medium text-zinc-700">{attentionLabel(m)}</td>
+                      <td className="px-4 py-3.5 text-sm font-medium text-zinc-700">{m.subscription ? m.subscription.source === "CASH" ? "Efectivo" : m.subscription.source === "STRIPE" ? "Stripe" : "Manual" : "—"}</td>
+                      <td className="px-4 py-3.5 text-sm text-zinc-700">{m.subscription ? (() => { const renewal = renewalPresentation(m.subscription); return <><span className="block font-medium">{renewal.title}</span>{renewal.detail ? <span className="block text-xs text-zinc-400">{renewal.detail}</span> : null}</>; })() : "—"}</td>
+                      <td className="hidden px-4 py-3.5 text-sm text-zinc-700 lg:table-cell">{m.usage?.limit === null ? "Ilimitado" : m.usage ? <><span className="font-medium tabular-nums">{m.usage.used} / {m.usage.limit}</span><span className={`block text-xs ${m.usage.remaining === 0 ? "font-medium text-rose-600" : "text-zinc-400"}`}>{m.usage.remaining === 0 ? "Sin créditos" : `${m.usage.remaining} ${m.usage.remaining === 1 ? "restante" : "restantes"}`}</span></> : "—"}</td>
+                      <td className="hidden px-4 py-3.5 text-sm text-zinc-600 xl:table-cell">{(() => { const visit = visitPresentation(m.lastAttendanceAt); return <><span className="block">{visit.title}</span>{visit.detail ? <span className="block text-xs text-zinc-400">{visit.detail}</span> : null}</>; })()}</td>
+                      <td className="hidden px-4 py-3.5 text-sm text-zinc-600 xl:table-cell"><span className="block">{nextClassPresentation(m.nextBooking?.startsAt)}</span>{m.nextBooking ? <span className="block max-w-36 truncate text-xs text-zinc-400">{m.nextBooking.className}</span> : null}</td>
+                      <td className="px-4 py-3.5 text-sm font-medium text-zinc-700">{m.attention?.label ?? "—"}</td>
                     </tr>
                   ))}
             </tbody>

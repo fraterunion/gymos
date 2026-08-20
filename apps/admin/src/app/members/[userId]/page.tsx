@@ -34,6 +34,7 @@ import {
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/sales";
 import { ApiError } from "@/lib/api/errors";
+import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, primaryStatus, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -80,11 +81,11 @@ function daysAgo(iso: string): number {
 }
 
 const SUB_STATUS_LABELS: Record<SubStatus, string> = {
-  ACTIVE: "Active",
-  TRIALING: "Trial",
-  PAST_DUE: "Past due",
-  PAUSED: "Paused",
-  CANCELED: "Canceled",
+  ACTIVE: "Activa",
+  TRIALING: "Prueba",
+  PAST_DUE: "Pago pendiente",
+  PAUSED: "Pausada",
+  CANCELED: "Cancelada",
 };
 
 const SUB_STATUS_COLORS: Record<SubStatus, string> = {
@@ -97,14 +98,14 @@ const SUB_STATUS_COLORS: Record<SubStatus, string> = {
 
 const LIFECYCLE_LABELS = {
   ...SUB_STATUS_LABELS,
-  ENDING: "Termina pronto",
+  ENDING: "Activa",
   SCHEDULED: "Programada",
   EXPIRED: "Vencida",
 } as const;
 
 const LIFECYCLE_COLORS = {
   ...SUB_STATUS_COLORS,
-  ENDING: "bg-amber-100 text-amber-800",
+  ENDING: "bg-emerald-100 text-emerald-800",
   SCHEDULED: "bg-sky-100 text-sky-800",
   EXPIRED: "bg-red-100 text-red-700",
 } as const;
@@ -139,10 +140,8 @@ function computeBadges(
   crm: MemberCrmProfile | null,
 ): SmartBadge[] {
   const badges: SmartBadge[] = [];
-  const sub = profile.currentMembership;
   const memberDays = daysAgo(profile.membership.createdAt);
 
-  if (sub) badges.push({ label: LIFECYCLE_LABELS[sub.lifecycleStatus], color: LIFECYCLE_COLORS[sub.lifecycleStatus] });
   if (memberDays <= 30) {
     badges.push({ label: "New Member", color: "bg-sky-100 text-sky-800" });
   }
@@ -1541,6 +1540,8 @@ export default function MemberProfilePage() {
   if (!selectedStudioId) return null;
 
   const badges = profile ? computeBadges(profile, crm) : [];
+  const profileRenewal = profile?.currentMembership ? renewalPresentation({ ...profile.currentMembership, entitlementDays: profile.currentMembership.plan.entitlementDays }) : null;
+  const profileVisit = visitPresentation(profile?.operations.lastVisit?.checkedInAt);
 
   return (
     <div className="space-y-6">
@@ -1561,7 +1562,7 @@ export default function MemberProfilePage() {
         <>
           {/* ── Profile header ── */}
           <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-start gap-4">
+            <div className="flex flex-wrap items-start gap-5">
               <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-xl font-bold text-white">
                 {initials(profile.user.firstName, profile.user.lastName)}
               </div>
@@ -1573,10 +1574,11 @@ export default function MemberProfilePage() {
                 {profile.user.phone && (
                   <p className="text-sm text-zinc-500">{profile.user.phone}</p>
                 )}
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
                     {profile.role}
                   </span>
+                  {profile.currentMembership ? <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${PRIMARY_STATUS_COLORS[primaryStatus(profile.currentMembership.lifecycleStatus)]}`}>{PRIMARY_STATUS_LABELS[primaryStatus(profile.currentMembership.lifecycleStatus)]}</span> : <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-500">Sin membresía</span>}
                   {badges.map((b) => (
                     <span key={b.label} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${b.color}`}>
                       {b.label}
@@ -1584,12 +1586,15 @@ export default function MemberProfilePage() {
                   ))}
                 </div>
               </div>
-              <div className="min-w-48 shrink-0 text-right">
-                <p className="text-xs uppercase tracking-wide text-zinc-400">Membresía actual</p>
-                <p className="mt-1 font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin plan"}</p>
-                <p className="text-xs text-zinc-500">{profile.currentMembership ? LIFECYCLE_LABELS[profile.currentMembership.lifecycleStatus] : "Sin membresía"}</p>
-                <button type="button" onClick={() => setActiveTab("membership")} className="mt-3 rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700">Gestionar membresía</button>
-              </div>
+            </div>
+            <div className="mt-6 grid gap-x-6 gap-y-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Plan</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin plan"}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Uso</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.classCredits === null ? "Ilimitado" : profile.currentMembership ? `${profile.currentMembership.creditsUsed ?? 0} / ${profile.currentMembership.plan.classCredits} clases usadas` : "—"}</p><p className="text-xs text-zinc-500">{profile.currentMembership?.creditsRemaining != null ? profile.currentMembership.creditsRemaining === 0 ? "Sin créditos" : `${profile.currentMembership.creditsRemaining} restantes` : null}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Vigencia</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership ? `${studioDate(profile.currentMembership.currentPeriodStart)} → ${studioDate(profile.currentMembership.effectiveEnd)}` : "—"}</p><p className="text-xs text-zinc-500">{profileRenewal?.detail}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Pago</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.source === "CASH" ? "Efectivo" : profile.currentMembership?.source === "STRIPE" ? "Stripe" : profile.currentMembership?.source === "MANUAL" ? "Manual" : "—"}</p><p className="text-xs text-zinc-500">{profileRenewal?.title}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profileVisit.title}</p><p className="text-xs text-zinc-500">{profileVisit.detail}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Próxima clase</p><p className="mt-1 truncate text-sm font-semibold text-zinc-900">{profile.operations.nextBooking?.scheduledClass.classTemplate.name ?? "—"}</p><p className="text-xs text-zinc-500">{nextClassPresentation(profile.operations.nextBooking?.scheduledClass.startsAt)}</p></div>
+              <div className="flex items-end xl:justify-end"><button type="button" onClick={() => setActiveTab("membership")} className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700">Gestionar membresía</button></div>
             </div>
           </div>
 
@@ -1600,20 +1605,15 @@ export default function MemberProfilePage() {
             <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-amber-900">Atención requerida</h2>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-center justify-between rounded-lg border border-amber-100 bg-white px-3 py-2"><span className="text-sm text-zinc-800">{item.message}</span>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
+                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado"}</p><p className="mt-0.5 text-xs text-zinc-500">{item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
               </div>
             </section>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <StatCard label="Membresía" value={profile.currentMembership?.plan.name ?? "Sin plan"} sub={profile.currentMembership ? `${LIFECYCLE_LABELS[profile.currentMembership.lifecycleStatus]} · hasta ${fmtDate(profile.currentMembership.effectiveEnd)}` : undefined} />
-            <StatCard label="Uso" value={profile.currentMembership?.plan.classCredits === null ? "Ilimitada" : profile.currentMembership ? `${profile.currentMembership.creditsUsed ?? 0} / ${profile.currentMembership.plan.classCredits}` : "—"} sub={profile.currentMembership?.creditsRemaining !== null && profile.currentMembership?.creditsRemaining !== undefined ? `${profile.currentMembership.creditsRemaining} restantes` : undefined} />
-            <StatCard label="Asistencia" value={profile.bookingStats.attendedCount} sub={profile.operations.lastVisit ? `Última ${fmtDate(profile.operations.lastVisit.checkedInAt)}` : "Sin visitas"} />
-            <StatCard
-              label="Facturación"
-              value={profile.operations.lastPayment ? fmtMoney(profile.operations.lastPayment.amountCents, profile.operations.lastPayment.currency) : "Sin pagos"}
-              sub={profile.operations.lastPayment ? `${profile.operations.lastPayment.paymentMethod} · ${profile.operations.lastPayment.status}` : undefined}
-            />
+          <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 shadow-sm">
+            <StatCard label="Visitas" value={profile.bookingStats.attendedCount} sub="Histórico" />
+            <StatCard label="Asistencia" value={profile.operations.attendanceRate == null ? "—" : `${profile.operations.attendanceRate}%`} sub="Sobre reservas" />
+            <StatCard label="No-shows" value={profile.operations.recentNoShows} sub="Últimos 30 días" />
           </div>
 
           {/* ── Tabs ── */}
@@ -1648,7 +1648,7 @@ export default function MemberProfilePage() {
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-zinc-900">Estado de membresía</h2>
                   <p className="mt-3 text-lg font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin plan"}</p>
-                  {profile.currentMembership ? <><p className="text-sm text-zinc-500">{LIFECYCLE_LABELS[profile.currentMembership.lifecycleStatus]} · {fmtDate(profile.currentMembership.currentPeriodStart)} → {fmtDate(profile.currentMembership.effectiveEnd)}</p><p className="mt-3 text-sm text-zinc-700">{profile.currentMembership.plan.allClassesAccess ? "Acceso a todas las clases" : `${profile.currentMembership.plan.allowedTemplateIds.length} clases permitidas`}</p><p className="text-sm text-zinc-500">{profile.currentMembership.cancelAtPeriodEnd ? "Sin renovación al finalizar" : profile.currentMembership.source === "STRIPE" ? "Renovación administrada por Stripe" : "Renovación manual"}</p></> : null}
+                  {profile.currentMembership ? <><p className="text-sm text-zinc-500">{LIFECYCLE_LABELS[profile.currentMembership.lifecycleStatus]} · {studioDate(profile.currentMembership.currentPeriodStart)} → {studioDate(profile.currentMembership.effectiveEnd)}</p><p className="mt-3 text-sm text-zinc-700">{profile.currentMembership.plan.allClassesAccess ? "Acceso a todas las clases" : `${profile.currentMembership.plan.allowedTemplateIds.length} clases permitidas`}</p><p className="text-sm font-medium text-zinc-700">{profileRenewal?.title}</p><p className="text-sm text-zinc-500">{profileRenewal?.detail}</p></> : null}
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
                   <h2 className="mb-4 text-sm font-semibold text-zinc-900">Información del miembro</h2>
@@ -1679,12 +1679,10 @@ export default function MemberProfilePage() {
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Renews</dt>
+                        <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Renovación / vencimiento</dt>
                         <dd className="mt-1 text-sm text-zinc-900">
-                          {fmtDate(profile.currentMembership.effectiveEnd)}
-                          {profile.currentMembership.cancelAtPeriodEnd && (
-                            <span className="ml-2 text-xs text-red-500">Cancels at period end</span>
-                          )}
+                          {profileRenewal?.title}
+                          {profileRenewal?.detail ? <span className="ml-2 text-xs text-zinc-500">{profileRenewal.detail}</span> : null}
                         </dd>
                       </div>
                     </>
