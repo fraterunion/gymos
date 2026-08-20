@@ -31,6 +31,7 @@ export type PlanAccessSummary = {
   label: string;
   regularCount: number;
   hasOpenGym: boolean;
+  openGymWindow: string | null;
 };
 
 /** Derives the human access summary from the same canonical fields the booking engine
@@ -38,39 +39,86 @@ export type PlanAccessSummary = {
  *  Open Gym membership from a template name. */
 export function planAccessSummary(plan: Pick<PlanForSummary, "classAccess">): PlanAccessSummary {
   if (plan.classAccess.allClasses) {
-    return { label: "Todas las clases", regularCount: 0, hasOpenGym: false };
+    return { label: "Todas las clases", regularCount: 0, hasOpenGym: false, openGymWindow: null };
   }
   const activeTemplates = plan.classAccess.templates.filter((t) => t.active);
   const openGymTemplates = activeTemplates.filter((t) => t.isOpenGymSlot);
   const regularTemplates = activeTemplates.filter((t) => !t.isOpenGymSlot);
   const hasOpenGym = openGymTemplates.length > 0;
   const regularCount = regularTemplates.length;
+  const og = openGymTemplates[0];
+  const openGymWindow =
+    og?.accessWindowStart && og.accessWindowEnd
+      ? `${og.accessWindowStart}–${og.accessWindowEnd}`
+      : null;
 
   if (regularCount === 0 && !hasOpenGym) {
-    return { label: "Sin clases permitidas", regularCount, hasOpenGym };
+    return { label: "Sin clases permitidas", regularCount, hasOpenGym, openGymWindow };
   }
   if (regularCount === 0 && hasOpenGym) {
-    const og = openGymTemplates[0];
-    const window = og.accessWindowStart && og.accessWindowEnd
-      ? ` · ${og.accessWindowStart}–${og.accessWindowEnd}`
-      : "";
-    return { label: `Acceso Open Gym${window}`, regularCount, hasOpenGym };
+    return { label: "Solo Open Gym", regularCount, hasOpenGym, openGymWindow };
   }
   if (regularCount === 1 && !hasOpenGym) {
-    return { label: `Solo ${regularTemplates[0].name}`, regularCount, hasOpenGym };
+    return { label: `Solo ${regularTemplates[0].name}`, regularCount, hasOpenGym, openGymWindow };
   }
   if (hasOpenGym) {
     return {
       label: `${regularCount} ${regularCount === 1 ? "clase" : "clases"} + Open Gym`,
       regularCount,
       hasOpenGym,
+      openGymWindow,
     };
   }
   return {
     label: `${regularCount} ${regularCount === 1 ? "clase permitida" : "clases permitidas"}`,
     regularCount,
     hasOpenGym,
+    openGymWindow,
   };
+}
+
+/** Compact card copy: usage line + access line (+ optional schedule for Open Gym-only). */
+export function planCardLines(plan: Pick<PlanForSummary, "classCredits" | "classAccess">): {
+  usageLine: string;
+  accessLine: string;
+  scheduleLine: string | null;
+} {
+  const access = planAccessSummary(plan);
+  const usageLine = planUsageLabel(plan);
+
+  if (access.label === "Solo Open Gym") {
+    return {
+      usageLine,
+      accessLine: "Solo Open Gym",
+      scheduleLine: access.openGymWindow ? `Horario ${access.openGymWindow}` : null,
+    };
+  }
+
+  return {
+    usageLine,
+    accessLine: access.label,
+    scheduleLine: null,
+  };
+}
+
+/** Staff-friendly translation of Stripe integrity statuses — never raw enum labels. */
+export function integrityIssueLabel(status: string): string {
+  switch (status) {
+    case "price_mismatch":
+      return "GymOS y Stripe tienen precios distintos";
+    case "currency_mismatch":
+      return "Moneda distinta entre GymOS y Stripe";
+    case "interval_mismatch":
+      return "Ciclo de GymOS y Stripe desalineado";
+    case "no_stripe_price":
+      return "Sin Price de Stripe configurado";
+    case "inactive_stripe_price":
+      return "Price de Stripe inactivo";
+    case "fetch_error":
+      return "No se pudo verificar Stripe";
+    default:
+      return "Configuración de GymOS y Stripe desalineada";
+  }
 }
 
 /** Deterministic configuration warnings, derived only from data already on the plan —
@@ -114,6 +162,8 @@ export type PlanHealth = {
   label: "Saludable" | "Requiere atención";
   tone: "healthy" | "warning";
   issues: string[];
+  primaryIssue: string | null;
+  extraIssueCount: number;
 };
 
 export function planHealth(
@@ -122,37 +172,40 @@ export function planHealth(
 ): PlanHealth {
   const issues = planWarnings(plan);
   if (integrityStatus && integrityStatus !== "healthy") {
-    issues.push(
-      integrityStatus === "no_stripe_price"
-        ? "Sin Price de Stripe configurado."
-        : "Configuración de GymOS y Stripe desalineada.",
-    );
+    issues.push(integrityIssueLabel(integrityStatus));
   }
+  const primaryIssue = issues[0] ?? null;
   return issues.length === 0
-    ? { label: "Saludable", tone: "healthy", issues }
-    : { label: "Requiere atención", tone: "warning", issues };
+    ? { label: "Saludable", tone: "healthy", issues, primaryIssue: null, extraIssueCount: 0 }
+    : {
+        label: "Requiere atención",
+        tone: "warning",
+        issues,
+        primaryIssue,
+        extraIssueCount: Math.max(0, issues.length - 1),
+      };
 }
 
 export type OperationalOverview = {
   activePlans: number;
   activeMembers: number;
-  endingSoon: number;
+  expiringWithin7Days: number;
   requiringAttention: number;
 };
 
 export function operationalOverview(input: {
   totalActivePlans: number;
   totalActiveSubscribers: number;
-  byStatus: Record<string, number>;
+  expiringWithin7Days: number;
+  requiringAttentionSubscriptions: number;
   unhealthyPlanCount: number;
 }): OperationalOverview {
-  const count = (status: string) => input.byStatus[status] ?? 0;
   return {
     activePlans: input.totalActivePlans,
     activeMembers: input.totalActiveSubscribers,
-    endingSoon: count("ENDING"),
+    expiringWithin7Days: input.expiringWithin7Days,
     requiringAttention:
-      count("PAST_DUE") + count("PAUSED") + count("EXPIRED") + input.unhealthyPlanCount,
+      input.requiringAttentionSubscriptions + input.unhealthyPlanCount,
   };
 }
 
@@ -189,4 +242,115 @@ export function subscriptionActions(sub: SubscriptionForActions): SubscriptionAc
     actions.push("pause");
   }
   return actions;
+}
+
+const SUBSCRIPTION_ACTION_LABELS: Record<SubscriptionAction, string> = {
+  view_member: "Ver miembro",
+  change_plan: "Cambiar plan",
+  renew: "Renovar",
+  pause: "Pausar",
+  resume: "Reanudar",
+  cancel_at_period_end: "Cancelar al final del periodo",
+  reactivate_renewal: "Reactivar renovación",
+  record_cash_payment: "Registrar pago en efectivo",
+};
+
+export function subscriptionActionLabel(action: SubscriptionAction): string {
+  return SUBSCRIPTION_ACTION_LABELS[action];
+}
+
+export function subscriptionOperationalStatusLabel(lifecycleStatus: string): string {
+  switch (lifecycleStatus) {
+    case "ACTIVE":
+      return "Activa";
+    case "TRIALING":
+      return "Prueba";
+    case "ENDING":
+      return "Por vencer";
+    case "PAST_DUE":
+      return "Pago pendiente";
+    case "PAUSED":
+      return "Pausada";
+    case "EXPIRED":
+      return "Vencida";
+    case "SCHEDULED":
+      return "Programada";
+    case "CANCELED":
+      return "Cancelada";
+    default:
+      return lifecycleStatus;
+  }
+}
+
+export function subscriptionPaymentSourceLabel(
+  source: SubscriptionForActions["source"],
+): string {
+  switch (source) {
+    case "STRIPE":
+      return "Stripe";
+    case "CASH":
+      return "Efectivo";
+    case "MANUAL":
+      return "Manual";
+    default:
+      return source;
+  }
+}
+
+export function subscriptionValidityLines(input: {
+  lifecycleStatus: string;
+  source: SubscriptionForActions["source"];
+  cancelAtPeriodEnd: boolean;
+  effectiveEnd: string | null;
+  entitlementDays: number | null;
+  billingInterval: string;
+}): { primary: string; secondary: string | null } {
+  const end = input.effectiveEnd
+    ? new Date(input.effectiveEnd).toLocaleDateString("es-MX", { day: "numeric", month: "short" })
+    : null;
+
+  if (input.lifecycleStatus === "EXPIRED" && end) {
+    return { primary: `Venció ${end}`, secondary: "Renovación manual" };
+  }
+
+  if (input.cancelAtPeriodEnd && end) {
+    return { primary: `Vence ${end}`, secondary: "No renovará automáticamente" };
+  }
+
+  if (input.source === "STRIPE" && end) {
+    return { primary: `Renueva ${end}`, secondary: "Automática" };
+  }
+
+  if (end) {
+    const cycle =
+      input.entitlementDays != null
+        ? `Cada ${input.entitlementDays} días`
+        : input.billingInterval === "MONTHLY"
+          ? "Mensual"
+          : input.billingInterval === "YEARLY"
+            ? "Anual"
+            : "Semanal";
+    return { primary: `Vence ${end}`, secondary: cycle };
+  }
+
+  return { primary: "—", secondary: null };
+}
+
+export function dayPassHealthLabel(allowedCount: number, totalCount: number): PlanHealth {
+  if (totalCount === 0 || allowedCount === 0) {
+    return {
+      label: "Requiere atención",
+      tone: "warning",
+      issues: ["Sin acceso configurado"],
+      primaryIssue: "Sin acceso configurado",
+      extraIssueCount: 0,
+    };
+  }
+  return {
+    label: "Saludable",
+    tone: "healthy",
+    issues: [],
+    primaryIssue: null,
+    extraIssueCount: 0,
+  };
 }

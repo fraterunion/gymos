@@ -329,14 +329,15 @@ export class BillingService {
   async checkPlanPricingIntegrity(studioId: string): Promise<PlanIntegrityResult[]> {
     const plans = await this.prisma.membershipPlan.findMany({
       where: { studioId, deletedAt: null, active: true },
-      select: {
-        id: true,
-        name: true,
-        priceCents: true,
-        currency: true,
-        billingInterval: true,
-        stripePriceId: true,
-      },
+        select: {
+          id: true,
+          name: true,
+          priceCents: true,
+          currency: true,
+          billingInterval: true,
+          entitlementDays: true,
+          stripePriceId: true,
+        },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -358,7 +359,9 @@ export class BillingService {
         try {
           const price = await this.stripe.retrievePrice(plan.stripePriceId);
           const stripeInterval = price.recurring?.interval ?? null;
-          const localInterval = billingIntervalToStripeRecurring(plan.billingInterval).interval;
+          const stripeIntervalCount = price.recurring?.interval_count ?? 1;
+          const localInterval = plan.entitlementDays != null ? 'day' : billingIntervalToStripeRecurring(plan.billingInterval).interval;
+          const localIntervalCount = plan.entitlementDays ?? 1;
 
           let status: PlanIntegrityStatus = 'healthy';
           if (!price.active) {
@@ -367,7 +370,10 @@ export class BillingService {
             status = 'price_mismatch';
           } else if ((price.currency ?? '').toLowerCase() !== plan.currency.toLowerCase()) {
             status = 'currency_mismatch';
-          } else if (stripeInterval && stripeInterval !== localInterval) {
+          } else if (
+            stripeInterval &&
+            (stripeInterval !== localInterval || stripeIntervalCount !== localIntervalCount)
+          ) {
             status = 'interval_mismatch';
           }
 

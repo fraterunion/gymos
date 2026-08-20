@@ -90,8 +90,22 @@ export class MembershipPlansController {
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN)
   @HttpCode(HttpStatus.CREATED)
-  create(@Param('studioId') studioId: string, @Body() dto: CreateMembershipPlanDto) {
-    return this.membershipPlansService.createPlan(studioId, dto);
+  create(
+    @Param('studioId') studioId: string,
+    @Body() dto: CreateMembershipPlanDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.membershipPlansService.createPlan(studioId, dto, req.user.sub);
+  }
+
+  @Get(':planId/configuration-history')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  configurationHistory(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+  ) {
+    return this.membershipPlansService.listPlanConfigurationHistory(studioId, planId);
   }
 
   @Patch(':planId')
@@ -101,15 +115,20 @@ export class MembershipPlansController {
     @Param('studioId') studioId: string,
     @Param('planId') planId: string,
     @Body() dto: UpdateMembershipPlanDto,
+    @Req() req: RequestWithUser,
   ) {
-    return this.membershipPlansService.updatePlan(studioId, planId, dto);
+    return this.membershipPlansService.updatePlan(studioId, planId, dto, req.user.sub);
   }
 
   @Delete(':planId')
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('studioId') studioId: string, @Param('planId') planId: string) {
-    await this.membershipPlansService.softDeletePlan(studioId, planId);
+  async remove(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Req() req: RequestWithUser,
+  ) {
+    await this.membershipPlansService.softDeletePlan(studioId, planId, req.user.sub);
   }
 }

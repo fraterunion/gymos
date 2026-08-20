@@ -20,7 +20,8 @@ describe('MembershipPlansService class access', () => {
     $transaction: jest.fn(),
   };
 
-  const service = new MembershipPlansService(prisma as never);
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const service = new MembershipPlansService(prisma as never, audit as never);
 
   beforeEach(() => {
     jest.clearAllMocks();

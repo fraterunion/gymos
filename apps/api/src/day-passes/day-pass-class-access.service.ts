@@ -1,10 +1,15 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../sales/audit.service';
+import { toAuditMetadata } from '../sales/audit-metadata.utils';
 import type { DayPassClassAccessTemplateDto } from './dto/day-pass-class-access.dto';
 
 @Injectable()
 export class DayPassClassAccessService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async listAccess(studioId: string): Promise<DayPassClassAccessTemplateDto[]> {
     const [templates, allowedRows] = await Promise.all([
@@ -29,10 +34,14 @@ export class DayPassClassAccessService {
     }));
   }
 
-  async grantAccess(studioId: string, classTemplateId: string): Promise<void> {
+  async grantAccess(
+    studioId: string,
+    classTemplateId: string,
+    actorUserId?: string,
+  ): Promise<void> {
     const template = await this.prisma.classTemplate.findFirst({
       where: { id: classTemplateId, studioId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     if (!template) {
       throw new BadRequestException('Class template not found in this studio.');
@@ -42,11 +51,45 @@ export class DayPassClassAccessService {
       create: { studioId, classTemplateId },
       update: {},
     });
+    if (actorUserId) {
+      await this.audit.log({
+        studioId,
+        actorUserId,
+        action: 'DAY_PASS_CLASS_ACCESS_GRANTED',
+        entityType: 'day_pass_class_access',
+        entityId: classTemplateId,
+        metadata: toAuditMetadata({
+          classTemplateId,
+          classTemplateName: template.name,
+        }),
+      });
+    }
   }
 
-  async revokeAccess(studioId: string, classTemplateId: string): Promise<void> {
+  async revokeAccess(
+    studioId: string,
+    classTemplateId: string,
+    actorUserId?: string,
+  ): Promise<void> {
+    const template = await this.prisma.classTemplate.findFirst({
+      where: { id: classTemplateId, studioId, deletedAt: null },
+      select: { id: true, name: true },
+    });
     await this.prisma.dayPassClassAccess.deleteMany({
       where: { studioId, classTemplateId },
     });
+    if (actorUserId && template) {
+      await this.audit.log({
+        studioId,
+        actorUserId,
+        action: 'DAY_PASS_CLASS_ACCESS_REVOKED',
+        entityType: 'day_pass_class_access',
+        entityId: classTemplateId,
+        metadata: toAuditMetadata({
+          classTemplateId,
+          classTemplateName: template.name,
+        }),
+      });
+    }
   }
 }

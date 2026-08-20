@@ -7,7 +7,8 @@ describe('DayPassClassAccessService', () => {
     dayPassClassAccess: { findMany: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
   };
 
-  const service = new DayPassClassAccessService(prisma as never);
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const service = new DayPassClassAccessService(prisma as never, audit as never);
 
   beforeEach(() => {
     jest.clearAllMocks();

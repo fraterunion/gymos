@@ -40,12 +40,16 @@ export class MembershipsController {
     @Param('studioId') studioId: string,
     @Query('status') status?: string,
     @Query('planId') planId?: string,
+    @Query('attention') attention?: string,
+    @Query('expiringWithin7Days') expiringWithin7Days?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     return this.membershipsService.listSubscriptions(studioId, {
       status: status as SubscriptionStatus | undefined,
       planId,
+      attention: attention === 'true',
+      expiringWithin7Days: expiringWithin7Days === 'true',
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });

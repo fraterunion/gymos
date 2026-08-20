@@ -14,7 +14,8 @@ describe('ClassTemplatesService — Open Gym access window', () => {
     studioMembership: { findFirst: jest.fn() },
   };
 
-  const service = new ClassTemplatesService(prisma as never);
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const service = new ClassTemplatesService(prisma as never, audit as never);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -121,7 +122,8 @@ describe('ClassTemplatesService.listAccessSummary', () => {
     dayPassClassAccess: { findMany: jest.fn() },
   };
 
-  const service = new ClassTemplatesService(prisma as never);
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const service = new ClassTemplatesService(prisma as never, audit as never);
 
   beforeEach(() => {
     jest.clearAllMocks();

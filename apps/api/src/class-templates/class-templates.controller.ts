@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -15,6 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
+import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { ClassTemplatesService } from './class-templates.service';
 import { CreateClassTemplateDto } from './dto/create-class-template.dto';
 import { UpdateClassTemplateDto } from './dto/update-class-template.dto';
@@ -51,8 +53,9 @@ export class ClassTemplatesController {
     @Param('studioId') studioId: string,
     @Param('templateId') templateId: string,
     @Body() dto: UpdateClassTemplateDto,
+    @Req() req: RequestWithUser,
   ) {
-    return this.classTemplatesService.updateTemplate(studioId, templateId, dto);
+    return this.classTemplatesService.updateTemplate(studioId, templateId, dto, req.user.sub);
   }
 
   @Delete(':templateId')

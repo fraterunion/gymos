@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -14,6 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
+import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { DayPassClassAccessService } from './day-pass-class-access.service';
 import { CreateDayPassClassAccessDto } from './dto/day-pass-class-access.dto';
 
@@ -33,8 +35,9 @@ export class DayPassClassAccessController {
   grant(
     @Param('studioId') studioId: string,
     @Body() dto: CreateDayPassClassAccessDto,
+    @Req() req: RequestWithUser,
   ) {
-    return this.service.grantAccess(studioId, dto.classTemplateId);
+    return this.service.grantAccess(studioId, dto.classTemplateId, req.user.sub);
   }
 
   @Delete(':classTemplateId')
@@ -42,7 +45,8 @@ export class DayPassClassAccessController {
   async revoke(
     @Param('studioId') studioId: string,
     @Param('classTemplateId') classTemplateId: string,
+    @Req() req: RequestWithUser,
   ) {
-    await this.service.revokeAccess(studioId, classTemplateId);
+    await this.service.revokeAccess(studioId, classTemplateId, req.user.sub);
   }
 }

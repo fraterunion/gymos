@@ -24,7 +24,8 @@ describe('Basic Access MXN 1,300 price contract', () => {
   });
 
   it('Admin membership catalog renders the API plan price', () => {
-    expect(repoFile('apps/admin/src/app/memberships/page.tsx')).toContain('formatCents(plan.priceCents, plan.currency)');
+    const ui = repoFile('apps/admin/src/app/memberships/memberships-ui.tsx');
+    expect(ui).toContain('formatCents(plan.priceCents, plan.currency)');
   });
 
   it('Admin member profile and plan-change choices render the API plan price', () => {

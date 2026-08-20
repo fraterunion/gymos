@@ -260,6 +260,104 @@ describe('BillingService.checkPlanPricingIntegrity', () => {
     expect(result[0].status).toBe('interval_mismatch');
   });
 
+  it('returns healthy for fixed-duration Booty Lab when Stripe uses day/45', async () => {
+    prisma.membershipPlan.findMany.mockResolvedValue([
+      { ...basePlan, name: 'Booty Lab by Etzia', entitlementDays: 45, priceCents: 80000 },
+    ]);
+    stripe.retrievePrice.mockResolvedValue({
+      unit_amount: 80000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'day', interval_count: 45 },
+    });
+
+    const service = buildService();
+    const result = await service.checkPlanPricingIntegrity('studio-1');
+
+    expect(result[0].status).toBe('healthy');
+  });
+
+  it('returns interval_mismatch when Booty 45 days vs Stripe month/1', async () => {
+    prisma.membershipPlan.findMany.mockResolvedValue([
+      { ...basePlan, name: 'Booty Lab by Etzia', entitlementDays: 45, priceCents: 80000 },
+    ]);
+    stripe.retrievePrice.mockResolvedValue({
+      unit_amount: 80000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const service = buildService();
+    const result = await service.checkPlanPricingIntegrity('studio-1');
+
+    expect(result[0].status).toBe('interval_mismatch');
+  });
+
+  it('returns interval_mismatch when Booty 45 days vs Stripe day/30', async () => {
+    prisma.membershipPlan.findMany.mockResolvedValue([
+      { ...basePlan, name: 'Booty Lab by Etzia', entitlementDays: 45, priceCents: 80000 },
+    ]);
+    stripe.retrievePrice.mockResolvedValue({
+      unit_amount: 80000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'day', interval_count: 30 },
+    });
+
+    const service = buildService();
+    const result = await service.checkPlanPricingIntegrity('studio-1');
+
+    expect(result[0].status).toBe('interval_mismatch');
+  });
+
+  it('returns interval_mismatch when 30-day entitlement vs Stripe day/45', async () => {
+    prisma.membershipPlan.findMany.mockResolvedValue([
+      { ...basePlan, name: 'Short Pass', entitlementDays: 30, priceCents: 50000 },
+    ]);
+    stripe.retrievePrice.mockResolvedValue({
+      unit_amount: 50000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'day', interval_count: 45 },
+    });
+
+    const service = buildService();
+    const result = await service.checkPlanPricingIntegrity('studio-1');
+
+    expect(result[0].status).toBe('interval_mismatch');
+  });
+
+  it('returns healthy for normal monthly plan vs Stripe month/1', async () => {
+    prisma.membershipPlan.findMany.mockResolvedValue([basePlan]);
+    stripe.retrievePrice.mockResolvedValue({
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const service = buildService();
+    const result = await service.checkPlanPricingIntegrity('studio-1');
+
+    expect(result[0].status).toBe('healthy');
+  });
+
+  it('returns interval_mismatch for normal monthly plan vs Stripe day/30', async () => {
+    prisma.membershipPlan.findMany.mockResolvedValue([basePlan]);
+    stripe.retrievePrice.mockResolvedValue({
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'day', interval_count: 30 },
+    });
+
+    const service = buildService();
+    const result = await service.checkPlanPricingIntegrity('studio-1');
+
+    expect(result[0].status).toBe('interval_mismatch');
+  });
+
   it('returns inactive_stripe_price when Stripe price is archived', async () => {
     prisma.membershipPlan.findMany.mockResolvedValue([basePlan]);
     stripe.retrievePrice.mockResolvedValue({

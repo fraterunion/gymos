@@ -1,8 +1,5 @@
 "use client";
 
-// Deployment marker: Memberships 4.0 production release.
-
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
@@ -13,6 +10,7 @@ import {
   fetchMembershipPlans,
   fetchMembershipsOverview,
   fetchPlanBillingIntegrity,
+  fetchPlanConfigurationHistory,
   fetchSubscriptions,
   setCancelAtPeriodEnd,
   updateMembershipPlan,
@@ -21,6 +19,7 @@ import {
   type MembershipPlanDto,
   type MembershipPlanInput,
   type MembershipsOverview,
+  type PlanConfigurationHistoryEntry,
   type PlanIntegrityResult,
   type SubscriptionListItem,
   type SubscriptionStatus,
@@ -36,266 +35,22 @@ import {
   revokeDayPassClassAccess,
   type DayPassClassAccessTemplateDto,
 } from "@/lib/api/dayPassClassAccess";
+import { planHealth } from "@/lib/membershipPlanSummary";
 import {
-  planAccessSummary,
-  planCycleLabel,
-  planHealth,
-  planUsageLabel,
-  operationalOverview,
-  subscriptionActions,
-} from "@/lib/membershipPlanSummary";
+  ClassAccessMatrix,
+  DayPassTab,
+  formatCents,
+  integrityIssueLabel,
+  OpenGymPanel,
+  OverviewBar,
+  PlanCard,
+  PlanConfigurationHistoryPanel,
+  SubRow,
+  TabNav,
+  type MembershipTab,
+} from "./memberships-ui";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function formatCents(cents: number, currency = "usd") {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-    minimumFractionDigits: 0,
-  }).format(cents / 100);
-}
-
-function OpenGymPanel({ studioId, template, plans, onSaved }: { studioId: string; template?: ClassTemplateDto; plans: MembershipPlanDto[]; onSaved: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [start, setStart] = useState(template?.accessWindowStart ?? "");
-  const [end, setEnd] = useState(template?.accessWindowEnd ?? "");
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { setStart(template?.accessWindowStart ?? ""); setEnd(template?.accessWindowEnd ?? ""); }, [template]);
-  if (!template) return null;
-  const allowedPlans = plans.filter((plan) => plan.active && !plan.deletedAt && (plan.classAccess.allClasses || plan.classAccess.templates.some((entry) => entry.id === template.id)));
-  async function saveWindow() {
-    if (!template || !start || !end || start >= end) return;
-    setSaving(true);
-    try {
-      await updateClassTemplate(studioId, template.id, { accessWindowStart: start, accessWindowEnd: end });
-      setEditing(false);
-      onSaved();
-    } finally { setSaving(false); }
-  }
-  return (
-    <div className="mb-10 rounded-xl border border-sky-200 bg-sky-50/50 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Open Gym</p><p className="mt-1 text-lg font-semibold text-zinc-900">Horario permitido: {template.accessWindowStart && template.accessWindowEnd ? `${template.accessWindowStart}–${template.accessWindowEnd}` : "sin configurar"}</p><p className="mt-1 text-sm text-zinc-600">Accesible por: {allowedPlans.map((plan) => plan.name).join(", ") || "ningún plan"}</p></div>
-        <button onClick={() => setEditing((value) => !value)} className="rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-800">{editing ? "Cerrar" : "Editar horario"}</button>
-      </div>
-      {editing ? <div className="mt-4 flex flex-wrap items-end gap-3"><label className="text-xs text-zinc-600">Inicio<input type="time" value={start} onChange={(event) => setStart(event.target.value)} className="mt-1 block rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm" /></label><label className="text-xs text-zinc-600">Fin<input type="time" value={end} onChange={(event) => setEnd(event.target.value)} className="mt-1 block rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm" /></label><button disabled={saving || !start || !end || start >= end} onClick={() => void saveWindow()} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{saving ? "Guardando…" : "Guardar horario"}</button></div> : null}
-      <p className="mt-3 text-xs text-zinc-500">Usa la hora local del estudio. Los bypass de staff, instructor y administración conservan exactamente la lógica actual.</p>
-    </div>
-  );
-}
-
-function fmtDate(iso: string | null | undefined) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-const INTERVAL_LABELS: Record<BillingInterval, string> = {
-  MONTHLY: "Mes",
-  YEARLY: "Año",
-  WEEKLY: "Semana",
-};
-
-const STATUS_LABELS: Record<SubscriptionStatus, string> = {
-  ACTIVE: "Activa",
-  TRIALING: "Prueba",
-  PAST_DUE: "Pago pendiente",
-  PAUSED: "Pausada",
-  CANCELED: "Cancelada",
-};
-
-const STATUS_COLORS: Record<SubscriptionStatus, string> = {
-  ACTIVE: "bg-emerald-100 text-emerald-800",
-  TRIALING: "bg-sky-100 text-sky-800",
-  PAST_DUE: "bg-amber-100 text-amber-800",
-  PAUSED: "bg-zinc-100 text-zinc-600",
-  CANCELED: "bg-red-100 text-red-700",
-};
-
-const LIFECYCLE_LABELS = {
-  ...STATUS_LABELS,
-  ENDING: "Por vencer",
-  SCHEDULED: "Programada",
-  EXPIRED: "Vencida",
-} as const;
-
-const LIFECYCLE_COLORS = {
-  ...STATUS_COLORS,
-  ENDING: "bg-amber-100 text-amber-800",
-  SCHEDULED: "bg-sky-100 text-sky-800",
-  EXPIRED: "bg-red-100 text-red-700",
-} as const;
-
-// ── Overview stats bar ────────────────────────────────────────────────────────
-
-function OverviewBar({ data, unhealthyPlanCount }: { data: MembershipsOverview; unhealthyPlanCount: number }) {
-  const summary = operationalOverview({ ...data, unhealthyPlanCount });
-
-  return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-8">
-      {[
-        { label: "Planes activos", value: summary.activePlans },
-        { label: "Miembros activos", value: summary.activeMembers },
-        { label: "Por vencer", value: summary.endingSoon },
-        { label: "Requieren atención", value: summary.requiringAttention },
-      ].map(({ label, value }) => (
-        <div
-          key={label}
-          className="rounded-xl border border-zinc-200 bg-white px-5 py-4"
-        >
-          <p className="text-xs font-medium text-zinc-500">{label}</p>
-          <p className="mt-1 text-2xl font-bold text-zinc-900">{value}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Plan card ─────────────────────────────────────────────────────────────────
-
-function PlanCard({
-  plan,
-  integrity,
-  integrityAvailable,
-  onEdit,
-  onArchive,
-  onViewMembers,
-  onManageAccess,
-}: {
-  plan: MembershipPlanDto;
-  integrity?: PlanIntegrityResult;
-  integrityAvailable: boolean;
-  onEdit: (p: MembershipPlanDto) => void;
-  onArchive: (p: MembershipPlanDto) => void;
-  onViewMembers: (p: MembershipPlanDto) => void;
-  onManageAccess: (p: MembershipPlanDto) => void;
-}) {
-  const archived = !!plan.deletedAt || !plan.active;
-  const cycleLabel = planCycleLabel(plan);
-  const usageLabel = planUsageLabel(plan);
-  const access = planAccessSummary(plan);
-  const health = planHealth(plan, integrity?.status);
-  return (
-    <div
-      className={`relative rounded-xl border p-5 ${
-        archived
-          ? "border-zinc-200 bg-zinc-50 opacity-60"
-          : "border-zinc-200 bg-white"
-      }`}
-    >
-      {archived && (
-        <span className="absolute right-3 top-3 rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600">
-          Inactivo
-        </span>
-      )}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold text-zinc-900">
-            {plan.name}
-          </h3>
-          <p className="mt-0.5 text-sm text-zinc-500">
-            {formatCents(plan.priceCents, plan.currency)}
-            {cycleLabel === null ? ` / ${INTERVAL_LABELS[plan.billingInterval].toLowerCase()}` : ""}
-          </p>
-          {cycleLabel !== null && (
-            <p className="text-sm text-zinc-500">{cycleLabel}</p>
-          )}
-          <p className="mt-0.5 text-sm text-zinc-500">{usageLabel}</p>
-          <p className="mt-1 text-xs text-zinc-500">
-            Acceso: {access.label}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-3 flex items-center justify-between gap-2 border-t border-zinc-100 pt-3">
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${health.tone === "healthy" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
-          {health.label}
-        </span>
-        <span className="text-xs text-zinc-500">{plan.activeSubscriberCount} miembros activos</span>
-      </div>
-
-      {health.issues.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {health.issues.slice(0, 2).map((w) => (
-            <p
-              key={w}
-              className="rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800"
-            >
-              ⚠ {w}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {plan.description && (
-        <p className="mt-2 text-sm text-zinc-600 line-clamp-2">
-          {plan.description}
-        </p>
-      )}
-
-      <div className="mt-3 flex items-center gap-2 text-xs text-zinc-400">
-        {integrity ? (
-          integrity.status === "healthy" ? (
-            <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-600">
-              Stripe sincronizado ✓
-            </span>
-          ) : integrity.status === "price_mismatch" ? (
-            <span
-              className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700"
-              title={`GymOS: ${formatCents(integrity.localPriceCents, integrity.localCurrency)} / Stripe: ${formatCents(integrity.stripeUnitAmount ?? 0, integrity.stripeCurrency ?? integrity.localCurrency)}`}
-            >
-              Stripe desalineado ⚠
-            </span>
-          ) : integrity.status === "no_stripe_price" ? (
-            <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-500">
-              Sin Price de Stripe
-            </span>
-          ) : integrity.status === "inactive_stripe_price" ? (
-            <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600">
-              Price de Stripe inactivo
-            </span>
-          ) : (
-            <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">
-              {integrity.status.replace(/_/g, " ")} ⚠
-            </span>
-          )
-        ) : !integrityAvailable ? (
-          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-400">
-            Estado de Stripe no disponible
-          </span>
-        ) : null}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button
-          onClick={() => onEdit(plan)}
-          className="flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-        >
-          Editar plan
-        </button>
-        <button onClick={() => onManageAccess(plan)} className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
-          Gestionar acceso
-        </button>
-        <button onClick={() => onViewMembers(plan)} className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
-          Ver miembros
-        </button>
-        {!archived && (
-          <button
-            onClick={() => onArchive(plan)}
-            className="flex-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
-          >
-            Archivar
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Plan modal ────────────────────────────────────────────────────────────────
+// ── Plan modal helpers ────────────────────────────────────────────────────────
 
 type PlanFormState = {
   name: string;
@@ -442,6 +197,9 @@ function PlanModal({
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<PlanConfigurationHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -459,6 +217,25 @@ function PlanModal({
       cancelled = true;
     };
   }, [studioId]);
+
+  useEffect(() => {
+    if (!editing || !showHistory) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    void fetchPlanConfigurationHistory(studioId, editing.id)
+      .then((data) => {
+        if (!cancelled) setHistory(data);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studioId, editing, showHistory]);
 
   function set<K extends keyof PlanFormState>(key: K, val: PlanFormState[K]) {
     setForm((f) => ({ ...f, [key]: val }));
@@ -799,18 +576,42 @@ function PlanModal({
 
           <SectionHeader>Stripe / Billing</SectionHeader>
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-3">
-            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               Vinculación de cobro
             </p>
             <p className="text-[11px] text-zinc-500">
-              Guardar aquí solo actualiza la configuración local de GymOS. Nunca crea, modifica
-              ni sincroniza precios o productos en Stripe automáticamente.
+              Guardar este plan no modifica automáticamente Stripe. Solo actualiza la
+              configuración local de GymOS.
             </p>
             {editing ? (
               <div className="grid grid-cols-2 gap-2 rounded-lg border border-zinc-200 bg-white p-3 text-xs">
-                <div><p className="text-zinc-400">GymOS</p><p className="mt-1 font-semibold text-zinc-900">{formatCents(editing.priceCents, editing.currency)}</p></div>
-                <div><p className="text-zinc-400">Stripe</p><p className="mt-1 font-semibold text-zinc-900">{integrity?.stripeUnitAmount == null ? "No disponible" : formatCents(integrity.stripeUnitAmount, integrity.stripeCurrency ?? editing.currency)}</p></div>
-                <p className={`col-span-2 font-semibold ${integrity?.status === "healthy" ? "text-emerald-700" : "text-amber-700"}`}>Estado: {integrity?.status === "healthy" ? "Sincronizado" : "Revisar configuración"}</p>
+                <div>
+                  <p className="text-zinc-400">Precio GymOS</p>
+                  <p className="mt-1 font-semibold text-zinc-900">
+                    {formatCents(editing.priceCents, editing.currency)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-zinc-400">Precio Stripe</p>
+                  <p className="mt-1 font-semibold text-zinc-900">
+                    {integrity?.stripeUnitAmount == null
+                      ? "No disponible"
+                      : formatCents(
+                          integrity.stripeUnitAmount,
+                          integrity.stripeCurrency ?? editing.currency,
+                        )}
+                  </p>
+                </div>
+                <p
+                  className={`col-span-2 font-semibold ${integrity?.status === "healthy" ? "text-emerald-700" : "text-amber-700"}`}
+                >
+                  Estado:{" "}
+                  {integrity?.status === "healthy"
+                    ? "Sincronizado"
+                    : integrity?.status
+                      ? integrityIssueLabel(integrity.status)
+                      : "Revisar configuración"}
+                </p>
               </div>
             ) : null}
             <div>
@@ -832,6 +633,23 @@ function PlanModal({
               />
             </div>
           </div>
+
+          {editing ? (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowHistory((v) => !v)}
+                className="text-xs font-semibold text-zinc-600 underline-offset-2 hover:underline"
+              >
+                {showHistory ? "Ocultar historial de cambios" : "Historial de cambios"}
+              </button>
+              {showHistory ? (
+                <div className="mt-2">
+                  <PlanConfigurationHistoryPanel entries={history} loading={historyLoading} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {error && (
             <p className="text-sm text-red-600">{error}</p>
@@ -859,295 +677,38 @@ function PlanModal({
   );
 }
 
-// ── Subscriptions table ───────────────────────────────────────────────────────
-
-function SubRow({
-  sub,
-  onAction,
-  onCancelAtPeriodEnd,
-}: {
-  sub: SubscriptionListItem;
-  onAction: (sub: SubscriptionListItem, status: SubscriptionStatus) => void;
-  onCancelAtPeriodEnd: (sub: SubscriptionListItem, cancel: boolean) => void;
-}) {
-  const status = sub.status as SubscriptionStatus;
-  const lifecycleStatus = sub.lifecycleStatus;
-  const operationalStatus = lifecycleStatus === "ENDING" ? "ENDING" : sub.primaryStatus;
-  const actions = subscriptionActions(sub);
-
-  return (
-    <tr className="border-b border-zinc-100 text-sm">
-      <td className="px-4 py-3 font-medium text-zinc-900">
-        <Link href={`/members/${sub.user.id}`} className="hover:underline">{sub.user.firstName} {sub.user.lastName}</Link>
-        <p className="text-xs font-normal text-zinc-400">{sub.user.email}</p>
-      </td>
-      <td className="px-4 py-3 text-zinc-600">
-        {sub.membershipPlan.name}
-        <p className="text-xs text-zinc-400">
-          {formatCents(sub.membershipPlan.priceCents, sub.membershipPlan.currency)} · {sub.membershipPlan.entitlementDays ? `${sub.membershipPlan.entitlementDays} días` : INTERVAL_LABELS[sub.membershipPlan.billingInterval].toLowerCase()}
-        </p>
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex flex-col gap-1">
-          <span
-            className={`inline-flex w-fit rounded-full px-2 py-0.5 text-xs font-semibold ${LIFECYCLE_COLORS[operationalStatus]}`}
-          >
-            {LIFECYCLE_LABELS[operationalStatus]}
-          </span>
-          <span className={`inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-medium ${status === "PAST_DUE" ? "bg-amber-50 text-amber-800" : "bg-zinc-100 text-zinc-600"}`}>
-            Pago: {status === "PAST_DUE" ? "Pendiente" : "Al corriente"}
-          </span>
-          {sub.source === "STRIPE" ? (
-            <span className="inline-flex w-fit items-center gap-1 text-xs text-indigo-600">
-              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-              Stripe · {sub.cancelAtPeriodEnd ? "no renovará" : "renovación automática"}
-            </span>
-          ) : (
-            <span className="inline-flex w-fit items-center gap-1 text-xs text-amber-600">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              Renovación manual
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="px-4 py-3 text-zinc-500">
-        {fmtDate(sub.effectiveEnd)}
-        {sub.lifecycleStatus === "ENDING" && (
-          <p className="mt-0.5 text-xs font-medium text-amber-500">
-            Finaliza al cierre del periodo
-          </p>
-        )}
-      </td>
-      <td className="px-4 py-3 text-xs text-zinc-500">
-        {sub.membershipPlan.classCredits === null ? "Ilimitado" : `${sub.membershipPlan.classCredits} créditos por ciclo`}
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex flex-wrap gap-1.5">
-          <Link href={`/members/${sub.user.id}`} className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200">Ver miembro</Link>
-          {actions.includes("cancel_at_period_end") && (
-            <button
-              onClick={() => onCancelAtPeriodEnd(sub, true)}
-              className="rounded px-2 py-1 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100"
-            >
-              Cancelar al final
-            </button>
-          )}
-          {actions.includes("reactivate_renewal") && (
-            <button
-              onClick={() => onCancelAtPeriodEnd(sub, false)}
-              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-            >
-              Reactivar renovación
-            </button>
-          )}
-          {actions.includes("pause") && (
-            <button
-              onClick={() => onAction(sub, "PAUSED")}
-              className="rounded px-2 py-1 text-xs bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-            >
-              Pausar
-            </button>
-          )}
-          {actions.includes("resume") && (
-            <button
-              onClick={() => onAction(sub, "ACTIVE")}
-              className="rounded px-2 py-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-            >
-              Reanudar
-            </button>
-          )}
-          {actions.includes("renew") ? <Link href={`/members/${sub.user.id}?tab=membership`} className="rounded bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">Renovar</Link> : null}
-          {actions.includes("change_plan") ? <Link href={`/members/${sub.user.id}?tab=membership`} className="rounded bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700">Cambiar plan</Link> : null}
-          {actions.includes("record_cash_payment") ? <Link href={`/members/${sub.user.id}?tab=billing`} className="rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">Registrar efectivo</Link> : null}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-// ── Page ──────────────────────────────────────────────────────────────────────
-
-function DayPassAccessSection({ studioId }: { studioId: string }) {
-  const [templates, setTemplates] = useState<DayPassClassAccessTemplateDto[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchDayPassClassAccess(studioId);
-      setTemplates(data);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "No se pudo cargar el acceso de Day Pass.");
-    } finally {
-      setLoading(false);
-    }
-  }, [studioId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function toggle(t: DayPassClassAccessTemplateDto) {
-    setPendingId(t.id);
-    setError(null);
-    try {
-      if (t.allowed) {
-        await revokeDayPassClassAccess(studioId, t.id);
-      } else {
-        await grantDayPassClassAccess(studioId, t.id);
-      }
-      await load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "No se pudo actualizar el acceso.");
-    } finally {
-      setPendingId(null);
-    }
-  }
-
-  const allowedCount = templates.filter((t) => t.allowed).length;
-  const zeroAccess = !loading && templates.length > 0 && allowedCount === 0;
-
-  return (
-    <section id="day-pass" className="mb-10 scroll-mt-6">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-5 py-4 text-left"
-      >
-        <div>
-          <h2 className="text-lg font-semibold text-zinc-900">Acceso de Day Pass</h2>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            Lista explícita de clases reservables. Las clases nuevas se niegan hasta habilitarlas aquí.
-            {!loading ? ` · ${allowedCount} de ${templates.length} permitidas` : ""}
-          </p>
-          {zeroAccess && (
-            <p className="mt-1 text-xs font-semibold text-red-600">
-              ⚠ Sin acceso — ningún Day Pass puede reservar ninguna clase ahora mismo.
-            </p>
-          )}
-        </div>
-        <span className="text-sm text-zinc-400">{expanded ? "Ocultar" : "Gestionar"}</span>
-      </button>
-
-      {expanded && (
-        <div className="mt-2 rounded-xl border border-zinc-200 bg-white p-4">
-          {error && (
-            <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
-          )}
-          {loading ? (
-            <p className="text-xs text-zinc-500">Cargando…</p>
-          ) : templates.length === 0 ? (
-            <p className="text-xs text-zinc-500">No hay plantillas de clase en este estudio.</p>
-          ) : (
-            <div className="divide-y divide-zinc-100">
-              {templates.map((t) => (
-                <label
-                  key={t.id}
-                  className="flex items-center justify-between gap-3 py-2 text-sm"
-                >
-                  <span className="flex items-center gap-2 text-zinc-700">
-                    {t.name}
-                    {t.isOpenGymSlot && (
-                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
-                        Open Gym
-                      </span>
-                    )}
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={t.allowed}
-                    disabled={pendingId === t.id}
-                    onChange={() => void toggle(t)}
-                    className="rounded"
-                  />
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ClassAccessMatrix({
-  plans,
-  templates,
-  dayPass,
-  onManagePlan,
-}: {
-  plans: MembershipPlanDto[];
-  templates: ClassTemplateDto[];
-  dayPass: DayPassClassAccessTemplateDto[];
-  onManagePlan: (plan: MembershipPlanDto) => void;
-}) {
-  const activePlans = plans.filter((plan) => plan.active && !plan.deletedAt);
-  const dayPassById = new Map(dayPass.map((template) => [template.id, template.allowed]));
-  return (
-    <section id="acceso" className="mb-10 scroll-mt-6">
-      <div className="mb-4">
-        <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Acceso y configuración</p>
-        <h2 className="mt-1 text-lg font-semibold text-zinc-900">Matriz de acceso a clases</h2>
-        <p className="mt-1 text-sm text-zinc-500">Fuente canónica: permisos explícitos por plantilla. Los cambios se realizan de uno en uno desde el editor protegido.</p>
-      </div>
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
-        <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-zinc-200 bg-zinc-50 text-xs text-zinc-500">
-            <tr>
-              <th className="sticky left-0 bg-zinc-50 px-4 py-3 font-semibold">Clase</th>
-              {activePlans.map((plan) => <th key={plan.id} className="px-3 py-3 font-semibold"><button onClick={() => onManagePlan(plan)} className="hover:text-zinc-900">{plan.name}</button></th>)}
-              <th className="px-3 py-3 font-semibold">Day Pass</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-100">
-            {templates.map((template) => {
-              const entitled = activePlans.filter((plan) => plan.classAccess.allClasses || plan.classAccess.templates.some((allowed) => allowed.id === template.id));
-              const orphan = entitled.length === 0 && !dayPassById.get(template.id);
-              return (
-                <tr key={template.id} className={orphan ? "bg-red-50/60" : ""}>
-                  <td className="sticky left-0 bg-inherit px-4 py-3 font-medium text-zinc-800">
-                    {template.name}
-                    {template.isOpenGymSlot ? <span className="ml-2 block text-[11px] font-normal text-sky-700">Open Gym · {template.accessWindowStart && template.accessWindowEnd ? `${template.accessWindowStart}–${template.accessWindowEnd}` : "sin horario"}</span> : null}
-                    {orphan ? <span className="mt-1 block text-[11px] font-semibold text-red-700">SIN ACCESO</span> : null}
-                  </td>
-                  {activePlans.map((plan) => {
-                    const allowed = plan.classAccess.allClasses || plan.classAccess.templates.some((entry) => entry.id === template.id);
-                    return <td key={plan.id} className="px-3 py-3 text-center"><span className={allowed ? "text-emerald-600" : "text-zinc-300"}>{allowed ? "✓" : "—"}</span></td>;
-                  })}
-                  <td className="px-3 py-3 text-center"><span className={dayPassById.get(template.id) ? "text-emerald-600" : "text-zinc-300"}>{dayPassById.get(template.id) ? "✓" : "—"}</span></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
+const STATUS_LABELS: Record<SubscriptionStatus, string> = {
+  ACTIVE: "Activa",
+  TRIALING: "Prueba",
+  PAST_DUE: "Pago pendiente",
+  PAUSED: "Pausada",
+  CANCELED: "Cancelada",
+};
 
 export default function MembershipsPage() {
   const { selectedStudioId } = useDeskStudio();
 
+  const [activeTab, setActiveTab] = useState<MembershipTab>("planes");
   const [overview, setOverview] = useState<MembershipsOverview | null>(null);
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [classTemplates, setClassTemplates] = useState<ClassTemplateDto[]>([]);
   const [dayPassTemplates, setDayPassTemplates] = useState<DayPassClassAccessTemplateDto[]>([]);
   const [planIntegrity, setPlanIntegrity] = useState<Map<string, PlanIntegrityResult>>(new Map());
-  const [integrityAvailable, setIntegrityAvailable] = useState(true);
   const [subs, setSubs] = useState<SubscriptionListItem[]>([]);
   const [subsTotal, setSubsTotal] = useState(0);
   const [subsPage, setSubsPage] = useState(1);
 
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [loadingSubs, setLoadingSubs] = useState(true);
+  const [dayPassLoading, setDayPassLoading] = useState(true);
+  const [dayPassError, setDayPassError] = useState<string | null>(null);
+  const [dayPassPendingId, setDayPassPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [showInactive, setShowInactive] = useState(false);
   const [statusFilter, setStatusFilter] = useState<SubscriptionStatus | "">("");
   const [planFilter, setPlanFilter] = useState<string>("");
+  const [subscriptionViewFilter, setSubscriptionViewFilter] = useState<"" | "attention" | "expiring">("");
 
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [editingPlan, setEditingPlan] = useState<MembershipPlanDto | null>(null);
@@ -1171,15 +732,14 @@ export default function MembershipsPage() {
       setDayPassTemplates(dayPassData);
       if (integrityResult.ok) {
         setPlanIntegrity(new Map(integrityResult.data.map((r) => [r.planId, r])));
-        setIntegrityAvailable(true);
       } else {
         setPlanIntegrity(new Map());
-        setIntegrityAvailable(false);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load plans.");
+      setError(e instanceof ApiError ? e.message : "No se pudieron cargar los planes.");
     } finally {
       setLoadingPlans(false);
+      setDayPassLoading(false);
     }
   }, [selectedStudioId]);
 
@@ -1198,8 +758,10 @@ export default function MembershipsPage() {
     setLoadingSubs(true);
     try {
       const res = await fetchSubscriptions(selectedStudioId, {
-        status: statusFilter || undefined,
+        status: subscriptionViewFilter ? undefined : statusFilter || undefined,
         planId: planFilter || undefined,
+        attention: subscriptionViewFilter === "attention" ? true : undefined,
+        expiringWithin7Days: subscriptionViewFilter === "expiring" ? true : undefined,
         page,
         limit: SUBS_LIMIT,
       });
@@ -1207,14 +769,17 @@ export default function MembershipsPage() {
       setSubsTotal(res.total);
       setSubsPage(res.page);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load subscriptions.");
+      setError(e instanceof ApiError ? e.message : "No se pudieron cargar las suscripciones.");
     } finally {
       setLoadingSubs(false);
     }
-  }, [selectedStudioId, statusFilter, planFilter]);
+  }, [selectedStudioId, statusFilter, planFilter, subscriptionViewFilter]);
 
   useEffect(() => {
-    const t = setTimeout(() => { void loadPlans(); void loadOverview(); }, 0);
+    const t = setTimeout(() => {
+      void loadPlans();
+      void loadOverview();
+    }, 0);
     return () => clearTimeout(t);
   }, [loadPlans, loadOverview]);
 
@@ -1226,16 +791,11 @@ export default function MembershipsPage() {
   async function handleSubAction(sub: SubscriptionListItem, newStatus: SubscriptionStatus) {
     if (!selectedStudioId) return;
     try {
-      await updateSubscriptionStatus(
-        selectedStudioId,
-        sub.user.id,
-        sub.id,
-        newStatus,
-      );
+      await updateSubscriptionStatus(selectedStudioId, sub.user.id, sub.id, newStatus);
       void loadSubs(subsPage);
       void loadOverview();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Action failed.");
+      setError(e instanceof ApiError ? e.message : "No se pudo completar la acción.");
     }
   }
 
@@ -1245,7 +805,7 @@ export default function MembershipsPage() {
       await setCancelAtPeriodEnd(selectedStudioId, sub.user.id, sub.id, cancel);
       void loadSubs(subsPage);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Action failed.");
+      setError(e instanceof ApiError ? e.message : "No se pudo completar la acción.");
     }
   }
 
@@ -1261,13 +821,51 @@ export default function MembershipsPage() {
     }
   }
 
-  const visiblePlans = showInactive
-    ? plans
-    : plans.filter((p) => p.active && !p.deletedAt);
+  async function handleToggleActive(plan: MembershipPlanDto) {
+    if (!selectedStudioId) return;
+    try {
+      await updateMembershipPlan(selectedStudioId, plan.id, { active: !plan.active });
+      void loadPlans();
+      void loadOverview();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No se pudo actualizar el plan.");
+    }
+  }
 
+  async function handleDayPassToggle(t: DayPassClassAccessTemplateDto) {
+    if (!selectedStudioId) return;
+    setDayPassPendingId(t.id);
+    setDayPassError(null);
+    try {
+      if (t.allowed) {
+        await revokeDayPassClassAccess(selectedStudioId, t.id);
+      } else {
+        await grantDayPassClassAccess(selectedStudioId, t.id);
+      }
+      const data = await fetchDayPassClassAccess(selectedStudioId);
+      setDayPassTemplates(data);
+    } catch (e) {
+      setDayPassError(e instanceof ApiError ? e.message : "No se pudo actualizar el acceso.");
+    } finally {
+      setDayPassPendingId(null);
+    }
+  }
+
+  function goToSubscriptions(planId?: string) {
+    if (planId) setPlanFilter(planId);
+    setActiveTab("suscripciones");
+  }
+
+  const visiblePlans = showInactive ? plans : plans.filter((p) => p.active && !p.deletedAt);
   const totalSubPages = Math.ceil(subsTotal / SUBS_LIMIT);
   const unhealthyPlanCount = useMemo(
-    () => plans.filter((plan) => plan.active && !plan.deletedAt && planHealth(plan, planIntegrity.get(plan.id)?.status).tone === "warning").length,
+    () =>
+      plans.filter(
+        (plan) =>
+          plan.active &&
+          !plan.deletedAt &&
+          planHealth(plan, planIntegrity.get(plan.id)?.status).tone === "warning",
+      ).length,
     [plans, planIntegrity],
   );
 
@@ -1281,7 +879,6 @@ export default function MembershipsPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-      {/* Page header */}
       <div className="mb-8 flex items-center justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Operaciones</p>
@@ -1290,187 +887,294 @@ export default function MembershipsPage() {
             Configura planes, accesos y suscripciones desde una sola superficie segura.
           </p>
         </div>
-        <button
-          onClick={() => { setEditingPlan(null); setShowPlanModal(true); }}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700"
-        >
-          + Nuevo plan
-        </button>
+        {activeTab === "planes" ? (
+          <button
+            type="button"
+            onClick={() => {
+              setEditingPlan(null);
+              setShowPlanModal(true);
+            }}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700"
+          >
+            + Nuevo plan
+          </button>
+        ) : null}
       </div>
 
-      {error && (
+      {error ? (
         <div className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
-          <button onClick={() => setError(null)} className="ml-3 underline">Cerrar</button>
+          <button type="button" onClick={() => setError(null)} className="ml-3 underline">
+            Cerrar
+          </button>
         </div>
-      )}
+      ) : null}
 
-      <nav className="mb-6 flex gap-1 overflow-x-auto rounded-xl border border-zinc-200 bg-white p-1 text-sm">
-        {[{ href: "#planes", label: "Planes" }, { href: "#suscripciones", label: "Suscripciones" }, { href: "#acceso", label: "Acceso a clases" }, { href: "#day-pass", label: "Day Pass" }].map((item) => (
-          <a key={item.href} href={item.href} className="whitespace-nowrap rounded-lg px-3 py-2 font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900">{item.label}</a>
-        ))}
-      </nav>
+      <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
-      {overview && <OverviewBar data={overview} unhealthyPlanCount={unhealthyPlanCount} />}
+      {activeTab === "planes" && overview ? (
+        <OverviewBar
+          data={overview}
+          unhealthyPlanCount={unhealthyPlanCount}
+          onExpiringClick={() => {
+            setSubscriptionViewFilter("expiring");
+            setStatusFilter("");
+            setActiveTab("suscripciones");
+          }}
+          onAttentionClick={() => {
+            setSubscriptionViewFilter("attention");
+            setStatusFilter("");
+            setActiveTab("suscripciones");
+          }}
+        />
+      ) : null}
 
-      {/* Plans section */}
-      <section id="planes" className="mb-10 scroll-mt-6">
-        <div className="mb-4 flex items-center justify-between">
-          <div><p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Planes</p><h2 className="mt-1 text-lg font-semibold text-zinc-900">Catálogo y configuración</h2></div>
-          <label className="flex items-center gap-2 text-sm text-zinc-500">
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-              className="rounded"
-            />
-            Mostrar inactivos
-          </label>
-        </div>
-
-        {loadingPlans ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-48 rounded-xl bg-zinc-100 animate-pulse" />
-            ))}
-          </div>
-        ) : visiblePlans.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-300 py-12 text-center">
-            <p className="text-sm text-zinc-500">Todavía no hay planes. Crea el primero para comenzar.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {visiblePlans.map((plan) => (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                integrity={planIntegrity.get(plan.id)}
-                integrityAvailable={integrityAvailable}
-                onEdit={(p) => { setEditingPlan(p); setShowPlanModal(true); }}
-                onArchive={handleArchivePlan}
-                onViewMembers={(p) => { setPlanFilter(p.id); document.getElementById("suscripciones")?.scrollIntoView({ behavior: "smooth" }); }}
-                onManageAccess={(p) => { setEditingPlan(p); setShowPlanModal(true); }}
+      {activeTab === "planes" ? (
+        <section>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Planes</p>
+              <h2 className="mt-1 text-lg font-semibold text-zinc-900">Catálogo operativo</h2>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-zinc-500">
+              <input
+                type="checkbox"
+                checked={showInactive}
+                onChange={(e) => setShowInactive(e.target.checked)}
+                className="rounded"
               />
-            ))}
+              Mostrar inactivos
+            </label>
           </div>
-        )}
-      </section>
 
-      <ClassAccessMatrix plans={plans} templates={classTemplates} dayPass={dayPassTemplates} onManagePlan={(p) => { setEditingPlan(p); setShowPlanModal(true); }} />
-      <OpenGymPanel studioId={selectedStudioId} template={classTemplates.find((template) => template.isOpenGymSlot)} plans={plans} onSaved={() => void loadPlans()} />
-
-      <DayPassAccessSection studioId={selectedStudioId} />
-
-      {/* Subscriptions section */}
-      <section id="suscripciones" className="scroll-mt-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-zinc-900">
-            Suscripciones
-            {subsTotal > 0 && (
-              <span className="ml-2 text-sm font-normal text-zinc-400">
-                ({subsTotal})
-              </span>
-            )}
-          </h2>
-
-          <div className="flex flex-wrap gap-2">
-            <select
-              value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value as SubscriptionStatus | ""); }}
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
-            >
-              <option value="">Todos los estados</option>
-              {(Object.keys(STATUS_LABELS) as SubscriptionStatus[]).map((s) => (
-                <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+          {loadingPlans ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="h-52 animate-pulse rounded-xl bg-zinc-100" />
               ))}
-            </select>
-
-            <select
-              value={planFilter}
-              onChange={(e) => setPlanFilter(e.target.value)}
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
-            >
-              <option value="">Todos los planes</option>
-              {plans.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+            </div>
+          ) : visiblePlans.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-zinc-300 py-12 text-center">
+              <p className="text-sm text-zinc-500">Todavía no hay planes. Crea el primero para comenzar.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {visiblePlans.map((plan) => (
+                <PlanCard
+                  key={plan.id}
+                  plan={plan}
+                  integrity={planIntegrity.get(plan.id)}
+                  onEdit={(p) => {
+                    setEditingPlan(p);
+                    setShowPlanModal(true);
+                  }}
+                  onArchive={handleArchivePlan}
+                  onViewMembers={(p) => goToSubscriptions(p.id)}
+                  onManageAccess={(p) => {
+                    setEditingPlan(p);
+                    setShowPlanModal(true);
+                  }}
+                  onToggleActive={handleToggleActive}
+                />
               ))}
-            </select>
-          </div>
-        </div>
+            </div>
+          )}
+        </section>
+      ) : null}
 
-        <p className="mb-3 text-xs text-zinc-400">
-          El precio y la fuente de facturación no confirman que el pago del periodo ya esté registrado. Consulta Analytics para ver ingresos cobrados.
-        </p>
-
-        <div className="overflow-x-auto rounded-xl border border-zinc-200">
-          <table className="w-full min-w-[640px] text-left">
-            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="px-4 py-3">Miembro</th>
-                <th className="px-4 py-3">Plan</th>
-                <th className="px-4 py-3">Estado / pago</th>
-                <th className="px-4 py-3">Vigencia</th>
-                <th className="px-4 py-3">Uso</th>
-                <th className="px-4 py-3">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100 bg-white">
-              {loadingSubs
-                ? [...Array(5)].map((_, i) => (
-                    <tr key={i} className="border-b border-zinc-100">
-                      {[...Array(6)].map((__, j) => (
-                        <td key={j} className="px-4 py-3">
-                          <div className="h-4 rounded bg-zinc-200 animate-pulse" />
-                        </td>
-                      ))}
-                    </tr>
-                  ))
-                : subs.length === 0
-                ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-12 text-center text-sm text-zinc-400">
-                        No se encontraron suscripciones.
-                      </td>
-                    </tr>
-                  )
-                : subs.map((sub) => (
-                    <SubRow
-                      key={sub.id}
-                      sub={sub}
-                      onAction={(s, st) => void handleSubAction(s, st)}
-                      onCancelAtPeriodEnd={(s, c) => void handleCancelAtPeriodEnd(s, c)}
-                    />
-                  ))}
-            </tbody>
-          </table>
-        </div>
-
-        {totalSubPages > 1 && (
-          <div className="mt-4 flex items-center justify-between text-sm text-zinc-500">
-            <span>
-              Página {subsPage} de {totalSubPages}
-            </span>
-            <div className="flex gap-2">
+      {activeTab === "suscripciones" ? (
+        <section>
+          {subscriptionViewFilter === "attention" ? (
+            <div className="mb-4 space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p>
+                Mostrando suscripciones que requieren atención: pago pendiente, pausadas y vencidas.
+              </p>
+              {unhealthyPlanCount > 0 ? (
+                <p>
+                  {unhealthyPlanCount} plan{unhealthyPlanCount === 1 ? "" : "es"} también requiere
+                  atención por problemas de facturación.{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubscriptionViewFilter("");
+                      setActiveTab("planes");
+                    }}
+                    className="font-medium underline"
+                  >
+                    Ver planes
+                  </button>
+                </p>
+              ) : null}
               <button
-                disabled={subsPage <= 1}
-                onClick={() => void loadSubs(subsPage - 1)}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
+                type="button"
+                onClick={() => setSubscriptionViewFilter("")}
+                className="text-xs font-medium underline"
               >
-                ← Anterior
-              </button>
-              <button
-                disabled={subsPage >= totalSubPages}
-                onClick={() => void loadSubs(subsPage + 1)}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
-              >
-                Siguiente →
+                Quitar filtro
               </button>
             </div>
+          ) : null}
+          {subscriptionViewFilter === "expiring" ? (
+            <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+              <p>
+                Mostrando suscripciones con acceso vigente que vence en los próximos 7 días (comparación UTC).
+              </p>
+              <button
+                type="button"
+                onClick={() => setSubscriptionViewFilter("")}
+                className="mt-1 text-xs font-medium underline"
+              >
+                Quitar filtro
+              </button>
+            </div>
+          ) : null}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Suscripciones
+              {subsTotal > 0 ? (
+                <span className="ml-2 text-sm font-normal text-zinc-400">({subsTotal})</span>
+              ) : null}
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setSubscriptionViewFilter("");
+                  setStatusFilter(e.target.value as SubscriptionStatus | "");
+                }}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
+              >
+                <option value="">Todos los estados</option>
+                {(Object.keys(STATUS_LABELS) as SubscriptionStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={planFilter}
+                onChange={(e) => {
+                  setSubscriptionViewFilter("");
+                  setPlanFilter(e.target.value);
+                }}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
+              >
+                <option value="">Todos los planes</option>
+                {plans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        )}
-      </section>
 
-      {showPlanModal && selectedStudioId && (
+          <div className="overflow-x-auto rounded-xl border border-zinc-200">
+            <table className="w-full min-w-[960px] text-left">
+              <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3">Miembro</th>
+                  <th className="px-4 py-3">Plan</th>
+                  <th className="px-4 py-3">Estado</th>
+                  <th className="px-4 py-3">Pago</th>
+                  <th className="px-4 py-3">Vigencia / renovación</th>
+                  <th className="px-4 py-3">Uso</th>
+                  <th className="px-4 py-3">Próximo cobro</th>
+                  <th className="px-4 py-3">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 bg-white">
+                {loadingSubs
+                  ? [...Array(5)].map((_, i) => (
+                      <tr key={i}>
+                        {[...Array(8)].map((__, j) => (
+                          <td key={j} className="px-4 py-3">
+                            <div className="h-4 animate-pulse rounded bg-zinc-200" />
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  : subs.length === 0
+                    ? (
+                        <tr>
+                          <td colSpan={8} className="px-4 py-12 text-center text-sm text-zinc-400">
+                            No se encontraron suscripciones.
+                          </td>
+                        </tr>
+                      )
+                    : subs.map((sub) => (
+                        <SubRow
+                          key={sub.id}
+                          sub={sub}
+                          onAction={(s, st) => void handleSubAction(s, st)}
+                          onCancelAtPeriodEnd={(s, c) => void handleCancelAtPeriodEnd(s, c)}
+                        />
+                      ))}
+              </tbody>
+            </table>
+          </div>
+
+          {totalSubPages > 1 ? (
+            <div className="mt-4 flex items-center justify-between text-sm text-zinc-500">
+              <span>
+                Página {subsPage} de {totalSubPages}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={subsPage <= 1}
+                  onClick={() => void loadSubs(subsPage - 1)}
+                  className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
+                >
+                  ← Anterior
+                </button>
+                <button
+                  type="button"
+                  disabled={subsPage >= totalSubPages}
+                  onClick={() => void loadSubs(subsPage + 1)}
+                  className="rounded-lg border border-zinc-200 px-3 py-1.5 hover:bg-zinc-50 disabled:opacity-40"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {activeTab === "acceso" ? (
+        <section>
+          <ClassAccessMatrix
+            plans={plans}
+            templates={classTemplates}
+            dayPass={dayPassTemplates}
+            onManagePlan={(p) => {
+              setEditingPlan(p);
+              setShowPlanModal(true);
+            }}
+          />
+          <OpenGymPanel
+            studioId={selectedStudioId}
+            template={classTemplates.find((template) => template.isOpenGymSlot)}
+            plans={plans}
+            onSaved={() => void loadPlans()}
+            onUpdateTemplate={updateClassTemplate}
+          />
+        </section>
+      ) : null}
+
+      {activeTab === "day-pass" ? (
+        <DayPassTab
+          studioId={selectedStudioId}
+          templates={dayPassTemplates}
+          onToggle={(t) => void handleDayPassToggle(t)}
+          pendingId={dayPassPendingId}
+          loading={dayPassLoading}
+          error={dayPassError}
+        />
+      ) : null}
+
+      {showPlanModal && selectedStudioId ? (
         <PlanModal
           editing={editingPlan}
           studioId={selectedStudioId}
@@ -1482,7 +1186,7 @@ export default function MembershipsPage() {
             void loadOverview();
           }}
         />
-      )}
+      ) : null}
     </div>
   );
 }

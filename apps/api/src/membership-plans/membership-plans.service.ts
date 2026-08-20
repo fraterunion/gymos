@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import type { MembershipPlan, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../sales/audit.service';
+import { buildAuditChangesRecord, toAuditMetadata } from '../sales/audit-metadata.utils';
 import type { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
 import type { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
 import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
@@ -65,7 +67,10 @@ function mapPlanWithClassAccess(plan: PlanWithAccess): MembershipPlan & { classA
 
 @Injectable()
 export class MembershipPlansService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async listActivePlans(studioId: string): Promise<Array<MembershipPlan & { classAccess: PlanClassAccessDto }>> {
     const plans = await this.prisma.membershipPlan.findMany({
@@ -120,6 +125,7 @@ export class MembershipPlansService {
   async createPlan(
     studioId: string,
     dto: CreateMembershipPlanDto,
+    actorUserId?: string,
   ): Promise<MembershipPlan & { classAccess: PlanClassAccessDto }> {
     await this.ensureStudioExists(studioId);
 
@@ -164,13 +170,31 @@ export class MembershipPlansService {
       });
     });
 
-    return mapPlanWithClassAccess(plan);
+    const mapped = mapPlanWithClassAccess(plan);
+    if (actorUserId) {
+      await this.audit.log({
+        studioId,
+        actorUserId,
+        action: 'MEMBERSHIP_PLAN_CREATED',
+        entityType: 'membership_plan',
+        entityId: mapped.id,
+        metadata: {
+          planName: mapped.name,
+          priceCents: mapped.priceCents,
+          classCredits: mapped.classCredits,
+          entitlementDays: mapped.entitlementDays,
+          allClassesAccess: mapped.allClassesAccess,
+        },
+      });
+    }
+    return mapped;
   }
 
   async updatePlan(
     studioId: string,
     planId: string,
     dto: UpdateMembershipPlanDto,
+    actorUserId?: string,
   ): Promise<MembershipPlan & { classAccess: PlanClassAccessDto }> {
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: planId, studioId, deletedAt: null },
@@ -250,10 +274,96 @@ export class MembershipPlansService {
       });
     });
 
-    return mapPlanWithClassAccess(updated);
+    const mapped = mapPlanWithClassAccess(updated);
+    if (actorUserId) {
+      if (accessChanged) {
+        await this.logPlanClassAccessChanges(
+          studioId,
+          planId,
+          mapped.name,
+          actorUserId,
+          plan,
+          nextAllClassesAccess,
+          classTemplateIds,
+          mapped,
+        );
+      }
+      const scalarChanges = this.diffPlanChanges(plan, mapped, dto);
+      if (scalarChanges.length > 0) {
+        await this.audit.log({
+          studioId,
+          actorUserId,
+          action: 'MEMBERSHIP_PLAN_UPDATED',
+          entityType: 'membership_plan',
+          entityId: planId,
+          metadata: toAuditMetadata({
+            planName: mapped.name,
+            changes: buildAuditChangesRecord(scalarChanges),
+          }),
+        });
+      }
+    }
+    return mapped;
   }
 
-  async softDeletePlan(studioId: string, planId: string): Promise<void> {
+  private async logPlanClassAccessChanges(
+    studioId: string,
+    planId: string,
+    planName: string,
+    actorUserId: string,
+    before: PlanWithAccess,
+    nextAllClassesAccess: boolean,
+    nextTemplateIds: string[],
+    afterMapped: MembershipPlan & { classAccess: PlanClassAccessDto },
+  ): Promise<void> {
+    const beforeIds = new Set(before.classTemplateAccess.map((row) => row.classTemplateId));
+    const nameById = new Map(
+      before.classTemplateAccess.map((row) => [row.classTemplateId, row.classTemplate.name]),
+    );
+    for (const template of afterMapped.classAccess.templates) {
+      nameById.set(template.id, template.name);
+    }
+
+    const afterIds = nextAllClassesAccess
+      ? new Set<string>()
+      : new Set(nextTemplateIds);
+
+    for (const templateId of afterIds) {
+      if (!beforeIds.has(templateId)) {
+        await this.audit.log({
+          studioId,
+          actorUserId,
+          action: 'MEMBERSHIP_PLAN_CLASS_ACCESS_GRANTED',
+          entityType: 'membership_plan',
+          entityId: planId,
+          metadata: toAuditMetadata({
+            planName,
+            classTemplateId: templateId,
+            classTemplateName: nameById.get(templateId) ?? null,
+          }),
+        });
+      }
+    }
+
+    for (const templateId of beforeIds) {
+      if (!afterIds.has(templateId)) {
+        await this.audit.log({
+          studioId,
+          actorUserId,
+          action: 'MEMBERSHIP_PLAN_CLASS_ACCESS_REVOKED',
+          entityType: 'membership_plan',
+          entityId: planId,
+          metadata: toAuditMetadata({
+            planName,
+            classTemplateId: templateId,
+            classTemplateName: nameById.get(templateId) ?? null,
+          }),
+        });
+      }
+    }
+  }
+
+  async softDeletePlan(studioId: string, planId: string, actorUserId?: string): Promise<void> {
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: planId, studioId, deletedAt: null },
     });
@@ -267,6 +377,88 @@ export class MembershipPlansService {
         active: false,
       },
     });
+    if (actorUserId) {
+      await this.audit.log({
+        studioId,
+        actorUserId,
+        action: 'MEMBERSHIP_PLAN_ARCHIVED',
+        entityType: 'membership_plan',
+        entityId: planId,
+        metadata: { planName: plan.name },
+      });
+    }
+  }
+
+  async listPlanConfigurationHistory(
+    studioId: string,
+    planId: string,
+    limit = 20,
+  ): Promise<
+    Array<{
+      id: string;
+      action: string;
+      createdAt: Date;
+      actor: { id: string; firstName: string; lastName: string };
+      metadata: Prisma.JsonValue;
+    }>
+  > {
+    const plan = await this.prisma.membershipPlan.findFirst({
+      where: { id: planId, studioId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!plan) {
+      throw new NotFoundException('Membership plan not found');
+    }
+
+    return this.prisma.auditLog.findMany({
+      where: {
+        studioId,
+        entityType: 'membership_plan',
+        entityId: planId,
+        action: {
+          in: [
+            'MEMBERSHIP_PLAN_CREATED',
+            'MEMBERSHIP_PLAN_UPDATED',
+            'MEMBERSHIP_PLAN_ARCHIVED',
+            'MEMBERSHIP_PLAN_CLASS_ACCESS_GRANTED',
+            'MEMBERSHIP_PLAN_CLASS_ACCESS_REVOKED',
+          ],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(limit, 50),
+      select: {
+        id: true,
+        action: true,
+        createdAt: true,
+        metadata: true,
+        actor: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+  }
+
+  private diffPlanChanges(
+    before: PlanWithAccess,
+    after: MembershipPlan & { classAccess: PlanClassAccessDto },
+    dto: UpdateMembershipPlanDto,
+  ): Array<{ field: string; oldValue: unknown; newValue: unknown }> {
+    const changes: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
+    const track = (field: string, oldValue: unknown, newValue: unknown) => {
+      if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+        changes.push({ field, oldValue, newValue });
+      }
+    };
+
+    if (dto.name !== undefined) track('name', before.name, after.name);
+    if (dto.description !== undefined) track('description', before.description, after.description);
+    if (dto.priceCents !== undefined) track('priceCents', before.priceCents, after.priceCents);
+    if (dto.currency !== undefined) track('currency', before.currency, after.currency);
+    if (dto.billingInterval !== undefined) track('billingInterval', before.billingInterval, after.billingInterval);
+    if (dto.classCredits !== undefined) track('classCredits', before.classCredits, after.classCredits);
+    if (dto.entitlementDays !== undefined) track('entitlementDays', before.entitlementDays, after.entitlementDays);
+    if (dto.active !== undefined) track('active', before.active, after.active);
+    if (dto.allClassesAccess !== undefined) track('allClassesAccess', before.allClassesAccess, after.allClassesAccess);
+    return changes;
   }
 
   private assertRestrictedAccess(

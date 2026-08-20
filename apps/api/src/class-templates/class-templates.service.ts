@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import type { ClassTemplate, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../sales/audit.service';
+import { toAuditMetadata } from '../sales/audit-metadata.utils';
 import { isClassIncludedInPlan } from '../membership-plans/membership-plan-class-access.utils';
 import type { CreateClassTemplateDto } from './dto/create-class-template.dto';
 import type { UpdateClassTemplateDto } from './dto/update-class-template.dto';
@@ -24,7 +26,10 @@ const templateListInclude = {
 
 @Injectable()
 export class ClassTemplatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async listTemplates(studioId: string) {
     return this.prisma.classTemplate.findMany({
@@ -74,6 +79,7 @@ export class ClassTemplatesService {
     studioId: string,
     templateId: string,
     dto: UpdateClassTemplateDto,
+    actorUserId?: string,
   ): Promise<ClassTemplate> {
     const existing = await this.prisma.classTemplate.findFirst({
       where: { id: templateId, studioId, deletedAt: null },
@@ -117,10 +123,35 @@ export class ClassTemplatesService {
     if (Object.keys(data).length === 0) {
       return existing;
     }
-    return this.prisma.classTemplate.update({
+    const updated = await this.prisma.classTemplate.update({
       where: { id: templateId },
       data,
     });
+
+    const openGymWindowChanged =
+      existing.isOpenGymSlot &&
+      (dto.accessWindowStart !== undefined || dto.accessWindowEnd !== undefined) &&
+      (nextAccessWindowStart !== existing.accessWindowStart ||
+        nextAccessWindowEnd !== existing.accessWindowEnd);
+
+    if (openGymWindowChanged && actorUserId) {
+      await this.audit.log({
+        studioId,
+        actorUserId,
+        action: 'OPEN_GYM_WINDOW_UPDATED',
+        entityType: 'class_template',
+        entityId: templateId,
+        metadata: toAuditMetadata({
+          classTemplateName: existing.name,
+          changes: {
+            accessWindowStart: { from: existing.accessWindowStart, to: nextAccessWindowStart },
+            accessWindowEnd: { from: existing.accessWindowEnd, to: nextAccessWindowEnd },
+          },
+        }),
+      });
+    }
+
+    return updated;
   }
 
   // Batched (3 queries total, independent of template/plan count) — avoids N+1 from

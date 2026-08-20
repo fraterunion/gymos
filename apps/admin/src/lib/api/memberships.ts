@@ -71,6 +71,8 @@ export type MembershipsOverview = {
   totalActivePlans: number;
   totalActiveSubscribers: number;
   totalMrrCents: number;
+  expiringWithin7Days: number;
+  requiringAttentionSubscriptions: number;
   byStatus: Record<string, number>;
 };
 
@@ -186,6 +188,28 @@ export function archiveMembershipPlan(
   });
 }
 
+export type PlanConfigurationHistoryEntry = {
+  id: string;
+  action: string;
+  createdAt: string;
+  actor: { id: string; firstName: string; lastName: string };
+  metadata: {
+    planName?: string;
+    changes?: Record<string, { from: unknown; to: unknown }>;
+    classTemplateId?: string;
+    classTemplateName?: string | null;
+  };
+};
+
+export function fetchPlanConfigurationHistory(
+  studioId: string,
+  planId: string,
+): Promise<PlanConfigurationHistoryEntry[]> {
+  return apiRequest<PlanConfigurationHistoryEntry[]>(
+    `/studios/${studioId}/membership-plans/${planId}/configuration-history`,
+  );
+}
+
 // ── Overview + subscriptions ─────────────────────────────────────────────────
 
 export function fetchMembershipsOverview(
@@ -201,6 +225,8 @@ export function fetchSubscriptions(
   opts: {
     status?: SubscriptionStatus;
     planId?: string;
+    attention?: boolean;
+    expiringWithin7Days?: boolean;
     page?: number;
     limit?: number;
   } = {},
@@ -208,6 +234,8 @@ export function fetchSubscriptions(
   const params = new URLSearchParams();
   if (opts.status) params.set("status", opts.status);
   if (opts.planId) params.set("planId", opts.planId);
+  if (opts.attention) params.set("attention", "true");
+  if (opts.expiringWithin7Days) params.set("expiringWithin7Days", "true");
   if (opts.page) params.set("page", String(opts.page));
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString() ? `?${params.toString()}` : "";

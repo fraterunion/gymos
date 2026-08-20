@@ -3,11 +3,12 @@ import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
 import { EnrollmentModule } from '../enrollment/enrollment.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { SalesModule } from '../sales/sales.module';
 import { MembershipPlansController } from './membership-plans.controller';
 import { MembershipPlansService } from './membership-plans.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, BillingModule, EnrollmentModule],
+  imports: [PrismaModule, AuthModule, BillingModule, EnrollmentModule, SalesModule],
   controllers: [MembershipPlansController],
   providers: [MembershipPlansService],
   exports: [MembershipPlansService],
