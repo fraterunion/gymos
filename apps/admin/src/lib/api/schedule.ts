@@ -26,13 +26,28 @@ export type ScheduledClassDto = {
   status: string;
   instructorId: string | null;
   classTemplateId: string;
+  scheduleTemplateId?: string | null;
   classTemplate: ClassTemplateSummary;
   instructor: InstructorSummary | null;
+  scheduleTemplate?: {
+    id: string;
+    dayOfWeek: number;
+    startTime: string;
+    startsAt: string;
+    endsAt: string | null;
+    intervalWeeks: number;
+    active: boolean;
+  } | null;
   bookedCount?: number;
   waitlistCount?: number;
   checkedInCount?: number;
   /** Studio booking rule — authoritative for desk check-in UI gating. */
   checkInWindowMinutes?: number;
+};
+
+export type StudioLocalDateTimeInput = {
+  date: string;
+  time: string;
 };
 
 export async function fetchScheduledClassById(
@@ -60,8 +75,8 @@ export async function createScheduledClass(
   studioId: string,
   input: {
     templateId: string;
-    startTime: string;
-    endTime: string;
+    localStart: StudioLocalDateTimeInput;
+    localEnd?: StudioLocalDateTimeInput;
     capacity?: number;
     instructorId?: string | null;
   },
@@ -76,8 +91,8 @@ export async function updateScheduledClass(
   studioId: string,
   scheduledClassId: string,
   input: {
-    startTime?: string;
-    endTime?: string;
+    localStart?: StudioLocalDateTimeInput;
+    localEnd?: StudioLocalDateTimeInput;
     capacity?: number;
     instructorId?: string | null;
   },

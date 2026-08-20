@@ -11,7 +11,9 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { StudioLocalDateTimeDto } from './studio-local-datetime.dto';
 
 export class CreateScheduledClassDto {
   @IsString()
@@ -19,13 +21,29 @@ export class CreateScheduledClassDto {
   @MaxLength(40)
   templateId!: string;
 
+  /** @deprecated Prefer localStart/localEnd — interpreted as UTC instants when used. */
+  @IsOptional()
   @Type(() => Date)
   @IsDate()
-  startTime!: Date;
+  startTime?: Date;
 
+  /** @deprecated Prefer localStart/localEnd */
+  @IsOptional()
   @Type(() => Date)
   @IsDate()
-  endTime!: Date;
+  endTime?: Date;
+
+  /** Studio-local start (authoritative for staff calendar). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StudioLocalDateTimeDto)
+  localStart?: StudioLocalDateTimeDto;
+
+  /** Studio-local end. When omitted with localStart, duration comes from class template. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StudioLocalDateTimeDto)
+  localEnd?: StudioLocalDateTimeDto;
 
   @IsOptional()
   @Type(() => Number)
@@ -52,6 +70,16 @@ export class UpdateScheduledClassDto {
   @Type(() => Date)
   @IsDate()
   endTime?: Date;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StudioLocalDateTimeDto)
+  localStart?: StudioLocalDateTimeDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StudioLocalDateTimeDto)
+  localEnd?: StudioLocalDateTimeDto;
 
   @IsOptional()
   @Type(() => Number)

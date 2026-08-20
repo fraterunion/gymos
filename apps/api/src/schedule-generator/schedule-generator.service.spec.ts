@@ -22,8 +22,7 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
       findMany: jest.fn(),
     },
     scheduleAutomationSettings: {
-      findUnique: jest.fn(),
-      upsert: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(null),
     },
     ...overrides,
   };
@@ -31,12 +30,9 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
 
 const STUDIO = { id: 'studio-1', timezone: 'America/Mexico_City' };
 
-// Mexico City is UTC-6 (no DST since 2023).
-// UTC midnight June 9 = June 8 18:00 Mexico City → getStudioLocalDateKey returns '2026-06-08' (Monday).
-// UTC midnight June 10 = June 9 18:00 Mexico City → getStudioLocalDateKey returns '2026-06-09' (Tuesday).
-// So this 1-day UTC window causes the generator to process local date June 8 (Monday) only.
-const FROM = new Date('2026-06-09T00:00:00.000Z'); // utcFrom after normalization
-const TO = new Date('2026-06-10T00:00:00.000Z');   // utcTo — one UTC day window
+// Mexico City is UTC-6. UTC midnight Oct 6 = Oct 5 evening local → local date Oct 5 (Monday).
+const FROM = new Date('2026-10-06T00:00:00.000Z');
+const TO = new Date('2026-10-07T00:00:00.000Z');
 
 describe('ScheduleGeneratorService', () => {
   let service: ScheduleGeneratorService;
@@ -83,6 +79,9 @@ describe('ScheduleGeneratorService', () => {
           dayOfWeek: 1, // Monday
           startTime: '06:00',
           capacity: null,
+          startsAt: new Date('2020-01-01T00:00:00.000Z'),
+          endsAt: null,
+          intervalWeeks: 1,
           classTemplate: { id: 'ct-1', name: 'Upper Push', durationMinutes: 60, defaultCapacity: 15 },
         },
       ]);
@@ -109,12 +108,15 @@ describe('ScheduleGeneratorService', () => {
           dayOfWeek: 1, // Monday
           startTime: '06:00',
           capacity: null,
+          startsAt: new Date('2020-01-01T00:00:00.000Z'),
+          endsAt: null,
+          intervalWeeks: 1,
           classTemplate: { id: 'ct-1', name: 'Upper Push', durationMinutes: 60, defaultCapacity: 15 },
         },
       ]);
       // Simulate that 06:00 Mexico City = 12:00 UTC already exists
       (prisma.scheduledClass.findMany as jest.Mock).mockResolvedValue([
-        { classTemplateId: 'ct-1', startsAt: new Date('2026-06-08T12:00:00.000Z') },
+        { classTemplateId: 'ct-1', startsAt: new Date('2026-10-05T12:00:00.000Z'), scheduleTemplateId: null, status: 'SCHEDULED' },
       ]);
 
       const result = await service.runGeneration('studio-1', FROM, TO, {

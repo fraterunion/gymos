@@ -1,11 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
 import { ClassStatus } from '@prisma/client';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  getDayOfWeekFromDateKey,
   getStudioLocalDateKey,
   studioLocalTimeToUtc,
 } from '../common/date/studio-local-date';
+import {
+  indexExistingOccurrences,
+  isTemplateActiveOnDateKey,
+  MaterializableTemplate,
+  shouldSkipCandidate,
+} from '../schedule/schedule-materialization';
+import { occurrenceDedupKey } from '../schedule/schedule-occurrence-key';
 
 export interface GenerationSummary {
   generated: number;
@@ -22,6 +28,8 @@ export interface GenerationOptions {
   triggeredBy: 'MANUAL' | 'AUTOMATIC';
   userId?: string;
 }
+
+const DEFAULT_HORIZON_DAYS = 90;
 
 @Injectable()
 export class ScheduleGeneratorService {
@@ -156,18 +164,18 @@ export class ScheduleGeneratorService {
       return { generated: 0, skipped: 0, conflicts: 0, errors: 0, durationMs: Date.now() - t0, breakdown: {} };
     }
 
-    // Normalize range to UTC midnight boundaries
     const utcFrom = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
     const utcTo = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
 
-    // Build candidate list: one entry per (template × matching day in range)
     type Candidate = {
+      scheduleTemplateId: string;
       classTemplateId: string;
       instructorId: string | null;
       startsAt: Date;
       endsAt: Date;
       capacity: number;
       templateName: string;
+      localDateKey: string;
     };
 
     const candidates: Candidate[] = [];
@@ -175,10 +183,9 @@ export class ScheduleGeneratorService {
 
     while (current < utcTo) {
       const dateKey = getStudioLocalDateKey(current, studio.timezone);
-      const dow = getDayOfWeekFromDateKey(dateKey);
 
-      for (const tpl of templates) {
-        if (tpl.dayOfWeek !== dow) continue;
+      for (const tpl of templates as MaterializableTemplate[]) {
+        if (!isTemplateActiveOnDateKey(tpl, dateKey, studio.timezone)) continue;
 
         const startsAt = studioLocalTimeToUtc(dateKey, tpl.startTime, studio.timezone);
         const endsAt = new Date(
@@ -187,12 +194,14 @@ export class ScheduleGeneratorService {
         const capacity = tpl.capacity ?? tpl.classTemplate.defaultCapacity;
 
         candidates.push({
+          scheduleTemplateId: tpl.id,
           classTemplateId: tpl.classTemplateId,
           instructorId: tpl.instructorId ?? null,
           startsAt,
           endsAt,
           capacity,
           templateName: tpl.classTemplate.name,
+          localDateKey: dateKey,
         });
       }
 
@@ -203,31 +212,46 @@ export class ScheduleGeneratorService {
       return { generated: 0, skipped: 0, conflicts: 0, errors: 0, durationMs: Date.now() - t0, breakdown: {} };
     }
 
-    // Bulk-fetch existing classes in the range (single query)
     const existingClasses = await this.prisma.scheduledClass.findMany({
       where: {
         studioId,
         startsAt: { gte: utcFrom, lt: utcTo },
       },
-      select: { classTemplateId: true, startsAt: true },
+      select: {
+        classTemplateId: true,
+        startsAt: true,
+        scheduleTemplateId: true,
+        status: true,
+      },
     });
 
-    const existingKeys = new Set(
-      existingClasses.map(
-        (r) => `${r.classTemplateId}|${r.startsAt.toISOString()}`,
-      ),
+    const { dedupKeys, templateDateKeys } = indexExistingOccurrences(
+      existingClasses,
+      studio.timezone,
     );
 
-    // Partition: new vs already-existing
     const toCreate: Candidate[] = [];
     const breakdown: Record<string, { name: string; generated: number; skipped: number }> = {};
 
     for (const c of candidates) {
-      const key = `${c.classTemplateId}|${c.startsAt.toISOString()}`;
+      const key = occurrenceDedupKey(c.classTemplateId, c.startsAt);
       if (!breakdown[c.classTemplateId]) {
         breakdown[c.classTemplateId] = { name: c.templateName, generated: 0, skipped: 0 };
       }
-      if (existingKeys.has(key)) {
+      const materialized = {
+        scheduleTemplateId: c.scheduleTemplateId,
+        classTemplateId: c.classTemplateId,
+        instructorId: c.instructorId,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+        capacity: c.capacity,
+        templateName: c.templateName,
+        localDateKey: c.localDateKey,
+      };
+      if (
+        dedupKeys.has(key) ||
+        shouldSkipCandidate(materialized, dedupKeys, templateDateKeys)
+      ) {
         breakdown[c.classTemplateId]!.skipped++;
       } else {
         breakdown[c.classTemplateId]!.generated++;
@@ -248,7 +272,6 @@ export class ScheduleGeneratorService {
       };
     }
 
-    // Bulk insert — all-or-nothing for atomicity
     let errors = 0;
     if (toCreate.length > 0) {
       try {
@@ -256,6 +279,7 @@ export class ScheduleGeneratorService {
           data: toCreate.map((c) => ({
             studioId,
             classTemplateId: c.classTemplateId,
+            scheduleTemplateId: c.scheduleTemplateId,
             instructorId: c.instructorId,
             startsAt: c.startsAt,
             endsAt: c.endsAt,
@@ -271,7 +295,6 @@ export class ScheduleGeneratorService {
     const durationMs = Date.now() - t0;
     const generated = errors === 0 ? toCreate.length : 0;
 
-    // Persist run record (non-blocking — don't fail if this fails)
     let runId: string | undefined;
     try {
       const run = await this.prisma.scheduleGenerationRun.create({
@@ -297,5 +320,12 @@ export class ScheduleGeneratorService {
     }
 
     return { generated, skipped, conflicts: 0, errors, durationMs, breakdown, runId };
+  }
+
+  private async getHorizonDays(studioId: string): Promise<number> {
+    const settings = await this.prisma.scheduleAutomationSettings.findUnique({
+      where: { studioId },
+    });
+    return settings?.minFutureDays ?? DEFAULT_HORIZON_DAYS;
   }
 }

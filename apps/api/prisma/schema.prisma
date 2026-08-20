@@ -530,30 +530,43 @@ model DayPassClassAccess {
   @@map("day_pass_class_access")
 }
 
-model ScheduledClass {
-  id              String      @id @default(cuid())
-  studioId        String      @map("studio_id")
-  classTemplateId String      @map("class_template_id")
-  instructorId    String?     @map("instructor_id")
-  startsAt        DateTime    @map("starts_at")
-  endsAt          DateTime    @map("ends_at")
-  capacity        Int
-  status          ClassStatus
-  cancelReason    String?     @map("cancel_reason")
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
+/// Marks an occurrence intentionally modified outside its recurring rule.
+/// Generator skips any local date that already has a row for the same scheduleTemplateId
+/// (any status), so CANCELLED single cancellations and DETACHED edits both block regeneration
+/// without a separate exception table.
+enum ScheduleOccurrenceExceptionKind {
+  DETACHED
+}
 
-  studio        Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
-  classTemplate ClassTemplate  @relation(fields: [classTemplateId], references: [id], onDelete: Restrict)
-  instructor    User?          @relation("ScheduledClassInstructor", fields: [instructorId], references: [id], onDelete: SetNull)
-  bookings      Booking[]
-  waitlist      WaitlistEntry[]
-  attendances   Attendance[]
-  qrTokens      QRToken[]
+model ScheduledClass {
+  id                 String                           @id @default(cuid())
+  studioId           String                           @map("studio_id")
+  classTemplateId    String                           @map("class_template_id")
+  scheduleTemplateId String?                          @map("schedule_template_id")
+  instructorId       String?                          @map("instructor_id")
+  startsAt           DateTime                         @map("starts_at")
+  endsAt             DateTime                         @map("ends_at")
+  capacity           Int
+  status             ClassStatus
+  cancelReason       String?                          @map("cancel_reason")
+  exceptionKind      ScheduleOccurrenceExceptionKind? @map("exception_kind")
+  createdAt          DateTime                         @default(now()) @map("created_at")
+  updatedAt          DateTime                         @updatedAt @map("updated_at")
+
+  studio           Studio            @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  classTemplate    ClassTemplate     @relation(fields: [classTemplateId], references: [id], onDelete: Restrict)
+  scheduleTemplate ScheduleTemplate? @relation(fields: [scheduleTemplateId], references: [id], onDelete: SetNull)
+  instructor       User?             @relation("ScheduledClassInstructor", fields: [instructorId], references: [id], onDelete: SetNull)
+  bookings         Booking[]
+  waitlist         WaitlistEntry[]
+  attendances      Attendance[]
+  qrTokens         QRToken[]
 
   @@index([studioId])
   @@index([studioId, startsAt])
   @@index([classTemplateId])
+  @@index([scheduleTemplateId])
+  @@index([studioId, scheduleTemplateId, startsAt])
   @@index([instructorId])
   @@index([status])
   @@map("scheduled_classes")
@@ -875,14 +888,21 @@ model ScheduleTemplate {
   dayOfWeek       Int       @map("day_of_week")
   startTime       String    @map("start_time")
   capacity        Int?
+  /// Local calendar date (stored as UTC anchor) when this recurring rule becomes effective.
+  startsAt        DateTime  @default(now()) @map("starts_at")
+  /// Optional end date (UTC anchor of local end date). Null = no fixed end (rolling horizon only).
+  endsAt          DateTime? @map("ends_at")
+  /// Repeat every N weeks (1 = weekly).
+  intervalWeeks   Int       @default(1) @map("interval_weeks")
   active          Boolean   @default(true)
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
   deletedAt       DateTime? @map("deleted_at")
 
-  studio        Studio        @relation(fields: [studioId], references: [id], onDelete: Restrict)
-  classTemplate ClassTemplate @relation(fields: [classTemplateId], references: [id], onDelete: Restrict)
-  instructor    User?         @relation("ScheduleTemplateInstructor", fields: [instructorId], references: [id])
+  studio           Studio           @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  classTemplate    ClassTemplate    @relation(fields: [classTemplateId], references: [id], onDelete: Restrict)
+  instructor       User?            @relation("ScheduleTemplateInstructor", fields: [instructorId], references: [id])
+  scheduledClasses ScheduledClass[]
 
   @@index([studioId])
   @@index([studioId, active])

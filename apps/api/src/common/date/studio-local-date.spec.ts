@@ -146,4 +146,19 @@ describe('studioLocalTimeToUtc', () => {
     const result = studioLocalTimeToUtc('2026-06-08', '20:00', 'America/Mexico_City');
     expect(result.toISOString()).toBe('2026-06-09T02:00:00.000Z');
   });
+
+  it('keeps 07:00 local in New York across DST fall 2026', () => {
+    const before = studioLocalTimeToUtc('2026-11-04', '07:00', 'America/New_York');
+    const after = studioLocalTimeToUtc('2026-11-11', '07:00', 'America/New_York');
+    const fmt = (d: Date) =>
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).format(d);
+    expect(fmt(before)).toMatch(/07:00/);
+    expect(fmt(after)).toMatch(/07:00/);
+    expect(after.getTime() - before.getTime()).toBe(7 * 86_400_000);
+  });
 });

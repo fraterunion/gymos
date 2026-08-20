@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import {
   addDaysToDateKey,
   getStudioLocalDateKey,
   studioLocalDateKeyToUtcAnchor,
+  studioLocalTimeToUtc,
 } from '../common/date/studio-local-date';
 import type { ScheduleQueryDto } from './dto/schedule-query.dto';
 import type {
@@ -17,6 +19,8 @@ import type {
   CreateScheduledClassDto,
   UpdateScheduledClassDto,
 } from './dto/scheduled-class.dto';
+import type { StudioLocalDateTimeDto } from './dto/studio-local-datetime.dto';
+import { ScheduleConflictsService } from './schedule-conflicts.service';
 
 function scheduleInclude(studioId: string) {
   return {
@@ -61,12 +65,26 @@ function scheduleInclude(studioId: string) {
         },
       },
     },
+    scheduleTemplate: {
+      select: {
+        id: true,
+        dayOfWeek: true,
+        startTime: true,
+        startsAt: true,
+        endsAt: true,
+        intervalWeeks: true,
+        active: true,
+      },
+    },
   } satisfies Prisma.ScheduledClassInclude;
 }
 
 @Injectable()
 export class ScheduleService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly conflicts: ScheduleConflictsService,
+  ) {}
 
   async listSchedule(studioId: string, query: ScheduleQueryDto) {
     const from = new Date(query.from);
@@ -182,15 +200,27 @@ export class ScheduleService {
     studioId: string,
     dto: CreateScheduledClassDto,
   ): Promise<ScheduledClass> {
-    if (dto.startTime >= dto.endTime) {
-      throw new BadRequestException('startTime must be before endTime');
-    }
+    const studio = await this.requireStudioTimezone(studioId);
     const template = await this.prisma.classTemplate.findFirst({
       where: { id: dto.templateId, studioId, deletedAt: null },
     });
     if (!template) {
       throw new NotFoundException('Class template not found');
     }
+
+    const { startsAt, endsAt } = this.resolveOccurrenceTimes(
+      dto.localStart,
+      dto.localEnd,
+      dto.startTime,
+      dto.endTime,
+      studio.timezone,
+      template.durationMinutes,
+    );
+
+    if (startsAt >= endsAt) {
+      throw new BadRequestException('startTime must be before endTime');
+    }
+
     const capacity = dto.capacity ?? template.defaultCapacity;
     if (capacity <= 0) {
       throw new BadRequestException('capacity must be greater than 0');
@@ -198,12 +228,32 @@ export class ScheduleService {
     if (dto.instructorId) {
       await this.assertActiveStudioMember(studioId, dto.instructorId);
     }
+
+    await this.assertNoDuplicateSlot(studioId, template.id, startsAt);
+
+    const slotConflicts = await this.conflicts.findConflictsForSlots(studioId, [
+      {
+        classTemplateId: template.id,
+        instructorId: dto.instructorId ?? null,
+        startsAt,
+        endsAt,
+        capacity,
+      },
+    ]);
+    const { blocking } = this.conflicts.partitionConflicts(slotConflicts);
+    if (blocking.length > 0) {
+      throw new ConflictException({
+        message: 'Cannot create class due to conflicts.',
+        conflicts: blocking,
+      });
+    }
+
     return this.prisma.scheduledClass.create({
       data: {
         studioId,
         classTemplateId: template.id,
-        startsAt: dto.startTime,
-        endsAt: dto.endTime,
+        startsAt,
+        endsAt,
         capacity,
         instructorId: dto.instructorId ?? null,
         status: ClassStatus.SCHEDULED,
@@ -216,8 +266,10 @@ export class ScheduleService {
     scheduledClassId: string,
     dto: UpdateScheduledClassDto,
   ): Promise<ScheduledClass> {
+    const studio = await this.requireStudioTimezone(studioId);
     const existing = await this.prisma.scheduledClass.findFirst({
       where: { id: scheduledClassId, studioId },
+      include: { classTemplate: true },
     });
     if (!existing) {
       throw new NotFoundException('Scheduled class not found');
@@ -225,17 +277,43 @@ export class ScheduleService {
     if (dto.instructorId) {
       await this.assertActiveStudioMember(studioId, dto.instructorId);
     }
-    const nextStart = dto.startTime ?? existing.startsAt;
-    const nextEnd = dto.endTime ?? existing.endsAt;
+
+    const resolved = this.resolveOccurrenceTimes(
+      dto.localStart,
+      dto.localEnd,
+      dto.startTime ?? (dto.localStart ? undefined : existing.startsAt),
+      dto.endTime ?? (dto.localEnd ? undefined : existing.endsAt),
+      studio.timezone,
+      existing.classTemplate.durationMinutes,
+      existing.startsAt,
+      existing.endsAt,
+    );
+
+    const nextStart = dto.localStart || dto.startTime !== undefined ? resolved.startsAt : existing.startsAt;
+    const nextEnd = dto.localEnd || dto.endTime !== undefined ? resolved.endsAt : existing.endsAt;
+
     if (nextStart >= nextEnd) {
       throw new BadRequestException('startTime must be before endTime');
     }
     if (dto.capacity !== undefined && dto.capacity <= 0) {
       throw new BadRequestException('capacity must be greater than 0');
     }
+    if (dto.capacity !== undefined) {
+      await this.conflicts.assertCapacityNotBelowBookings(scheduledClassId, dto.capacity);
+    }
+
+    if (nextStart.getTime() !== existing.startsAt.getTime()) {
+      await this.assertNoDuplicateSlot(
+        studioId,
+        existing.classTemplateId,
+        nextStart,
+        scheduledClassId,
+      );
+    }
+
     const data: Prisma.ScheduledClassUpdateInput = {
-      ...(dto.startTime !== undefined ? { startsAt: dto.startTime } : {}),
-      ...(dto.endTime !== undefined ? { endsAt: dto.endTime } : {}),
+      ...(dto.localStart || dto.startTime !== undefined ? { startsAt: nextStart } : {}),
+      ...(dto.localEnd || dto.endTime !== undefined ? { endsAt: nextEnd } : {}),
       ...(dto.capacity !== undefined ? { capacity: dto.capacity } : {}),
       ...(dto.instructorId !== undefined ? { instructorId: dto.instructorId } : {}),
       ...(dto.status !== undefined ? { status: dto.status } : {}),
@@ -281,11 +359,6 @@ export class ScheduleService {
       throw new NotFoundException('Studio not found');
     }
 
-    // Compute the UTC window that spans today in the studio's local timezone.
-    // dayStart = local midnight (00:00:00) in UTC.
-    // dayEnd   = next local midnight (00:00:00) in UTC.
-    // DST-safe: studioLocalDateKeyToUtcAnchor handles the offset for each boundary
-    // independently, so a 23- or 25-hour DST day is handled correctly.
     const dayKey = getStudioLocalDateKey(now, studio.timezone);
     const dayStart = studioLocalDateKeyToUtcAnchor(dayKey, studio.timezone);
     const nextDayKey = addDaysToDateKey(dayKey, 1);
@@ -331,6 +404,64 @@ export class ScheduleService {
       bookedCount:      row._count.bookings,
       checkedInCount:   row._count.attendances,
     }));
+  }
+
+  resolveOccurrenceTimes(
+    localStart: StudioLocalDateTimeDto | undefined,
+    localEnd: StudioLocalDateTimeDto | undefined,
+    startTime: Date | undefined,
+    endTime: Date | undefined,
+    timezone: string,
+    durationMinutes: number,
+    fallbackStart?: Date,
+    fallbackEnd?: Date,
+  ): { startsAt: Date; endsAt: Date } {
+    if (localStart) {
+      const startsAt = studioLocalTimeToUtc(localStart.date, localStart.time, timezone);
+      const endsAt = localEnd
+        ? studioLocalTimeToUtc(localEnd.date, localEnd.time, timezone)
+        : new Date(startsAt.getTime() + durationMinutes * 60_000);
+      return { startsAt, endsAt };
+    }
+    if (startTime && endTime) {
+      return { startsAt: startTime, endsAt: endTime };
+    }
+    if (fallbackStart && fallbackEnd) {
+      return { startsAt: fallbackStart, endsAt: fallbackEnd };
+    }
+    throw new BadRequestException(
+      'Provide localStart/localEnd or startTime/endTime for scheduling.',
+    );
+  }
+
+  private async requireStudioTimezone(studioId: string) {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { timezone: true },
+    });
+    if (!studio) throw new NotFoundException('Studio not found');
+    return studio;
+  }
+
+  private async assertNoDuplicateSlot(
+    studioId: string,
+    classTemplateId: string,
+    startsAt: Date,
+    excludeId?: string,
+  ) {
+    const existing = await this.prisma.scheduledClass.findFirst({
+      where: {
+        studioId,
+        classTemplateId,
+        startsAt,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    });
+    if (existing) {
+      throw new ConflictException(
+        'A class with this type and start time already exists.',
+      );
+    }
   }
 
   private async assertActiveStudioMember(studioId: string, userId: string): Promise<void> {
