@@ -38,6 +38,12 @@ export function studioDate(iso: string | null | undefined, withYear = false) {
 
 type RenewalMembership = Pick<MemberSubscriptionSummary, "lifecycleStatus" | "source" | "cancelAtPeriodEnd" | "currentPeriodStart" | "currentPeriodEnd" | "effectiveEnd"> & { entitlementDays?: number | null };
 
+export const PAYMENT_SOURCE_PRESENTATION = {
+  STRIPE: { label: "Stripe", className: "bg-violet-50 text-violet-700 ring-violet-600/15" },
+  CASH: { label: "Efectivo", className: "bg-emerald-50 text-emerald-700 ring-emerald-600/15" },
+  MANUAL: { label: "Manual", className: "bg-sky-50 text-sky-700 ring-sky-600/15" },
+} as const;
+
 export function renewalPresentation(subscription: RenewalMembership, now = new Date()) {
   const end = subscription.effectiveEnd;
   if (subscription.lifecycleStatus === "SCHEDULED") {
@@ -51,14 +57,19 @@ export function renewalPresentation(subscription: RenewalMembership, now = new D
     return { title: `Venció ${studioDate(end)}`, detail: days === null ? null : days === 0 ? "Hoy" : `hace ${days} ${days === 1 ? "día" : "días"}` };
   }
   if (subscription.source === "STRIPE" && !subscription.cancelAtPeriodEnd) {
-    return { title: `Renueva ${studioDate(subscription.currentPeriodEnd ?? end)}`, detail: "Automática" };
+    return {
+      title: `Renueva ${studioDate(subscription.currentPeriodEnd ?? end)}`,
+      detail: subscription.entitlementDays
+        ? `Ciclo de ${subscription.entitlementDays} días · vigencia hasta ${studioDate(end)}`
+        : "Automática",
+    };
   }
-  const fixedDuration = subscription.entitlementDays
-    ? `Programa de ${subscription.entitlementDays} días`
-    : subscription.source === "STRIPE" && subscription.cancelAtPeriodEnd
-      ? "No renovará"
+  const detail = subscription.source === "STRIPE" && subscription.cancelAtPeriodEnd
+    ? "No renovará"
+    : subscription.entitlementDays
+      ? `Renovación manual · ciclo de ${subscription.entitlementDays} días`
       : "Renovación manual";
-  return { title: `Vence ${studioDate(end)}`, detail: fixedDuration };
+  return { title: `Vence ${studioDate(end)}`, detail };
 }
 
 export function visitPresentation(iso: string | null | undefined, now = new Date()) {

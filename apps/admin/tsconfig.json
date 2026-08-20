@@ -1,6 +1,7 @@
 {
   "extends": "@gymos/config/tsconfig/next",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "incremental": true,
     "plugins": [
       {

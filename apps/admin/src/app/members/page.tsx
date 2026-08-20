@@ -18,6 +18,7 @@ import {
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import {
   nextClassPresentation,
+  PAYMENT_SOURCE_PRESENTATION,
   PRIMARY_STATUS_COLORS,
   PRIMARY_STATUS_LABELS,
   renewalPresentation,
@@ -38,7 +39,7 @@ function initials(firstName: string, lastName: string) {
 function RowSkeleton() {
   return (
     <tr className="border-b border-zinc-100">
-      {[...Array(9)].map((_, i) => (
+      {[...Array(8)].map((_, i) => (
         <td key={i} className="px-4 py-3.5">
           <div className="h-4 rounded bg-zinc-200 animate-pulse" style={{ width: `${60 + (i * 17) % 40}%` }} />
         </td>
@@ -86,6 +87,15 @@ function MemberStatusPill({ status }: { status: keyof typeof PRIMARY_STATUS_LABE
   return (
     <span className={`${adminStatusPill} ring-1 ring-inset ${PRIMARY_STATUS_COLORS[status]}`}>
       {PRIMARY_STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+function PaymentSourceBadge({ source }: { source: keyof typeof PAYMENT_SOURCE_PRESENTATION }) {
+  const presentation = PAYMENT_SOURCE_PRESENTATION[source];
+  return (
+    <span className={`${adminStatusPill} ring-1 ring-inset ${presentation.className}`}>
+      {presentation.label}
     </span>
   );
 }
@@ -348,7 +358,6 @@ export default function MembersPage() {
                 <th className="hidden px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600 lg:table-cell">Uso</th>
                 <SortTh label="Última visita" field="lastAttendance" current={sortBy} dir={sortDir} onSort={handleSort} className="hidden xl:table-cell" />
                 <th className="hidden px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600 xl:table-cell">Próxima clase</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-600">Atención</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
@@ -357,7 +366,7 @@ export default function MembersPage() {
                 : members.length === 0
                   ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-12 text-center text-sm text-zinc-600">
+                      <td colSpan={8} className="px-4 py-12 text-center text-sm text-zinc-600">
                         {hasFilters
                           ? "Ningún miembro coincide con tus filtros."
                           : "Aún no hay miembros registrados."}
@@ -389,12 +398,11 @@ export default function MembersPage() {
                           <span className={`${adminStatusPill} bg-zinc-100 text-zinc-500 ring-1 ring-inset ring-zinc-500/15`}>Sin membresía</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-sm font-medium text-zinc-700">{m.subscription ? m.subscription.source === "CASH" ? "Efectivo" : m.subscription.source === "STRIPE" ? "Stripe" : "Manual" : "—"}</td>
+                      <td className="px-4 py-3.5">{m.subscription ? <PaymentSourceBadge source={m.subscription.source} /> : "—"}</td>
                       <td className="px-4 py-3.5 text-sm text-zinc-700">{m.subscription ? (() => { const renewal = renewalPresentation(m.subscription); return <><span className="block font-medium">{renewal.title}</span>{renewal.detail ? <span className="block text-xs text-zinc-400">{renewal.detail}</span> : null}</>; })() : "—"}</td>
                       <td className="hidden px-4 py-3.5 text-sm text-zinc-700 lg:table-cell">{m.usage?.limit === null ? "Ilimitado" : m.usage ? <><span className="font-medium tabular-nums">{m.usage.used} / {m.usage.limit}</span><span className={`block text-xs ${m.usage.remaining === 0 ? "font-medium text-rose-600" : "text-zinc-400"}`}>{m.usage.remaining === 0 ? "Sin créditos" : `${m.usage.remaining} ${m.usage.remaining === 1 ? "restante" : "restantes"}`}</span></> : "—"}</td>
                       <td className="hidden px-4 py-3.5 text-sm text-zinc-600 xl:table-cell">{(() => { const visit = visitPresentation(m.lastAttendanceAt); return <><span className="block">{visit.title}</span>{visit.detail ? <span className="block text-xs text-zinc-400">{visit.detail}</span> : null}</>; })()}</td>
                       <td className="hidden px-4 py-3.5 text-sm text-zinc-600 xl:table-cell"><span className="block">{nextClassPresentation(m.nextBooking?.startsAt)}</span>{m.nextBooking ? <span className="block max-w-36 truncate text-xs text-zinc-400">{m.nextBooking.className}</span> : null}</td>
-                      <td className="px-4 py-3.5 text-sm font-medium text-zinc-700">{m.attention?.label ?? "—"}</td>
                     </tr>
                   ))}
             </tbody>
