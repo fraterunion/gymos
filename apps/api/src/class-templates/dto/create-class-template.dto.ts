@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -14,6 +15,8 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { ClassCategory, IntensityLevel } from '@prisma/client';
+
+export const HH_MM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export class CreateClassTemplateDto {
   @IsString()
@@ -125,4 +128,24 @@ export class CreateClassTemplateDto {
   @Min(0)
   @Max(10_000)
   waitlistCapacity?: number | null;
+
+  // Designates this template as unstructured Open Gym access rather than a coached class.
+  // Multiple Open Gym templates per studio are allowed — the booking engine treats each by ID.
+  @IsOptional()
+  @IsBoolean()
+  isOpenGymSlot?: boolean;
+
+  // Local booking time window (HH:mm, 24h, studio timezone). Both bounds must be set together;
+  // see ClassTemplatesService.assertValidAccessWindow for the start < end invariant.
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @Matches(HH_MM_PATTERN, { message: 'accessWindowStart must be HH:mm (24h)' })
+  accessWindowStart?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @Matches(HH_MM_PATTERN, { message: 'accessWindowEnd must be HH:mm (24h)' })
+  accessWindowEnd?: string | null;
 }

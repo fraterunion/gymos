@@ -55,6 +55,16 @@ export class UpdateMembershipPlanDto {
   @Max(1_000_000)
   classCredits?: number | null;
 
+  // Fixed-duration entitlement window in days (e.g. Booty Lab = 45). When set, this
+  // overrides billingInterval for both the GymOS access window and the Stripe recurring price.
+  @IsOptional()
+  @ValidateIf((_, v) => v !== undefined && v !== null)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(3_650)
+  entitlementDays?: number | null;
+
   @IsOptional()
   @IsBoolean()
   active?: boolean;

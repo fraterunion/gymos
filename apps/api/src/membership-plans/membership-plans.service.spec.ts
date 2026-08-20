@@ -184,4 +184,118 @@ describe('MembershipPlansService class access', () => {
     });
     expect(prisma.membershipPlanClassAccess.createMany).toHaveBeenCalled();
   });
+
+  it('creates a fixed-duration plan with entitlementDays', async () => {
+    prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
+      fn(prisma),
+    );
+    prisma.classTemplate.findMany.mockResolvedValue([{ id: 't1' }]);
+    prisma.membershipPlan.create.mockResolvedValue({ id: 'plan-booty' });
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      id: 'plan-booty',
+      studioId: 'studio-1',
+      name: 'Booty Lab by Etzia',
+      entitlementDays: 45,
+      allClassesAccess: false,
+      classTemplateAccess: [
+        { classTemplate: { id: 't1', name: 'Booty Lab', durationMinutes: 45, deletedAt: null } },
+      ],
+    });
+
+    await service.createPlan('studio-1', {
+      name: 'Booty Lab by Etzia',
+      priceCents: 90000,
+      billingInterval: BillingInterval.MONTHLY,
+      classCredits: 4,
+      entitlementDays: 45,
+      allClassesAccess: false,
+      classTemplateIds: ['t1'],
+    });
+
+    expect(prisma.membershipPlan.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ entitlementDays: 45 }) }),
+    );
+  });
+
+  it('omitting entitlementDays on create persists null (recurring plan)', async () => {
+    prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
+      fn(prisma),
+    );
+    prisma.membershipPlan.create.mockResolvedValue({ id: 'plan-1' });
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      name: 'Basic',
+      entitlementDays: null,
+      allClassesAccess: true,
+      classTemplateAccess: [],
+    });
+
+    await service.createPlan('studio-1', {
+      name: 'Basic',
+      priceCents: 1000,
+      billingInterval: BillingInterval.MONTHLY,
+      allClassesAccess: true,
+      classTemplateIds: [],
+    });
+
+    expect(prisma.membershipPlan.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ entitlementDays: null }) }),
+    );
+  });
+
+  it('updates entitlementDays on an existing plan', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-booty',
+      studioId: 'studio-1',
+      allClassesAccess: false,
+      allowedCategories: [],
+      classTemplateAccess: [{ classTemplateId: 't1' }],
+    });
+    prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
+      fn(prisma),
+    );
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      id: 'plan-booty',
+      studioId: 'studio-1',
+      entitlementDays: 45,
+      allClassesAccess: false,
+      classTemplateAccess: [
+        { classTemplate: { id: 't1', name: 'Booty Lab', durationMinutes: 45, deletedAt: null } },
+      ],
+    });
+
+    await service.updatePlan('studio-1', 'plan-booty', { entitlementDays: 45 });
+
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ entitlementDays: 45 }) }),
+    );
+  });
+
+  it('not passing entitlementDays on update leaves it untouched', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-booty',
+      studioId: 'studio-1',
+      allClassesAccess: false,
+      allowedCategories: [],
+      classTemplateAccess: [{ classTemplateId: 't1' }],
+    });
+    prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
+      fn(prisma),
+    );
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      id: 'plan-booty',
+      studioId: 'studio-1',
+      entitlementDays: 45,
+      allClassesAccess: false,
+      classTemplateAccess: [
+        { classTemplate: { id: 't1', name: 'Booty Lab', durationMinutes: 45, deletedAt: null } },
+      ],
+    });
+
+    await service.updatePlan('studio-1', 'plan-booty', { priceCents: 95000 });
+
+    const updateCall = prisma.membershipPlan.update.mock.calls[0][0];
+    expect(updateCall.data).not.toHaveProperty('entitlementDays');
+  });
 });

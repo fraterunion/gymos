@@ -14,6 +14,9 @@ export type ClassAccessTemplateDto = {
   name: string;
   durationMinutes: number;
   active: boolean;
+  isOpenGymSlot: boolean;
+  accessWindowStart: string | null;
+  accessWindowEnd: string | null;
 };
 
 export type PlanClassAccessDto = {
@@ -30,6 +33,11 @@ export type MembershipPlanDto = {
   currency: string;
   billingInterval: BillingInterval;
   classCredits: number | null;
+  /** Fixed-duration entitlement window in days (e.g. Booty Lab = 45). Overrides billingInterval
+   *  for both the GymOS access window and the Stripe recurring price when set. */
+  entitlementDays: number | null;
+  /** Legacy category-based allowlist, superseded by classAccess.templates when non-empty. */
+  allowedCategories: string[];
   active: boolean;
   stripeProductId: string | null;
   stripePriceId: string | null;
@@ -48,6 +56,7 @@ export type MembershipPlanInput = {
   currency?: string;
   billingInterval: BillingInterval;
   classCredits?: number | null;
+  entitlementDays?: number | null;
   stripeProductId?: string | null;
   stripePriceId?: string | null;
   allClassesAccess?: boolean;

@@ -64,6 +64,9 @@ export type ClassAccessTemplateDto = {
   name: string;
   durationMinutes: number;
   active: boolean;
+  isOpenGymSlot: boolean;
+  accessWindowStart: string | null;
+  accessWindowEnd: string | null;
 };
 
 export type PlanClassAccessDto = {
@@ -78,6 +81,9 @@ export function buildPlanClassAccessDto(input: {
     name: string;
     durationMinutes: number;
     deletedAt: Date | null;
+    isOpenGymSlot: boolean;
+    accessWindowStart: string | null;
+    accessWindowEnd: string | null;
   }>;
 }): PlanClassAccessDto {
   return {
@@ -87,6 +93,9 @@ export function buildPlanClassAccessDto(input: {
       name: t.name,
       durationMinutes: t.durationMinutes,
       active: t.deletedAt == null,
+      isOpenGymSlot: t.isOpenGymSlot,
+      accessWindowStart: t.accessWindowStart,
+      accessWindowEnd: t.accessWindowEnd,
     })),
   };
 }

@@ -7,8 +7,10 @@ import { ApiError } from "@/lib/api/errors";
 import {
   archiveClassTemplate,
   createClassTemplate,
+  fetchClassAccessSummary,
   fetchClassTemplates,
   updateClassTemplate,
+  type ClassAccessSummaryDto,
   type ClassCategory,
   type ClassTemplateDto,
   type ClassTemplateInput,
@@ -86,6 +88,10 @@ type FormState = {
   caloriesEstimateMax: string;
   cancellationWindowHours: string;
   waitlistCapacity: string;
+  isOpenGymSlot: boolean;
+  hasAccessWindow: boolean;
+  accessWindowStart: string;
+  accessWindowEnd: string;
 };
 
 const emptyForm: FormState = {
@@ -107,6 +113,10 @@ const emptyForm: FormState = {
   caloriesEstimateMax: "",
   cancellationWindowHours: "",
   waitlistCapacity: "",
+  isOpenGymSlot: false,
+  hasAccessWindow: false,
+  accessWindowStart: "",
+  accessWindowEnd: "",
 };
 
 function templateToForm(t: ClassTemplateDto): FormState {
@@ -129,6 +139,10 @@ function templateToForm(t: ClassTemplateDto): FormState {
     caloriesEstimateMax: t.caloriesEstimateMax !== null ? String(t.caloriesEstimateMax) : "",
     cancellationWindowHours: t.cancellationWindowHours !== null ? String(t.cancellationWindowHours) : "",
     waitlistCapacity: t.waitlistCapacity !== null ? String(t.waitlistCapacity) : "",
+    isOpenGymSlot: t.isOpenGymSlot,
+    hasAccessWindow: t.accessWindowStart !== null && t.accessWindowEnd !== null,
+    accessWindowStart: t.accessWindowStart ?? "",
+    accessWindowEnd: t.accessWindowEnd ?? "",
   };
 }
 
@@ -174,6 +188,16 @@ function TemplateModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (form.hasAccessWindow) {
+      if (!form.accessWindowStart || !form.accessWindowEnd) {
+        setError("Ingresa hora de inicio y fin para la ventana de acceso.");
+        return;
+      }
+      if (form.accessWindowStart >= form.accessWindowEnd) {
+        setError("La hora de inicio debe ser anterior a la hora de fin.");
+        return;
+      }
+    }
     setSaving(true);
     try {
       const input: ClassTemplateInput = {
@@ -195,6 +219,9 @@ function TemplateModal({
         caloriesEstimateMax: intOrNull(form.caloriesEstimateMax),
         cancellationWindowHours: intOrNull(form.cancellationWindowHours),
         waitlistCapacity: intOrNull(form.waitlistCapacity),
+        isOpenGymSlot: form.isOpenGymSlot,
+        accessWindowStart: form.hasAccessWindow ? form.accessWindowStart : null,
+        accessWindowEnd: form.hasAccessWindow ? form.accessWindowEnd : null,
       };
       const saved =
         modal.type === "edit"
@@ -302,6 +329,57 @@ function TemplateModal({
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Open Gym designation + access window */}
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-2 dark:border-zinc-700 dark:bg-zinc-800/40">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={form.isOpenGymSlot}
+                onChange={(e) => setForm((prev) => ({ ...prev, isOpenGymSlot: e.target.checked }))}
+                className="h-4 w-4 rounded border-zinc-300 accent-zinc-900 dark:border-zinc-600"
+              />
+              Es un slot de Open Gym (acceso libre, no clase con instructor)
+            </label>
+
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+              <input
+                type="checkbox"
+                checked={form.hasAccessWindow}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, hasAccessWindow: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-zinc-300 accent-zinc-900 dark:border-zinc-600"
+              />
+              Restringir a una ventana horaria de reserva
+            </label>
+            {form.hasAccessWindow && (
+              <div className="grid grid-cols-2 gap-3 pl-6">
+                <div>
+                  <label className={labelCls}>Desde</label>
+                  <input
+                    type="time"
+                    value={form.accessWindowStart}
+                    onChange={field("accessWindowStart")}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Hasta</label>
+                  <input
+                    type="time"
+                    value={form.accessWindowEnd}
+                    onChange={field("accessWindowEnd")}
+                    className={inputCls}
+                  />
+                </div>
+                <p className="col-span-2 text-[11px] text-zinc-500">
+                  Hora local del estudio. Fuera de esta ventana, ningún miembro (incluyendo Day
+                  Pass) podrá reservar esta clase, salvo staff/instructor/admin.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Difficulty label / Featured */}
@@ -517,6 +595,9 @@ function TemplateModal({
 export default function ClassesPage() {
   const { selectedStudioId, loading: studioLoading, error: studioError } = useDeskStudio();
   const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
+  const [accessSummary, setAccessSummary] = useState<Map<string, ClassAccessSummaryDto>>(
+    new Map(),
+  );
   const [instructors, setInstructors] = useState<StaffInstructorDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -526,18 +607,21 @@ export default function ClassesPage() {
   const load = useCallback(async () => {
     if (!selectedStudioId) {
       setTemplates([]);
+      setAccessSummary(new Map());
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const [tpl, instr] = await Promise.all([
+      const [tpl, instr, summary] = await Promise.all([
         fetchClassTemplates(selectedStudioId),
         fetchStaffInstructors(selectedStudioId),
+        fetchClassAccessSummary(selectedStudioId).catch(() => [] as ClassAccessSummaryDto[]),
       ]);
       setTemplates(tpl);
       setInstructors(instr);
+      setAccessSummary(new Map(summary.map((s) => [s.id, s])));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load class types");
     } finally {
@@ -699,6 +783,14 @@ export default function ClassesPage() {
                     </div>
 
                     <div className="mt-2 flex flex-wrap gap-1">
+                      {t.isOpenGymSlot ? (
+                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                          Open Gym
+                          {t.accessWindowStart && t.accessWindowEnd
+                            ? ` · ${t.accessWindowStart}–${t.accessWindowEnd}`
+                            : " · sin ventana configurada"}
+                        </span>
+                      ) : null}
                       {t.category ? (
                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${CATEGORY_COLORS[t.category]}`}>
                           {CATEGORY_OPTIONS.find((o) => o.value === t.category)?.label ?? t.category}
@@ -742,6 +834,26 @@ export default function ClassesPage() {
                         </>
                       ) : null}
                     </div>
+
+                    {(() => {
+                      const summary = accessSummary.get(t.id);
+                      if (!summary) return null;
+                      if (summary.orphan) {
+                        return (
+                          <p className="mt-2 rounded-lg bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                            SIN ACCESO — ningún plan ni Day Pass puede reservar esta clase.
+                          </p>
+                        );
+                      }
+                      const parts: string[] = [];
+                      parts.push(summary.planCount === 1 ? "1 plan" : `${summary.planCount} planes`);
+                      if (summary.dayPassAllowed) parts.push("Day Pass");
+                      return (
+                        <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {parts.join(" · ")}
+                        </p>
+                      );
+                    })()}
                     {t.tags.length > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {t.tags.slice(0, 4).map((tag) => (

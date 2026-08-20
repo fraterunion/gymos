@@ -26,6 +26,18 @@ import {
   fetchClassTemplates,
   type ClassTemplateDto,
 } from "@/lib/api/classTemplates";
+import {
+  fetchDayPassClassAccess,
+  grantDayPassClassAccess,
+  revokeDayPassClassAccess,
+  type DayPassClassAccessTemplateDto,
+} from "@/lib/api/dayPassClassAccess";
+import {
+  planAccessSummary,
+  planCycleLabel,
+  planUsageLabel,
+  planWarnings,
+} from "@/lib/membershipPlanSummary";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -113,16 +125,6 @@ function OverviewBar({ data }: { data: MembershipsOverview }) {
   );
 }
 
-function formatPlanAccessSummary(plan: MembershipPlanDto): string {
-  const access = plan.classAccess;
-  if (access.allClasses) return "Todas las clases";
-  if (access.templates.length === 0) return "Acceso restringido";
-  if (access.templates.length <= 3) {
-    return access.templates.map((t) => t.name).join(", ");
-  }
-  return `${access.templates.length} clases incluidas`;
-}
-
 // ── Plan card ─────────────────────────────────────────────────────────────────
 
 function PlanCard({
@@ -139,6 +141,10 @@ function PlanCard({
   onArchive: (p: MembershipPlanDto) => void;
 }) {
   const archived = !!plan.deletedAt || !plan.active;
+  const cycleLabel = planCycleLabel(plan);
+  const usageLabel = planUsageLabel(plan);
+  const access = planAccessSummary(plan);
+  const warnings = planWarnings(plan);
   return (
     <div
       className={`relative rounded-xl border p-5 ${
@@ -158,19 +164,31 @@ function PlanCard({
             {plan.name}
           </h3>
           <p className="mt-0.5 text-sm text-zinc-500">
-            {formatCents(plan.priceCents, plan.currency)} /{" "}
-            {INTERVAL_LABELS[plan.billingInterval].toLowerCase()}
-            {plan.classCredits === null
-              ? " · Unlimited credits"
-              : plan.classCredits === 0
-              ? ""
-              : ` · ${plan.classCredits} class credits`}
+            {formatCents(plan.priceCents, plan.currency)}
+            {cycleLabel === null ? ` / ${INTERVAL_LABELS[plan.billingInterval].toLowerCase()}` : ""}
           </p>
+          {cycleLabel !== null && (
+            <p className="text-sm text-zinc-500">{cycleLabel}</p>
+          )}
+          <p className="mt-0.5 text-sm text-zinc-500">{usageLabel}</p>
           <p className="mt-1 text-xs text-zinc-500">
-            Acceso: {formatPlanAccessSummary(plan)}
+            Acceso: {access.label}
           </p>
         </div>
       </div>
+
+      {warnings.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {warnings.map((w) => (
+            <p
+              key={w}
+              className="rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800"
+            >
+              ⚠ {w}
+            </p>
+          ))}
+        </div>
+      )}
 
       {plan.description && (
         <p className="mt-2 text-sm text-zinc-600 line-clamp-2">
@@ -256,6 +274,8 @@ type PlanFormState = {
   billingInterval: BillingInterval;
   classCredits: string;
   unlimitedCredits: boolean;
+  fixedDuration: boolean;
+  entitlementDays: string;
   stripeProductId: string;
   stripePriceId: string;
   active: boolean;
@@ -271,6 +291,8 @@ const emptyForm = (): PlanFormState => ({
   billingInterval: "MONTHLY",
   classCredits: "",
   unlimitedCredits: true,
+  fixedDuration: false,
+  entitlementDays: "",
   stripeProductId: "",
   stripePriceId: "",
   active: true,
@@ -287,6 +309,8 @@ function planToForm(p: MembershipPlanDto): PlanFormState {
     billingInterval: p.billingInterval,
     classCredits: p.classCredits === null ? "" : String(p.classCredits),
     unlimitedCredits: p.classCredits === null,
+    fixedDuration: p.entitlementDays !== null,
+    entitlementDays: p.entitlementDays === null ? "" : String(p.entitlementDays),
     stripeProductId: p.stripeProductId ?? "",
     stripePriceId: p.stripePriceId ?? "",
     active: p.active,
@@ -315,6 +339,9 @@ function ClassAccessTemplateRow({
   checked,
   disabled,
   inactive,
+  isOpenGymSlot,
+  accessWindowStart,
+  accessWindowEnd,
   onToggle,
 }: {
   name: string;
@@ -322,6 +349,9 @@ function ClassAccessTemplateRow({
   checked: boolean;
   disabled: boolean;
   inactive?: boolean;
+  isOpenGymSlot?: boolean;
+  accessWindowStart?: string | null;
+  accessWindowEnd?: string | null;
   onToggle?: () => void;
 }) {
   return (
@@ -338,6 +368,11 @@ function ClassAccessTemplateRow({
         className="rounded"
       />
       <span className="min-w-0 flex-1 truncate">{name}</span>
+      {isOpenGymSlot ? (
+        <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">
+          Open Gym{accessWindowStart && accessWindowEnd ? ` ${accessWindowStart}–${accessWindowEnd}` : ""}
+        </span>
+      ) : null}
       {inactive ? (
         <span className="shrink-0 text-xs text-zinc-400">Inactiva</span>
       ) : null}
@@ -345,6 +380,14 @@ function ClassAccessTemplateRow({
         {durationMinutes} min
       </span>
     </label>
+  );
+}
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="border-t border-zinc-100 pt-3 text-[11px] font-bold uppercase tracking-widest text-zinc-400 first:border-t-0 first:pt-0">
+      {children}
+    </p>
   );
 }
 
@@ -403,6 +446,15 @@ function PlanModal({
 
   function handleAllClassesAccessChange(checked: boolean) {
     if (checked) {
+      const hadRestrictedAccess = editing != null && !editing.classAccess.allClasses;
+      if (hadRestrictedAccess) {
+        const confirmed = window.confirm(
+          `«${editing!.name}» currently restricts access to ${editing!.classAccess.templates.length} class(es). ` +
+            "Switching to «Todas las clases» will immediately grant this plan access to every active class in the studio, " +
+            "including classes it was deliberately excluded from (e.g. Booty Lab, Open Gym). Continue?",
+        );
+        if (!confirmed) return;
+      }
       set("allClassesAccess", true);
       return;
     }
@@ -449,6 +501,13 @@ function PlanModal({
       setError("Selecciona al menos una clase o activa «Todas las clases».");
       return;
     }
+    if (form.fixedDuration) {
+      const days = parseInt(form.entitlementDays, 10);
+      if (isNaN(days) || days < 1) {
+        setError("Ingresa una duración fija válida (días).");
+        return;
+      }
+    }
     const input: MembershipPlanInput = {
       name: form.name.trim(),
       description: form.description.trim() || null,
@@ -458,6 +517,9 @@ function PlanModal({
       classCredits: form.unlimitedCredits
         ? null
         : parseInt(form.classCredits, 10) || 0,
+      entitlementDays: form.fixedDuration
+        ? parseInt(form.entitlementDays, 10)
+        : null,
       stripeProductId: form.stripeProductId.trim() || null,
       stripePriceId: form.stripePriceId.trim() || null,
       allClassesAccess: form.allClassesAccess,
@@ -498,6 +560,7 @@ function PlanModal({
         </div>
 
         <form onSubmit={(e) => void handleSubmit(e)} className="px-6 py-5 space-y-4 overflow-y-auto max-h-[70vh]">
+          <SectionHeader>Básico</SectionHeader>
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600">
               Plan name *
@@ -574,6 +637,48 @@ function PlanModal({
             </select>
           </div>
 
+          {editing && (
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(e) => set("active", e.target.checked)}
+                className="rounded"
+              />
+              Plan is active (visible to members)
+            </label>
+          )}
+
+          <SectionHeader>Ciclo</SectionHeader>
+          <div>
+            <label className="mb-1 flex items-center gap-2 text-xs font-medium text-zinc-600">
+              <input
+                type="checkbox"
+                checked={form.fixedDuration}
+                onChange={(e) => set("fixedDuration", e.target.checked)}
+                className="rounded"
+              />
+              Duración fija (ej. Booty Lab = 45 días)
+            </label>
+            {form.fixedDuration ? (
+              <>
+                <input
+                  type="number"
+                  min="1"
+                  value={form.entitlementDays}
+                  onChange={(e) => set("entitlementDays", e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
+                  placeholder="Número de días de vigencia"
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  Anula el intervalo de facturación de arriba: el ciclo de acceso y el precio
+                  recurrente de Stripe usarán este número de días en lugar de {form.billingInterval.toLowerCase()}.
+                </p>
+              </>
+            ) : null}
+          </div>
+
+          <SectionHeader>Uso</SectionHeader>
           <div>
             <label className="mb-1 flex items-center gap-2 text-xs font-medium text-zinc-600">
               <input
@@ -596,6 +701,7 @@ function PlanModal({
             )}
           </div>
 
+          <SectionHeader>Acceso</SectionHeader>
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-3">
             <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
               Acceso a clases
@@ -611,8 +717,10 @@ function PlanModal({
             </label>
 
             {form.allClassesAccess ? (
-              <p className="text-xs text-zinc-500">
-                Esta membresía incluye acceso a todas las clases activas del estudio.
+              <p className="text-xs text-amber-700">
+                ⚠ Esta membresía incluye acceso a <strong>todas</strong> las clases activas del
+                estudio, incluyendo clases restringidas como Booty Lab u Open Gym. Úsalo solo para
+                planes de acceso total.
               </p>
             ) : (
               <div className="flex gap-2">
@@ -654,6 +762,9 @@ function PlanModal({
                         form.selectedTemplateIds,
                       )}
                       disabled={form.allClassesAccess}
+                      isOpenGymSlot={template.isOpenGymSlot}
+                      accessWindowStart={template.accessWindowStart}
+                      accessWindowEnd={template.accessWindowEnd}
                       onToggle={() => toggleTemplate(template.id)}
                     />
                   ))}
@@ -674,6 +785,9 @@ function PlanModal({
                           )}
                           disabled
                           inactive
+                          isOpenGymSlot={template.isOpenGymSlot}
+                          accessWindowStart={template.accessWindowStart}
+                          accessWindowEnd={template.accessWindowEnd}
                         />
                       ))}
                     </div>
@@ -683,9 +797,14 @@ function PlanModal({
             </div>
           </div>
 
+          <SectionHeader>Stripe / Billing</SectionHeader>
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-3">
             <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
               Stripe IDs (optional — automation coming soon)
+            </p>
+            <p className="text-[11px] text-zinc-500">
+              Guardar aquí solo actualiza la configuración local de GymOS. Nunca crea, modifica
+              ni sincroniza precios o productos en Stripe automáticamente.
             </p>
             <div>
               <label className="mb-1 block text-xs text-zinc-500">Stripe Product ID</label>
@@ -706,18 +825,6 @@ function PlanModal({
               />
             </div>
           </div>
-
-          {editing && (
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
-              <input
-                type="checkbox"
-                checked={form.active}
-                onChange={(e) => set("active", e.target.checked)}
-                className="rounded"
-              />
-              Plan is active (visible to members)
-            </label>
-          )}
 
           {error && (
             <p className="text-sm text-red-600">{error}</p>
@@ -862,6 +969,113 @@ function SubRow({
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
+
+function DayPassAccessSection({ studioId }: { studioId: string }) {
+  const [templates, setTemplates] = useState<DayPassClassAccessTemplateDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchDayPassClassAccess(studioId);
+      setTemplates(data);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load Day Pass access.");
+    } finally {
+      setLoading(false);
+    }
+  }, [studioId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function toggle(t: DayPassClassAccessTemplateDto) {
+    setPendingId(t.id);
+    setError(null);
+    try {
+      if (t.allowed) {
+        await revokeDayPassClassAccess(studioId, t.id);
+      } else {
+        await grantDayPassClassAccess(studioId, t.id);
+      }
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Update failed.");
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  const allowedCount = templates.filter((t) => t.allowed).length;
+  const zeroAccess = !loading && templates.length > 0 && allowedCount === 0;
+
+  return (
+    <section className="mb-10">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white px-5 py-4 text-left"
+      >
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-900">Day Pass class access</h2>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            Explicit allowlist of classes a one-time Day Pass may book. Deny-by-default: new
+            classes are not eligible until added here.
+            {!loading ? ` · ${allowedCount} of ${templates.length} eligible` : ""}
+          </p>
+          {zeroAccess && (
+            <p className="mt-1 text-xs font-semibold text-red-600">
+              ⚠ Sin acceso — ningún Day Pass puede reservar ninguna clase ahora mismo.
+            </p>
+          )}
+        </div>
+        <span className="text-sm text-zinc-400">{expanded ? "Hide" : "Manage"}</span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 rounded-xl border border-zinc-200 bg-white p-4">
+          {error && (
+            <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
+          )}
+          {loading ? (
+            <p className="text-xs text-zinc-500">Loading…</p>
+          ) : templates.length === 0 ? (
+            <p className="text-xs text-zinc-500">No class templates in this studio.</p>
+          ) : (
+            <div className="divide-y divide-zinc-100">
+              {templates.map((t) => (
+                <label
+                  key={t.id}
+                  className="flex items-center justify-between gap-3 py-2 text-sm"
+                >
+                  <span className="flex items-center gap-2 text-zinc-700">
+                    {t.name}
+                    {t.isOpenGymSlot && (
+                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                        Open Gym
+                      </span>
+                    )}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={t.allowed}
+                    disabled={pendingId === t.id}
+                    onChange={() => void toggle(t)}
+                    className="rounded"
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 export default function MembershipsPage() {
   const { selectedStudioId } = useDeskStudio();
@@ -1072,6 +1286,8 @@ export default function MembershipsPage() {
           </div>
         )}
       </section>
+
+      <DayPassAccessSection studioId={selectedStudioId} />
 
       {/* Subscriptions section */}
       <section>

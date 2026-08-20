@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -14,6 +15,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { ClassCategory, IntensityLevel } from '@prisma/client';
+import { HH_MM_PATTERN } from './create-class-template.dto';
 
 export class UpdateClassTemplateDto {
   @IsOptional()
@@ -127,4 +129,20 @@ export class UpdateClassTemplateDto {
   @Min(0)
   @Max(10_000)
   waitlistCapacity?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isOpenGymSlot?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @Matches(HH_MM_PATTERN, { message: 'accessWindowStart must be HH:mm (24h)' })
+  accessWindowStart?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @Matches(HH_MM_PATTERN, { message: 'accessWindowEnd must be HH:mm (24h)' })
+  accessWindowEnd?: string | null;
 }

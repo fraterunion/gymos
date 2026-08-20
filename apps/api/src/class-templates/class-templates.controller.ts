@@ -29,6 +29,13 @@ export class ClassTemplatesController {
     return this.classTemplatesService.listTemplates(studioId);
   }
 
+  @Get('access-summary')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  accessSummary(@Param('studioId') studioId: string) {
+    return this.classTemplatesService.listAccessSummary(studioId);
+  }
+
   @Post()
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN)

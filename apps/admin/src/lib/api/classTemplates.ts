@@ -41,6 +41,9 @@ export type ClassTemplateDto = {
   caloriesEstimateMax: number | null;
   cancellationWindowHours: number | null;
   waitlistCapacity: number | null;
+  isOpenGymSlot: boolean;
+  accessWindowStart: string | null;
+  accessWindowEnd: string | null;
 };
 
 export type ClassTemplateInput = {
@@ -62,10 +65,35 @@ export type ClassTemplateInput = {
   caloriesEstimateMax?: number | null;
   cancellationWindowHours?: number | null;
   waitlistCapacity?: number | null;
+  isOpenGymSlot?: boolean;
+  accessWindowStart?: string | null;
+  accessWindowEnd?: string | null;
+};
+
+export type ClassAccessSummaryDto = {
+  id: string;
+  name: string;
+  category: ClassCategory | null;
+  isOpenGymSlot: boolean;
+  accessWindowStart: string | null;
+  accessWindowEnd: string | null;
+  planCount: number;
+  planNames: string[];
+  dayPassAllowed: boolean;
+  orphan: boolean;
 };
 
 export async function fetchClassTemplates(studioId: string): Promise<ClassTemplateDto[]> {
   return apiRequest<ClassTemplateDto[]>(`/studios/${studioId}/class-templates`, { method: "GET" });
+}
+
+export async function fetchClassAccessSummary(
+  studioId: string,
+): Promise<ClassAccessSummaryDto[]> {
+  return apiRequest<ClassAccessSummaryDto[]>(
+    `/studios/${studioId}/class-templates/access-summary`,
+    { method: "GET" },
+  );
 }
 
 export async function createClassTemplate(
