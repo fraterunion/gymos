@@ -1,5 +1,7 @@
 "use client";
 
+// Deployment marker: Memberships 4.0 production release.
+
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
