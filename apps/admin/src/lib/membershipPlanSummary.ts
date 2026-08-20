@@ -1,3 +1,5 @@
+export type BillingInterval = "MONTHLY" | "YEARLY" | "WEEKLY";
+
 export type PlanSummaryTemplate = {
   name: string;
   active: boolean;
@@ -354,3 +356,73 @@ export function dayPassHealthLabel(allowedCount: number, totalCount: number): Pl
     extraIssueCount: 0,
   };
 }
+
+export function billingIntervalLabel(interval: BillingInterval): string {
+  switch (interval) {
+    case "MONTHLY":
+      return "Mensual";
+    case "YEARLY":
+      return "Anual";
+    case "WEEKLY":
+      return "Semanal";
+    default:
+      return interval;
+  }
+}
+
+export function planEditorFixedDurationHelperText(days: number): string {
+  return `La membresía dura ${days} días desde su activación y se renueva por periodos de ${days} días.`;
+}
+
+export type PlanConfigurationHistoryMetadata = {
+  planName?: string;
+  changes?: Record<string, { from: unknown; to: unknown }>;
+  classTemplateId?: string;
+  classTemplateName?: string | null;
+};
+
+export type PlanConfigurationHistoryEntryLike = {
+  action: string;
+  actor: { firstName: string; lastName: string };
+  metadata: PlanConfigurationHistoryMetadata;
+};
+
+export function formatHistoryEntryCents(cents: number, currency: string): string {
+  return new Intl.NumberFormat("es-MX", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(cents / 100);
+}
+
+export function formatHistoryEntry(entry: PlanConfigurationHistoryEntryLike): string {
+  const actor = `${entry.actor.firstName} ${entry.actor.lastName}`.trim();
+  const changes = entry.metadata.changes;
+  if (entry.action === "MEMBERSHIP_PLAN_ARCHIVED") return `${actor} archivó el plan`;
+  if (entry.action === "MEMBERSHIP_PLAN_CREATED") return `${actor} creó el plan`;
+  if (entry.action === "MEMBERSHIP_PLAN_CLASS_ACCESS_GRANTED") {
+    const name = entry.metadata.classTemplateName ?? "clase";
+    return `${actor} concedió acceso a ${name}`;
+  }
+  if (entry.action === "MEMBERSHIP_PLAN_CLASS_ACCESS_REVOKED") {
+    const name = entry.metadata.classTemplateName ?? "clase";
+    return `${actor} revocó acceso a ${name}`;
+  }
+  const priceChange = changes?.priceCents;
+  if (priceChange) {
+    return `${actor} cambió precio · ${formatHistoryEntryCents(Number(priceChange.from), "mxn")} → ${formatHistoryEntryCents(Number(priceChange.to), "mxn")}`;
+  }
+  const accessChange = changes?.allClassesAccess;
+  if (accessChange) return `${actor} cambió acceso a clases`;
+  const changedFields = changes ? Object.keys(changes) : [];
+  if (changedFields.length > 0) return `${actor} actualizó ${changedFields[0]}`;
+  return `${actor} actualizó el plan`;
+}
+
+export type SubscriptionSort = "effective_end_asc" | "effective_end_desc";
+
+export const SUBSCRIPTION_SORT_LABELS: Record<SubscriptionSort, string> = {
+  effective_end_asc: "Próximas a vencer / renovar",
+  effective_end_desc: "Más lejanas",
+};

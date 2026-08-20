@@ -227,6 +227,8 @@ export function fetchSubscriptions(
     planId?: string;
     attention?: boolean;
     expiringWithin7Days?: boolean;
+    search?: string;
+    sort?: "effective_end_asc" | "effective_end_desc";
     page?: number;
     limit?: number;
   } = {},
@@ -236,6 +238,8 @@ export function fetchSubscriptions(
   if (opts.planId) params.set("planId", opts.planId);
   if (opts.attention) params.set("attention", "true");
   if (opts.expiringWithin7Days) params.set("expiringWithin7Days", "true");
+  if (opts.search?.trim()) params.set("search", opts.search.trim());
+  if (opts.sort) params.set("sort", opts.sort);
   if (opts.page) params.set("page", String(opts.page));
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString() ? `?${params.toString()}` : "";

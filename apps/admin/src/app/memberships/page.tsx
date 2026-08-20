@@ -35,7 +35,7 @@ import {
   revokeDayPassClassAccess,
   type DayPassClassAccessTemplateDto,
 } from "@/lib/api/dayPassClassAccess";
-import { planHealth } from "@/lib/membershipPlanSummary";
+import { planHealth, billingIntervalLabel, planEditorFixedDurationHelperText, SUBSCRIPTION_SORT_LABELS, type SubscriptionSort } from "@/lib/membershipPlanSummary";
 import {
   ClassAccessMatrix,
   DayPassTab,
@@ -45,6 +45,7 @@ import {
   OverviewBar,
   PlanCard,
   PlanConfigurationHistoryPanel,
+  PlanHistoryDisclosure,
   SubRow,
   TabNav,
   type MembershipTab,
@@ -200,6 +201,7 @@ function PlanModal({
   const [history, setHistory] = useState<PlanConfigurationHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showStripeTechnical, setShowStripeTechnical] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -338,14 +340,18 @@ function PlanModal({
     }
   }
 
+  const fixedDays = parseInt(form.entitlementDays, 10);
+  const fixedDurationValid = form.fixedDuration && !isNaN(fixedDays) && fixedDays >= 1;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
+      <div className="flex max-h-[min(90vh,820px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 px-6 py-4">
           <h2 className="text-base font-semibold text-zinc-900">
             {editing ? "Editar plan" : "Nuevo plan de membresía"}
           </h2>
           <button
+            type="button"
             onClick={onClose}
             className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
           >
@@ -353,7 +359,8 @@ function PlanModal({
           </button>
         </div>
 
-        <form onSubmit={(e) => void handleSubmit(e)} className="px-6 py-5 space-y-4 overflow-y-auto max-h-[70vh]">
+        <form onSubmit={(e) => void handleSubmit(e)} className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
           <SectionHeader>General</SectionHeader>
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600">
@@ -381,6 +388,19 @@ function PlanModal({
             />
           </div>
 
+          {editing && (
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={form.active}
+                onChange={(e) => set("active", e.target.checked)}
+                className="rounded"
+              />
+              Plan activo y disponible para nuevas ventas
+            </label>
+          )}
+
+          <SectionHeader>Precio</SectionHeader>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-zinc-600">
@@ -416,60 +436,63 @@ function PlanModal({
             </div>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-600">
-              Intervalo de facturación
-            </label>
-            <select
-              value={form.billingInterval}
-              onChange={(e) => set("billingInterval", e.target.value as BillingInterval)}
-              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
-            >
-              <option value="MONTHLY">Mensual</option>
-              <option value="YEARLY">Anual</option>
-              <option value="WEEKLY">Semanal</option>
-            </select>
-          </div>
-
-          {editing && (
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
-              <input
-                type="checkbox"
-                checked={form.active}
-                onChange={(e) => set("active", e.target.checked)}
-                className="rounded"
-              />
-              Plan activo y disponible para nuevas ventas
-            </label>
-          )}
-
           <SectionHeader>Ciclo</SectionHeader>
-          <div>
-            <label className="mb-1 flex items-center gap-2 text-xs font-medium text-zinc-600">
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
               <input
                 type="checkbox"
                 checked={form.fixedDuration}
                 onChange={(e) => set("fixedDuration", e.target.checked)}
                 className="rounded"
               />
-              Duración fija (ej. Booty Lab = 45 días)
+              Duración fija por periodo (ej. Booty Lab = 45 días)
             </label>
+
             {form.fixedDuration ? (
-              <>
-                <input
-                  type="number"
-                  min="1"
-                  value={form.entitlementDays}
-                  onChange={(e) => set("entitlementDays", e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
-                  placeholder="Número de días de vigencia"
-                />
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  Ciclo del plan
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-zinc-600">Cada</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={form.entitlementDays}
+                    onChange={(e) => set("entitlementDays", e.target.value)}
+                    className="w-20 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  />
+                  <span className="text-sm text-zinc-600">días</span>
+                </div>
+                {fixedDurationValid ? (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    {planEditorFixedDurationHelperText(fixedDays)}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Ingresa la duración del periodo de acceso y renovación.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-zinc-600">
+                  Intervalo de facturación
+                </label>
+                <select
+                  value={form.billingInterval}
+                  onChange={(e) => set("billingInterval", e.target.value as BillingInterval)}
+                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
+                >
+                  <option value="MONTHLY">Mensual</option>
+                  <option value="YEARLY">Anual</option>
+                  <option value="WEEKLY">Semanal</option>
+                </select>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Anula el intervalo de facturación de arriba: el ciclo de acceso y el precio
-                  recurrente de Stripe usarán este número de días en lugar de {form.billingInterval.toLowerCase()}.
+                  Ciclo recurrente: {billingIntervalLabel(form.billingInterval).toLowerCase()}.
                 </p>
-              </>
-            ) : null}
+              </div>
+            )}
           </div>
 
           <SectionHeader>Uso</SectionHeader>
@@ -614,48 +637,54 @@ function PlanModal({
                 </p>
               </div>
             ) : null}
-            <div>
-              <label className="mb-1 block text-xs text-zinc-500">Product ID de Stripe</label>
-              <input
-                value={form.stripeProductId}
-                onChange={(e) => set("stripeProductId", e.target.value)}
-                className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs font-mono"
-                placeholder="prod_…"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-zinc-500">Price ID de Stripe</label>
-              <input
-                value={form.stripePriceId}
-                onChange={(e) => set("stripePriceId", e.target.value)}
-                className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs font-mono"
-                placeholder="price_…"
-              />
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowStripeTechnical((v) => !v)}
+              className="flex w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-xs font-semibold text-zinc-700"
+              aria-expanded={showStripeTechnical}
+            >
+              <span>Detalles técnicos de Stripe</span>
+              <span className="text-zinc-400" aria-hidden>{showStripeTechnical ? "⌄" : "›"}</span>
+            </button>
+            {showStripeTechnical ? (
+              <div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-3">
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">Stripe Product ID</label>
+                  <input
+                    value={form.stripeProductId}
+                    onChange={(e) => set("stripeProductId", e.target.value)}
+                    className="w-full rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs font-mono"
+                    placeholder="prod_…"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">Stripe Price ID</label>
+                  <input
+                    value={form.stripePriceId}
+                    onChange={(e) => set("stripePriceId", e.target.value)}
+                    className="w-full rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs font-mono"
+                    placeholder="price_…"
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {editing ? (
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowHistory((v) => !v)}
-                className="text-xs font-semibold text-zinc-600 underline-offset-2 hover:underline"
-              >
-                {showHistory ? "Ocultar historial de cambios" : "Historial de cambios"}
-              </button>
-              {showHistory ? (
-                <div className="mt-2">
-                  <PlanConfigurationHistoryPanel entries={history} loading={historyLoading} />
-                </div>
-              ) : null}
-            </div>
+            <PlanHistoryDisclosure
+              expanded={showHistory}
+              onToggle={() => setShowHistory((v) => !v)}
+            >
+              <PlanConfigurationHistoryPanel entries={history} loading={historyLoading} />
+            </PlanHistoryDisclosure>
           ) : null}
 
           {error && (
             <p className="text-sm text-red-600">{error}</p>
           )}
+          </div>
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex shrink-0 gap-3 border-t border-zinc-200 bg-white px-6 py-4">
             <button
               type="button"
               onClick={onClose}
@@ -709,11 +738,19 @@ export default function MembershipsPage() {
   const [statusFilter, setStatusFilter] = useState<SubscriptionStatus | "">("");
   const [planFilter, setPlanFilter] = useState<string>("");
   const [subscriptionViewFilter, setSubscriptionViewFilter] = useState<"" | "attention" | "expiring">("");
+  const [subSearch, setSubSearch] = useState("");
+  const [debouncedSubSearch, setDebouncedSubSearch] = useState("");
+  const [subSort, setSubSort] = useState<SubscriptionSort>("effective_end_asc");
 
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [editingPlan, setEditingPlan] = useState<MembershipPlanDto | null>(null);
 
   const SUBS_LIMIT = 25;
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSubSearch(subSearch.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [subSearch]);
 
   const loadPlans = useCallback(async () => {
     if (!selectedStudioId) return;
@@ -762,6 +799,8 @@ export default function MembershipsPage() {
         planId: planFilter || undefined,
         attention: subscriptionViewFilter === "attention" ? true : undefined,
         expiringWithin7Days: subscriptionViewFilter === "expiring" ? true : undefined,
+        search: debouncedSubSearch || undefined,
+        sort: subSort,
         page,
         limit: SUBS_LIMIT,
       });
@@ -773,7 +812,7 @@ export default function MembershipsPage() {
     } finally {
       setLoadingSubs(false);
     }
-  }, [selectedStudioId, statusFilter, planFilter, subscriptionViewFilter]);
+  }, [selectedStudioId, statusFilter, planFilter, subscriptionViewFilter, debouncedSubSearch, subSort]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -790,6 +829,12 @@ export default function MembershipsPage() {
 
   async function handleSubAction(sub: SubscriptionListItem, newStatus: SubscriptionStatus) {
     if (!selectedStudioId) return;
+    if (newStatus === "PAUSED") {
+      const ok = confirm(
+        `¿Pausar la suscripción de ${sub.user.firstName} ${sub.user.lastName}? El acceso quedará suspendido hasta reanudarla.`,
+      );
+      if (!ok) return;
+    }
     try {
       await updateSubscriptionStatus(selectedStudioId, sub.user.id, sub.id, newStatus);
       void loadSubs(subsPage);
@@ -801,6 +846,12 @@ export default function MembershipsPage() {
 
   async function handleCancelAtPeriodEnd(sub: SubscriptionListItem, cancel: boolean) {
     if (!selectedStudioId) return;
+    if (cancel) {
+      const ok = confirm(
+        `¿Programar cancelación al final del periodo para ${sub.user.firstName} ${sub.user.lastName}? No se cancelará de inmediato; dejará de renovar cuando venza el acceso actual.`,
+      );
+      if (!ok) return;
+    }
     try {
       await setCancelAtPeriodEnd(selectedStudioId, sub.user.id, sub.id, cancel);
       void loadSubs(subsPage);
@@ -823,6 +874,12 @@ export default function MembershipsPage() {
 
   async function handleToggleActive(plan: MembershipPlanDto) {
     if (!selectedStudioId) return;
+    if (plan.active) {
+      const ok = confirm(
+        `¿Desactivar «${plan.name}»? Dejará de mostrarse para nuevas ventas, pero las suscripciones existentes no se eliminan.`,
+      );
+      if (!ok) return;
+    }
     try {
       await updateMembershipPlan(selectedStudioId, plan.id, { active: !plan.active });
       void loadPlans();
@@ -1036,6 +1093,37 @@ export default function MembershipsPage() {
               ) : null}
             </h2>
             <div className="flex flex-wrap gap-2">
+              <div className="relative min-w-[220px] flex-1">
+                <input
+                  type="search"
+                  value={subSearch}
+                  onChange={(e) => setSubSearch(e.target.value)}
+                  placeholder="Buscar por nombre o correo"
+                  className="w-full rounded-lg border border-zinc-200 bg-white py-1.5 pl-3 pr-8 text-sm"
+                />
+                {subSearch ? (
+                  <button
+                    type="button"
+                    onClick={() => setSubSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-zinc-600"
+                    aria-label="Limpiar búsqueda"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </div>
+              <select
+                value={subSort}
+                onChange={(e) => setSubSort(e.target.value as SubscriptionSort)}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm"
+                aria-label="Ordenar suscripciones"
+              >
+                {(Object.keys(SUBSCRIPTION_SORT_LABELS) as SubscriptionSort[]).map((key) => (
+                  <option key={key} value={key}>
+                    {SUBSCRIPTION_SORT_LABELS[key]}
+                  </option>
+                ))}
+              </select>
               <select
                 value={statusFilter}
                 onChange={(e) => {

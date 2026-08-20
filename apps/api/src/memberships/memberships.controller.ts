@@ -42,14 +42,20 @@ export class MembershipsController {
     @Query('planId') planId?: string,
     @Query('attention') attention?: string,
     @Query('expiringWithin7Days') expiringWithin7Days?: string,
+    @Query('search') search?: string,
+    @Query('sort') sort?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    const parsedSort =
+      sort === 'effective_end_asc' || sort === 'effective_end_desc' ? sort : undefined;
     return this.membershipsService.listSubscriptions(studioId, {
       status: status as SubscriptionStatus | undefined,
       planId,
       attention: attention === 'true',
       expiringWithin7Days: expiringWithin7Days === 'true',
+      search,
+      sort: parsedSort,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });

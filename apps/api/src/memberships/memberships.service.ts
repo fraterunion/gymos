@@ -100,11 +100,13 @@ export class MembershipsService {
       planId?: string;
       attention?: boolean;
       expiringWithin7Days?: boolean;
+      search?: string;
+      sort?: SubscriptionSort;
       page?: number;
       limit?: number;
     } = {},
   ): Promise<{ data: SubscriptionListItem[]; total: number; page: number; limit: number }> {
-    const { status, planId, attention, expiringWithin7Days, page = 1, limit = 50 } = opts;
+    const { status, planId, attention, expiringWithin7Days, search, sort, page = 1, limit = 50 } = opts;
     const now = new Date();
     const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
@@ -162,6 +164,12 @@ export class MembershipsService {
         isSubscriptionExpiringWithin7Days(lifecycle, now, sevenDaysFromNow),
       );
     }
+    if (search?.trim()) {
+      mapped = mapped.filter(({ row }) => subscriptionMatchesSearch(row.user, search));
+    }
+    if (sort) {
+      mapped = sortSubscriptionRows(mapped, sort);
+    }
 
     const total = mapped.length;
     const start = (page - 1) * limit;
@@ -174,6 +182,45 @@ export class MembershipsService {
       limit,
     };
   }
+}
+
+export type SubscriptionSort = 'effective_end_asc' | 'effective_end_desc';
+
+type SubscriptionUser = {
+  firstName: string;
+  lastName: string;
+  email: string;
+};
+
+export function subscriptionMatchesSearch(user: SubscriptionUser, rawSearch: string): boolean {
+  const term = rawSearch.trim().toLowerCase();
+  if (!term) return true;
+  const haystack = [
+    user.firstName,
+    user.lastName,
+    user.email,
+    `${user.firstName} ${user.lastName}`,
+  ]
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(term);
+}
+
+export function effectiveEndSortKey(lifecycle: MembershipLifecycleSnapshot): number {
+  return lifecycle.effectiveEnd?.getTime() ?? Number.MAX_SAFE_INTEGER;
+}
+
+export function sortSubscriptionRows<T extends { lifecycle: MembershipLifecycleSnapshot }>(
+  rows: T[],
+  sort: SubscriptionSort,
+): T[] {
+  const sorted = [...rows];
+  sorted.sort((a, b) => {
+    const aKey = effectiveEndSortKey(a.lifecycle);
+    const bKey = effectiveEndSortKey(b.lifecycle);
+    return sort === 'effective_end_asc' ? aKey - bKey : bKey - aKey;
+  });
+  return sorted;
 }
 
 const ATTENTION_LIFECYCLE_STATUSES = new Set(['PAST_DUE', 'PAUSED', 'EXPIRED']);

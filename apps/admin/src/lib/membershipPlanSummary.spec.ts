@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  billingIntervalLabel,
+  formatHistoryEntry,
+  planEditorFixedDurationHelperText,
   dayPassHealthLabel,
   integrityIssueLabel,
   planAccessSummary,
@@ -204,4 +207,59 @@ test("enabling allClassesAccess still requires explicit confirmation in the plan
   const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
   assert.match(source, /window\.confirm\(/);
   assert.match(source, /hadRestrictedAccess/);
+});
+
+test("fixed-duration plan editor uses single cycle presentation", () => {
+  assert.equal(planEditorFixedDurationHelperText(45), "La membresía dura 45 días desde su activación y se renueva por periodos de 45 días.");
+  const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /Ciclo del plan/);
+  assert.doesNotMatch(source, /Intervalo de facturación[\s\S]{0,120}form\.fixedDuration/);
+});
+
+test("recurring plan editor keeps billing interval selector", () => {
+  assert.equal(billingIntervalLabel("MONTHLY"), "Mensual");
+  const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /Intervalo de facturación/);
+});
+
+test("configuration history renders human-readable Spanish entries", () => {
+  assert.match(
+    formatHistoryEntry({
+      action: "MEMBERSHIP_PLAN_CLASS_ACCESS_GRANTED",
+      actor: { firstName: "Rodrigo", lastName: "Ponce" },
+      metadata: { classTemplateName: "Booty Lab" },
+    }),
+    /concedió acceso a Booty Lab/,
+  );
+});
+
+test("subscriptions tab supports search and sort controls", () => {
+  const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /Buscar por nombre o correo/);
+  assert.match(source, /SUBSCRIPTION_SORT_LABELS/);
+  assert.match(source, /debouncedSubSearch/);
+});
+
+test("stripe technical ids are behind progressive disclosure", () => {
+  const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /Detalles técnicos de Stripe/);
+  assert.match(source, /showStripeTechnical/);
+  assert.match(source, /Guardar este plan no modifica automáticamente Stripe/);
+});
+
+test("subscription destructive actions require confirmation", () => {
+  const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /Programar cancelación al final del periodo/);
+  assert.match(source, /¿Pausar la suscripción/);
+  assert.match(source, /¿Desactivar «/);
+});
+
+test("active Stripe subscriptions expose cancel-at-period-end only", () => {
+  const actions = subscriptionActions({
+    lifecycleStatus: "ACTIVE",
+    source: "STRIPE",
+    cancelAtPeriodEnd: false,
+    isEntitled: true,
+  });
+  assert.deepEqual(actions.filter((a) => a.includes("cancel")), ["cancel_at_period_end"]);
 });

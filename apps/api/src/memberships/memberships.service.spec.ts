@@ -2,6 +2,9 @@ import {
   MembershipsService,
   isSubscriptionExpiringWithin7Days,
   isSubscriptionRequiringAttention,
+  subscriptionMatchesSearch,
+  sortSubscriptionRows,
+  effectiveEndSortKey,
 } from './memberships.service';
 
 describe('MembershipsService operations projection', () => {
@@ -122,6 +125,76 @@ describe('MembershipsService operations projection', () => {
 
     expect(overview.expiringWithin7Days).toBe(1);
   });
+
+  it('filters subscriptions by member name or email search', async () => {
+    const now = Date.now();
+    const rows = [
+      { id: 'sub-a', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: new Date(now + 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'ana@example.com', firstName: 'Ana', lastName: 'Villar' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [] },
+      { id: 'sub-b', status: 'ACTIVE', source: 'STRIPE', stripeSubscriptionId: 's1', currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'other@example.com', firstName: 'Victor', lastName: 'Herrera' }, membershipPlan: { id: 'p2', name: 'Pro', billingInterval: 'MONTHLY', priceCents: 600, currency: 'mxn', classCredits: 5, entitlementDays: null }, entitlementCycles: [] },
+    ];
+    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const service = new MembershipsService(prisma as never, {} as never);
+
+    const result = await service.listSubscriptions('studio-1', { search: 'ana@example.com' });
+
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('sub-a');
+  });
+
+  it('composes search with attention and plan filters', async () => {
+    const now = Date.now();
+    const rows = [
+      { id: 'sub-past-due-ana', status: 'PAST_DUE', source: 'STRIPE', stripeSubscriptionId: 's1', currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'ana@example.com', firstName: 'Ana', lastName: 'Villar' }, membershipPlan: { id: 'plan-basic', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [] },
+      { id: 'sub-past-due-victor', status: 'PAST_DUE', source: 'STRIPE', stripeSubscriptionId: 's2', currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'victor@example.com', firstName: 'Victor', lastName: 'Herrera' }, membershipPlan: { id: 'plan-pro', name: 'Pro', billingInterval: 'MONTHLY', priceCents: 600, currency: 'mxn', classCredits: 5, entitlementDays: null }, entitlementCycles: [] },
+    ];
+    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const service = new MembershipsService(prisma as never, {} as never);
+
+    const result = await service.listSubscriptions('studio-1', {
+      attention: true,
+      planId: 'plan-basic',
+      search: 'ana',
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('sub-past-due-ana');
+  });
+
+  it('composes search with expiringWithin7Days filter', async () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    jest.useFakeTimers({ now });
+    const rows = [
+      { id: 'sub-expiring-ana', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 2 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 2 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'ana@example.com', firstName: 'Ana', lastName: 'Villar' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 2 * 86_400_000) }] },
+      { id: 'sub-expiring-victor', status: 'ACTIVE', source: 'STRIPE', stripeSubscriptionId: 's1', currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 3 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 3 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'victor@example.com', firstName: 'Victor', lastName: 'Herrera' }, membershipPlan: { id: 'p2', name: 'Pro', billingInterval: 'MONTHLY', priceCents: 600, currency: 'mxn', classCredits: 5, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 3 * 86_400_000) }] },
+    ];
+    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const service = new MembershipsService(prisma as never, {} as never);
+
+    const result = await service.listSubscriptions('studio-1', {
+      expiringWithin7Days: true,
+      search: 'victor',
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('sub-expiring-victor');
+    jest.useRealTimers();
+  });
+
+  it('sorts subscriptions by effective end ascending for upcoming renewals', async () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    jest.useFakeTimers({ now });
+    const rows = [
+      { id: 'sub-later', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 10 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 10 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'a@x.com', firstName: 'A', lastName: 'Later' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 10 * 86_400_000) }] },
+      { id: 'sub-soon', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 2 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 2 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'b@x.com', firstName: 'B', lastName: 'Soon' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 2 * 86_400_000) }] },
+    ];
+    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const service = new MembershipsService(prisma as never, {} as never);
+
+    const result = await service.listSubscriptions('studio-1', { sort: 'effective_end_asc' });
+
+    expect(result.data.map((row) => row.id)).toEqual(['sub-soon', 'sub-later']);
+    jest.useRealTimers();
+  });
 });
 
 describe('membership KPI filter helpers', () => {
@@ -156,5 +229,36 @@ describe('membership KPI filter helpers', () => {
         sevenDays,
       ),
     ).toBe(false);
+  });
+
+  it('matches search case-insensitively across name and email', () => {
+    expect(
+      subscriptionMatchesSearch(
+        { firstName: 'Ana', lastName: 'Villar', email: 'ana@example.com' },
+        'ANA@EXAMPLE',
+      ),
+    ).toBe(true);
+    expect(
+      subscriptionMatchesSearch(
+        { firstName: 'Victor', lastName: 'Herrera', email: 'v@x.com' },
+        'herrera',
+      ),
+    ).toBe(true);
+  });
+
+  it('sorts by effective end with nulls last', () => {
+    const now = new Date('2026-08-20T12:00:00.000Z');
+    const rows = sortSubscriptionRows(
+      [
+        { lifecycle: { effectiveEnd: new Date(now.getTime() + 5 * 86_400_000), isEntitled: true, lifecycleStatus: 'ACTIVE' } as never },
+        { lifecycle: { effectiveEnd: null, isEntitled: true, lifecycleStatus: 'ACTIVE' } as never },
+        { lifecycle: { effectiveEnd: new Date(now.getTime() + 1 * 86_400_000), isEntitled: true, lifecycleStatus: 'ACTIVE' } as never },
+      ],
+      'effective_end_asc',
+    );
+    expect(effectiveEndSortKey(rows[0].lifecycle)).toBeLessThan(
+      effectiveEndSortKey(rows[1].lifecycle),
+    );
+    expect((rows[2].lifecycle as { effectiveEnd: Date | null }).effectiveEnd).toBeNull();
   });
 });

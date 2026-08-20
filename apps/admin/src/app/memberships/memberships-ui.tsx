@@ -21,6 +21,7 @@ import {
   planCardLines,
   planCycleLabel,
   planHealth,
+  formatHistoryEntry,
   subscriptionActionLabel,
   subscriptionActions,
   subscriptionOperationalStatusLabel,
@@ -323,28 +324,31 @@ export function PlanCard({
   );
 }
 
-export function formatHistoryEntry(entry: PlanConfigurationHistoryEntry): string {
-  const actor = `${entry.actor.firstName} ${entry.actor.lastName}`.trim();
-  const changes = entry.metadata.changes;
-  if (entry.action === "MEMBERSHIP_PLAN_ARCHIVED") return `${actor} archivó el plan`;
-  if (entry.action === "MEMBERSHIP_PLAN_CREATED") return `${actor} creó el plan`;
-  if (entry.action === "MEMBERSHIP_PLAN_CLASS_ACCESS_GRANTED") {
-    const name = entry.metadata.classTemplateName ?? "clase";
-    return `${actor} concedió acceso a ${name}`;
-  }
-  if (entry.action === "MEMBERSHIP_PLAN_CLASS_ACCESS_REVOKED") {
-    const name = entry.metadata.classTemplateName ?? "clase";
-    return `${actor} revocó acceso a ${name}`;
-  }
-  const priceChange = changes?.priceCents;
-  if (priceChange) {
-    return `${actor} cambió precio · ${formatCents(Number(priceChange.from), "mxn")} → ${formatCents(Number(priceChange.to), "mxn")}`;
-  }
-  const accessChange = changes?.allClassesAccess;
-  if (accessChange) return `${actor} cambió acceso a clases`;
-  const changedFields = changes ? Object.keys(changes) : [];
-  if (changedFields.length > 0) return `${actor} actualizó ${changedFields[0]}`;
-  return `${actor} actualizó el plan`;
+export function PlanHistoryDisclosure({
+  expanded,
+  onToggle,
+  children,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-zinc-800"
+        aria-expanded={expanded}
+      >
+        <span>Historial de cambios</span>
+        <span className="text-zinc-400" aria-hidden>
+          {expanded ? "⌄" : "›"}
+        </span>
+      </button>
+      {expanded ? <div className="border-t border-zinc-200 px-4 py-3">{children}</div> : null}
+    </div>
+  );
 }
 
 export function PlanConfigurationHistoryPanel({
@@ -362,6 +366,7 @@ export function PlanConfigurationHistoryPanel({
         <div key={entry.id} className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
           <p className="font-medium text-zinc-900">{formatHistoryEntry(entry)}</p>
           <p className="mt-0.5 text-zinc-500">
+            {entry.actor.firstName} {entry.actor.lastName} ·{" "}
             {new Date(entry.createdAt).toLocaleDateString("es-MX", {
               day: "numeric",
               month: "short",
