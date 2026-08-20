@@ -3,7 +3,7 @@ import { apiRequest } from "@/lib/api/client";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type SubStatus = "ACTIVE" | "PAST_DUE" | "CANCELED" | "TRIALING" | "PAUSED";
-export type LifecycleStatus = SubStatus | "ENDING" | "SCHEDULED" | "EXPIRED";
+export type LifecycleStatus = SubStatus | "ENDING" | "SCHEDULED" | "EXPIRED" | "REPLACED";
 export type LifecycleFilter = LifecycleStatus | "NONE";
 export type PrimaryLifecycleStatus = Exclude<LifecycleStatus, "ENDING">;
 export type PaymentSource = "STRIPE" | "CASH" | "MANUAL" | "NONE";
@@ -168,6 +168,8 @@ export type MemberSubscription = {
   entitlementCycles: Array<{ id: string; startsAt: string; endsAt: string; creditLimit: number | null; source: Exclude<PaymentSource, "NONE">; stripeInvoiceId: string | null }>;
   payments: Array<Pick<MemberPayment, "id" | "amountCents" | "currency" | "status" | "paymentMethod" | "paidAt" | "createdAt" | "stripeInvoiceId">>;
   pendingMembershipPlan?: Pick<MemberPlan, "id" | "name" | "billingInterval" | "priceCents" | "currency"> | null;
+  endReason: string | null;
+  transitionDetail: { label: string; detail: string } | null;
 };
 
 export type PlanChangePreview = {

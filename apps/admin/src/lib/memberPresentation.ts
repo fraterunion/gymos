@@ -9,6 +9,7 @@ export const PRIMARY_STATUS_LABELS: Record<PrimaryLifecycleStatus, string> = {
   PAST_DUE: "Pago pendiente",
   PAUSED: "Pausada",
   CANCELED: "Cancelada",
+  REPLACED: "Reemplazada",
   SCHEDULED: "Programada",
 };
 
@@ -19,6 +20,7 @@ export const PRIMARY_STATUS_COLORS: Record<PrimaryLifecycleStatus, string> = {
   PAST_DUE: "bg-rose-50 text-rose-700 ring-rose-600/15",
   PAUSED: "bg-amber-50 text-amber-700 ring-amber-600/15",
   CANCELED: "bg-zinc-100 text-zinc-600 ring-zinc-500/15",
+  REPLACED: "bg-blue-50 text-blue-700 ring-blue-600/15",
   SCHEDULED: "bg-blue-50 text-blue-700 ring-blue-600/15",
 };
 

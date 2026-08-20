@@ -18,6 +18,7 @@ import {
   subscriptionActionLabel,
   subscriptionActions,
   subscriptionOperationalStatusLabel,
+  subscriptionTransitionPresentation,
   subscriptionPaymentSourceLabel,
   subscriptionValidityLines,
   type PlanForSummary,
@@ -262,4 +263,25 @@ test("active Stripe subscriptions expose cancel-at-period-end only", () => {
     isEntitled: true,
   });
   assert.deepEqual(actions.filter((a) => a.includes("cancel")), ["cancel_at_period_end"]);
+});
+
+test("replaced subscriptions use Reemplazada label and no operational actions", () => {
+  assert.equal(subscriptionOperationalStatusLabel("REPLACED"), "Reemplazada");
+  const actions = subscriptionActions({
+    lifecycleStatus: "REPLACED",
+    source: "CASH",
+    cancelAtPeriodEnd: true,
+    isEntitled: false,
+  });
+  assert.deepEqual(actions, ["view_member"]);
+});
+
+test("transition presentation formats Spanish staff copy", () => {
+  assert.equal(
+    subscriptionTransitionPresentation({
+      label: "Cambio de forma de pago",
+      detail: "Efectivo → Stripe",
+    }),
+    "Cambio de forma de pago · Efectivo → Stripe",
+  );
 });

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DayPassStatus, PaymentMethod, PaymentStatus, Prisma, Subscription, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
+import { DayPassStatus, PaymentMethod, PaymentStatus, Prisma, Subscription, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
@@ -340,6 +340,16 @@ export class StripeWebhookService {
         });
       }
 
+      if (
+        status === SubscriptionStatus.CANCELED &&
+        row.endReason == null
+      ) {
+        row = await tx.subscription.update({
+          where: { id: row.id },
+          data: { endReason: SubscriptionEndReason.MEMBER_CANCELLED },
+        });
+      }
+
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
         await this.subscriptionLifecycle.auditDuplicateRenewableSubscriptions(tx, {
           studioId,
@@ -423,21 +433,7 @@ export class StripeWebhookService {
       conflictingRow.currentPeriodEnd < new Date();
 
     if (isExpiredCash) {
-      await tx.subscription.update({
-        where: { id: conflictingRow.id },
-        data: { status: SubscriptionStatus.CANCELED },
-      });
-      this.logger.log(
-        JSON.stringify({
-          event: 'webhook_superseded_expired_cash_subscription',
-          canceledLocalId: conflictingRow.id,
-          incomingStripeSubId: incomingSub.id,
-          stripeEventType,
-          studioId,
-          userId,
-        }),
-      );
-      return tx.subscription.create({
+      const created = await tx.subscription.create({
         data: {
           studioId,
           userId,
@@ -450,6 +446,26 @@ export class StripeWebhookService {
           ...(params.entitlementEndsAt !== undefined ? { entitlementEndsAt: params.entitlementEndsAt } : {}),
         },
       });
+      await tx.subscription.update({
+        where: { id: conflictingRow.id },
+        data: {
+          status: SubscriptionStatus.CANCELED,
+          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+          supersededBySubscriptionId: created.id,
+        },
+      });
+      this.logger.log(
+        JSON.stringify({
+          event: 'webhook_superseded_expired_cash_subscription',
+          canceledLocalId: conflictingRow.id,
+          supersededBySubscriptionId: created.id,
+          incomingStripeSubId: incomingSub.id,
+          stripeEventType,
+          studioId,
+          userId,
+        }),
+      );
+      return created;
     }
 
     // Cases B and C: cannot auto-resolve without risking incorrect financial decisions.

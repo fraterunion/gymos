@@ -38,6 +38,7 @@ import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/membersh
 import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/sales";
 import { ApiError } from "@/lib/api/errors";
 import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
+import { subscriptionTransitionPresentation } from "@/lib/membershipPlanSummary";
 import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, paymentSourceLabel, renewalBehavior, usagePresentation } from "@/lib/member360";
 import {
   attestMemberWaiver,
@@ -1105,16 +1106,22 @@ function MembershipTab({
             <p className="text-sm text-zinc-500">No hay membresías registradas.</p>
           </div>
         )}
-        {subs.map((s) => (
+        {subs.map((s) => {
+          const statusKey = s.lifecycleStatus === "REPLACED" ? "REPLACED" : s.primaryStatus;
+          const transitionNote = subscriptionTransitionPresentation(s.transitionDetail);
+          return (
           <div key={s.id} className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
                   <p className="font-semibold text-zinc-900">{s.membershipPlan.name}</p>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PRIMARY_STATUS_COLORS[s.primaryStatus]}`}>
-                    {PRIMARY_STATUS_LABELS[s.primaryStatus]}
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PRIMARY_STATUS_COLORS[statusKey]}`}>
+                    {PRIMARY_STATUS_LABELS[statusKey]}
                   </span>
                 </div>
+                {transitionNote ? (
+                  <p className="mt-1 text-xs text-zinc-500">{transitionNote}</p>
+                ) : null}
                 <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Precio actual</p>
                 <p className="text-sm text-zinc-500">
                   {fmtPlanPrice(s.membershipPlan.priceCents, s.membershipPlan.currency, s.membershipPlan.billingInterval)}
@@ -1128,7 +1135,7 @@ function MembershipTab({
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
-                {canChangePlan && (s.isEntitled || s.lifecycleStatus === "EXPIRED" || s.status === "PAST_DUE") && (
+                {s.lifecycleStatus !== "REPLACED" && canChangePlan && (s.isEntitled || s.lifecycleStatus === "EXPIRED" || s.status === "PAST_DUE") && (
                   <button
                     onClick={() => setChangePlanSub(s)}
                     disabled={actionLoading === s.id}
@@ -1137,7 +1144,7 @@ function MembershipTab({
                     Cambiar plan
                   </button>
                 )}
-                {s.isEntitled && s.status === "ACTIVE" && (
+                {s.lifecycleStatus !== "REPLACED" && s.isEntitled && s.status === "ACTIVE" && (
                   <>
                     <button onClick={() => void handleStatusChange(s.id, "PAUSED")} disabled={actionLoading === s.id}
                       className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50">
@@ -1149,7 +1156,7 @@ function MembershipTab({
                     </button>
                   </>
                 )}
-                {(s.status === "PAUSED" || s.status === "CANCELED" || s.status === "PAST_DUE") && (
+                {s.lifecycleStatus !== "REPLACED" && (s.status === "PAUSED" || s.status === "CANCELED" || s.status === "PAST_DUE") && (
                   <button onClick={() => void handleStatusChange(s.id, "ACTIVE")} disabled={actionLoading === s.id}
                     className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
                     {actionLoading === s.id ? "…" : "Reactivar"}
@@ -1197,7 +1204,7 @@ function MembershipTab({
               </div>
             ) : null}
           </div>
-        ))}
+        );})}
         {subs.length > 0 && (
           <p className="text-xs text-zinc-400">Los cambios administrativos no sustituyen el estado de pago; Stripe puede sincronizar nuevamente las membresías vinculadas.</p>
         )}

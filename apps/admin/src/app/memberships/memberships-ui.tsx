@@ -25,6 +25,7 @@ import {
   subscriptionActionLabel,
   subscriptionActions,
   subscriptionOperationalStatusLabel,
+  subscriptionTransitionPresentation,
   subscriptionPaymentSourceLabel,
   subscriptionValidityLines,
   type SubscriptionAction,
@@ -55,6 +56,7 @@ const LIFECYCLE_COLORS: Record<string, string> = {
   EXPIRED: "bg-red-100 text-red-700",
   SCHEDULED: "bg-sky-100 text-sky-800",
   CANCELED: "bg-red-100 text-red-700",
+  REPLACED: "bg-blue-100 text-blue-800",
 };
 
 function fmtDate(iso: string | null | undefined) {
@@ -392,7 +394,13 @@ export function SubRow({
   onAction: (sub: SubscriptionListItem, status: SubscriptionStatus) => void;
   onCancelAtPeriodEnd: (sub: SubscriptionListItem, cancel: boolean) => void;
 }) {
-  const operationalStatus = sub.lifecycleStatus === "ENDING" ? "ENDING" : sub.primaryStatus;
+  const operationalStatus =
+    sub.lifecycleStatus === "REPLACED"
+      ? "REPLACED"
+      : sub.lifecycleStatus === "ENDING"
+        ? "ENDING"
+        : sub.primaryStatus;
+  const transitionNote = subscriptionTransitionPresentation(sub.transitionDetail);
   const actions = subscriptionActions(sub).filter((a) => a !== "view_member");
   const validity = subscriptionValidityLines({
     lifecycleStatus: sub.lifecycleStatus,
@@ -435,6 +443,9 @@ export function SubRow({
         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${LIFECYCLE_COLORS[operationalStatus] ?? "bg-zinc-100 text-zinc-600"}`}>
           {subscriptionOperationalStatusLabel(operationalStatus)}
         </span>
+        {transitionNote ? (
+          <p className="mt-1 text-xs text-zinc-500">{transitionNote}</p>
+        ) : null}
       </td>
       <td className="px-4 py-3 text-zinc-600">{subscriptionPaymentSourceLabel(sub.source)}</td>
       <td className="px-4 py-3 text-zinc-600">

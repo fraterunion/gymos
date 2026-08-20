@@ -9,6 +9,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Role,
+  SubscriptionEndReason,
   SubscriptionSource,
   SubscriptionStatus,
 } from '@prisma/client';
@@ -294,17 +295,6 @@ export class SalesService {
       .join(' | ') || null;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      if (existingRenewable > 0 && !renewableCashSubscription) {
-        await tx.subscription.updateMany({
-          where: {
-            studioId,
-            userId: targetUserId,
-            status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
-          },
-          data: { status: SubscriptionStatus.CANCELED },
-        });
-      }
-
       const subscription = renewableCashSubscription
         ? await tx.subscription.update({
           where: { id: renewableCashSubscription.id },
@@ -356,6 +346,46 @@ export class SalesService {
           },
         },
         });
+
+      if (existingRenewable > 0 && !renewableCashSubscription) {
+        const superseded = await tx.subscription.findMany({
+          where: {
+            studioId,
+            userId: targetUserId,
+            status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+            id: { not: subscription.id },
+          },
+          select: { id: true, membershipPlanId: true },
+        });
+        for (const row of superseded) {
+          const endReason =
+            row.membershipPlanId === plan.id
+              ? SubscriptionEndReason.SUPERSEDED_RENEWAL
+              : SubscriptionEndReason.SUPERSEDED_PLAN_CHANGE;
+          await tx.subscription.update({
+            where: { id: row.id },
+            data: {
+              status: SubscriptionStatus.CANCELED,
+              endReason,
+              supersededBySubscriptionId: subscription.id,
+            },
+          });
+        }
+      }
+
+      if (!renewableCashSubscription) {
+        // Link Stripe rows canceled for offline assignment (payment-method change).
+        await tx.subscription.updateMany({
+          where: {
+            studioId,
+            userId: targetUserId,
+            endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+            supersededBySubscriptionId: null,
+            id: { not: subscription.id },
+          },
+          data: { supersededBySubscriptionId: subscription.id },
+        });
+      }
 
       if (plan.entitlementDays != null) {
         await tx.membershipEntitlementCycle.create({

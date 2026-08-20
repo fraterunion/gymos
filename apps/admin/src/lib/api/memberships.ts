@@ -7,7 +7,7 @@ export type SubscriptionStatus =
   | "CANCELED"
   | "TRIALING"
   | "PAUSED";
-export type LifecycleStatus = SubscriptionStatus | "ENDING" | "SCHEDULED" | "EXPIRED";
+export type LifecycleStatus = SubscriptionStatus | "ENDING" | "SCHEDULED" | "EXPIRED" | "REPLACED";
 
 export type ClassAccessTemplateDto = {
   id: string;
@@ -105,6 +105,8 @@ export type SubscriptionListItem = {
     classCredits: number | null;
     entitlementDays: number | null;
   };
+  endReason: string | null;
+  transitionDetail: { label: string; detail: string } | null;
 };
 
 export type SubscriptionListResponse = {

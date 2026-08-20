@@ -4,6 +4,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Role,
+  SubscriptionEndReason,
   SubscriptionSource,
   SubscriptionStatus,
 } from '@prisma/client';
@@ -22,7 +23,7 @@ describe('SalesService', () => {
     studioMembership: { findFirst: jest.Mock; create: jest.Mock };
     user: { findFirst: jest.Mock; create: jest.Mock };
     membershipPlan: { findFirst: jest.Mock };
-    subscription: { create: jest.Mock; update: jest.Mock; count: jest.Mock; updateMany: jest.Mock; findFirst: jest.Mock };
+    subscription: { create: jest.Mock; update: jest.Mock; count: jest.Mock; updateMany: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock };
     membershipEntitlementCycle: { create: jest.Mock };
     payment: { create: jest.Mock };
     $transaction: jest.Mock;
@@ -54,7 +55,7 @@ describe('SalesService', () => {
       },
       user: { findFirst: jest.fn(), create: jest.fn() },
       membershipPlan: { findFirst: jest.fn() },
-      subscription: { create: jest.fn(), update: jest.fn(), count: jest.fn(), updateMany: jest.fn(), findFirst: jest.fn() },
+      subscription: { create: jest.fn(), update: jest.fn(), count: jest.fn(), updateMany: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
       membershipEntitlementCycle: { create: jest.fn().mockResolvedValue({ id: 'cycle-1' }) },
       payment: { create: jest.fn() },
       $transaction: jest.fn(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)),
@@ -245,6 +246,8 @@ describe('SalesService', () => {
       currentPeriodEnd: new Date('2026-09-19T18:00:00.000Z'),
       membershipPlan: { id: 'plan-1', name: 'Monthly' },
     });
+    prisma.subscription.findMany.mockResolvedValue([{ id: 'sub-old', membershipPlanId: 'plan-1' }]);
+    prisma.subscription.update.mockResolvedValue({});
     prisma.payment.create.mockResolvedValue({ id: 'pay-renewed' });
     const renewedStart = new Date('2026-08-19T18:00:00.000Z');
 
@@ -255,13 +258,13 @@ describe('SalesService', () => {
       periodStart: renewedStart.toISOString(),
     });
 
-    expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
-      where: {
-        studioId: 'studio-1',
-        userId: 'member-1',
-        status: { in: expect.arrayContaining([SubscriptionStatus.ACTIVE]) },
+    expect(prisma.subscription.update).toHaveBeenCalledWith({
+      where: { id: 'sub-old' },
+      data: {
+        status: SubscriptionStatus.CANCELED,
+        endReason: SubscriptionEndReason.SUPERSEDED_RENEWAL,
+        supersededBySubscriptionId: 'sub-renewed',
       },
-      data: { status: SubscriptionStatus.CANCELED },
     });
     expect(prisma.subscription.create).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -230,6 +230,7 @@ export type SubscriptionAction =
 
 export function subscriptionActions(sub: SubscriptionForActions): SubscriptionAction[] {
   const actions: SubscriptionAction[] = ["view_member"];
+  if (sub.lifecycleStatus === "REPLACED") return actions;
   if (sub.lifecycleStatus === "EXPIRED" && sub.source !== "STRIPE") {
     return [...actions, "renew", "change_plan", "record_cash_payment"];
   }
@@ -277,11 +278,25 @@ export function subscriptionOperationalStatusLabel(lifecycleStatus: string): str
       return "Vencida";
     case "SCHEDULED":
       return "Programada";
+    case "REPLACED":
+      return "Reemplazada";
     case "CANCELED":
       return "Cancelada";
     default:
       return lifecycleStatus;
   }
+}
+
+export type MembershipTransitionDetail = {
+  label: string;
+  detail: string;
+};
+
+export function subscriptionTransitionPresentation(
+  transitionDetail: MembershipTransitionDetail | null | undefined,
+): string | null {
+  if (!transitionDetail) return null;
+  return `${transitionDetail.label} · ${transitionDetail.detail}`;
 }
 
 export function subscriptionPaymentSourceLabel(

@@ -2,7 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MembershipPlansService } from '../membership-plans/membership-plans.service';
-import { deriveMembershipLifecycle, type MembershipLifecycleSnapshot } from './membership-entitlement';
+import { type MembershipLifecycleSnapshot } from './membership-entitlement';
+import {
+  groupSubscriptionsByUserId,
+  loadLegacyInferenceContextForUsers,
+  projectMembershipLifecycle,
+  toSubscriptionSibling,
+  type MembershipTransitionDetail,
+} from './membership-transition';
 import { toPrimaryMembershipStatus } from '../members/member-operations';
 import { isCurrentImmutableCycle } from '../members/member-360.utils';
 
@@ -44,6 +51,8 @@ export type SubscriptionListItem = {
     classCredits: number | null;
     entitlementDays: number | null;
   };
+  endReason: string | null;
+  transitionDetail: MembershipTransitionDetail | null;
 };
 
 @Injectable()
@@ -67,11 +76,20 @@ export class MembershipsService {
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
     const sevenDaysFromNow = new Date(now.getTime() + sevenDaysMs);
 
+    const byUser = groupSubscriptionsByUserId(subscriptions);
+    const legacyContext = await loadLegacyInferenceContextForUsers(
+      this.prisma,
+      studioId,
+      [...byUser.keys()],
+    );
     const byStatus: Record<string, number> = {};
     let expiringWithin7Days = 0;
     let requiringAttentionSubscriptions = 0;
     for (const subscription of subscriptions) {
-      const lifecycle = deriveMembershipLifecycle(subscription, now);
+      const siblings = (byUser.get(subscription.userId) ?? [])
+        .filter((s) => s.id !== subscription.id)
+        .map(toSubscriptionSibling);
+      const lifecycle = projectMembershipLifecycle(subscription, now, siblings, legacyContext);
       byStatus[lifecycle.lifecycleStatus] = (byStatus[lifecycle.lifecycleStatus] ?? 0) + 1;
 
       if (isSubscriptionRequiringAttention(lifecycle)) {
@@ -138,8 +156,23 @@ export class MembershipsService {
       orderBy: { createdAt: 'desc' },
     });
 
+    const byUser = groupSubscriptionsByUserId(rows);
+    const legacyContext = await loadLegacyInferenceContextForUsers(
+      this.prisma,
+      studioId,
+      [...byUser.keys()],
+    );
+
     let mapped = rows.map((row) => {
-      const lifecycle = deriveMembershipLifecycle(row, now);
+      const siblings = (byUser.get(row.userId) ?? [])
+        .filter((s) => s.id !== row.id)
+        .map(toSubscriptionSibling);
+      const lifecycle = projectMembershipLifecycle(
+        { ...row, membershipPlan: row.membershipPlan },
+        now,
+        siblings,
+        legacyContext,
+      );
       return {
         row,
         lifecycle,
@@ -152,9 +185,15 @@ export class MembershipsService {
               isCurrentImmutableCycle(cycle, now),
             ),
           }),
+          endReason: lifecycle.endReason,
+          transitionDetail: lifecycle.transitionDetail,
         } as SubscriptionListItem,
       };
     });
+
+    if (status === SubscriptionStatus.CANCELED) {
+      mapped = mapped.filter(({ lifecycle }) => lifecycle.lifecycleStatus === 'CANCELED');
+    }
 
     if (attention) {
       mapped = mapped.filter(({ lifecycle }) => isSubscriptionRequiringAttention(lifecycle));

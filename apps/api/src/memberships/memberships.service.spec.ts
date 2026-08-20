@@ -7,6 +7,13 @@ import {
   effectiveEndSortKey,
 } from './memberships.service';
 
+function mockPrisma(subscriptionRows: unknown[]) {
+  return {
+    subscription: { findMany: jest.fn().mockResolvedValue(subscriptionRows) },
+    auditLog: { findMany: jest.fn().mockResolvedValue([]) },
+  };
+}
+
 describe('MembershipsService operations projection', () => {
   it('projects source, usage configuration and paid trial as operationally active', async () => {
     const now = Date.now();
@@ -20,11 +27,7 @@ describe('MembershipsService operations projection', () => {
       membershipPlan: { id: 'plan-1', name: 'Booty', billingInterval: 'MONTHLY', priceCents: 80000, currency: 'mxn', classCredits: 4, entitlementDays: 45 },
       entitlementCycles: [{ startsAt: new Date(now - 1_000), endsAt: new Date(now + 86_400_000) }],
     };
-    const prisma = {
-      subscription: {
-        findMany: jest.fn().mockResolvedValue([row]),
-      },
-    };
+    const prisma = mockPrisma([row]);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1');
@@ -51,7 +54,7 @@ describe('MembershipsService operations projection', () => {
       membershipPlan: { id: 'plan-2', name: 'Trial', billingInterval: 'MONTHLY', priceCents: 0, currency: 'mxn', classCredits: 2, entitlementDays: null },
       entitlementCycles: [],
     };
-    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue([row]) } };
+    const prisma = mockPrisma([row]);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1');
@@ -65,7 +68,7 @@ describe('MembershipsService operations projection', () => {
       { id: 'sub-past-due', status: 'PAST_DUE', source: 'STRIPE', stripeSubscriptionId: 's1', currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'a@x.com', firstName: 'A', lastName: 'B' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [] },
       { id: 'sub-active', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: new Date(now + 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'b@x.com', firstName: 'B', lastName: 'C' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now), endsAt: new Date(now + 86_400_000) }] },
     ];
-    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const prisma = mockPrisma(rows);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1', { attention: true });
@@ -82,7 +85,7 @@ describe('MembershipsService operations projection', () => {
       { id: 'sub-expired', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 10 * 86_400_000), currentPeriodEnd: new Date(now.getTime() - 86_400_000), entitlementEndsAt: new Date(now.getTime() - 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'b@x.com', firstName: 'B', lastName: 'C' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [] },
       { id: 'sub-later', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 20 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 20 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u3', email: 'c@x.com', firstName: 'C', lastName: 'D' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 20 * 86_400_000) }] },
     ];
-    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const prisma = mockPrisma(rows);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1', { expiringWithin7Days: true });
@@ -98,6 +101,7 @@ describe('MembershipsService operations projection', () => {
       subscription: {
         findMany: jest.fn().mockResolvedValue([
           {
+            userId: 'user-1',
             status: 'ACTIVE',
             currentPeriodStart: new Date(now - 1_000),
             currentPeriodEnd: new Date(now + 3 * 86_400_000),
@@ -105,6 +109,7 @@ describe('MembershipsService operations projection', () => {
             cancelAtPeriodEnd: false,
           },
           {
+            userId: 'user-2',
             status: 'ACTIVE',
             currentPeriodStart: new Date(now - 1_000),
             currentPeriodEnd: new Date(now + 20 * 86_400_000),
@@ -113,6 +118,7 @@ describe('MembershipsService operations projection', () => {
           },
         ]),
       },
+      auditLog: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const plansService = {
       listAllPlans: jest.fn().mockResolvedValue([
@@ -132,7 +138,7 @@ describe('MembershipsService operations projection', () => {
       { id: 'sub-a', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: new Date(now + 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'ana@example.com', firstName: 'Ana', lastName: 'Villar' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [] },
       { id: 'sub-b', status: 'ACTIVE', source: 'STRIPE', stripeSubscriptionId: 's1', currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'other@example.com', firstName: 'Victor', lastName: 'Herrera' }, membershipPlan: { id: 'p2', name: 'Pro', billingInterval: 'MONTHLY', priceCents: 600, currency: 'mxn', classCredits: 5, entitlementDays: null }, entitlementCycles: [] },
     ];
-    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const prisma = mockPrisma(rows);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1', { search: 'ana@example.com' });
@@ -147,7 +153,7 @@ describe('MembershipsService operations projection', () => {
       { id: 'sub-past-due-ana', status: 'PAST_DUE', source: 'STRIPE', stripeSubscriptionId: 's1', currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'ana@example.com', firstName: 'Ana', lastName: 'Villar' }, membershipPlan: { id: 'plan-basic', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [] },
       { id: 'sub-past-due-victor', status: 'PAST_DUE', source: 'STRIPE', stripeSubscriptionId: 's2', currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 86_400_000), entitlementEndsAt: null, cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'victor@example.com', firstName: 'Victor', lastName: 'Herrera' }, membershipPlan: { id: 'plan-pro', name: 'Pro', billingInterval: 'MONTHLY', priceCents: 600, currency: 'mxn', classCredits: 5, entitlementDays: null }, entitlementCycles: [] },
     ];
-    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const prisma = mockPrisma(rows);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1', {
@@ -167,7 +173,7 @@ describe('MembershipsService operations projection', () => {
       { id: 'sub-expiring-ana', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 2 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 2 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'ana@example.com', firstName: 'Ana', lastName: 'Villar' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 2 * 86_400_000) }] },
       { id: 'sub-expiring-victor', status: 'ACTIVE', source: 'STRIPE', stripeSubscriptionId: 's1', currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 3 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 3 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'victor@example.com', firstName: 'Victor', lastName: 'Herrera' }, membershipPlan: { id: 'p2', name: 'Pro', billingInterval: 'MONTHLY', priceCents: 600, currency: 'mxn', classCredits: 5, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 3 * 86_400_000) }] },
     ];
-    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const prisma = mockPrisma(rows);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1', {
@@ -187,7 +193,7 @@ describe('MembershipsService operations projection', () => {
       { id: 'sub-later', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 10 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 10 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u1', email: 'a@x.com', firstName: 'A', lastName: 'Later' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 10 * 86_400_000) }] },
       { id: 'sub-soon', status: 'ACTIVE', source: 'CASH', stripeSubscriptionId: null, currentPeriodStart: new Date(now.getTime() - 86_400_000), currentPeriodEnd: new Date(now.getTime() + 2 * 86_400_000), entitlementEndsAt: new Date(now.getTime() + 2 * 86_400_000), cancelAtPeriodEnd: false, createdAt: new Date(), updatedAt: new Date(), user: { id: 'u2', email: 'b@x.com', firstName: 'B', lastName: 'Soon' }, membershipPlan: { id: 'p1', name: 'Basic', billingInterval: 'MONTHLY', priceCents: 1000, currency: 'mxn', classCredits: 12, entitlementDays: null }, entitlementCycles: [{ startsAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 2 * 86_400_000) }] },
     ];
-    const prisma = { subscription: { findMany: jest.fn().mockResolvedValue(rows) } };
+    const prisma = mockPrisma(rows);
     const service = new MembershipsService(prisma as never, {} as never);
 
     const result = await service.listSubscriptions('studio-1', { sort: 'effective_end_asc' });

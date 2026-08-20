@@ -32,6 +32,14 @@ enum SubscriptionStatus {
   PAUSED
 }
 
+/// Why a subscription record ended. Distinct from SubscriptionStatus (provider state).
+enum SubscriptionEndReason {
+  MEMBER_CANCELLED
+  SUPERSEDED_PAYMENT_METHOD
+  SUPERSEDED_RENEWAL
+  SUPERSEDED_PLAN_CHANGE
+}
+
 enum BillingInterval {
   MONTHLY
   YEARLY
@@ -384,6 +392,10 @@ model Subscription {
   /// Never overwritten by Stripe webhooks — access checks use this over currentPeriodEnd
   /// when present, decoupling Stripe billing renewal from the member's access window.
   entitlementEndsAt    DateTime?            @map("entitlement_ends_at")
+  /// Set when this record was replaced by another subscription (renewal, plan/payment change).
+  supersededBySubscriptionId String?      @map("superseded_by_subscription_id")
+  /// Why this record ended — separates true cancellation from administrative supersession.
+  endReason            SubscriptionEndReason? @map("end_reason")
   createdByUserId      String?              @map("created_by_user_id")
   notes                String?
   createdAt            DateTime             @default(now()) @map("created_at")
@@ -394,6 +406,8 @@ model Subscription {
   membershipPlan MembershipPlan @relation(fields: [membershipPlanId], references: [id], onDelete: Restrict)
   pendingMembershipPlan MembershipPlan? @relation("SubscriptionPendingPlan", fields: [pendingMembershipPlanId], references: [id], onDelete: SetNull)
   createdBy      User?          @relation("SubscriptionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  supersededBy   Subscription?  @relation("SubscriptionSupersession", fields: [supersededBySubscriptionId], references: [id], onDelete: SetNull)
+  supersedes     Subscription[] @relation("SubscriptionSupersession")
   payments       Payment[]
   entitlementCycles MembershipEntitlementCycle[]
 

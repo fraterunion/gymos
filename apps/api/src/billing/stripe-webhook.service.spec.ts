@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { PaymentMethod, PaymentStatus, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
+import { PaymentMethod, PaymentStatus, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import { StripeWebhookService } from './stripe-webhook.service';
 import type { WebhookInvoicePayload } from './stripe-webhook-payloads';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -997,7 +997,11 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     expect(txSubscription.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: expiredCashRow.id },
-        data: { status: SubscriptionStatus.CANCELED },
+        data: expect.objectContaining({
+          status: SubscriptionStatus.CANCELED,
+          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+          supersededBySubscriptionId: 'sub-local-new',
+        }),
       }),
     );
     // New Stripe-backed row must be CREATED
@@ -1038,7 +1042,12 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     );
 
     expect(txSubscription.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: SubscriptionStatus.CANCELED } }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: SubscriptionStatus.CANCELED,
+          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+        }),
+      }),
     );
     expect(createCalls).toHaveLength(1);
   });
@@ -1170,10 +1179,9 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       'customer.subscription.created',
     );
 
-    // Old ACTIVE CASH row canceled first, then new ACTIVE Stripe row created:
-    // update(CANCELED) is called before create(ACTIVE) — order within the transaction.
-    expect(txSubscription.update.mock.invocationCallOrder[0]).toBeLessThan(
-      txSubscription.create.mock.invocationCallOrder[0],
+    // New Stripe-backed row is created first, then the expired CASH row is marked superseded.
+    expect(txSubscription.create.mock.invocationCallOrder[0]).toBeLessThan(
+      txSubscription.update.mock.invocationCallOrder[0],
     );
     expect(createCalls[0]).toMatchObject({ status: SubscriptionStatus.ACTIVE });
   });
@@ -1292,7 +1300,11 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     expect(txSubscription.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'cmr5e5tl3002hm60r9s2d08cc' },
-        data: { status: SubscriptionStatus.CANCELED },
+        data: expect.objectContaining({
+          status: SubscriptionStatus.CANCELED,
+          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+          supersededBySubscriptionId: 'sub-local-new',
+        }),
       }),
     );
     expect(createCalls).toHaveLength(1);

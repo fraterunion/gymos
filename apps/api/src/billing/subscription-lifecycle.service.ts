@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  SubscriptionEndReason,
   SubscriptionStatus,
   type MembershipPlan,
   type Subscription,
@@ -416,7 +417,11 @@ export class SubscriptionLifecycleService {
       await this.stripe.cancelSubscription(stripeSub.stripeSubscriptionId);
       await this.prisma.subscription.update({
         where: { id: stripeSub.id },
-        data: { status: SubscriptionStatus.CANCELED, cancelAtPeriodEnd: false },
+        data: {
+          status: SubscriptionStatus.CANCELED,
+          cancelAtPeriodEnd: false,
+          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+        },
       });
       return;
     }

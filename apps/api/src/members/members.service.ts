@@ -16,6 +16,7 @@ import {
   Role,
   SubscriptionSource,
   SubscriptionStatus,
+  SubscriptionEndReason,
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
@@ -28,6 +29,11 @@ import {
   deriveMembershipLifecycle,
   MEMBERSHIP_EXPIRED_MESSAGE,
 } from '../memberships/membership-entitlement';
+import {
+  loadLegacyInferenceContextForUsers,
+  projectMembershipLifecycle,
+  toSubscriptionSibling,
+} from '../memberships/membership-transition';
 import {
   isClassIncludedInPlan,
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
@@ -757,13 +763,22 @@ export class MembersService {
       orderBy: { createdAt: 'desc' },
     });
     const now = new Date();
+    const legacyContext = await loadLegacyInferenceContextForUsers(this.prisma, studioId, [userId]);
+    const siblings = rows.map(toSubscriptionSibling);
     return rows.map((subscription) => {
-      const lifecycle = deriveMembershipLifecycle(subscription, now);
+      const lifecycle = projectMembershipLifecycle(
+        { ...subscription, membershipPlan: subscription.membershipPlan },
+        now,
+        siblings.filter((s) => s.id !== subscription.id),
+        legacyContext,
+      );
       const hasCurrentPaidEntitlementCycle = subscription.entitlementCycles.some((cycle) => isCurrentImmutableCycle(cycle, now));
       return {
         ...subscription,
         ...lifecycle,
         primaryStatus: toPrimaryMembershipStatus(lifecycle.lifecycleStatus, { isEntitled: lifecycle.isEntitled, hasCurrentPaidEntitlementCycle }),
+        endReason: lifecycle.endReason,
+        transitionDetail: lifecycle.transitionDetail,
       };
     });
   }
@@ -1113,9 +1128,13 @@ export class MembersService {
       where: { id: subscriptionId, studioId, userId },
     });
     if (!sub) throw new NotFoundException('Subscription not found');
+    const data: { status: typeof dto.status; endReason?: SubscriptionEndReason } = { status: dto.status };
+    if (dto.status === SubscriptionStatus.CANCELED) {
+      data.endReason = SubscriptionEndReason.MEMBER_CANCELLED;
+    }
     return this.prisma.subscription.update({
       where: { id: subscriptionId },
-      data: { status: dto.status },
+      data,
       include: {
         membershipPlan: { select: { id: true, name: true } },
       },

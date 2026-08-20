@@ -10,6 +10,7 @@ export type MembershipLifecycleStatus =
   | 'PAST_DUE'
   | 'PAUSED'
   | 'CANCELED'
+  | 'REPLACED'
   | 'SCHEDULED'
   | 'EXPIRED';
 
