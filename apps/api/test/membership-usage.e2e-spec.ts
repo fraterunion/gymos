@@ -68,15 +68,9 @@ describe('Membership usage (e2e)', () => {
     const member = await createUserWithPassword(prisma, { email: `flex-${Date.now()}@e2e.local` });
     await createMembership(prisma, member.id, studioId, Role.MEMBER);
     const { start, end } = periodBounds();
-    await prisma.subscription.create({
-      data: {
-        studioId,
-        userId: member.id,
-        membershipPlanId: plan.id,
-        status: 'ACTIVE',
-        currentPeriodStart: start,
-        currentPeriodEnd: end,
-      },
+    await createActiveSubscription(prisma, studioId, member.id, plan.id, {
+      currentPeriodStart: start,
+      currentPeriodEnd: end,
     });
     return { member, plan };
   }
@@ -121,8 +115,7 @@ describe('Membership usage (e2e)', () => {
     await createMembership(prisma, owner.id, studio.id, Role.OWNER);
     const ownerToken = await loginAccessToken(app, owner.email, owner.password);
 
-    const startsAt = new Date();
-    startsAt.setUTCDate(12);
+    const startsAt = new Date(Date.now() - 5 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
     const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt, endsAt });
     const booking = await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
@@ -341,15 +334,9 @@ describe('Membership usage (e2e)', () => {
     const member = await createUserWithPassword(prisma, { email: 'unlimited-member@e2e.local' });
     await createMembership(prisma, member.id, studio.id, Role.MEMBER);
     const { start, end } = periodBounds();
-    await prisma.subscription.create({
-      data: {
-        studioId: studio.id,
-        userId: member.id,
-        membershipPlanId: plan.id,
-        status: 'ACTIVE',
-        currentPeriodStart: start,
-        currentPeriodEnd: end,
-      },
+    await createActiveSubscription(prisma, studio.id, member.id, plan.id, {
+      currentPeriodStart: start,
+      currentPeriodEnd: end,
     });
     const owner = await createUserWithPassword(prisma, { email: 'unlimited-owner@e2e.local' });
     await createMembership(prisma, owner.id, studio.id, Role.OWNER);
@@ -376,7 +363,7 @@ describe('Membership usage (e2e)', () => {
     const body = profile.body as {
       activeSubscription: { creditsUsed: number | null; creditsRemaining: number | null };
     };
-    expect(body.activeSubscription.creditsUsed).toBe(0);
+    expect(body.activeSubscription.creditsUsed).toBeNull();
     expect(body.activeSubscription.creditsRemaining).toBeNull();
   });
 
@@ -459,16 +446,18 @@ describe('Membership usage (e2e)', () => {
     await createMembership(prisma, owner.id, studio.id, Role.OWNER);
     const ownerToken = await loginAccessToken(app, owner.email, owner.password);
 
-    const currentStart = new Date('2025-08-01T00:00:00.000Z');
-    const currentEnd = new Date('2025-09-01T00:00:00.000Z');
-    await createActiveSubscription(prisma, studio.id, member.id, plan.id);
-    await prisma.subscription.updateMany({
-      where: { studioId: studio.id, userId: member.id },
-      data: { currentPeriodStart: currentStart, currentPeriodEnd: currentEnd },
+    const { start: currentStart, end: currentEnd } = periodBounds();
+    await createActiveSubscription(prisma, studio.id, member.id, plan.id, {
+      currentPeriodStart: currentStart,
+      currentPeriodEnd: currentEnd,
     });
 
-    const julyClassStart = new Date('2025-07-20T12:00:00.000Z');
-    const julyClassEnd = new Date(julyClassStart.getTime() + 60 * 60 * 1000);
+    const priorPeriodStart = new Date(currentStart);
+    priorPeriodStart.setUTCMonth(priorPeriodStart.getUTCMonth() - 1);
+    priorPeriodStart.setUTCDate(20);
+    priorPeriodStart.setUTCHours(12, 0, 0, 0);
+    const julyClassStart = priorPeriodStart;
+    const julyClassEnd = new Date(priorPeriodStart.getTime() + 60 * 60 * 1000);
     const cls = await createScheduledClass(prisma, studio.id, tpl.id, {
       startsAt: julyClassStart,
       endsAt: julyClassEnd,

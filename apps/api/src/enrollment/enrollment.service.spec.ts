@@ -40,7 +40,7 @@ function buildService(txOverrides: Parameters<typeof buildTx>[0] = {}) {
   const tx = buildTx(txOverrides);
   const prisma = {
     $transaction: jest.fn().mockImplementation(
-      async (fn: (tx: typeof tx) => Promise<void>, _opts?: unknown) => fn(tx),
+      async (fn: (transaction: typeof tx) => Promise<void>) => fn(tx),
     ),
   };
   const stripe = {

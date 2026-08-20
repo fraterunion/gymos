@@ -18,7 +18,6 @@ import {
   SubscriptionStatus,
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
-import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
 import { PrismaService } from '../prisma/prisma.service';

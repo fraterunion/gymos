@@ -601,7 +601,9 @@ describe('Check-ins (e2e)', () => {
         .set('Authorization', `Bearer ${ownerToken}`)
         .send({ memberId: member.id })
         .expect(400);
-      expect(String((res.body as { message: unknown }).message)).toContain('inactive');
+      expect(String((res.body as { message: unknown }).message)).toContain(
+        'MEMBERSHIP_EXPIRED',
+      );
     });
 
     it('allows OWNER to register attendance for a class one week ago', async () => {

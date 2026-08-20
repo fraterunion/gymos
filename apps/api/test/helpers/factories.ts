@@ -95,13 +95,37 @@ export async function createActiveSubscription(
   studioId: string,
   userId: string,
   membershipPlanId: string,
+  period?: { currentPeriodStart: Date; currentPeriodEnd: Date },
 ) {
+  const now = new Date();
+  const currentPeriodStart =
+    period?.currentPeriodStart ?? new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const currentPeriodEnd =
+    period?.currentPeriodEnd ?? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const templates = await prisma.classTemplate.findMany({
+    where: { studioId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (templates.length > 0) {
+    await prisma.membershipPlanClassAccess.createMany({
+      data: templates.map((template) => ({
+        studioId,
+        membershipPlanId,
+        classTemplateId: template.id,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
   return prisma.subscription.create({
     data: {
       studioId,
       userId,
       membershipPlanId,
       status: SubscriptionStatus.ACTIVE,
+      currentPeriodStart,
+      currentPeriodEnd,
     },
   });
 }

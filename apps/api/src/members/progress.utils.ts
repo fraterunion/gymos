@@ -19,7 +19,6 @@ export function getCurrentStudioMonthBounds(
   const nowKey = getStudioLocalDateKey(now, timezone);
   const [year, month] = nowKey.split('-').map(Number);
   const monthStartKey = `${year}-${String(month).padStart(2, '0')}-01`;
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const nextMonthYear = month === 12 ? year + 1 : year;
   const nextMonth = month === 12 ? 1 : month + 1;
   const nextMonthStartKey = `${nextMonthYear}-${String(nextMonth).padStart(2, '0')}-01`;

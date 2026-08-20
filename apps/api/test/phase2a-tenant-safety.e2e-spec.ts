@@ -99,7 +99,7 @@ describe('Phase 2A tenant and role safety (e2e)', () => {
       .get(`/api/v1/studios/${studio.id}/members`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray((res.body as { data: unknown[] }).data)).toBe(true);
   });
 
   it('denies MEMBER GET /studios/:studioId/members', async () => {

@@ -10,6 +10,15 @@
 --
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- This migration contains an ARES-specific data backfill. Fresh databases do
+-- not contain that tenant, so replay must safely skip the backfill instead of
+-- inventing production seed data or violating foreign keys.
+DO $phase29$
+BEGIN
+IF EXISTS (
+  SELECT 1 FROM "studios" WHERE "id" = 'cmp33m0gp0000qomlj9p42ia5'
+) THEN
+
 -- ── B1: Booty Lab plan — set 45-day entitlement window ──────────────────────
 -- all_classes_access already = false; Booty Lab → Booty Lab row already exists.
 UPDATE "membership_plans"
@@ -156,3 +165,7 @@ VALUES
   (gen_random_uuid(), 'cmp33m0gp0000qomlj9p42ia5', 'cmq1y1t470019ensw4oc3mm08', NOW()),  -- Legs Strength
   (gen_random_uuid(), 'cmp33m0gp0000qomlj9p42ia5', 'cmq1y1t9t001fensw22vgsfn2', NOW()),  -- Street Bars
   (gen_random_uuid(), 'cmp33m0gp0000qomlj9p42ia5', 'cmr0cjesi00039k8qxolh3lm8', NOW());  -- Upperbody
+
+END IF;
+END
+$phase29$;

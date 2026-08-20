@@ -78,6 +78,17 @@ type ServiceUnderTest = {
   onInvoicePaid: (invoice: WebhookInvoicePayload) => Promise<void>;
 };
 
+type FixedDurationGrantTarget = {
+  grantFixedDurationCycleForPaidInvoice: (
+    context: unknown,
+    invoice: WebhookInvoicePayload,
+  ) => Promise<void>;
+};
+
+type DispatchTarget = {
+  dispatch: (event: unknown) => Promise<void>;
+};
+
 function makeMocks() {
   const payments = new Map<string, PaymentRow>();
 
@@ -135,7 +146,7 @@ function makeMocks() {
     // Default: no studioId in metadata → Stripe path also fails gracefully
     retrieveSubscription: jest.fn().mockResolvedValue(stripeSubscriptionWithNoMetadata),
     constructWebhookEvent: jest.fn(),
-  } as unknown as StripeService;
+  };
 
   const enrollment = {} as unknown as EnrollmentService;
 
@@ -147,7 +158,12 @@ function makeMocks() {
     }),
   };
 
-  const service = new StripeWebhookService(prisma, stripe, enrollment, subscriptionLifecycle as never);
+  const service = new StripeWebhookService(
+    prisma,
+    stripe as unknown as StripeService,
+    enrollment,
+    subscriptionLifecycle as never,
+  );
 
   jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -155,7 +171,7 @@ function makeMocks() {
   return {
     service: service as unknown as ServiceUnderTest,
     prisma: prisma as unknown as jest.Mocked<typeof prisma>,
-    stripe: stripe as unknown as jest.Mocked<typeof stripe>,
+    stripe,
     payments,
   };
 }
@@ -265,8 +281,11 @@ describe('StripeWebhookService — fixed entitlement cycle grants', () => {
         }),
       },
       $executeRaw: jest.fn(),
-      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+      $transaction: jest.fn(),
     };
+    prisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    );
     const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never);
     const grant = (service as unknown as {
       grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
@@ -305,12 +324,13 @@ describe('StripeWebhookService — fixed entitlement cycle grants', () => {
         }),
       },
       $executeRaw: jest.fn(),
-      $transaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) => {
-        const run = transactionTail.then(() => fn(prisma));
-        transactionTail = run.catch(() => undefined);
-        return run;
-      }),
+      $transaction: jest.fn(),
     };
+    prisma.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) => {
+      const run: Promise<unknown> = transactionTail.then(() => fn(prisma));
+      transactionTail = run.catch(() => undefined);
+      return run;
+    });
     const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never);
     const grant = (service as unknown as {
       grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
@@ -348,7 +368,10 @@ describe('StripeWebhookService — zero-value paid invoice classification', () =
   it('acknowledges a trial bridge invoice without Payment, cycle, exception, or dead letter', async () => {
     const { service, prisma, stripe, payments } = makeMocks();
     configureFixedSubscription(prisma);
-    const grantSpy = jest.spyOn(service as never, 'grantFixedDurationCycleForPaidInvoice');
+    const grantSpy = jest.spyOn(
+      service as unknown as FixedDurationGrantTarget,
+      'grantFixedDurationCycleForPaidInvoice',
+    );
     const trialInvoice = basilInvoice({
       id: 'in_trial_bridge', amount_paid: 0, amount_due: 0, total: 0,
       billing_reason: 'subscription_update',
@@ -379,7 +402,10 @@ describe('StripeWebhookService — zero-value paid invoice classification', () =
   ])('grants an exact fixed-duration cycle for a %s invoice but creates no zero-value Payment', async (_label, billingReason) => {
     const { service, prisma, payments } = makeMocks();
     configureFixedSubscription(prisma);
-    const grantSpy = jest.spyOn(service as never, 'grantFixedDurationCycleForPaidInvoice').mockResolvedValue(undefined);
+    const grantSpy = jest.spyOn(
+      service as unknown as FixedDurationGrantTarget,
+      'grantFixedDurationCycleForPaidInvoice',
+    ).mockResolvedValue(undefined);
     const invoice = basilInvoice({
       id: `in_${_label}`, amount_paid: 0, amount_due: 0, total: 0, billing_reason: billingReason,
       lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: cycleStart, end: cycleStart + 45 * 86400 }, proration: false }] },
@@ -796,7 +822,9 @@ describe('StripeWebhookService — handleIncomingWebhook error observability', (
   it('persists lastError via updateMany when dispatch throws', async () => {
     const { service, updateManyMock } = makeWebhookHandlerMocks();
 
-    jest.spyOn(service as never, 'dispatch').mockRejectedValue(new Error('DB connection lost'));
+    jest.spyOn(service as unknown as DispatchTarget, 'dispatch').mockRejectedValue(
+      new Error('DB connection lost'),
+    );
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     await expect(
@@ -814,7 +842,7 @@ describe('StripeWebhookService — handleIncomingWebhook error observability', (
   it('does not persist lastError when dispatch succeeds — only processed=true is written', async () => {
     const { service, updateManyMock } = makeWebhookHandlerMocks();
 
-    jest.spyOn(service as never, 'dispatch').mockResolvedValue(undefined);
+    jest.spyOn(service as unknown as DispatchTarget, 'dispatch').mockResolvedValue(undefined);
 
     await service.handleIncomingWebhook(Buffer.from('{}'), 'sig');
 
@@ -837,7 +865,9 @@ describe('StripeWebhookService — handleIncomingWebhook error observability', (
     const { service, updateManyMock } = makeWebhookHandlerMocks();
     const longError = 'X'.repeat(600);
 
-    jest.spyOn(service as never, 'dispatch').mockRejectedValue(new Error(longError));
+    jest.spyOn(service as unknown as DispatchTarget, 'dispatch').mockRejectedValue(
+      new Error(longError),
+    );
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     await expect(

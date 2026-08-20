@@ -136,12 +136,18 @@ describe('membership-plan-class-access.utils', () => {
             name: 'Push',
             durationMinutes: 60,
             deletedAt: null,
+            isOpenGymSlot: false,
+            accessWindowStart: null,
+            accessWindowEnd: null,
           },
           {
             id: 't2',
             name: 'Pull',
             durationMinutes: 45,
             deletedAt: new Date(),
+            isOpenGymSlot: false,
+            accessWindowStart: null,
+            accessWindowEnd: null,
           },
         ],
       });
@@ -167,10 +173,10 @@ describe('membership-plan-class-access.utils', () => {
         formatPlanAccessSummary({
           allClasses: false,
           templates: [
-            { id: '1', name: 'A', durationMinutes: 60, active: true },
-            { id: '2', name: 'B', durationMinutes: 60, active: true },
-            { id: '3', name: 'C', durationMinutes: 60, active: true },
-            { id: '4', name: 'D', durationMinutes: 60, active: true },
+            { id: '1', name: 'A', durationMinutes: 60, active: true, isOpenGymSlot: false, accessWindowStart: null, accessWindowEnd: null },
+            { id: '2', name: 'B', durationMinutes: 60, active: true, isOpenGymSlot: false, accessWindowStart: null, accessWindowEnd: null },
+            { id: '3', name: 'C', durationMinutes: 60, active: true, isOpenGymSlot: false, accessWindowStart: null, accessWindowEnd: null },
+            { id: '4', name: 'D', durationMinutes: 60, active: true, isOpenGymSlot: false, accessWindowStart: null, accessWindowEnd: null },
           ],
         }),
       ).toBe('4 clases incluidas');

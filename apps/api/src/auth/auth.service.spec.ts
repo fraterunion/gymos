@@ -255,7 +255,7 @@ describe('AuthService', () => {
       waiverService.validateRegistrationWaiver.mockResolvedValue({ waiverDocumentId: 'doc-validated' });
       (prisma.refreshToken.create as jest.Mock).mockResolvedValue({});
 
-      const { txClient } = setupSuccessfulTransaction();
+      setupSuccessfulTransaction();
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(safeUser);
 
       await service.register({

@@ -51,7 +51,14 @@ export function readCurrentStripePriceId(sub: StripeSubscriptionPriceSnapshot): 
 }
 
 export async function resolvePlanIdForStripePrice(
-  prisma: Prisma.TransactionClient | { membershipPlan: { findFirst: Function } },
+  prisma: Prisma.TransactionClient | {
+    membershipPlan: {
+      findFirst: (args: {
+        where: { stripePriceId: string; deletedAt: null };
+        select: { id: true };
+      }) => Promise<{ id: string } | null>;
+    };
+  },
   stripePriceId: string | null,
 ): Promise<string | null> {
   if (!stripePriceId) return null;

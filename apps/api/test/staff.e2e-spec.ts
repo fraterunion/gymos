@@ -236,7 +236,7 @@ describe('Staff account passwords (e2e)', () => {
       .expect(201);
   });
 
-  it('allows ADMIN to create INSTRUCTOR but not ADMIN', async () => {
+  it('allows ADMIN to create INSTRUCTOR and ADMIN but not OWNER', async () => {
     const studio = await createStudio(prisma);
     const admin = await createUserWithPassword(prisma, {
       email: 'admin-create@e2e.local',
@@ -264,6 +264,18 @@ describe('Staff account passwords (e2e)', () => {
         addStaffPayload({
           email: 'admin-by-admin@e2e.local',
           role: Role.ADMIN,
+          staffType: StaffType.MANAGER,
+        }),
+      )
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/staff`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(
+        addStaffPayload({
+          email: 'owner-by-admin@e2e.local',
+          role: Role.OWNER,
           staffType: StaffType.MANAGER,
         }),
       )

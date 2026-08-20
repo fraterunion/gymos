@@ -127,6 +127,17 @@ See [`WHITE_LABEL_BUILDS.md`](./WHITE_LABEL_BUILDS.md) — EAS **secrets** must 
 
 **Rollback:** Prisma does not auto-downgrade production. See [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md).
 
+### Phase 29 historical migration portability note
+
+`20260818230000_phase29_data_entitlements` was amended after production had
+already applied it so that clean databases skip its ARES-specific data backfill
+when the ARES studio is absent. Production applied checksum
+`034c35ca2e2b26c63ed85c6f0053cfe6c3b6ab7b4aad8a05e0a747b4986b1dbc`; the
+portable repository version has checksum
+`5683f358134ebd33b924e18265326b5d06ffae2039529cb961bbbd106f120ae3`. Do not
+manually rewrite production migration metadata. Development databases using
+`prisma migrate dev` may need recreation if Prisma detects the amended file.
+
 ---
 
 ## CORS (`CORS_ORIGIN`)

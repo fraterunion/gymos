@@ -275,7 +275,7 @@ describe('AnalyticsService analytics exclusion', () => {
       return Promise.resolve([]);
     });
 
-    await service.getFinancialSummary(STUDIO_A, 'monthToDate');
+    await service.getFinancialSummary(STUDIO_A, 'month');
 
     const financialCalls = queryRaw.mock.calls.filter((c) =>
       sql(c[0]).includes('FROM payments'),

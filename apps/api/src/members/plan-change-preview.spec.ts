@@ -104,7 +104,7 @@ describe('plan-change-preview: Full → Basic downgrade', () => {
         }),
       },
       subscription: {
-        findFirst: jest.fn().mockImplementation(async (args: { where: { stripeSubscriptionId?: { not: null } } }) => ({
+        findFirst: jest.fn().mockImplementation(async () => ({
           id: 'sub-1',
           membershipPlanId: 'plan-full',
           pendingMembershipPlanId: null,

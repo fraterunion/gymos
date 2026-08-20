@@ -7,7 +7,7 @@ describe('MemberOperationalNotesService', () => {
     memberOperationalNote: { findMany: jest.fn(), create: jest.fn() },
   };
 
-  const service = new MemberOperationalNotesService(prisma);
+  const service = new MemberOperationalNotesService(prisma as never);
 
   beforeEach(() => {
     jest.clearAllMocks();

@@ -31,6 +31,7 @@ describe('SalesService', () => {
   let billingService: { createStaffInitiatedCheckoutSession: jest.Mock };
   let waiverService: { assertMemberWaiverAccepted: jest.Mock };
   let auditService: { log: jest.Mock };
+  let salesSettingsService: { getSettings: jest.Mock };
   let subscriptionLifecycle: {
     assertNoRenewableSubscriptionConflict: jest.Mock;
   };

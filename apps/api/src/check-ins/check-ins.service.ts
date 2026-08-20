@@ -14,7 +14,6 @@ import {
   ClassStatus,
   Prisma,
   Role,
-  SubscriptionStatus,
 } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import type { JwtPayload } from 'jsonwebtoken';
