@@ -206,7 +206,7 @@ export class MembersController {
 
   @Get(':userId/attendance-log')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getMemberAttendanceLog(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,
@@ -325,7 +325,7 @@ export class MembersController {
 
   @Get(':userId/profile')
   @UseGuards(RolesGuard)
-  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
   getCrmProfile(
     @Param('studioId') studioId: string,
     @Param('userId') userId: string,

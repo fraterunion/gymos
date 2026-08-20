@@ -98,9 +98,11 @@ export type TimelineEventType =
   | "BOOKING_NO_SHOW"
   | "CHECKED_IN"
   | "MEMBERSHIP_ASSIGNED"
+  | "MEMBERSHIP_CYCLE_CREATED"
   | "PAYMENT_SUCCEEDED"
   | "PAYMENT_FAILED"
   | "CRM_UPDATED"
+  | "WAIVER_ACCEPTED"
   | "NOTE_CREATED";
 
 export type TimelineEvent = {
@@ -151,12 +153,20 @@ export type MemberSubscription = {
   status: SubStatus;
   accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
   lifecycleStatus: LifecycleStatus;
+  primaryStatus: PrimaryLifecycleStatus;
   isEntitled: boolean;
   effectiveEnd: string | null;
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
-  membershipPlan: MemberPlan;
+  source: Exclude<PaymentSource, "NONE">;
+  membershipPlan: MemberPlan & {
+    allClassesAccess: boolean;
+    allowedCategories: string[];
+    classTemplateAccess: Array<{ classTemplateId: string; classTemplate: { name: string; isOpenGymSlot: boolean; accessWindowStart: string | null; accessWindowEnd: string | null } }>;
+  };
+  entitlementCycles: Array<{ id: string; startsAt: string; endsAt: string; creditLimit: number | null; source: Exclude<PaymentSource, "NONE">; stripeInvoiceId: string | null }>;
+  payments: Array<Pick<MemberPayment, "id" | "amountCents" | "currency" | "status" | "paymentMethod" | "paidAt" | "createdAt" | "stripeInvoiceId">>;
   pendingMembershipPlan?: Pick<MemberPlan, "id" | "name" | "billingInterval" | "priceCents" | "currency"> | null;
 };
 
@@ -186,6 +196,13 @@ export type MemberProfile = {
     attendedCount: number;
     noShowCount: number;
     cancelledCount: number;
+    upcomingCount: number;
+  };
+  engagement: {
+    visitsCurrentPeriod: number;
+    visitsLast30Days: number;
+    averageVisitsPerWeekLast30: number;
+    daysSinceLastVisit: number | null;
   };
   currentMembership: ({
     id: string;
@@ -200,7 +217,12 @@ export type MemberProfile = {
     cancelAtPeriodEnd: boolean;
     effectiveEnd: string | null;
     entitlementEndsAt: string | null;
-    plan: MemberPlan & { allowedCategories: string[]; allClassesAccess: boolean; allowedTemplateIds: string[] };
+    plan: MemberPlan & {
+      allowedCategories: string[];
+      allClassesAccess: boolean;
+      allowedTemplateIds: string[];
+      allowedTemplates: Array<{ id: string; name: string; isOpenGymSlot: boolean; accessWindowStart: string | null; accessWindowEnd: string | null }>;
+    };
     pendingPlan: Pick<MemberPlan, "id" | "name" | "billingInterval" | "priceCents" | "currency"> | null;
     creditsUsed: number | null;
     creditsRemaining: number | null;
@@ -211,8 +233,9 @@ export type MemberProfile = {
     lastPayment: (MemberPayment & { paymentMethod: string; membershipPlan: { id: string; name: string } | null }) | null;
     recentNoShows: number;
     attendanceRate: number | null;
-    attentionItems: Array<{ code: string; priority: "critical" | "warning" | "informational"; message: string; action: string | null }>;
+    attentionItems: Array<{ code: "PAST_DUE" | "EXPIRED" | "CANCELLATION_SCHEDULED" | "ZERO_CREDITS" | "ENDING" | "NO_SHOWS" | "INACTIVE"; priority: "critical" | "warning" | "informational"; message: string; action: "REVIEW_BILLING" | "RENEW" | null }>;
     segments: string[];
+    recentActivity: Array<{ type: "BOOKING_CREATED" | "BOOKING_CANCELLED" | "BOOKING_NO_SHOW"; title: string; description: string; occurredAt: string; classStartsAt: string }>;
   };
   activeSubscription: {
     id: string;
@@ -238,6 +261,13 @@ export type MemberCrmProfile = {
   injuries: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type MemberOperationalNote = {
+  id: string;
+  body: string;
+  createdAt: string;
+  author: { id: string; firstName: string; lastName: string };
 };
 
 export type UpsertCrmProfileInput = {
@@ -273,6 +303,7 @@ export type MemberBookingsResponse = {
   total: number;
   page: number;
   limit: number;
+  summary: { upcoming: number; completed: number; cancelled: number; noShows: number };
 };
 
 export type MemberAttendance = {
@@ -367,6 +398,14 @@ export async function fetchMemberProfile(
   userId: string,
 ): Promise<MemberProfile> {
   return apiRequest<MemberProfile>(`/studios/${studioId}/members/${userId}`, { method: "GET" });
+}
+
+export async function fetchMemberOperationalNotes(studioId: string, userId: string): Promise<MemberOperationalNote[]> {
+  return apiRequest<MemberOperationalNote[]>(`/studios/${studioId}/members/${userId}/operational-notes?limit=50`, { method: "GET" });
+}
+
+export async function createMemberOperationalNote(studioId: string, userId: string, body: string): Promise<MemberOperationalNote> {
+  return apiRequest<MemberOperationalNote>(`/studios/${studioId}/members/${userId}/operational-notes`, { method: "POST", body: JSON.stringify({ body }) });
 }
 
 export async function fetchMemberBookings(

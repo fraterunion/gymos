@@ -40,6 +40,7 @@ import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
 import type { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
 import { matchesActivityFilter, matchesLifecycleFilter, matchesPaymentSource, selectHighestMemberAttention, toPrimaryMembershipStatus } from './member-operations';
+import { buildAttendanceRate, buildBookingSummary, buildMemberEngagement, isCurrentImmutableCycle, sortMemberTimeline } from './member-360.utils';
 
 const ENTITLEMENT_OVERRIDE_ROLES: ReadonlySet<Role> = new Set([Role.ADMIN, Role.OWNER]);
 
@@ -362,9 +363,12 @@ export class MembersService {
 
     const profileNow = new Date();
     const thirtyDaysAgo = new Date(profileNow.getTime() - 30 * 86_400_000);
-    const [attendanceTotal, latestSubscription, bookingGroups, lastAttendance, nextBooking, lastPayment, recentNoShows] = await Promise.all([
+    const [attendanceTotal, attendanceLast30, latestSubscription, bookingGroups, lastAttendance, nextBooking, upcomingBookingCount, lastPayment, recentNoShows, recentBookings] = await Promise.all([
       this.prisma.attendance.count({
         where: { studioId, userId },
+      }),
+      this.prisma.attendance.count({
+        where: { studioId, userId, checkedInAt: { gte: thirtyDaysAgo } },
       }),
       this.prisma.subscription.findFirst({
         where: { studioId, userId },
@@ -382,7 +386,10 @@ export class MembersService {
               allowedCategories: true,
               allClassesAccess: true,
               classTemplateAccess: {
-                select: { classTemplateId: true },
+                select: {
+                  classTemplateId: true,
+                  classTemplate: { select: { name: true, isOpenGymSlot: true, accessWindowStart: true, accessWindowEnd: true } },
+                },
               },
             },
           },
@@ -417,12 +424,27 @@ export class MembersService {
         orderBy: { scheduledClass: { startsAt: 'asc' } },
         include: { scheduledClass: { select: { id: true, startsAt: true, classTemplate: { select: { name: true } } } } },
       }),
+      this.prisma.booking.count({
+        where: { studioId, userId, status: BookingStatus.CONFIRMED, scheduledClass: { startsAt: { gt: profileNow } } },
+      }),
       this.prisma.payment.findFirst({
         where: { studioId, userId },
         orderBy: { createdAt: 'desc' },
         include: { membershipPlan: { select: { id: true, name: true } } },
       }),
       this.prisma.booking.count({ where: { studioId, userId, status: BookingStatus.NO_SHOW, scheduledClass: { startsAt: { gte: thirtyDaysAgo } } } }),
+      this.prisma.booking.findMany({
+        where: { studioId, userId },
+        orderBy: { updatedAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          status: true,
+          createdAt: true,
+          cancelledAt: true,
+          scheduledClass: { select: { startsAt: true, classTemplate: { select: { name: true } } } },
+        },
+      }),
     ]);
 
     const totalBookings = bookingGroups.reduce((s, g) => s + g._count._all, 0);
@@ -432,6 +454,7 @@ export class MembersService {
     // Compute credit usage for credit-limited plans via shared membership usage.
     let creditsUsed: number | null = null;
     let creditsRemaining: number | null = null;
+    let visitsCurrentPeriod = 0;
 
     const latestLifecycle = latestSubscription ? deriveMembershipLifecycle(latestSubscription, profileNow) : null;
     const latestPrimaryStatus = latestLifecycle && latestSubscription
@@ -462,6 +485,12 @@ export class MembersService {
           creditsRemaining = usage.creditsRemaining;
         }
       }
+      const periodEnd = latestLifecycle?.effectiveEnd;
+      if (latestSubscription.currentPeriodStart && periodEnd) {
+        visitsCurrentPeriod = await this.prisma.attendance.count({
+          where: { studioId, userId, checkedInAt: { gte: latestSubscription.currentPeriodStart, lt: periodEnd } },
+        });
+      }
     }
 
     const currentMembership = latestSubscription
@@ -489,6 +518,13 @@ export class MembersService {
             allowedCategories: latestSubscription.membershipPlan.allowedCategories,
             allClassesAccess: latestSubscription.membershipPlan.allClassesAccess,
             allowedTemplateIds: latestSubscription.membershipPlan.classTemplateAccess.map((row) => row.classTemplateId),
+            allowedTemplates: latestSubscription.membershipPlan.classTemplateAccess.map((row) => ({
+              id: row.classTemplateId,
+              name: row.classTemplate.name,
+              isOpenGymSlot: row.classTemplate.isOpenGymSlot,
+              accessWindowStart: row.classTemplate.accessWindowStart,
+              accessWindowEnd: row.classTemplate.accessWindowEnd,
+            })),
           },
           pendingPlan: latestSubscription.pendingMembershipPlan,
           creditsUsed,
@@ -499,6 +535,7 @@ export class MembersService {
     const attentionItems = [];
     if (latestLifecycle?.lifecycleStatus === 'PAST_DUE') attentionItems.push({ code: 'PAST_DUE', priority: 'critical', message: 'Pago pendiente', action: 'REVIEW_BILLING' });
     if (latestLifecycle?.lifecycleStatus === 'EXPIRED') attentionItems.push({ code: 'EXPIRED', priority: 'critical', message: `Membresía vencida hace ${Math.max(0, Math.floor((profileNow.getTime() - latestLifecycle.effectiveEnd!.getTime()) / 86_400_000))} días`, action: 'RENEW' });
+    if (latestLifecycle?.isEntitled && latestSubscription?.source === SubscriptionSource.STRIPE && latestSubscription.cancelAtPeriodEnd) attentionItems.push({ code: 'CANCELLATION_SCHEDULED', priority: 'warning', message: 'No renovará automáticamente al terminar el periodo', action: 'REVIEW_BILLING' });
     if (creditsRemaining === 0) attentionItems.push({ code: 'ZERO_CREDITS', priority: 'warning', message: 'Sin créditos restantes', action: 'RENEW' });
     if (latestLifecycle?.lifecycleStatus === 'ENDING' && latestLifecycle.effectiveEnd && latestLifecycle.effectiveEnd.getTime() - profileNow.getTime() <= 7 * 86_400_000) attentionItems.push({ code: 'ENDING', priority: 'warning', message: `Termina en ${Math.max(0, Math.ceil((latestLifecycle.effectiveEnd.getTime() - profileNow.getTime()) / 86_400_000))} días`, action: 'RENEW' });
     if (recentNoShows > 0) attentionItems.push({ code: 'NO_SHOWS', priority: 'warning', message: `${recentNoShows} no-show${recentNoShows === 1 ? '' : 's'} en los últimos 30 días`, action: null });
@@ -530,16 +567,29 @@ export class MembersService {
         attendedCount: attendanceTotal,
         noShowCount,
         cancelledCount,
+        upcomingCount: upcomingBookingCount,
       },
+      engagement: buildMemberEngagement({
+        visitsCurrentPeriod,
+        visitsLast30Days: attendanceLast30,
+        daysSinceLastVisit: daysSinceVisit,
+      }),
       currentMembership,
       operations: {
         lastVisit: lastAttendance,
         nextBooking,
         lastPayment,
         recentNoShows,
-        attendanceRate: totalBookings > 0 ? Math.round((attendanceTotal / totalBookings) * 100) : null,
+        attendanceRate: buildAttendanceRate(attendanceTotal, noShowCount),
         attentionItems,
         segments,
+        recentActivity: recentBookings.map((booking) => ({
+          type: booking.status === BookingStatus.CANCELLED ? 'BOOKING_CANCELLED' : booking.status === BookingStatus.NO_SHOW ? 'BOOKING_NO_SHOW' : 'BOOKING_CREATED',
+          title: booking.status === BookingStatus.CANCELLED ? 'Reserva cancelada' : booking.status === BookingStatus.NO_SHOW ? 'No-show' : 'Reserva creada',
+          description: booking.scheduledClass.classTemplate.name,
+          occurredAt: booking.cancelledAt ?? booking.createdAt,
+          classStartsAt: booking.scheduledClass.startsAt,
+        })),
       },
       activeSubscription: activeSubscription
         ? {
@@ -591,7 +641,7 @@ export class MembersService {
   ) {
     await this.assertMembership(studioId, userId);
     const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
+    const [data, total, grouped] = await Promise.all([
       this.prisma.booking.findMany({
         where: { studioId, userId },
         include: {
@@ -607,8 +657,13 @@ export class MembersService {
         take: limit,
       }),
       this.prisma.booking.count({ where: { studioId, userId } }),
+      this.prisma.booking.groupBy({ by: ['status'], where: { studioId, userId }, _count: { _all: true } }),
     ]);
-    return { data, total, page, limit };
+    const upcoming = await this.prisma.booking.count({ where: { studioId, userId, status: BookingStatus.CONFIRMED, scheduledClass: { startsAt: { gt: new Date() } } } });
+    return {
+      data, total, page, limit,
+      summary: buildBookingSummary(grouped, upcoming),
+    };
   }
 
   async getMemberAttendance(
@@ -619,7 +674,8 @@ export class MembersService {
   ) {
     await this.assertMembership(studioId, userId);
     const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
+    const [data, total, last30] = await Promise.all([
       this.prisma.attendance.findMany({
         where: { studioId, userId },
         include: {
@@ -634,8 +690,9 @@ export class MembersService {
         take: limit,
       }),
       this.prisma.attendance.count({ where: { studioId, userId } }),
+      this.prisma.attendance.count({ where: { studioId, userId, checkedInAt: { gte: thirtyDaysAgo } } }),
     ]);
-    return { data, total, page, limit };
+    return { data, total, page, limit, summary: { total, last30, averagePerWeekLast30: Math.round((last30 / (30 / 7)) * 10) / 10 } };
   }
 
   async getMemberPayments(
@@ -672,7 +729,12 @@ export class MembersService {
             priceCents: true,
             currency: true,
             classCredits: true,
+            entitlementDays: true,
+            allClassesAccess: true,
             allowedCategories: true,
+            classTemplateAccess: {
+              select: { classTemplateId: true, classTemplate: { select: { name: true, isOpenGymSlot: true, accessWindowStart: true, accessWindowEnd: true } } },
+            },
           },
         },
         pendingMembershipPlan: {
@@ -684,14 +746,27 @@ export class MembersService {
             currency: true,
           },
         },
+        entitlementCycles: {
+          orderBy: { startsAt: 'desc' },
+          select: { id: true, startsAt: true, endsAt: true, creditLimit: true, source: true, stripeInvoiceId: true },
+        },
+        payments: {
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, amountCents: true, currency: true, status: true, paymentMethod: true, paidAt: true, createdAt: true, stripeInvoiceId: true },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
     const now = new Date();
-    return rows.map((subscription) => ({
-      ...subscription,
-      ...deriveMembershipLifecycle(subscription, now),
-    }));
+    return rows.map((subscription) => {
+      const lifecycle = deriveMembershipLifecycle(subscription, now);
+      const hasCurrentPaidEntitlementCycle = subscription.entitlementCycles.some((cycle) => isCurrentImmutableCycle(cycle, now));
+      return {
+        ...subscription,
+        ...lifecycle,
+        primaryStatus: toPrimaryMembershipStatus(lifecycle.lifecycleStatus, { isEntitled: lifecycle.isEntitled, hasCurrentPaidEntitlementCycle }),
+      };
+    });
   }
 
   // ── Staff booking operations ───────────────────────────────────────────────
@@ -1119,7 +1194,7 @@ export class MembersService {
   async getMemberTimeline(studioId: string, userId: string) {
     await this.assertMembership(studioId, userId);
 
-    const [membership, bookings, attendances, subscriptions, payments, crmProfile, operationalNotes] =
+    const [membership, bookings, attendances, subscriptions, payments, crmProfile, operationalNotes, entitlementCycles, waiverAcceptances] =
       await Promise.all([
         this.prisma.studioMembership.findFirst({
           where: { studioId, userId, deletedAt: null },
@@ -1164,6 +1239,8 @@ export class MembersService {
           where: { studioId_userId: { studioId, userId } },
         }),
         this.prisma.memberOperationalNote.findMany({ where: { studioId, memberUserId: userId }, include: { author: { select: { firstName: true, lastName: true } } }, orderBy: { createdAt: 'desc' }, take: 100 }),
+        this.prisma.membershipEntitlementCycle.findMany({ where: { studioId, userId }, include: { membershipPlan: { select: { name: true } } }, orderBy: { startsAt: 'desc' }, take: 100 }),
+        this.prisma.waiverAcceptance.findMany({ where: { studioId, userId }, include: { waiverDocument: { select: { version: true } }, attestedBy: { select: { firstName: true, lastName: true } } }, orderBy: { acceptedAt: 'desc' }, take: 20 }),
       ]);
 
     type TimelineEvent = {
@@ -1210,12 +1287,19 @@ export class MembersService {
 
     for (const note of operationalNotes) events.push({ type: 'NOTE_CREATED', title: 'Operational note added', description: note.body, actor: `${note.author.firstName} ${note.author.lastName}`, occurredAt: note.createdAt });
 
+    for (const cycle of entitlementCycles) {
+      events.push({ type: 'MEMBERSHIP_CYCLE_CREATED', title: 'Membership cycle created', description: `${cycle.membershipPlan.name} · ${cycle.startsAt.toISOString().slice(0, 10)} → ${cycle.endsAt.toISOString().slice(0, 10)}`, occurredAt: cycle.createdAt });
+    }
+
+    for (const waiver of waiverAcceptances) {
+      events.push({ type: 'WAIVER_ACCEPTED', title: 'Waiver accepted', description: `Version ${waiver.waiverDocument.version}`, actor: waiver.attestedBy ? `${waiver.attestedBy.firstName} ${waiver.attestedBy.lastName}` : null, occurredAt: waiver.acceptedAt });
+    }
+
     if (crmProfile && crmProfile.updatedAt.getTime() - crmProfile.createdAt.getTime() > 60_000) {
       events.push({ type: 'CRM_UPDATED', title: 'Coach notes updated', occurredAt: crmProfile.updatedAt });
     }
 
-    events.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
-    return events.slice(0, 200);
+    return sortMemberTimeline(events).slice(0, 200);
   }
 
   // ── Attendance log (bookings + check-in status) ────────────────────────────

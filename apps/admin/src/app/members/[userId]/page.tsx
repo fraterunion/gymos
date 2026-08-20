@@ -7,10 +7,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import {
   fetchMemberAttendanceLog,
+  createMemberOperationalNote,
   fetchMemberBookings,
   fetchMemberCrmProfile,
   fetchMemberPayments,
   fetchMemberProfile,
+  fetchMemberOperationalNotes,
   fetchMemberSubscriptions,
   fetchMemberTimeline,
   fetchPlanChangePreview,
@@ -23,6 +25,7 @@ import {
   type MemberBooking,
   type MemberCrmProfile,
   type MemberPayment,
+  type MemberOperationalNote,
   type MemberPlan,
   type MemberProfile,
   type MemberSubscription,
@@ -35,6 +38,7 @@ import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/membersh
 import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/sales";
 import { ApiError } from "@/lib/api/errors";
 import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
+import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, usagePresentation } from "@/lib/member360";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -117,6 +121,7 @@ const BOOKING_STATUS_COLORS: Record<string, string> = {
   COMPLETED: "bg-blue-100 text-blue-800",
   PENDING: "bg-zinc-100 text-zinc-600",
 };
+const BOOKING_STATUS_LABELS: Record<string, string> = { PENDING: "Pendiente", CONFIRMED: "Confirmada", CANCELLED: "Cancelada", NO_SHOW: "No-show", COMPLETED: "Completada" };
 
 const PAYMENT_STATUS_COLORS: Record<string, string> = {
   SUCCEEDED: "bg-emerald-100 text-emerald-800",
@@ -125,6 +130,7 @@ const PAYMENT_STATUS_COLORS: Record<string, string> = {
   REFUNDED: "bg-blue-100 text-blue-800",
   PARTIALLY_REFUNDED: "bg-amber-100 text-amber-800",
 };
+const PAYMENT_STATUS_LABELS: Record<string, string> = { PENDING: "Pendiente", SUCCEEDED: "Pagado", FAILED: "Fallido", REFUNDED: "Reembolsado", PARTIALLY_REFUNDED: "Reembolso parcial" };
 
 const PRESET_TAGS = [
   "VIP", "New", "At Risk", "PT Client", "Trial",
@@ -263,15 +269,17 @@ const TABS: { id: Tab; label: string }[] = [
 
 // ── Bookings tab ──────────────────────────────────────────────────────────────
 
-function BookingsTab({ studioId, userId }: { studioId: string; userId: string }) {
+function BookingsTab({ studioId, userId, studioRole }: { studioId: string; userId: string; studioRole: string | null }) {
   const [bookings, setBookings] = useState<MemberBooking[]>([]);
   const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState({ upcoming: 0, completed: 0, cancelled: 0, noShows: 0 });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const limit = 20;
+  const canOperateBookings = studioRole === "OWNER" || studioRole === "ADMIN" || studioRole === "STAFF";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -280,6 +288,7 @@ function BookingsTab({ studioId, userId }: { studioId: string; userId: string })
       const res = await fetchMemberBookings(studioId, userId, page, limit);
       setBookings(res.data);
       setTotal(res.total);
+      setSummary(res.summary);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load bookings");
     } finally {
@@ -321,6 +330,12 @@ function BookingsTab({ studioId, userId }: { studioId: string; userId: string })
     <div className="space-y-3">
       {actionError && <ErrorBanner message={actionError} />}
       {error && <ErrorBanner message={error} />}
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 sm:grid-cols-4">
+        <StatCard label="Próximas" value={summary.upcoming} />
+        <StatCard label="Completadas" value={summary.completed} />
+        <StatCard label="Canceladas" value={summary.cancelled} />
+        <StatCard label="No-shows" value={summary.noShows} />
+      </div>
       <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <table className="min-w-full divide-y divide-zinc-100">
           <thead className="bg-zinc-50">
@@ -345,11 +360,11 @@ function BookingsTab({ studioId, userId }: { studioId: string; userId: string })
                 </td>
                 <td className="px-4 py-3 text-sm text-zinc-600">{fmtDateTime(b.scheduledClass.startsAt)}</td>
                 <td className="px-4 py-3">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BOOKING_STATUS_COLORS[b.status] ?? ""}`}>{b.status}</span>
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BOOKING_STATUS_COLORS[b.status] ?? ""}`}>{BOOKING_STATUS_LABELS[b.status] ?? b.status}</span>
                 </td>
                 <td className="px-4 py-3 text-sm text-zinc-500">{fmtDate(b.createdAt)}</td>
                 <td className="px-4 py-3 text-right">
-                  {b.status === "CONFIRMED" && (
+                  {canOperateBookings && b.status === "CONFIRMED" && (
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => void handleCheckIn(b.id)}
@@ -390,7 +405,7 @@ const ATTENDANCE_STATUS_CONFIG: Record<string, { label: string; color: string }>
   UPCOMING: { label: "Upcoming", color: "bg-sky-100 text-sky-800" },
 };
 
-function AttendanceTab({ studioId, userId }: { studioId: string; userId: string }) {
+function AttendanceTab({ studioId, userId, studioRole, profile }: { studioId: string; userId: string; studioRole: string | null; profile: MemberProfile }) {
   const [records, setRecords] = useState<AttendanceLogEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -398,6 +413,7 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const limit = 25;
+  const canMarkNoShow = studioRole === "OWNER" || studioRole === "ADMIN" || studioRole === "STAFF";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -432,6 +448,12 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 sm:grid-cols-4">
+        <StatCard label="Visitas" value={profile.attendances.totalInStudio} sub="Histórico" />
+        <StatCard label="Este periodo" value={profile.engagement.visitsCurrentPeriod} />
+        <StatCard label="Últimos 30 días" value={profile.engagement.visitsLast30Days} />
+        <StatCard label="Promedio semanal" value={profile.engagement.averageVisitsPerWeekLast30} sub="últimos 30 días" />
+      </div>
       <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <table className="min-w-full divide-y divide-zinc-100">
           <thead className="bg-zinc-50">
@@ -475,7 +497,7 @@ function AttendanceTab({ studioId, userId }: { studioId: string; userId: string 
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {r.canMarkNoShow && (
+                    {canMarkNoShow && r.canMarkNoShow && (
                       <button
                         onClick={() => void handleMarkNoShow(r)}
                         disabled={actionLoading === r.id}
@@ -505,10 +527,12 @@ const TIMELINE_CONFIG: Record<string, { dot: string; label?: string }> = {
   BOOKING_NO_SHOW:    { dot: "bg-amber-400" },
   CHECKED_IN:         { dot: "bg-emerald-500" },
   MEMBERSHIP_ASSIGNED: { dot: "bg-indigo-500" },
+  MEMBERSHIP_CYCLE_CREATED: { dot: "bg-indigo-400" },
   PAYMENT_SUCCEEDED:  { dot: "bg-emerald-500" },
   PAYMENT_FAILED:     { dot: "bg-red-500" },
   CRM_UPDATED:        { dot: "bg-zinc-400" },
   NOTE_CREATED:       { dot: "bg-violet-500" },
+  WAIVER_ACCEPTED:    { dot: "bg-teal-500" },
 };
 
 function TimelineTab({ studioId, userId }: { studioId: string; userId: string }) {
@@ -662,7 +686,7 @@ function BillingTab({ studioId, userId, profile }: { studioId: string; userId: s
                 <td className="px-4 py-3 text-sm text-zinc-600">{p.paymentMethod === "CASH" ? "Efectivo" : p.paymentMethod === "STRIPE" ? "Stripe" : p.paymentMethod}</td>
                 <td className="px-4 py-3">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PAYMENT_STATUS_COLORS[p.status] ?? ""}`}>
-                    {p.status}
+                    {PAYMENT_STATUS_LABELS[p.status] ?? p.status}
                   </span>
                 </td>
               </tr>
@@ -1067,8 +1091,8 @@ function MembershipTab({
               <div>
                 <div className="flex items-center gap-2">
                   <p className="font-semibold text-zinc-900">{s.membershipPlan.name}</p>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${LIFECYCLE_COLORS[s.lifecycleStatus]}`}>
-                    {LIFECYCLE_LABELS[s.lifecycleStatus]}
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PRIMARY_STATUS_COLORS[s.primaryStatus]}`}>
+                    {PRIMARY_STATUS_LABELS[s.primaryStatus]}
                   </span>
                 </div>
                 <p className="mt-0.5 text-sm text-zinc-500">
@@ -1112,7 +1136,7 @@ function MembershipTab({
                 )}
               </div>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
               <div>
                 <p className="text-xs text-zinc-400">Period start</p>
                 <p className="text-sm text-zinc-700">{fmtDate(s.currentPeriodStart)}</p>
@@ -1129,7 +1153,27 @@ function MembershipTab({
                 <p className="text-xs text-zinc-400">Cancel at period end</p>
                 <p className="text-sm text-zinc-700">{s.cancelAtPeriodEnd ? <span className="text-amber-600">Yes</span> : "No"}</p>
               </div>
+              <div>
+                <p className="text-xs text-zinc-400">Provider / pago</p>
+                <p className="text-sm text-zinc-700">{s.status} · {s.source === "CASH" ? "Efectivo" : s.source === "STRIPE" ? "Stripe" : "Manual"}</p>
+              </div>
             </div>
+            <div className="mt-4 border-t border-zinc-100 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Acceso de clases</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {s.membershipPlan.allClassesAccess ? <span className="text-sm text-zinc-700">Todas las clases</span> : s.membershipPlan.classTemplateAccess.length > 0 ? s.membershipPlan.classTemplateAccess.map((access) => <span key={access.classTemplateId} className="rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700">{access.classTemplate.name}{access.classTemplate.isOpenGymSlot && access.classTemplate.accessWindowStart && access.classTemplate.accessWindowEnd ? ` · ${access.classTemplate.accessWindowStart}–${access.classTemplate.accessWindowEnd}` : ""}</span>) : <span className="text-sm text-rose-600">Sin clases configuradas</span>}
+              </div>
+            </div>
+            {s.source === "STRIPE" && s.isEntitled && !s.cancelAtPeriodEnd ? <div className="mt-4 rounded-lg bg-zinc-50 px-3 py-2"><p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Próxima renovación programada</p><p className="mt-1 text-sm font-medium text-zinc-900">{studioDate(s.currentPeriodEnd ?? s.effectiveEnd)} · {fmtMoney(s.membershipPlan.priceCents, s.membershipPlan.currency)}</p><p className="text-xs text-zinc-500">{s.membershipPlan.entitlementDays ? `Cada ${s.membershipPlan.entitlementDays} días` : "Renovación automática"} · el siguiente derecho se crea solo tras pago exitoso.</p></div> : null}
+            {s.entitlementCycles.length > 0 ? (
+              <div className="mt-4 border-t border-zinc-100 pt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Historial de ciclos pagados</p>
+                <div className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-100">
+                  {s.entitlementCycles.map((cycle) => { const payment = cyclePayment(s, cycle.stripeInvoiceId); const current = new Date(cycle.startsAt) <= new Date() && new Date(cycle.endsAt) > new Date(); return <div key={cycle.id} className="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[1fr_auto_auto]"><span><span className="font-medium text-zinc-900">{studioDate(cycle.startsAt)} → {studioDate(cycle.endsAt)}</span>{current ? <span className="ml-2 text-xs font-medium text-emerald-700">Actual</span> : null}<span className="block text-xs text-zinc-500">{cycle.creditLimit == null ? "Ilimitado" : `${cycle.creditLimit} créditos`} · {cycle.source === "CASH" ? "Efectivo" : cycle.source === "STRIPE" ? "Stripe" : "Manual"}</span></span><span className="text-zinc-600">{payment ? fmtMoney(payment.amountCents, payment.currency) : "Pago no vinculado"}</span><span className="text-xs text-zinc-400">{payment?.paymentMethod ?? "—"}</span></div>; })}
+                </div>
+                <p className="mt-2 text-xs text-zinc-400">Los ciclos futuros aparecen únicamente después de un pago válido.</p>
+              </div>
+            ) : null}
           </div>
         ))}
         {subs.length > 0 && (
@@ -1145,9 +1189,13 @@ function MembershipTab({
 function NotesTab({
   studioId,
   userId,
+  readOnly = false,
+  canAddOperationalNote = false,
 }: {
   studioId: string;
   userId: string;
+  readOnly?: boolean;
+  canAddOperationalNote?: boolean;
 }) {
   const [crm, setCrm] = useState<MemberCrmProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1166,6 +1214,9 @@ function NotesTab({
     injuries: null,
   });
   const [tagInput, setTagInput] = useState("");
+  const [operationalNotes, setOperationalNotes] = useState<MemberOperationalNote[]>([]);
+  const [newOperationalNote, setNewOperationalNote] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1193,6 +1244,27 @@ function NotesTab({
     }, 0);
     return () => clearTimeout(t);
   }, [studioId, userId]);
+
+  useEffect(() => {
+    const t = setTimeout(() => void fetchMemberOperationalNotes(studioId, userId).then(setOperationalNotes).catch((e: unknown) => setError(e instanceof ApiError ? e.message : "Failed to load operational notes")), 0);
+    return () => clearTimeout(t);
+  }, [studioId, userId]);
+
+  async function addOperationalNote() {
+    const body = newOperationalNote.trim();
+    if (!body) return;
+    setNoteSaving(true);
+    setError(null);
+    try {
+      const created = await createMemberOperationalNote(studioId, userId, body);
+      setOperationalNotes((current) => [created, ...current]);
+      setNewOperationalNote("");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to add operational note");
+    } finally {
+      setNoteSaving(false);
+    }
+  }
 
   function set<K extends keyof UpsertCrmProfileInput>(key: K, val: UpsertCrmProfileInput[K]) {
     setForm((prev) => ({ ...prev, [key]: val }));
@@ -1231,7 +1303,15 @@ function NotesTab({
   return (
     <form onSubmit={(e) => void handleSave(e)} className="space-y-6">
       {error && <ErrorBanner message={error} />}
+      {readOnly ? <p className="rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-600">Los datos CRM son de solo lectura para recepción; las notas operativas sí pueden agregarse.</p> : null}
 
+      <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-zinc-900">Notas operativas</h3><p className="text-xs text-zinc-500">Historial append-only para seguimiento interno.</p></div></div>
+        {canAddOperationalNote ? <div className="mt-4 flex gap-2"><textarea value={newOperationalNote} onChange={(event) => setNewOperationalNote(event.target.value)} rows={2} maxLength={5000} placeholder="Agregar seguimiento operativo…" className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm"/><button type="button" disabled={noteSaving || !newOperationalNote.trim()} onClick={() => void addOperationalNote()} className="self-end rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{noteSaving ? "Guardando…" : "Agregar"}</button></div> : null}
+        <div className="mt-4 divide-y divide-zinc-100">{operationalNotes.length > 0 ? operationalNotes.map((note) => <article key={note.id} className="py-3"><p className="whitespace-pre-line text-sm text-zinc-800">{note.body}</p><p className="mt-1 text-xs text-zinc-400">{note.author.firstName} {note.author.lastName} · {fmtDateTime(note.createdAt)}</p></article>) : <p className="py-3 text-sm text-zinc-500">Sin notas operativas.</p>}</div>
+      </section>
+
+      <fieldset disabled={readOnly} className="space-y-6 disabled:opacity-75">
       {/* Tags */}
       <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-zinc-900 mb-3">Tags</h3>
@@ -1368,17 +1448,18 @@ function NotesTab({
           </div>
         </div>
       </div>
+      </fieldset>
 
       <div className="flex items-center justify-between">
         {saved && <p className="text-sm text-emerald-600">Saved.</p>}
         {!saved && <span />}
-        <button
+        {!readOnly ? <button
           type="submit"
           disabled={saving}
           className="rounded-lg bg-zinc-900 px-5 py-2 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save changes"}
-        </button>
+        </button> : null}
       </div>
 
       {crm && (
@@ -1542,6 +1623,10 @@ export default function MemberProfilePage() {
   const badges = profile ? computeBadges(profile, crm) : [];
   const profileRenewal = profile?.currentMembership ? renewalPresentation({ ...profile.currentMembership, entitlementDays: profile.currentMembership.plan.entitlementDays }) : null;
   const profileVisit = visitPresentation(profile?.operations.lastVisit?.checkedInAt);
+  const profileActions = profile ? member360Actions(studioRole, profile.currentMembership) : [];
+  const usageKpi = profile ? usagePresentation(profile) : null;
+  const allowedClasses = profile?.currentMembership ? allowedClassPresentation(profile.currentMembership) : [];
+  const billingState = profile ? billingOperationalState(profile) : "—";
 
   return (
     <div className="space-y-6">
@@ -1574,6 +1659,7 @@ export default function MemberProfilePage() {
                 {profile.user.phone && (
                   <p className="text-sm text-zinc-500">{profile.user.phone}</p>
                 )}
+                <p className="mt-1 text-xs text-zinc-400">{profile.role} · Miembro desde {studioDate(profile.membership.createdAt, true)}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
                     {profile.role}
@@ -1588,13 +1674,13 @@ export default function MemberProfilePage() {
               </div>
             </div>
             <div className="mt-6 grid gap-x-6 gap-y-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Plan</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin plan"}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Membresía actual</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership ? `${profile.currentMembership.plan.name} · ${PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]}` : "Sin membresía"}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Uso</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.classCredits === null ? "Ilimitado" : profile.currentMembership ? `${profile.currentMembership.creditsUsed ?? 0} / ${profile.currentMembership.plan.classCredits} clases usadas` : "—"}</p><p className="text-xs text-zinc-500">{profile.currentMembership?.creditsRemaining != null ? profile.currentMembership.creditsRemaining === 0 ? "Sin créditos" : `${profile.currentMembership.creditsRemaining} restantes` : null}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Vigencia</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership ? `${studioDate(profile.currentMembership.currentPeriodStart)} → ${studioDate(profile.currentMembership.effectiveEnd)}` : "—"}</p><p className="text-xs text-zinc-500">{profileRenewal?.detail}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Pago</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.source === "CASH" ? "Efectivo" : profile.currentMembership?.source === "STRIPE" ? "Stripe" : profile.currentMembership?.source === "MANUAL" ? "Manual" : "—"}</p><p className="text-xs text-zinc-500">{profileRenewal?.title}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profileVisit.title}</p><p className="text-xs text-zinc-500">{profileVisit.detail}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Próxima clase</p><p className="mt-1 truncate text-sm font-semibold text-zinc-900">{profile.operations.nextBooking?.scheduledClass.classTemplate.name ?? "—"}</p><p className="text-xs text-zinc-500">{nextClassPresentation(profile.operations.nextBooking?.scheduledClass.startsAt)}</p></div>
-              <div className="flex items-end xl:justify-end"><button type="button" onClick={() => setActiveTab("membership")} className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700">Gestionar membresía</button></div>
+              <div className="flex flex-wrap items-end gap-2 xl:justify-end">{profileActions.map((action) => <button key={action.id} type="button" onClick={() => setActiveTab(action.id)} className={action.emphasis === "primary" ? "rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700" : "rounded-lg border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"}>{action.label}</button>)}</div>
             </div>
           </div>
 
@@ -1605,15 +1691,16 @@ export default function MemberProfilePage() {
             <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-amber-900">Atención requerida</h2>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado"}</p><p className="mt-0.5 text-xs text-zinc-500">{item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
+                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado"}</p><p className="mt-0.5 text-xs text-zinc-500">{item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
               </div>
             </section>
           ) : null}
 
-          <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 shadow-sm">
-            <StatCard label="Visitas" value={profile.bookingStats.attendedCount} sub="Histórico" />
-            <StatCard label="Asistencia" value={profile.operations.attendanceRate == null ? "—" : `${profile.operations.attendanceRate}%`} sub="Sobre reservas" />
-            <StatCard label="No-shows" value={profile.operations.recentNoShows} sub="Últimos 30 días" />
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 shadow-sm lg:grid-cols-4">
+            <StatCard label="Uso del periodo" value={usageKpi?.value ?? "—"} sub={usageKpi?.detail} />
+            <StatCard label="Visitas" value={profile.engagement.visitsCurrentPeriod} sub={`${profile.attendances.totalInStudio} total`} />
+            <StatCard label="Asistencia" value={profile.operations.attendanceRate == null ? "—" : `${profile.operations.attendanceRate}%`} sub={`${profile.operations.recentNoShows} no-show${profile.operations.recentNoShows === 1 ? "" : "s"} · 30 días`} />
+            <StatCard label="Facturación" value={billingState} sub={profile.operations.lastPayment ? `Último pago ${fmtMoney(profile.operations.lastPayment.amountCents, profile.operations.lastPayment.currency)}` : "Sin pago registrado"} />
           </div>
 
           {/* ── Tabs ── */}
@@ -1643,12 +1730,24 @@ export default function MemberProfilePage() {
                   <h2 className="text-sm font-semibold text-zinc-900">Actividad próxima</h2>
                   <p className="mt-3 text-sm font-medium text-zinc-900">{profile.operations.nextBooking?.scheduledClass.classTemplate.name ?? "Sin reserva futura"}</p>
                   {profile.operations.nextBooking ? <p className="text-sm text-zinc-500">{fmtDateTime(profile.operations.nextBooking.scheduledClass.startsAt)}</p> : null}
+                  <p className="mt-2 text-xs text-zinc-400">{profile.bookingStats.upcomingCount} {profile.bookingStats.upcomingCount === 1 ? "reserva próxima" : "reservas próximas"}</p>
                   <div className="mt-4 border-t border-zinc-100 pt-4"><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm text-zinc-800">{profile.operations.lastVisit ? `${fmtDateTime(profile.operations.lastVisit.checkedInAt)} · ${profile.operations.lastVisit.scheduledClass.classTemplate.name}` : "Nunca ha asistido"}</p></div>
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-zinc-900">Estado de membresía</h2>
                   <p className="mt-3 text-lg font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin plan"}</p>
-                  {profile.currentMembership ? <><p className="text-sm text-zinc-500">{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]} · {studioDate(profile.currentMembership.currentPeriodStart)} → {studioDate(profile.currentMembership.effectiveEnd)}</p><p className="mt-3 text-sm text-zinc-700">{profile.currentMembership.plan.allClassesAccess ? "Acceso a todas las clases" : `${profile.currentMembership.plan.allowedTemplateIds.length} clases permitidas`}</p><p className="text-sm font-medium text-zinc-700">{profileRenewal?.title}</p><p className="text-sm text-zinc-500">{profileRenewal?.detail}</p></> : null}
+                  {profile.currentMembership ? <><p className="text-sm text-zinc-500">{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]} · {studioDate(profile.currentMembership.currentPeriodStart)} → {studioDate(profile.currentMembership.effectiveEnd)}</p><div className="mt-3 flex flex-wrap gap-1.5">{allowedClasses.map((label) => <span key={label} className="rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700">{label}</span>)}</div><p className="mt-3 text-sm font-medium text-zinc-700">{profileRenewal?.title}</p><p className="text-sm text-zinc-500">{profileRenewal?.detail}</p></> : null}
+                </section>
+                <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold text-zinc-900">Actividad reciente</h2>
+                  <div className="mt-3 divide-y divide-zinc-100">{profile.operations.recentActivity.length > 0 ? profile.operations.recentActivity.map((event, index) => <div key={`${event.type}-${index}`} className="py-2"><p className="text-sm font-medium text-zinc-800">{event.title} · {event.description}</p><p className="text-xs text-zinc-400">{fmtDateTime(event.occurredAt)} · clase {fmtDateTime(event.classStartsAt)}</p></div>) : <p className="text-sm text-zinc-500">Sin actividad reciente.</p>}</div>
+                </section>
+                <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold text-zinc-900">Facturación</h2>
+                  <p className="mt-3 text-lg font-semibold text-zinc-900">{billingState}</p>
+                  <p className="text-sm text-zinc-500">{profile.currentMembership?.source === "STRIPE" ? "Stripe" : profile.currentMembership?.source === "CASH" ? "Efectivo" : profile.currentMembership?.source === "MANUAL" ? "Manual" : "Sin fuente"}</p>
+                  {profile.operations.lastPayment ? <p className="mt-3 text-sm text-zinc-700">Último pago: {fmtMoney(profile.operations.lastPayment.amountCents, profile.operations.lastPayment.currency)} · {fmtDate(profile.operations.lastPayment.paidAt ?? profile.operations.lastPayment.createdAt)}</p> : <p className="mt-3 text-sm text-zinc-500">Sin pagos registrados.</p>}
+                  <button type="button" onClick={() => setActiveTab("billing")} className="mt-3 text-xs font-semibold text-zinc-900 underline">Ver historial</button>
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
                   <h2 className="mb-4 text-sm font-semibold text-zinc-900">Información del miembro</h2>
@@ -1732,11 +1831,11 @@ export default function MemberProfilePage() {
                 onProfileRefresh={() => void load()}
               />
             )}
-            {activeTab === "bookings" && <BookingsTab studioId={selectedStudioId} userId={userId} />}
-            {activeTab === "attendance" && <AttendanceTab studioId={selectedStudioId} userId={userId} />}
+            {activeTab === "bookings" && <BookingsTab studioId={selectedStudioId} userId={userId} studioRole={studioRole} />}
+            {activeTab === "attendance" && <AttendanceTab studioId={selectedStudioId} userId={userId} studioRole={studioRole} profile={profile} />}
             {activeTab === "timeline" && <TimelineTab studioId={selectedStudioId} userId={userId} />}
             {activeTab === "billing" && <BillingTab studioId={selectedStudioId} userId={userId} profile={profile} />}
-            {activeTab === "notes" && <NotesTab studioId={selectedStudioId} userId={userId} />}
+            {activeTab === "notes" && <NotesTab studioId={selectedStudioId} userId={userId} readOnly={studioRole === "FRONT_DESK"} canAddOperationalNote={studioRole === "OWNER" || studioRole === "ADMIN" || studioRole === "FRONT_DESK"} />}
           </div>
         </>
       ) : null}
