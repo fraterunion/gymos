@@ -121,7 +121,7 @@ export class StripeWebhookService {
         );
         break;
       case 'invoice.paid':
-        await this.onInvoicePaid(event.data.object as WebhookInvoicePayload);
+        await this.onInvoicePaid(event.data.object as WebhookInvoicePayload, event.id);
         break;
       case 'invoice.payment_failed':
         await this.onInvoicePaymentFailed(event.data.object as WebhookInvoicePayload);
@@ -580,7 +580,7 @@ export class StripeWebhookService {
     };
   }
 
-  private async onInvoicePaid(invoice: WebhookInvoicePayload): Promise<void> {
+  private async onInvoicePaid(invoice: WebhookInvoicePayload, stripeEventId?: string): Promise<void> {
     if (invoice.status !== 'paid') {
       return;
     }
@@ -608,6 +608,30 @@ export class StripeWebhookService {
     }
 
     const amountCents = invoice.amount_paid ?? 0;
+    if (amountCents <= 0) {
+      const entitlementBearing = await this.hasExactFixedDurationServiceLine(ctx, invoice);
+      if (!entitlementBearing) {
+        this.logger.log(
+          JSON.stringify({
+            event: 'stripe_invoice_paid_non_entitlement',
+            stripeEventId: stripeEventId ?? null,
+            stripeInvoiceId: invoice.id,
+            subscriptionId: readInvoiceSubscriptionId(invoice),
+            amountDue: invoice.amount_due ?? 0,
+            amountPaid: amountCents,
+            billingReason: invoice.billing_reason ?? null,
+            reasonSkipped: 'no_positive_payment_and_no_exact_fixed_duration_service_line',
+          }),
+        );
+        return;
+      }
+
+      // Discounts and customer balance can satisfy a real fixed-duration invoice
+      // without a positive Stripe payment. Grant the exact service line, but do not
+      // create a zero-value financial Payment row.
+      await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice);
+      return;
+    }
     const piId =
       typeof invoice.payment_intent === 'string'
         ? invoice.payment_intent
@@ -649,6 +673,26 @@ export class StripeWebhookService {
     await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice);
   }
 
+  private async hasExactFixedDurationServiceLine(
+    ctx: { dbSubscriptionId: string | null },
+    invoice: WebhookInvoicePayload,
+  ): Promise<boolean> {
+    if (!ctx.dbSubscriptionId) return false;
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { id: ctx.dbSubscriptionId },
+      include: { membershipPlan: true },
+    });
+    const plan = subscription?.membershipPlan;
+    if (!plan?.entitlementDays || !plan.stripePriceId) return false;
+    const expectedSeconds = plan.entitlementDays * 86_400;
+    return invoice.lines?.data.some((line) => {
+      if (line.price?.id !== plan.stripePriceId || line.proration === true) return false;
+      const start = line.period?.start;
+      const end = line.period?.end;
+      return start != null && end != null && Math.abs(end - start - expectedSeconds) <= 1;
+    }) ?? false;
+  }
+
   private async grantFixedDurationCycleForPaidInvoice(
     ctx: { userId: string; studioId: string; dbSubscriptionId: string | null; membershipPlanId: string | null },
     invoice: WebhookInvoicePayload,
@@ -671,7 +715,10 @@ export class StripeWebhookService {
 
     const line = invoice.lines?.data.find((candidate) =>
       candidate.price?.id === subscription.membershipPlan.stripePriceId,
-    ) ?? invoice.lines?.data[0];
+    );
+    if (!line) {
+      throw new Error(`Paid invoice ${invoice.id} has no service line for the membership plan Price`);
+    }
     const startsAt = line?.period?.start ? new Date(line.period.start * 1000) : null;
     const endsAt = line?.period?.end ? new Date(line.period.end * 1000) : null;
     if (!startsAt || !endsAt) {
