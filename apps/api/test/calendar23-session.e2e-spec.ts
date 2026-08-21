@@ -123,7 +123,7 @@ describe('Calendar 2.3 session operations (e2e)', () => {
     expect(body.waitlist[0]?.position).toBe(1);
   });
 
-  async function seedEntitledMember(studioId: string, templateId: string) {
+  async function seedEntitledMember(studioId: string) {
     const member = await createUserWithPassword(prisma);
     await createMembership(prisma, member.id, studioId, Role.MEMBER);
     const plan = await createMembershipPlanForStudio(prisma, studioId);
@@ -140,7 +140,7 @@ describe('Calendar 2.3 session operations (e2e)', () => {
       endsAt: studioLocalTimeToUtc(CLASS_DATE, '10:00', TZ),
       capacity: 12,
     });
-    const member = await seedEntitledMember(studio.id, tpl.id);
+    const member = await seedEntitledMember(studio.id);
     const admin = await seedAdmin(studio.id);
     const token = await loginToken(admin.email);
 
@@ -173,7 +173,7 @@ describe('Calendar 2.3 session operations (e2e)', () => {
       endsAt: studioLocalTimeToUtc(CLASS_DATE, '12:00', TZ),
       capacity: 12,
     });
-    const member = await seedEntitledMember(studio.id, tpl.id);
+    const member = await seedEntitledMember(studio.id);
     await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
     const admin = await seedAdmin(studio.id);
     const token = await loginToken(admin.email);
