@@ -888,8 +888,8 @@ model ScheduleTemplate {
   dayOfWeek       Int       @map("day_of_week")
   startTime       String    @map("start_time")
   capacity        Int?
-  /// Local calendar date (stored as UTC anchor) when this recurring rule becomes effective.
-  startsAt        DateTime  @default(now()) @map("starts_at")
+  /// Explicit series start (UTC anchor of local start date). NULL = legacy weekly rule with no fixed start boundary.
+  startsAt        DateTime? @map("starts_at")
   /// Optional end date (UTC anchor of local end date). Null = no fixed end (rolling horizon only).
   endsAt          DateTime? @map("ends_at")
   /// Repeat every N weeks (1 = weekly).

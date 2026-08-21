@@ -47,14 +47,24 @@ describe('schedule-materialization — series invariants', () => {
     expect(endKey).toBe('2031-09-10');
   });
 
-  it('treats legacy templates with startsAt≈createdAt as unbounded start', () => {
+  it('treats NULL startsAt as legacy unbounded start', () => {
     const legacy = {
       ...baseTemplate,
-      startsAt: new Date('2031-08-01T12:00:00.000Z'),
-      createdAt: new Date('2031-08-01T12:00:00.000Z'),
+      startsAt: null,
+      createdAt: new Date('2026-06-25T17:45:24.766Z'),
     };
     expect(isLegacyUnboundedTemplate(legacy)).toBe(true);
     expect(isTemplateActiveOnDateKey(legacy, '2031-08-06', 'America/Mexico_City')).toBe(true);
+  });
+
+  it('does NOT treat migration-backfilled startsAt as legacy (pre-2.1.1 bug shape)', () => {
+    const migrationBackfill = {
+      ...baseTemplate,
+      startsAt: new Date('2026-08-20T23:52:38.760Z'),
+      createdAt: new Date('2026-06-25T17:45:24.766Z'),
+    };
+    expect(isLegacyUnboundedTemplate(migrationBackfill)).toBe(false);
+    expect(isTemplateActiveOnDateKey(migrationBackfill, '2026-08-18', 'America/Mexico_City')).toBe(false);
   });
 
   it('skips regeneration for template+localDate even when startsAt changed (detached)', () => {
@@ -103,7 +113,7 @@ describe('schedule-materialization — series invariants', () => {
   it('preserves New York local clock across DST when building candidates', () => {
     const nyTemplate = {
       ...baseTemplate,
-      startsAt: studioLocalDateKeyToUtcAnchor('2020-01-01', 'America/New_York'),
+      startsAt: null,
       createdAt: new Date('2020-01-01T00:00:00.000Z'),
       endsAt: null,
     };

@@ -14,7 +14,8 @@ export type MaterializableTemplate = {
   dayOfWeek: number;
   startTime: string;
   capacity: number | null;
-  startsAt: Date;
+  /** NULL = legacy / implicit weekly rule without an explicit start boundary. */
+  startsAt: Date | null;
   endsAt: Date | null;
   intervalWeeks: number;
   createdAt?: Date;
@@ -53,17 +54,13 @@ export function weeksBetweenDateKeys(fromKey: string, toKey: string): number {
   return Math.floor((toMs - fromMs) / (7 * 86_400_000));
 }
 
-/**
- * Pre-2.1 templates received startsAt = createdAt at migration time.
- * Treat those as unbounded start so historical generator behavior is preserved.
- */
+/** Legacy weekly templates and implicit rules have no explicit recurrence start. */
 export function isLegacyUnboundedTemplate(template: MaterializableTemplate): boolean {
-  if (!template.createdAt) return false;
-  return Math.abs(template.startsAt.getTime() - template.createdAt.getTime()) < 60_000;
+  return template.startsAt === null;
 }
 
 export function templateEffectiveStartKey(template: MaterializableTemplate, timezone: string): string {
-  if (isLegacyUnboundedTemplate(template)) {
+  if (template.startsAt === null) {
     return '1970-01-01';
   }
   return getStudioLocalDateKey(template.startsAt, timezone);

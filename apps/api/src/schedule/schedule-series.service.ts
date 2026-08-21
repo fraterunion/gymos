@@ -245,7 +245,7 @@ export class ScheduleSeriesService {
       label: `Todos los ${dayNames[tpl.dayOfWeek]} · ${tpl.startTime}`,
       dayOfWeek: tpl.dayOfWeek,
       startTime: tpl.startTime,
-      startsAt: tpl.startsAt.toISOString(),
+      startsAt: tpl.startsAt?.toISOString() ?? null,
       endsAt: tpl.endsAt?.toISOString() ?? null,
       intervalWeeks: tpl.intervalWeeks,
       active: tpl.active,

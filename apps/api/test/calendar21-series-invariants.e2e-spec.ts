@@ -359,10 +359,9 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
     expect(futureScheduled).toBe(0);
   });
 
-  it('legacy ScheduleTemplate with startsAt≈createdAt still generates historical dates', async () => {
+  it('legacy ScheduleTemplate with NULL startsAt still generates historical dates', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const ct = await createClassTemplate(prisma, studio.id);
-    const now = new Date();
     await prisma.scheduleTemplate.create({
       data: {
         studioId: studio.id,
@@ -370,8 +369,7 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
         dayOfWeek: 3,
         startTime: '07:00',
         active: true,
-        startsAt: now,
-        createdAt: now,
+        startsAt: null,
         intervalWeeks: 1,
       },
     });

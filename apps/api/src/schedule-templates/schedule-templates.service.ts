@@ -44,6 +44,7 @@ export class ScheduleTemplatesService {
         dayOfWeek: dto.dayOfWeek,
         startTime: dto.startTime,
         capacity: dto.capacity ?? null,
+        startsAt: null,
         active: true,
       },
       include: {
