@@ -7,6 +7,7 @@ import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import { AnalyticsService } from './analytics.service';
 import { ExecutiveDashboardService } from './executive-dashboard.service';
 import { FinancialActivityService } from './financial-activity.service';
+import { MemberAnalyticsService } from './member-analytics.service';
 import type {
   FinancialActivityEventType,
   FinancialActivityMethod,
@@ -27,6 +28,7 @@ export class AnalyticsController {
     private readonly analyticsService: AnalyticsService,
     private readonly executiveDashboardService: ExecutiveDashboardService,
     private readonly financialActivityService: FinancialActivityService,
+    private readonly memberAnalyticsService: MemberAnalyticsService,
   ) {}
 
   @Get('overview')
@@ -77,6 +79,72 @@ export class AnalyticsController {
   @Get('briefing')
   getBriefing(@Param('studioId') studioId: string) {
     return this.analyticsService.getOwnerBriefing(studioId);
+  }
+
+  /** Member Intelligence — owner/admin only. */
+  @Get('members/summary')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getMemberAnalyticsSummary(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.memberAnalyticsService.getSummary(studioId, period, from, to);
+  }
+
+  @Get('members/activity')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getMemberAnalyticsActivity(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('frequencyPopulation') frequencyPopulation?: string,
+  ) {
+    const population = frequencyPopulation === 'all' ? 'all' : 'active';
+    return this.memberAnalyticsService.getActivity(studioId, period, from, to, population);
+  }
+
+  @Get('members/:userId')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getMemberAnalyticsDetail(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.memberAnalyticsService.getMemberDetail(studioId, userId, period, from, to);
+  }
+
+  @Get('members')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getMemberAnalyticsList(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('search') search?: string,
+    @Query('sort') sort?: string,
+    @Query('order') order?: 'asc' | 'desc',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    const parsedPage = parseInt(page ?? '', 10);
+    const parsedLimit = parseInt(limit ?? '', 10);
+    return this.memberAnalyticsService.listMembers(studioId, {
+      period,
+      from,
+      to,
+      search,
+      sort,
+      order,
+      status,
+      page: Number.isNaN(parsedPage) ? undefined : parsedPage,
+      limit: Number.isNaN(parsedLimit) ? undefined : parsedLimit,
+    });
   }
 
   /** Executive Dashboard 2.0 — owner/admin financial intelligence only. */

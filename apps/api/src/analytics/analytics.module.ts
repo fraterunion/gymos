@@ -6,9 +6,11 @@ import { AnalyticsService } from './analytics.service';
 import { ExecutiveDashboardService } from './executive-dashboard.service';
 import { FinancialActivityService } from './financial-activity.service';
 
+import { MemberAnalyticsService } from './member-analytics.service';
+
 @Module({
   imports: [PrismaModule, AuthModule],
   controllers: [AnalyticsController],
-  providers: [AnalyticsService, ExecutiveDashboardService, FinancialActivityService],
+  providers: [AnalyticsService, ExecutiveDashboardService, FinancialActivityService, MemberAnalyticsService],
 })
 export class AnalyticsModule {}

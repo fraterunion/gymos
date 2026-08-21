@@ -18,6 +18,7 @@ import {
 } from "recharts";
 
 import { FinancialKpiSection } from "@/components/analytics/FinancialKpiSection";
+import { AnalyticsSubNav } from "@/components/analytics/AnalyticsSubNav";
 import { ExecutiveDashboard } from "@/components/analytics/executive/ExecutiveDashboard";
 import { FinancialActivitySection } from "@/components/analytics/executive/FinancialActivitySection";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -805,6 +806,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-8">
+      <AnalyticsSubNav />
       <PageHeader
         title="Panel ejecutivo"
         subtitle="Salud del negocio en 15 segundos — cobros, miembros y lo que requiere atención."
