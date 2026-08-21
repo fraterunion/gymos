@@ -72,7 +72,7 @@ describe('Calendar 2.3.2 duplicate-week scale (e2e)', () => {
       sourceSlots.push({ templateIndex: i, dayOffset, hour });
       await createScheduledClass(prisma, studioId, templates[i]!.id, {
         startsAt: studioLocalTimeToUtc(day, `${hour}:00`, TZ),
-        endsAt: studioLocalTimeToUtc(day, `${hour}:50`, TZ),
+        endsAt: studioLocalTimeToUtc(day, `${String(Number(hour) + 1).padStart(2, '0')}:00`, TZ),
         capacity: 12,
       });
     }
@@ -83,7 +83,11 @@ describe('Calendar 2.3.2 duplicate-week scale (e2e)', () => {
         const day = addDaysToDateKey(targetWeekStart, slot.dayOffset);
         await createScheduledClass(prisma, studioId, templates[slot.templateIndex]!.id, {
           startsAt: studioLocalTimeToUtc(day, `${slot.hour}:00`, TZ),
-          endsAt: studioLocalTimeToUtc(day, `${slot.hour}:50`, TZ),
+          endsAt: studioLocalTimeToUtc(
+            day,
+            `${String(Number(slot.hour) + 1).padStart(2, '0')}:00`,
+            TZ,
+          ),
           capacity: 12,
         });
       }

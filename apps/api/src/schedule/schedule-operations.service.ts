@@ -937,7 +937,7 @@ export class ScheduleOperationsService {
         endsAt: true,
         capacity: true,
         scheduleTemplateId: true,
-        classTemplate: { select: { name: true } },
+        classTemplate: { select: { name: true, durationMinutes: true } },
       },
     });
 
@@ -949,7 +949,7 @@ export class ScheduleOperationsService {
         const targetDayKey = addDaysToDateKey(targetWeekStart, dayOffset);
         const time = getStudioLocalHHmm(src.startsAt, timezone);
         const startsAt = studioLocalTimeToUtc(targetDayKey, time, timezone);
-        const durationMs = src.endsAt.getTime() - src.startsAt.getTime();
+        const durationMs = src.classTemplate.durationMinutes * 60_000;
         const endsAt = new Date(startsAt.getTime() + durationMs);
 
         slots.push({
@@ -976,6 +976,7 @@ export class ScheduleOperationsService {
       capacity: number;
       startsAt: Date;
       endsAt: Date;
+      classTemplate: { durationMinutes: number };
     },
     dto: DuplicateClassDto,
     timezone: string,
@@ -989,7 +990,7 @@ export class ScheduleOperationsService {
     if (dto.localEnd) {
       endsAt = studioLocalTimeToUtc(dto.localEnd.date, dto.localEnd.time, timezone);
     } else {
-      const durationMs = source.endsAt.getTime() - source.startsAt.getTime();
+      const durationMs = source.classTemplate.durationMinutes * 60_000;
       endsAt = new Date(startsAt.getTime() + durationMs);
     }
     return {
@@ -1309,6 +1310,7 @@ export class ScheduleOperationsService {
         startsAt: true,
         endsAt: true,
         status: true,
+        classTemplate: { select: { durationMinutes: true } },
       },
     });
     if (!row) throw new NotFoundException('Scheduled class not found');

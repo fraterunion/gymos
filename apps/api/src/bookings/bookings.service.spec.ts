@@ -53,6 +53,7 @@ function makeTx(overrides: {
   scheduledClass?: ReturnType<typeof makeClass> | null;
   studio?: ReturnType<typeof makeStudio> | null;
   overlapBooking?: object | null;
+  overlapCandidates?: object[];
   confirmedCount?: number;
 }) {
   return {
@@ -61,8 +62,15 @@ function makeTx(overrides: {
     studio: { findUnique: jest.fn().mockResolvedValue('studio' in overrides ? overrides.studio : makeStudio()) },
     booking: {
       findFirst: jest.fn().mockResolvedValue(overrides.overlapBooking ?? null),
+      findMany: jest.fn().mockResolvedValue(
+        overrides.overlapCandidates ??
+          (overrides.overlapBooking ? [overrides.overlapBooking] : []),
+      ),
       count: jest.fn().mockResolvedValue(overrides.confirmedCount ?? 0),
       create: jest.fn().mockResolvedValue(makeBooking()),
+    },
+    classTemplate: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ durationMinutes: 60 }),
     },
   };
 }
@@ -218,16 +226,42 @@ describe('BookingsService', () => {
 
   describe('overlap check', () => {
     it('throws ConflictException when member has overlapping confirmed booking', async () => {
-      setupTx({ overlapBooking: { id: 'overlap-booking' } });
+      const overlapRow = {
+        id: 'overlap-booking',
+        scheduledClass: {
+          startsAt: FUTURE,
+          endsAt: new Date(FUTURE.getTime() + 3_600_000),
+          classTemplate: { durationMinutes: 60 },
+        },
+      };
+      setupTx({ overlapCandidates: [overlapRow] });
       await expect(service.createBooking(STUDIO_ID, CLASS_ID, USER_ID)).rejects.toBeInstanceOf(
         ConflictException,
       );
     });
 
+    it('does NOT throw when overlap candidate fails effective duration check', async () => {
+      const pastStart = new Date(Date.now() - 86_400_000);
+      const corruptEnd = new Date(pastStart.getTime() + 304 * 86_400_000);
+      setupTx({
+        overlapCandidates: [
+          {
+            id: 'stale-booking',
+            scheduledClass: {
+              startsAt: pastStart,
+              endsAt: corruptEnd,
+              classTemplate: { durationMinutes: 60 },
+            },
+          },
+        ],
+      });
+      await service.createBooking(STUDIO_ID, CLASS_ID, USER_ID);
+    });
+
     it('does NOT throw when staff has overlapping booking (bypass)', async () => {
       const tx = setupTx({ membership: makeMembership(Role.STAFF) });
       await service.createBooking(STUDIO_ID, CLASS_ID, STAFF_ID);
-      expect(tx.booking.findFirst).not.toHaveBeenCalled();
+      expect(tx.booking.findMany).not.toHaveBeenCalled();
     });
   });
 

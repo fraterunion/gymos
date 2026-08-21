@@ -455,4 +455,211 @@ describe('Bookings (e2e)', () => {
       .expect(200);
     expect((res.body as unknown[]).length).toBe(0);
   });
+
+  describe('member booking time overlap', () => {
+    async function memberWithSub(studioId: string, email: string) {
+      const plan = await createMembershipPlanForStudio(prisma, studioId);
+      const user = await createUserWithPassword(prisma, { email, password: 'password12' });
+      await createMembership(prisma, user.id, studioId, Role.MEMBER);
+      await createActiveSubscription(prisma, studioId, user.id, plan.id);
+      const token = await loginAccessToken(app, user.email, user.password);
+      return { user, token };
+    }
+
+    it('allows adjacent back-to-back classes (07:00–08:00 then 08:00–09:00)', async () => {
+      const studio = await createStudio(prisma, { timezone: 'America/Mexico_City' });
+      const tplA = await createClassTemplate(prisma, studio.id, { name: 'Class A' });
+      const tplB = await createClassTemplate(prisma, studio.id, { name: 'Class B' });
+      const day = new Date(Date.now() + 9 * 24 * 60 * 60 * 1000);
+      day.setUTCHours(13, 0, 0, 0); // 07:00 CDMX
+      const firstEnd = new Date(day.getTime() + 60 * 60 * 1000);
+      const secondStart = firstEnd;
+      const secondEnd = new Date(secondStart.getTime() + 60 * 60 * 1000);
+      const clsA = await createScheduledClass(prisma, studio.id, tplA.id, {
+        startsAt: day,
+        endsAt: firstEnd,
+      });
+      const clsB = await createScheduledClass(prisma, studio.id, tplB.id, {
+        startsAt: secondStart,
+        endsAt: secondEnd,
+      });
+      const { token } = await memberWithSub(studio.id, 'adjacent-a@e2e.local');
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsA.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsB.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+    });
+
+    it('blocks partial overlap between CONFIRMED bookings', async () => {
+      const studio = await createStudio(prisma);
+      const tplA = await createClassTemplate(prisma, studio.id);
+      const tplB = await createClassTemplate(prisma, studio.id);
+      const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+      const firstEnd = new Date(start.getTime() + 60 * 60 * 1000);
+      const secondStart = new Date(start.getTime() + 30 * 60 * 1000);
+      const secondEnd = new Date(secondStart.getTime() + 60 * 60 * 1000);
+      const clsA = await createScheduledClass(prisma, studio.id, tplA.id, {
+        startsAt: start,
+        endsAt: firstEnd,
+      });
+      const clsB = await createScheduledClass(prisma, studio.id, tplB.id, {
+        startsAt: secondStart,
+        endsAt: secondEnd,
+      });
+      const { token } = await memberWithSub(studio.id, 'overlap-block@e2e.local');
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsA.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsB.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+      expect((res.body as { message: string }).message).toMatch(/already have a class booked at this time/i);
+    });
+
+    it('does not block after cancelling the overlapping booking', async () => {
+      const studio = await createStudio(prisma);
+      const tplA = await createClassTemplate(prisma, studio.id);
+      const tplB = await createClassTemplate(prisma, studio.id);
+      const start = new Date(Date.now() + 11 * 24 * 60 * 60 * 1000);
+      const firstEnd = new Date(start.getTime() + 60 * 60 * 1000);
+      const secondStart = new Date(start.getTime() + 30 * 60 * 1000);
+      const secondEnd = new Date(secondStart.getTime() + 60 * 60 * 1000);
+      const clsA = await createScheduledClass(prisma, studio.id, tplA.id, {
+        startsAt: start,
+        endsAt: firstEnd,
+      });
+      const clsB = await createScheduledClass(prisma, studio.id, tplB.id, {
+        startsAt: secondStart,
+        endsAt: secondEnd,
+      });
+      const { token } = await memberWithSub(studio.id, 'cancel-then-book@e2e.local');
+
+      const booked = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsA.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+      const bookingId = (booked.body as { id: string }).id;
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/bookings/${bookingId}/cancel`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsB.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+    });
+
+    it('does not block when prior CONFIRMED booking is on a CANCELLED class', async () => {
+      const studio = await createStudio(prisma);
+      const tplA = await createClassTemplate(prisma, studio.id);
+      const tplB = await createClassTemplate(prisma, studio.id);
+      const { start, end } = futureClassDates();
+      const clsA = await createScheduledClass(prisma, studio.id, tplA.id, {
+        startsAt: start,
+        endsAt: end,
+        status: ClassStatus.CANCELLED,
+      });
+      const clsB = await createScheduledClass(prisma, studio.id, tplB.id, {
+        startsAt: start,
+        endsAt: end,
+      });
+      const { user, token } = await memberWithSub(studio.id, 'cancelled-class@e2e.local');
+      await prisma.booking.create({
+        data: {
+          studioId: studio.id,
+          scheduledClassId: clsA.id,
+          userId: user.id,
+          status: BookingStatus.CONFIRMED,
+        },
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsB.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+    });
+
+    it('does not block Street Bars when member has hidden past booking on corrupt endsAt row', async () => {
+      const studio = await createStudio(prisma, { timezone: 'America/Mexico_City' });
+      const fullBody = await createClassTemplate(prisma, studio.id, {
+        name: 'Full Body',
+        durationMinutes: 60,
+      });
+      const streetBars = await createClassTemplate(prisma, studio.id, {
+        name: 'Street Bars',
+        durationMinutes: 60,
+      });
+      const pastStart = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      pastStart.setUTCHours(12, 0, 0, 0);
+      const corruptEnd = new Date(pastStart.getTime() + 304 * 24 * 60 * 60 * 1000);
+      const corruptClass = await createScheduledClass(prisma, studio.id, fullBody.id, {
+        startsAt: pastStart,
+        endsAt: corruptEnd,
+      });
+      const futureStart = new Date(Date.now() + 12 * 24 * 60 * 60 * 1000);
+      futureStart.setUTCHours(14, 0, 0, 0); // 08:00 CDMX
+      const futureEnd = new Date(futureStart.getTime() + 60 * 60 * 1000);
+      const streetClass = await createScheduledClass(prisma, studio.id, streetBars.id, {
+        startsAt: futureStart,
+        endsAt: futureEnd,
+      });
+      const { user, token } = await memberWithSub(studio.id, 'street-bars@e2e.local');
+      await prisma.booking.create({
+        data: {
+          studioId: studio.id,
+          scheduledClassId: corruptClass.id,
+          userId: user.id,
+          status: BookingStatus.CONFIRMED,
+        },
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${streetClass.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(201);
+    });
+
+    it('blocks booking a future class while member is in an in-progress class', async () => {
+      const studio = await createStudio(prisma);
+      const tplA = await createClassTemplate(prisma, studio.id);
+      const tplB = await createClassTemplate(prisma, studio.id);
+      const inProgressStart = new Date(Date.now() - 10 * 60 * 1000);
+      const inProgressEnd = new Date(inProgressStart.getTime() + 60 * 60 * 1000);
+      const futureStart = new Date(Date.now() + 20 * 60 * 1000);
+      const futureEnd = new Date(futureStart.getTime() + 60 * 60 * 1000);
+      const clsA = await createScheduledClass(prisma, studio.id, tplA.id, {
+        startsAt: inProgressStart,
+        endsAt: inProgressEnd,
+      });
+      const clsB = await createScheduledClass(prisma, studio.id, tplB.id, {
+        startsAt: futureStart,
+        endsAt: futureEnd,
+      });
+      const { user, token } = await memberWithSub(studio.id, 'in-progress@e2e.local');
+      await prisma.booking.create({
+        data: {
+          studioId: studio.id,
+          scheduledClassId: clsA.id,
+          userId: user.id,
+          status: BookingStatus.CONFIRMED,
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${clsB.id}/bookings`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(409);
+      expect((res.body as { message: string }).message).toMatch(/already have a class booked at this time/i);
+    });
+  });
 });

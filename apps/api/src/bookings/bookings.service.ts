@@ -19,6 +19,7 @@ import {
   WaitlistService,
 } from '../waitlist/waitlist.service';
 import { BookingAccessService } from './booking-access.service';
+import { findMemberBookingTimeConflict } from './booking-overlap.check';
 import { WaiverService } from '../waiver/waiver.service';
 
 const rosterUserSelect = {
@@ -105,17 +106,13 @@ export class BookingsService {
         // inequality: a class ending at T and one starting at T do not overlap).
         // Staff/admin/instructor roles bypass this check.
         if (!bypassSubscriptionRoles.has(membership.role)) {
-          const overlap = await tx.booking.findFirst({
-            where: {
-              studioId,
-              userId: actorUserId,
-              status: BookingStatus.CONFIRMED,
-              scheduledClass: {
-                startsAt: { lt: scheduledClass.endsAt },
-                endsAt:   { gt: scheduledClass.startsAt },
-              },
-            },
-            select: { id: true },
+          const overlap = await findMemberBookingTimeConflict(tx, {
+            studioId,
+            userId: actorUserId,
+            targetScheduledClassId: scheduledClassId,
+            targetClassTemplateId: scheduledClass.classTemplateId,
+            targetStartsAt: scheduledClass.startsAt,
+            targetEndsAt: scheduledClass.endsAt,
           });
           if (overlap) {
             throw new ConflictException(

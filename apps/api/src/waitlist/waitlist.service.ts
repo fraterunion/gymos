@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { BookingAccessService } from '../bookings/booking-access.service';
+import { findMemberBookingTimeConflict } from '../bookings/booking-overlap.check';
 import { PrismaService } from '../prisma/prisma.service';
 
 const bypassSubscriptionRoles: ReadonlySet<Role> = new Set([
@@ -133,17 +134,13 @@ export class WaitlistService {
 
       // Mirrors the overlap guard in joinWaitlist and createBooking.
       if (!bypassSubscriptionRoles.has(membership.role)) {
-        const overlap = await tx.booking.findFirst({
-          where: {
-            studioId,
-            userId: candidate.userId,
-            status: BookingStatus.CONFIRMED,
-            scheduledClass: {
-              startsAt: { lt: scheduledClass.endsAt },
-              endsAt:   { gt: scheduledClass.startsAt },
-            },
-          },
-          select: { id: true },
+        const overlap = await findMemberBookingTimeConflict(tx, {
+          studioId,
+          userId: candidate.userId,
+          targetScheduledClassId: scheduledClassId,
+          targetClassTemplateId: scheduledClass.classTemplateId,
+          targetStartsAt: scheduledClass.startsAt,
+          targetEndsAt: scheduledClass.endsAt,
         });
         if (overlap) continue;
       }
@@ -230,17 +227,13 @@ export class WaitlistService {
         // Mirrors the same guard in BookingsService.createBooking.
         // Staff/admin/instructor roles bypass this check.
         if (!bypassSubscriptionRoles.has(membership.role)) {
-          const overlap = await tx.booking.findFirst({
-            where: {
-              studioId,
-              userId: actorUserId,
-              status: BookingStatus.CONFIRMED,
-              scheduledClass: {
-                startsAt: { lt: scheduledClass.endsAt },
-                endsAt:   { gt: scheduledClass.startsAt },
-              },
-            },
-            select: { id: true },
+          const overlap = await findMemberBookingTimeConflict(tx, {
+            studioId,
+            userId: actorUserId,
+            targetScheduledClassId: scheduledClassId,
+            targetClassTemplateId: scheduledClass.classTemplateId,
+            targetStartsAt: scheduledClass.startsAt,
+            targetEndsAt: scheduledClass.endsAt,
           });
           if (overlap) {
             throw new ConflictException(
