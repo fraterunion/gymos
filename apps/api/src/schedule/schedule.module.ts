@@ -9,18 +9,21 @@ import { ScheduleConflictsService } from './schedule-conflicts.service';
 import { ScheduleSeriesController } from './schedule-series.controller';
 import { ScheduleSeriesService } from './schedule-series.service';
 import { ScheduleService } from './schedule.service';
+import { ScheduleSessionService } from './schedule-session.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, SalesModule],
   controllers: [ScheduleController, ScheduleSeriesController, ScheduleOperationsController],
   providers: [
     ScheduleService,
+    ScheduleSessionService,
     ScheduleSeriesService,
     ScheduleConflictsService,
     ScheduleOperationsService,
   ],
   exports: [
     ScheduleService,
+    ScheduleSessionService,
     ScheduleSeriesService,
     ScheduleConflictsService,
     ScheduleOperationsService,

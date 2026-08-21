@@ -12,12 +12,12 @@ import { fetchStudioSchedule, type ScheduledClassDto } from "@/lib/api/schedule"
 import { fetchClassTemplates, type ClassTemplateDto } from "@/lib/api/classTemplates";
 import { fetchStaffInstructors, type StaffInstructorDto } from "@/lib/api/staff";
 import { calendarDayKeyInZone, todayKeyInZone } from "@/lib/datetime";
-import { classRosterHref } from "@/lib/classRosterNav";
 import {
   BulkActionModal,
   DuplicateClassModal,
   DuplicateWeekModal,
 } from "@/app/schedule/ScheduleOperationsModals";
+import { SessionDrawer } from "@/app/schedule/SessionDrawer";
 import {
   ScheduleModal,
   type ScheduleModalState,
@@ -25,12 +25,15 @@ import {
 import {
   filterOperationalScheduleInWeek,
   mondayStartKeyForInstant,
-  studioLocalDateKeyToUtcAnchor,
   studioWeekQueryRangeIso,
   weekBoundsInZone,
   weekDayKeysFromStart,
   weekOffsetFromMondayStartKey,
 } from "@/lib/operationalSchedule";
+import {
+  formatOccupancyLabel,
+  occupancyToneClass,
+} from "@/lib/scheduleOccupancy";
 import { canManageCalendarOperations } from "@/lib/scheduleCalendarAccess";
 import type { BulkOperation } from "@/lib/api/scheduleOperations";
 
@@ -110,28 +113,19 @@ function ClassCard({
   selectMode,
   selected,
   onToggleSelect,
-  onViewRoster,
-  onEdit,
-  onDuplicate,
+  onOpenSession,
 }: {
   cls: ScheduledClassDto;
   tz: string;
   selectMode: boolean;
   selected: boolean;
   onToggleSelect: () => void;
-  onViewRoster: () => void;
-  onEdit: () => void;
-  onDuplicate: () => void;
+  onOpenSession: () => void;
 }) {
   const accentColor = cls.classTemplate.color;
   const booked = cls.bookedCount ?? 0;
   const waitlist = cls.waitlistCount ?? 0;
-  const occupancy =
-    booked >= cls.capacity
-      ? waitlist > 0
-        ? `${booked}/${cls.capacity} · +${waitlist} espera`
-        : `${booked}/${cls.capacity} · Llena`
-      : `${booked}/${cls.capacity} reservados`;
+  const { label, tone } = formatOccupancyLabel(booked, cls.capacity, waitlist);
 
   return (
     <div
@@ -151,36 +145,22 @@ function ClassCard({
       {cls.scheduleTemplateId ? (
         <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-indigo-500">Serie</p>
       ) : null}
-      <button type="button" onClick={selectMode ? onToggleSelect : onViewRoster} className="w-full text-left">
+      <button
+        type="button"
+        onClick={selectMode ? onToggleSelect : onOpenSession}
+        className="w-full text-left"
+      >
         <p className="text-xs font-semibold leading-snug text-zinc-900">{cls.classTemplate.name}</p>
         <p className="mt-0.5 text-[11px] text-zinc-500">
           {formatTime(cls.startsAt, tz)} – {formatTime(cls.endsAt, tz)}
         </p>
         {cls.instructor ? (
-          <p className="mt-0.5 text-[11px] text-zinc-500">
+          <p className="mt-0.5 truncate text-[11px] text-zinc-500">
             {cls.instructor.firstName} {cls.instructor.lastName}
           </p>
         ) : null}
-        <p className="mt-1 text-[10px] text-zinc-400">{occupancy}</p>
+        <p className={`mt-1 text-[10px] ${occupancyToneClass(tone)}`}>{label}</p>
       </button>
-      {!selectMode ? (
-        <div className="mt-1.5 flex gap-2">
-          <button
-            type="button"
-            onClick={onEdit}
-            className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 underline hover:text-zinc-800"
-          >
-            Editar
-          </button>
-          <button
-            type="button"
-            onClick={onDuplicate}
-            className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 underline hover:text-zinc-800"
-          >
-            Duplicar
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -204,6 +184,7 @@ export default function SchedulePage() {
   const [duplicateWeekOpen, setDuplicateWeekOpen] = useState(false);
   const [duplicateClass, setDuplicateClass] = useState<ScheduledClassDto | null>(null);
   const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(null);
+  const [sessionClassId, setSessionClassId] = useState<string | null>(null);
 
   const urlWeekStart = searchParams.get("weekStart");
   const weekOffsetFromUrl = useMemo(() => {
@@ -273,16 +254,13 @@ export default function SchedulePage() {
     [classes, weekBounds.endKey, weekBounds.startKey, selectedStudioId, tz],
   );
 
-  const openClassRoster = useCallback(
-    (cls: ScheduledClassDto) => {
-      router.push(
-        classRosterHref(cls.id, {
-          returnTo: "schedule",
-          weekStart: studioLocalDateKeyToUtcAnchor(weekBounds.startKey, tz).toISOString(),
-        }),
-      );
-    },
-    [router, weekBounds.startKey, tz],
+  const openSession = useCallback((cls: ScheduledClassDto) => {
+    setSessionClassId(cls.id);
+  }, []);
+
+  const resolveClass = useCallback(
+    (classId: string): ScheduledClassDto | undefined => classes.find((c) => c.id === classId),
+    [classes],
   );
 
   const classesByDay = useMemo(() => {
@@ -458,9 +436,7 @@ export default function SchedulePage() {
                             selectMode={selectMode}
                             selected={selectedIds.has(cls.id)}
                             onToggleSelect={() => toggleClassSelected(cls.id)}
-                            onViewRoster={() => openClassRoster(cls)}
-                            onEdit={() => setModal({ type: "edit", cls })}
-                            onDuplicate={() => setDuplicateClass(cls)}
+                            onOpenSession={() => openSession(cls)}
                           />
                         ))}
                         <button
@@ -551,6 +527,32 @@ export default function SchedulePage() {
           timezone={tz}
           onClose={() => setModal({ type: "closed" })}
           onDone={handleModalDone}
+        />
+      ) : null}
+
+      {sessionClassId ? (
+        <SessionDrawer
+          studioId={selectedStudioId}
+          classId={sessionClassId}
+          timezone={tz}
+          role={selected?.role}
+          onClose={() => setSessionClassId(null)}
+          onEdit={(classId) => {
+            const cls = resolveClass(classId);
+            setSessionClassId(null);
+            if (cls) setModal({ type: "edit", cls });
+          }}
+          onDuplicate={(classId) => {
+            const cls = resolveClass(classId);
+            setSessionClassId(null);
+            if (cls) setDuplicateClass(cls);
+          }}
+          onCancel={(classId) => {
+            const cls = resolveClass(classId);
+            setSessionClassId(null);
+            if (cls) setModal({ type: "edit", cls });
+          }}
+          onCalendarRefresh={() => void load()}
         />
       ) : null}
     </>

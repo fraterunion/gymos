@@ -24,12 +24,16 @@ import {
   UpdateScheduledClassDto,
 } from './dto/scheduled-class.dto';
 import { ScheduleService } from './schedule.service';
+import { ScheduleSessionService } from './schedule-session.service';
 import { DESK_SCHEDULE_READ_ROLES } from '../auth/desk-roles';
 
 @Controller('studios/:studioId/schedule')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
 export class ScheduleController {
-  constructor(private readonly scheduleService: ScheduleService) {}
+  constructor(
+    private readonly scheduleService: ScheduleService,
+    private readonly sessionService: ScheduleSessionService,
+  ) {}
 
   @Get()
   list(@Param('studioId') studioId: string, @Query() query: ScheduleQueryDto) {
@@ -41,6 +45,16 @@ export class ScheduleController {
   @Roles(...DESK_SCHEDULE_READ_ROLES)
   todaySummary(@Param('studioId') studioId: string) {
     return this.scheduleService.getTodaySummaryForStaff(studioId);
+  }
+
+  @Get(':scheduledClassId/session')
+  @UseGuards(RolesGuard)
+  @Roles(...DESK_SCHEDULE_READ_ROLES)
+  session(
+    @Param('studioId') studioId: string,
+    @Param('scheduledClassId') scheduledClassId: string,
+  ) {
+    return this.sessionService.getSessionOperationalProjection(studioId, scheduledClassId);
   }
 
   @Get(':scheduledClassId')

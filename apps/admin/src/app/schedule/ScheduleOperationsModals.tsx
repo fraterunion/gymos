@@ -18,6 +18,7 @@ import {
   type ScheduleOperationResult,
 } from "@/lib/api/scheduleOperations";
 import { shiftDateKey } from "@/lib/operationalSchedule";
+import { formatScheduleConflict } from "@/lib/scheduleConflictCopy";
 
 function isoToLocalParts(iso: string, tz: string): { date: string; time: string } {
   const date = new Intl.DateTimeFormat("en-CA", {
@@ -44,6 +45,18 @@ function weekLabel(startKey: string, tz: string): string {
       new Date(`${key}T12:00:00Z`),
     );
   return `${fmt(startKey)} – ${fmt(endKey)}`;
+}
+
+function previewHardBlockCount(preview: ScheduleOperationResult | null): number {
+  if (!preview) return 0;
+  return preview.conflicts.filter(
+    (c) => c.severity === "BLOCKING" && c.kind !== "DUPLICATE_OCCURRENCE",
+  ).length;
+}
+
+function duplicateExecuteDisabled(preview: ScheduleOperationResult | null): boolean {
+  if (!preview) return true;
+  return preview.createdCount === 0 || previewHardBlockCount(preview) > 0;
 }
 
 function PreviewSummary({ preview }: { preview: ScheduleOperationResult | null }) {
@@ -95,7 +108,7 @@ function PreviewSummary({ preview }: { preview: ScheduleOperationResult | null }
             .slice(0, 8)
             .map((c, i) => (
               <li key={i}>
-                [{c.severity === "WARNING" ? "Aviso" : "Bloqueo"}] {c.message}
+                [{c.severity === "WARNING" ? "Aviso" : "Bloqueo"}] {formatScheduleConflict(c)}
               </li>
             ))}
         </ul>
@@ -245,9 +258,15 @@ export function DuplicateWeekModal({
             type="button"
             onClick={() => void handleExecute()}
             className={adminPrimaryBtn}
-            disabled={loading || targetWeekStarts.length === 0}
+            disabled={loading || targetWeekStarts.length === 0 || duplicateExecuteDisabled(preview)}
           >
-            {loading ? "Procesando…" : confirmWarnings ? "Confirmar y duplicar" : "Duplicar"}
+            {loading
+              ? "Procesando…"
+              : duplicateExecuteDisabled(preview) && preview && preview.createdCount === 0
+                ? "No hay nada que duplicar"
+                : confirmWarnings
+                  ? "Confirmar y duplicar"
+                  : "Duplicar"}
           </button>
         </div>
       </div>
@@ -396,8 +415,17 @@ export function DuplicateClassModal({
           <button type="button" onClick={onClose} className={adminSecondaryBtn} disabled={loading}>
             Cancelar
           </button>
-          <button type="button" onClick={() => void handleExecute()} className={adminPrimaryBtn} disabled={loading}>
-            {loading ? "Creando…" : "Duplicar clase"}
+          <button
+            type="button"
+            onClick={() => void handleExecute()}
+            className={adminPrimaryBtn}
+            disabled={loading || duplicateExecuteDisabled(preview)}
+          >
+            {loading
+              ? "Creando…"
+              : duplicateExecuteDisabled(preview) && preview && preview.createdCount === 0
+                ? "No hay nada que duplicar"
+                : "Duplicar clase"}
           </button>
         </div>
       </div>
