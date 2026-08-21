@@ -1,6 +1,8 @@
 import { apiRequest } from "@/lib/api/client";
 
 export type ClassDemandBand = "ALTA" | "FUERTE" | "NORMAL" | "BAJA" | "INSUFICIENTE";
+export type SlotMaturity = "ESTABLISHED_SLOT" | "LIMITED_HISTORY_SLOT";
+export type OpportunitySignalKind = "FORTALEZA" | "REVISAR" | "COMPARACION" | "ALERTA";
 
 export type ClassScheduleOpportunityType =
   | "STRONG_SLOT"
@@ -37,15 +39,19 @@ export type ClassScheduleSummaryDto = {
 
 export type ClassScheduleOpportunityDto = {
   type: ClassScheduleOpportunityType;
+  signalKind: OpportunitySignalKind;
   title: string;
-  reason: string;
-  evidence: string;
-  sampleSize: number;
+  subject: string;
+  headlineMetric: string;
+  supportingMetric: string;
   suggestedAction: string;
+  sampleSize: number;
   classTemplateId: string | null;
   className: string | null;
   weekday: number | null;
   scheduleTime: string | null;
+  reason: string;
+  evidence: string;
 };
 
 export type ClassScheduleHeatmapCellDto = {
@@ -60,6 +66,27 @@ export type ClassScheduleHeatmapCellDto = {
   attendanceOccupancyPct: number | null;
   bookingOccupancyPct: number | null;
   totalAttendances: number;
+  slotMaturity: SlotMaturity;
+  distinctWeeks: number;
+};
+
+export type LimitedHistorySlotDto = {
+  weekday: number;
+  scheduleTime: string;
+  scheduledSessions: number;
+  distinctWeeks: number;
+  classNames: string[];
+  totalAttendances: number;
+};
+
+export type OperationalReadingDto = {
+  text: string;
+  evidence: string;
+  sampleSize: number;
+  kind?: string;
+  className?: string | null;
+  weekday?: number | null;
+  scheduleTime?: string | null;
 };
 
 export type ClassTemplateRowDto = {
@@ -95,6 +122,8 @@ export type ClassScheduleSlotRowDto = {
   band: ClassDemandBand;
   sampleInsufficient: boolean;
   totalAttendances: number;
+  slotMaturity: SlotMaturity;
+  distinctWeeks: number;
 };
 
 export type ClassScheduleActivityDto = {
@@ -104,7 +133,10 @@ export type ClassScheduleActivityDto = {
   isPartialPeriod: boolean;
   analyticsDataAvailableFrom: string | null;
   opportunities: ClassScheduleOpportunityDto[];
+  operationalReadings: OperationalReadingDto[];
   heatmap: ClassScheduleHeatmapCellDto[];
+  limitedHistorySlots: LimitedHistorySlotDto[];
+  limitedHistorySummary: string | null;
   heatmapDefaultMetric: string;
   instructorNote: string | null;
   waitlistNote: string | null;
@@ -119,6 +151,7 @@ export type ClassTemplateDetailDto = ClassTemplateRowDto & {
     avgAttendance: number | null;
     avgBookings: number | null;
     sampleInsufficient: boolean;
+    slotMaturity: SlotMaturity;
   }>;
   recentSessions: Array<{
     scheduledClassId: string;

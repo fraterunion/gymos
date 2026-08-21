@@ -12,10 +12,12 @@ import {
 } from './member-analytics-range.utils';
 import {
   buildClassTimeInsight,
+  buildOperationalReadings,
   buildOpportunities,
   CLASS_RANKING_MIN_ACTIVE_SESSIONS,
   CLASS_TIME_COMPARE_MIN_SESSIONS,
   classifyDemandBand,
+  classifySlotMaturity,
   computeShowRatePct,
   isActiveSession,
   isEmptySession,
@@ -23,7 +25,9 @@ import {
   round1,
   SLOT_RECOMMENDATION_MIN_SESSIONS,
   type SessionFact,
+  type SlotMaturity,
 } from './class-schedule-engagement.utils';
+import { getStudioLocalWeekStartKey } from './member-analytics-schedule.utils';
 import type {
   ClassScheduleActivityDto,
   ClassScheduleHeatmapCellDto,
@@ -31,6 +35,7 @@ import type {
   ClassScheduleSummaryDto,
   ClassTemplateDetailDto,
   ClassTemplateRowDto,
+  LimitedHistorySlotDto,
 } from './class-schedule-analytics.types';
 
 type RawSessionRow = {
@@ -148,19 +153,23 @@ export class ClassScheduleAnalyticsService {
       ORDER BY sc.starts_at DESC
     `;
 
-    return rows.map((r) => ({
-      scheduledClassId: r.scheduled_class_id,
-      classTemplateId: r.class_template_id,
-      className: r.class_name,
-      capacity: Number(r.capacity),
-      startsAt: r.starts_at,
-      weekday: Number(r.weekday),
-      scheduleTime: r.schedule_time,
-      hour: Number(r.hour),
-      attendances: Number(r.attendances),
-      confirmedBookings: Number(r.confirmed_bookings),
-      confirmedAttended: Number(r.confirmed_attended),
-    }));
+    return rows.map((r) => {
+      const startsAt = r.starts_at;
+      return {
+        scheduledClassId: r.scheduled_class_id,
+        classTemplateId: r.class_template_id,
+        className: r.class_name,
+        capacity: Number(r.capacity),
+        startsAt,
+        weekday: Number(r.weekday),
+        scheduleTime: r.schedule_time,
+        hour: Number(r.hour),
+        attendances: Number(r.attendances),
+        confirmedBookings: Number(r.confirmed_bookings),
+        confirmedAttended: Number(r.confirmed_attended),
+        localWeekStartKey: getStudioLocalWeekStartKey(startsAt, timezone),
+      };
+    });
   }
 
   private async loadUniqueMembers(
@@ -292,6 +301,20 @@ export class ClassScheduleAnalyticsService {
     });
   }
 
+  private slotMaturityFor(list: SessionFact[]): {
+    slotMaturity: SlotMaturity;
+    distinctWeeks: number;
+  } {
+    const distinctWeeks = new Set(list.map((f) => f.localWeekStartKey)).size;
+    return {
+      distinctWeeks,
+      slotMaturity: classifySlotMaturity({
+        eligibleSessionCount: list.length,
+        distinctLocalWeekCount: distinctWeeks,
+      }),
+    };
+  }
+
   private aggregateSlots(facts: SessionFact[]): Array<
     ClassScheduleSlotRowDto & { confirmedBookings: number }
   > {
@@ -311,6 +334,7 @@ export class ClassScheduleAnalyticsService {
       const confAtt = list.reduce((s, x) => s + x.confirmedAttended, 0);
       const capSum = list.reduce((s, x) => s + x.capacity, 0);
       const avgAtt = list.length > 0 ? round1(attendances / list.length) : null;
+      const { slotMaturity, distinctWeeks } = this.slotMaturityFor(list);
       const band = classifyDemandBand({
         avgAttendance: avgAtt,
         sampleSize: list.length,
@@ -331,6 +355,8 @@ export class ClassScheduleAnalyticsService {
         sampleInsufficient: list.length < SLOT_RECOMMENDATION_MIN_SESSIONS,
         totalAttendances: attendances,
         confirmedBookings: conf,
+        slotMaturity,
+        distinctWeeks,
       });
     }
     return rows.sort(
@@ -340,22 +366,30 @@ export class ClassScheduleAnalyticsService {
     );
   }
 
-  private buildHeatmap(facts: SessionFact[]): ClassScheduleHeatmapCellDto[] {
+  private buildHeatmap(facts: SessionFact[]): {
+    heatmap: ClassScheduleHeatmapCellDto[];
+    limitedHistorySlots: LimitedHistorySlotDto[];
+    limitedHistorySummary: string | null;
+  } {
     const by = new Map<string, SessionFact[]>();
     for (const f of facts) {
-      const key = `${f.weekday}|${f.hour}|${f.scheduleTime}`;
+      const key = `${f.weekday}|${f.scheduleTime}`;
       const list = by.get(key) ?? [];
       list.push(f);
       by.set(key, list);
     }
-    const cells: ClassScheduleHeatmapCellDto[] = [];
+
+    const heatmap: ClassScheduleHeatmapCellDto[] = [];
+    const limitedHistorySlots: LimitedHistorySlotDto[] = [];
+
     for (const [, list] of by) {
       const active = list.filter(isActiveSession);
       const empty = list.filter(isEmptySession);
       const attendances = list.reduce((s, x) => s + x.attendances, 0);
       const conf = list.reduce((s, x) => s + x.confirmedBookings, 0);
       const capSum = list.reduce((s, x) => s + x.capacity, 0);
-      cells.push({
+      const { slotMaturity, distinctWeeks } = this.slotMaturityFor(list);
+      const cell: ClassScheduleHeatmapCellDto = {
         weekday: list[0]!.weekday,
         hour: list[0]!.hour,
         scheduleTime: list[0]!.scheduleTime,
@@ -367,11 +401,45 @@ export class ClassScheduleAnalyticsService {
         attendanceOccupancyPct: capSum > 0 ? pct(attendances, capSum) : null,
         bookingOccupancyPct: capSum > 0 ? pct(conf, capSum) : null,
         totalAttendances: attendances,
-      });
+        slotMaturity,
+        distinctWeeks,
+      };
+
+      if (slotMaturity === 'ESTABLISHED_SLOT') {
+        heatmap.push(cell);
+      } else {
+        const classNames = [...new Set(list.map((f) => f.className))];
+        limitedHistorySlots.push({
+          weekday: cell.weekday,
+          scheduleTime: cell.scheduleTime,
+          scheduledSessions: cell.sessions,
+          distinctWeeks,
+          classNames,
+          totalAttendances: attendances,
+        });
+      }
     }
-    return cells.sort(
-      (a, b) => a.weekday - b.weekday || a.hour - b.hour || a.scheduleTime.localeCompare(b.scheduleTime),
+
+    heatmap.sort(
+      (a, b) =>
+        a.weekday - b.weekday ||
+        a.hour - b.hour ||
+        a.scheduleTime.localeCompare(b.scheduleTime),
     );
+    limitedHistorySlots.sort(
+      (a, b) =>
+        a.weekday - b.weekday || a.scheduleTime.localeCompare(b.scheduleTime),
+    );
+
+    const n = limitedHistorySlots.length;
+    const limitedHistorySummary =
+      n === 0
+        ? null
+        : n === 1
+          ? '1 horario aún no tiene suficiente historial para comparación estratégica.'
+          : `${n} horarios aún no tienen suficiente historial para comparación estratégica.`;
+
+    return { heatmap, limitedHistorySlots, limitedHistorySummary };
   }
 
   async getSummary(
@@ -464,6 +532,7 @@ export class ClassScheduleAnalyticsService {
         avgAttendance: s.avgAttendance,
         showRatePct: s.showRatePct,
         confirmedBookings: s.confirmedBookings,
+        slotMaturity: s.slotMaturity,
       })),
       classSlots,
       studioShowRatePct: studioShow,
@@ -473,6 +542,30 @@ export class ClassScheduleAnalyticsService {
       return rest;
     });
 
+    const templates = this.aggregateTemplates(ctx.facts, ctx.uniqueByClass);
+    const operationalReadings = buildOperationalReadings({
+      templates,
+      slots: slots.map((s) => ({
+        weekday: s.weekday,
+        scheduleTime: s.scheduleTime,
+        scheduledSessions: s.scheduledSessions,
+        emptyRatePct: s.emptyRatePct,
+        avgAttendance: s.avgAttendance,
+        slotMaturity: s.slotMaturity,
+      })),
+      opportunities: opportunities.map((o) => ({
+        type: o.type,
+        className: o.className,
+        classTemplateId: o.classTemplateId,
+        weekday: o.weekday,
+        scheduleTime: o.scheduleTime,
+      })),
+    });
+
+    const { heatmap, limitedHistorySlots, limitedHistorySummary } = this.buildHeatmap(
+      ctx.facts,
+    );
+
     return {
       timezone: ctx.timezone,
       period: ctx.period,
@@ -480,7 +573,10 @@ export class ClassScheduleAnalyticsService {
       isPartialPeriod: ctx.windows.isPartialPeriod,
       analyticsDataAvailableFrom: ctx.dataFrom?.toISOString() ?? null,
       opportunities,
-      heatmap: this.buildHeatmap(ctx.facts),
+      operationalReadings,
+      heatmap,
+      limitedHistorySlots,
+      limitedHistorySummary,
       heatmapDefaultMetric: 'avg_attendance',
       instructorNote: 'Atribución de instructor insuficiente para análisis.',
       waitlistNote:
@@ -562,17 +658,27 @@ export class ClassScheduleAnalyticsService {
       slotMap.set(key, list);
     }
     const bySlot = [...slotMap.values()]
-      .map((list) => ({
-        weekday: list[0]!.weekday,
-        scheduleTime: list[0]!.scheduleTime,
-        sessions: list.length,
-        activeSessions: list.length,
-        avgAttendance: round1(list.reduce((s, x) => s + x.attendances, 0) / list.length),
-        avgBookings: round1(
-          list.reduce((s, x) => s + x.confirmedBookings, 0) / list.length,
-        ),
-        sampleInsufficient: list.length < CLASS_TIME_COMPARE_MIN_SESSIONS,
-      }))
+      .map((list) => {
+        const { slotMaturity } = this.slotMaturityFor(
+          facts.filter(
+            (f) =>
+              f.weekday === list[0]!.weekday &&
+              f.scheduleTime === list[0]!.scheduleTime,
+          ),
+        );
+        return {
+          weekday: list[0]!.weekday,
+          scheduleTime: list[0]!.scheduleTime,
+          sessions: list.length,
+          activeSessions: list.length,
+          avgAttendance: round1(list.reduce((s, x) => s + x.attendances, 0) / list.length),
+          avgBookings: round1(
+            list.reduce((s, x) => s + x.confirmedBookings, 0) / list.length,
+          ),
+          sampleInsufficient: list.length < CLASS_TIME_COMPARE_MIN_SESSIONS,
+          slotMaturity,
+        };
+      })
       .sort((a, b) => (b.avgAttendance ?? -1) - (a.avgAttendance ?? -1));
 
     // For insight, also include scheduled (not only active) counts by using active averages

@@ -235,10 +235,20 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
-    expect(activity.body.heatmap.some((c: { scheduleTime: string }) => c.scheduleTime === '07:00')).toBe(
-      true,
-    );
     expect(activity.body.instructorNote).toContain('instructor');
+    expect(Array.isArray(activity.body.operationalReadings)).toBe(true);
+    expect(Array.isArray(activity.body.limitedHistorySlots)).toBe(true);
+    // Sparse fixture sessions are LIMITED_HISTORY; primary heatmap only includes ESTABLISHED
+    for (const cell of activity.body.heatmap as Array<{ slotMaturity: string }>) {
+      expect(cell.slotMaturity).toBe('ESTABLISHED_SLOT');
+    }
+    const times = [
+      ...(activity.body.heatmap as Array<{ scheduleTime: string }>).map((c) => c.scheduleTime),
+      ...(activity.body.limitedHistorySlots as Array<{ scheduleTime: string }>).map(
+        (c) => c.scheduleTime,
+      ),
+    ];
+    expect(times).toContain('07:00');
 
     const templates = await request(app.getHttpServer())
       .get(`/api/v1/studios/${studio.id}/analytics/classes/templates?period=last_90d`)

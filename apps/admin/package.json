@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "test": "node --experimental-strip-types --test src/lib/memberPresentation.spec.ts src/lib/membershipPlanSummary.spec.ts src/lib/scheduleCalendarAccess.spec.ts src/lib/scheduleOccupancy.spec.ts src/lib/scheduleWeekNavigation.spec.ts src/lib/schedulePageNavigation.contract.spec.ts src/lib/scheduleReconciliationPreview.spec.ts",
+    "test": "node --experimental-strip-types --test src/lib/memberPresentation.spec.ts src/lib/membershipPlanSummary.spec.ts src/lib/scheduleCalendarAccess.spec.ts src/lib/scheduleOccupancy.spec.ts src/lib/scheduleWeekNavigation.spec.ts src/lib/schedulePageNavigation.contract.spec.ts src/lib/scheduleReconciliationPreview.spec.ts src/lib/classScheduleAnalyticsPresentation.spec.ts",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",

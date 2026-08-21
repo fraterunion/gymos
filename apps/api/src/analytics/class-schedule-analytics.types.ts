@@ -3,6 +3,9 @@ import type {
   ClassDemandBand,
   ClassScheduleOpportunityType,
   ClassScheduleHeatmapMetric,
+  OpportunitySignalKind,
+  SlotMaturity,
+  OperationalReading,
 } from './class-schedule-engagement.utils';
 
 export type ClassScheduleSummaryDto = {
@@ -26,27 +29,29 @@ export type ClassScheduleSummaryDto = {
     attendances: number;
     avgAttendancePerActiveSession: number | null;
     showRatePct: number | null;
-    /** Confirmed bookings that attended / confirmed bookings (past eligible). */
     confirmedBookings: number;
     confirmedAttended: number;
-    /** Secondary: Σ attendance / Σ capacity over eligible scheduled sessions. */
     capacityUtilizationPct: number | null;
-    /** Secondary: same over active sessions only. */
     capacityUtilizationActivePct: number | null;
   };
 };
 
 export type ClassScheduleOpportunityDto = {
   type: ClassScheduleOpportunityType;
+  signalKind: OpportunitySignalKind;
   title: string;
-  reason: string;
-  evidence: string;
-  sampleSize: number;
+  subject: string;
+  headlineMetric: string;
+  supportingMetric: string;
   suggestedAction: string;
+  sampleSize: number;
   classTemplateId: string | null;
   className: string | null;
   weekday: number | null;
   scheduleTime: string | null;
+  /** Transitional mirrors for older clients */
+  reason: string;
+  evidence: string;
 };
 
 export type ClassScheduleHeatmapCellDto = {
@@ -60,6 +65,17 @@ export type ClassScheduleHeatmapCellDto = {
   avgBookings: number | null;
   attendanceOccupancyPct: number | null;
   bookingOccupancyPct: number | null;
+  totalAttendances: number;
+  slotMaturity: SlotMaturity;
+  distinctWeeks: number;
+};
+
+export type LimitedHistorySlotDto = {
+  weekday: number;
+  scheduleTime: string;
+  scheduledSessions: number;
+  distinctWeeks: number;
+  classNames: string[];
   totalAttendances: number;
 };
 
@@ -96,6 +112,8 @@ export type ClassScheduleSlotRowDto = {
   band: ClassDemandBand;
   sampleInsufficient: boolean;
   totalAttendances: number;
+  slotMaturity: SlotMaturity;
+  distinctWeeks: number;
 };
 
 export type ClassScheduleActivityDto = {
@@ -105,7 +123,11 @@ export type ClassScheduleActivityDto = {
   isPartialPeriod: boolean;
   analyticsDataAvailableFrom: string | null;
   opportunities: ClassScheduleOpportunityDto[];
+  operationalReadings: OperationalReading[];
+  /** Primary strategic heatmap — ESTABLISHED_SLOT only. */
   heatmap: ClassScheduleHeatmapCellDto[];
+  limitedHistorySlots: LimitedHistorySlotDto[];
+  limitedHistorySummary: string | null;
   heatmapDefaultMetric: ClassScheduleHeatmapMetric;
   instructorNote: string | null;
   waitlistNote: string | null;
@@ -120,6 +142,7 @@ export type ClassTemplateDetailDto = ClassTemplateRowDto & {
     avgAttendance: number | null;
     avgBookings: number | null;
     sampleInsufficient: boolean;
+    slotMaturity: SlotMaturity;
   }>;
   recentSessions: Array<{
     scheduledClassId: string;
