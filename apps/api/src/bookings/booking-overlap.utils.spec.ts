@@ -2,6 +2,7 @@ import {
   effectiveOccurrenceEnd,
   findEffectiveOverlapBooking,
   intervalsOverlap,
+  isConfirmedBookingVisibleOnMyBookings,
   occurrencesOverlapEffective,
 } from './booking-overlap.utils';
 
@@ -126,5 +127,46 @@ describe('findEffectiveOverlapBooking', () => {
       durationMinutes: 60,
     };
     expect(occurrencesOverlapEffective(existing, corruptTarget)).toBe(false);
+  });
+});
+
+describe('isConfirmedBookingVisibleOnMyBookings', () => {
+  const start = new Date('2026-08-22T14:00:00.000Z');
+  const end = new Date('2026-08-22T15:00:00.000Z');
+
+  it('is visible before start', () => {
+    expect(
+      isConfirmedBookingVisibleOnMyBookings(start, end, 60, new Date('2026-08-22T13:59:59.000Z')),
+    ).toBe(true);
+  });
+
+  it('is visible at exact start', () => {
+    expect(isConfirmedBookingVisibleOnMyBookings(start, end, 60, start)).toBe(true);
+  });
+
+  it('is visible during class', () => {
+    expect(
+      isConfirmedBookingVisibleOnMyBookings(start, end, 60, new Date('2026-08-22T14:30:00.000Z')),
+    ).toBe(true);
+  });
+
+  it('is hidden at exact effective end', () => {
+    expect(isConfirmedBookingVisibleOnMyBookings(start, end, 60, end)).toBe(false);
+  });
+
+  it('is hidden after effective end', () => {
+    expect(
+      isConfirmedBookingVisibleOnMyBookings(start, end, 60, new Date('2026-08-22T15:00:01.000Z')),
+    ).toBe(false);
+  });
+
+  it('corrupt far-future endsAt cannot extend visibility past duration', () => {
+    const corruptEnd = new Date('2027-08-22T15:00:00.000Z');
+    expect(
+      isConfirmedBookingVisibleOnMyBookings(start, corruptEnd, 60, new Date('2026-08-22T15:00:00.000Z')),
+    ).toBe(false);
+    expect(
+      isConfirmedBookingVisibleOnMyBookings(start, corruptEnd, 60, new Date('2026-08-22T14:30:00.000Z')),
+    ).toBe(true);
   });
 });

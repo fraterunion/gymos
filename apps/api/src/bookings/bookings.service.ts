@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -20,7 +21,12 @@ import {
 } from '../waitlist/waitlist.service';
 import { BookingAccessService } from './booking-access.service';
 import { findMemberBookingTimeConflict } from './booking-overlap.check';
+import {
+  isConfirmedBookingVisibleOnMyBookings,
+  memberUpcomingBookingClassWhere,
+} from './booking-overlap.utils';
 import { WaiverService } from '../waiver/waiver.service';
+import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
 const rosterUserSelect = {
   id: true,
@@ -39,6 +45,8 @@ const bypassSubscriptionRoles: ReadonlySet<Role> = new Set([
 
 @Injectable()
 export class BookingsService {
+  private readonly logger = new Logger(BookingsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly waitlistService: WaitlistService,
@@ -79,11 +87,11 @@ export class BookingsService {
           throw new NotFoundException('Studio not found');
         }
         if (scheduledClass.status !== ClassStatus.SCHEDULED) {
-          throw new ConflictException('This class is not open for booking');
+          throw new ConflictException(MEMBER_ERRORS.classNotOpen);
         }
         const now = new Date();
         if (scheduledClass.startsAt <= now) {
-          throw new ConflictException('Cannot book a class that has already started');
+          throw new ConflictException(MEMBER_ERRORS.classAlreadyStarted);
         }
 
         if (!bypassSubscriptionRoles.has(membership.role)) {
@@ -115,9 +123,7 @@ export class BookingsService {
             targetEndsAt: scheduledClass.endsAt,
           });
           if (overlap) {
-            throw new ConflictException(
-              'You already have a class booked at this time. Cancel it before booking another.',
-            );
+            throw new ConflictException(MEMBER_ERRORS.overlap);
           }
         }
 
@@ -128,7 +134,7 @@ export class BookingsService {
           },
         });
         if (confirmedCount >= scheduledClass.capacity) {
-          throw new ConflictException('Class is full');
+          throw new ConflictException(MEMBER_ERRORS.classFull);
         }
 
         try {
@@ -142,7 +148,7 @@ export class BookingsService {
           });
         } catch (e) {
           if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-            throw new ConflictException('Already booked for this class');
+            throw new ConflictException(MEMBER_ERRORS.alreadyBooked);
           }
           throw e;
         }
@@ -185,7 +191,7 @@ export class BookingsService {
       return { cancelled: false, promotion: null };
     }
 
-    return this.prisma.$transaction(
+    const cancelled = await this.prisma.$transaction(
       async (tx) => {
         await acquireBookingClassAdvisoryLock(tx, booking.scheduledClassId);
 
@@ -204,7 +210,7 @@ export class BookingsService {
           throw new ForbiddenException();
         }
         if (b.status === BookingStatus.CANCELLED) {
-          return { cancelled: false, promotion: null };
+          return { cancelled: false as const, scheduledClassId: b.scheduledClassId };
         }
 
         await tx.booking.update({
@@ -216,20 +222,33 @@ export class BookingsService {
           },
         });
 
-        const promotion = await this.waitlistService.promoteNextAfterSpotOpenedInTx(
-          tx,
-          studioId,
-          b.scheduledClassId,
-        );
-        return { cancelled: true, promotion };
+        return { cancelled: true as const, scheduledClassId: b.scheduledClassId };
       },
       { timeout: 15_000 },
     );
+
+    if (!cancelled.cancelled) {
+      return { cancelled: false, promotion: null };
+    }
+
+    let promotion: BookingCancellationResult['promotion'] = null;
+    try {
+      promotion = await this.waitlistService.promoteNextAfterSpotOpened(
+        studioId,
+        cancelled.scheduledClassId,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Waitlist promotion after cancel failed (booking ${bookingId} remains cancelled)`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+    return { cancelled: true, promotion };
   }
 
   async listMyUpcomingBookings(studioId: string, actorUserId: string) {
     const now = new Date();
-    return this.prisma.booking.findMany({
+    const rows = await this.prisma.booking.findMany({
       where: {
         studioId,
         userId: actorUserId,
@@ -237,8 +256,7 @@ export class BookingsService {
         user: { deletedAt: null },
         scheduledClass: {
           studioId,
-          status: ClassStatus.SCHEDULED,
-          startsAt: { gte: now },
+          ...memberUpcomingBookingClassWhere(now),
         },
       },
       include: {
@@ -252,11 +270,26 @@ export class BookingsService {
             status: true,
             instructorId: true,
             classTemplateId: true,
+            classTemplate: { select: { durationMinutes: true } },
           },
         },
       },
       orderBy: { scheduledClass: { startsAt: 'asc' } },
     });
+
+    return rows
+      .filter((row) =>
+        isConfirmedBookingVisibleOnMyBookings(
+          row.scheduledClass.startsAt,
+          row.scheduledClass.endsAt,
+          row.scheduledClass.classTemplate.durationMinutes,
+          now,
+        ),
+      )
+      .map(({ scheduledClass, ...booking }) => {
+        const { classTemplate: _duration, ...publicClass } = scheduledClass;
+        return { ...booking, scheduledClass: publicClass };
+      });
   }
 
   async getRoster(studioId: string, scheduledClassId: string) {

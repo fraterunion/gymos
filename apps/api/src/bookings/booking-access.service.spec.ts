@@ -3,7 +3,7 @@ import { ClassCategory, Role } from '@prisma/client';
 import { BookingAccessService, CLASS_TIME_WINDOW_DENIED_MESSAGE } from './booking-access.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE } from '../membership-plans/membership-plan-class-access.utils';
-import { MEMBERSHIP_EXPIRED_MESSAGE } from '../memberships/membership-entitlement';
+import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
 describe('BookingAccessService', () => {
   const membershipUsage = {
@@ -140,7 +140,7 @@ describe('BookingAccessService', () => {
         classTemplateId,
         scheduledClassId,
       ),
-    ).rejects.toThrow(MEMBERSHIP_EXPIRED_MESSAGE);
+    ).rejects.toThrow(MEMBER_ERRORS.membershipExpired);
   });
 
   it('selects entitlement with a strict end-exclusive database predicate', async () => {
@@ -297,7 +297,7 @@ describe('BookingAccessService', () => {
     const tx = makeTx({ sub: null, dayPass: false });
     await expect(
       service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-    ).rejects.toThrow('Active membership or Day Pass required to book this class.');
+    ).rejects.toThrow(MEMBER_ERRORS.membershipOrDayPassRequired);
   });
 
   it('no subscription + valid day pass → allowed', async () => {
@@ -318,7 +318,7 @@ describe('BookingAccessService', () => {
       dayPass: true,
     });
     (membershipUsage.assertCreditAvailableForClass as jest.Mock).mockRejectedValue(
-      new ForbiddenException('Membership class credits exhausted.'),
+      new ForbiddenException(MEMBER_ERRORS.creditsExhausted),
     );
     await expect(
       service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
@@ -336,11 +336,11 @@ describe('BookingAccessService', () => {
       dayPass: false,
     });
     (membershipUsage.assertCreditAvailableForClass as jest.Mock).mockRejectedValue(
-      new ForbiddenException('Membership class credits exhausted.'),
+      new ForbiddenException(MEMBER_ERRORS.creditsExhausted),
     );
     await expect(
       service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-    ).rejects.toThrow('Membership class credits exhausted.');
+    ).rejects.toThrow(MEMBER_ERRORS.creditsExhausted);
   });
 
   it('category-restricted plan denies when template category is null', async () => {
@@ -462,7 +462,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: null, dayPass: true, dayPassClassEligible: false });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', 'tpl-booty-lab', scheduledClassId),
-      ).rejects.toThrow('Active membership or Day Pass required to book this class.');
+      ).rejects.toThrow(MEMBER_ERRORS.membershipOrDayPassRequired);
       expect(tx.dayPassClassAccess.findFirst).toHaveBeenCalledWith({
         where: { studioId, classTemplateId: 'tpl-booty-lab' },
         select: { id: true },

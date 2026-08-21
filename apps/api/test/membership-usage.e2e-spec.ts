@@ -170,7 +170,7 @@ describe('Membership usage (e2e)', () => {
       .send({ memberId: member.id })
       .expect(400);
 
-    expect(String((res.body as { message: unknown }).message)).toContain('credits exhausted');
+    expect(String((res.body as { message: unknown }).message)).toContain('créditos');
   });
 
   it('rejects booking after walk-ins exhaust credits', async () => {

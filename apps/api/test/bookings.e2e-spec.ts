@@ -1,6 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { BookingStatus, ClassStatus, Role } from '@prisma/client';
 import request from 'supertest';
+import { MEMBER_ERRORS } from '../src/member-facing/member-errors';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
@@ -134,10 +135,7 @@ describe('Bookings (e2e)', () => {
       .expect(409);
     expect(res.status).toBe(409);
     const message = (res.body as { message: string }).message;
-    expect(
-      message.includes('Already booked') ||
-        message.includes('already have a class booked at this time'),
-    ).toBe(true);
+    expect(message).toBe(MEMBER_ERRORS.alreadyBooked);
   });
 
   it('returns 409 when class is full', async () => {
@@ -166,7 +164,7 @@ describe('Bookings (e2e)', () => {
       .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/bookings`)
       .set('Authorization', `Bearer ${t2}`)
       .expect(409);
-    expect((res.body as { message: string }).message).toMatch(/full/i);
+    expect((res.body as { message: string }).message).toBe(MEMBER_ERRORS.classFull);
   });
 
   it('cancels via POST /bookings/:id/cancel', async () => {
@@ -521,7 +519,7 @@ describe('Bookings (e2e)', () => {
         .post(`/api/v1/studios/${studio.id}/classes/${clsB.id}/bookings`)
         .set('Authorization', `Bearer ${token}`)
         .expect(409);
-      expect((res.body as { message: string }).message).toMatch(/already have a class booked at this time/i);
+      expect((res.body as { message: string }).message).toBe(MEMBER_ERRORS.overlap);
     });
 
     it('does not block after cancelling the overlapping booking', async () => {
@@ -659,7 +657,7 @@ describe('Bookings (e2e)', () => {
         .post(`/api/v1/studios/${studio.id}/classes/${clsB.id}/bookings`)
         .set('Authorization', `Bearer ${token}`)
         .expect(409);
-      expect((res.body as { message: string }).message).toMatch(/already have a class booked at this time/i);
+      expect((res.body as { message: string }).message).toBe(MEMBER_ERRORS.overlap);
     });
   });
 });

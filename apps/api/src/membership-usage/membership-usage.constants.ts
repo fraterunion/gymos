@@ -1,4 +1,5 @@
 import { BookingStatus } from '@prisma/client';
+import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
 /**
  * Booking statuses that consume a class credit for the billing period containing
@@ -17,5 +18,4 @@ export const CREDIT_CONSUMING_BOOKING_STATUSES: readonly BookingStatus[] = [
   BookingStatus.COMPLETED,
 ];
 
-export const MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE =
-  'Membership class credits exhausted.';
+export const MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE = MEMBER_ERRORS.creditsExhausted;

@@ -337,6 +337,10 @@ describe('Calendar 2.2 schedule operations (e2e)', () => {
 
     const row = await prisma.scheduledClass.findUnique({ where: { id: cls.id } });
     expect(row?.status).toBe(ClassStatus.CANCELLED);
+    const booking = await prisma.booking.findFirst({
+      where: { scheduledClassId: cls.id, userId: member.id },
+    });
+    expect(booking?.status).toBe('CANCELLED');
   });
 
   it('bulk edit on recurring occurrence marks DETACHED', async () => {

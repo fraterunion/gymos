@@ -24,8 +24,10 @@ interface AuthRequest {
 export class ScheduleGeneratorController {
   constructor(private readonly service: ScheduleGeneratorService) {}
 
-  /** Calendar coverage summary. */
+  /** Calendar coverage summary. Owner/Admin only. */
   @Get('status')
+  @UseGuards(RolesGuard)
+  @Roles('OWNER', 'ADMIN')
   getStatus(@Param('studioId') studioId: string) {
     return this.service.getStatus(studioId);
   }
@@ -56,8 +58,10 @@ export class ScheduleGeneratorController {
     });
   }
 
-  /** History of past runs. */
+  /** History of past runs. Owner/Admin only. */
   @Get('runs')
+  @UseGuards(RolesGuard)
+  @Roles('OWNER', 'ADMIN')
   listRuns(@Param('studioId') studioId: string) {
     return this.service.listRuns(studioId);
   }

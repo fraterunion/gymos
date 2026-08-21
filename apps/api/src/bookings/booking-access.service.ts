@@ -18,10 +18,8 @@ import {
   isClassIncludedInPlan,
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
 } from '../membership-plans/membership-plan-class-access.utils';
-import {
-  currentlyEntitledSubscriptionWhere,
-  MEMBERSHIP_EXPIRED_MESSAGE,
-} from '../memberships/membership-entitlement';
+import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
+import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
 const bypassRoles: ReadonlySet<Role> = new Set([
   Role.STAFF,
@@ -30,8 +28,7 @@ const bypassRoles: ReadonlySet<Role> = new Set([
   Role.OWNER,
 ]);
 
-export const CLASS_TIME_WINDOW_DENIED_MESSAGE =
-  'This class is not available during this time. Please check the allowed access hours.';
+export const CLASS_TIME_WINDOW_DENIED_MESSAGE = MEMBER_ERRORS.timeWindowDenied;
 
 /**
  * Shared booking access guard used by BookingsService (direct booking) and
@@ -208,8 +205,8 @@ export class BookingAccessService {
       select: { id: true },
     });
     if (expiredSubscription) {
-      throw new ForbiddenException(MEMBERSHIP_EXPIRED_MESSAGE);
+      throw new ForbiddenException(MEMBER_ERRORS.membershipExpired);
     }
-    throw new ForbiddenException('Active membership or Day Pass required to book this class.');
+    throw new ForbiddenException(MEMBER_ERRORS.membershipOrDayPassRequired);
   }
 }

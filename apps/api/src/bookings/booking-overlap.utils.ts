@@ -62,6 +62,33 @@ export function memberBookingOverlapCandidateWhere(input: {
   } as const;
 }
 
+/** First-pass window for in-progress classes; effective-end clamping happens in JS. */
+export const IN_PROGRESS_BOOKING_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+export function isConfirmedBookingVisibleOnMyBookings(
+  startsAt: Date,
+  endsAt: Date,
+  durationMinutes: number,
+  now: Date,
+): boolean {
+  if (startsAt.getTime() >= now.getTime()) {
+    return true;
+  }
+  const effectiveEnd = effectiveOccurrenceEnd(startsAt, endsAt, durationMinutes);
+  return now.getTime() < effectiveEnd.getTime();
+}
+
+export function memberUpcomingBookingClassWhere(now: Date): {
+  status: typeof ClassStatus.SCHEDULED;
+  OR: Array<{ startsAt: { gte: Date } } | { startsAt: { gte: Date; lt: Date } }>;
+} {
+  const lookback = new Date(now.getTime() - IN_PROGRESS_BOOKING_LOOKBACK_MS);
+  return {
+    status: ClassStatus.SCHEDULED,
+    OR: [{ startsAt: { gte: now } }, { startsAt: { gte: lookback, lt: now } }],
+  };
+}
+
 export function findEffectiveOverlapBooking<
   T extends {
     id: string;

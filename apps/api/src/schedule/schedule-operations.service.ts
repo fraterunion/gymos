@@ -32,6 +32,8 @@ import {
   OccurrenceSlot,
   ScheduleConflictsService,
 } from './schedule-conflicts.service';
+import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
+import { assertStartsBeforeEnds } from './occurrence-interval';
 import { acquireOperationAdvisoryLock, acquireWeekReconciliationLocks } from './schedule-occurrence-concurrency';
 import { insertScheduledOccurrenceOrSkip } from './schedule-occurrence-insert';
 import {
@@ -531,6 +533,17 @@ export class ScheduleOperationsService {
         }
       }
 
+      let cancelledBookingCount = 0;
+      let expiredWaitlistCount = 0;
+      if (dto.operation === BulkScheduleOperation.CANCEL && ids.length > 0) {
+        const cascade = await cascadeClassCancellationInTx(tx, {
+          studioId,
+          scheduledClassIds: ids,
+        });
+        cancelledBookingCount = cascade.cancelledBookingCount;
+        expiredWaitlistCount = cascade.expiredWaitlistCount;
+      }
+
       const result = emptyOperationResult({
         ...preview,
         updatedCount,
@@ -550,6 +563,8 @@ export class ScheduleOperationsService {
             affectedClassCount: ids.length,
             affectedClassIds: ids,
             affectedReservationCount: preview.affectedReservationCount,
+            cancelledBookingCount,
+            expiredWaitlistCount,
             timeDeltaMinutes: dto.timeDeltaMinutes ?? null,
             instructorId: dto.instructorId ?? null,
             capacity: dto.capacity ?? null,
@@ -951,6 +966,7 @@ export class ScheduleOperationsService {
         const startsAt = studioLocalTimeToUtc(targetDayKey, time, timezone);
         const durationMs = src.classTemplate.durationMinutes * 60_000;
         const endsAt = new Date(startsAt.getTime() + durationMs);
+        assertStartsBeforeEnds(startsAt, endsAt);
 
         slots.push({
           classTemplateId: src.classTemplateId,
@@ -993,6 +1009,7 @@ export class ScheduleOperationsService {
       const durationMs = source.classTemplate.durationMinutes * 60_000;
       endsAt = new Date(startsAt.getTime() + durationMs);
     }
+    assertStartsBeforeEnds(startsAt, endsAt);
     return {
       classTemplateId: source.classTemplateId,
       instructorId: dto.instructorId !== undefined ? dto.instructorId : source.instructorId,

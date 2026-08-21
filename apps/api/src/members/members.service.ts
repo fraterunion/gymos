@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { StripeService } from '../stripe/stripe.service';
@@ -60,6 +61,8 @@ const publicUserSelect = {
 
 @Injectable()
 export class MembersService {
+  private readonly logger = new Logger(MembersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly waitlistService: WaitlistService,
@@ -983,13 +986,13 @@ export class MembersService {
       return { cancelled: false, promotion: null };
     }
 
-    return this.prisma.$transaction(
+    const cancelled = await this.prisma.$transaction(
       async (tx) => {
         await acquireBookingClassAdvisoryLock(tx, booking.scheduledClassId);
 
         const b = await tx.booking.findFirst({ where: { id: bookingId, studioId, userId } });
         if (!b || b.status === BookingStatus.CANCELLED) {
-          return { cancelled: false, promotion: null };
+          return { cancelled: false as const, scheduledClassId: booking.scheduledClassId };
         }
 
         await tx.booking.update({
@@ -1001,15 +1004,28 @@ export class MembersService {
           },
         });
 
-        const promotion = await this.waitlistService.promoteNextAfterSpotOpenedInTx(
-          tx,
-          studioId,
-          booking.scheduledClassId,
-        );
-        return { cancelled: true, promotion };
+        return { cancelled: true as const, scheduledClassId: booking.scheduledClassId };
       },
       { timeout: 15_000 },
     );
+
+    if (!cancelled.cancelled) {
+      return { cancelled: false, promotion: null };
+    }
+
+    let promotion: Awaited<ReturnType<WaitlistService['promoteNextAfterSpotOpened']>> = null;
+    try {
+      promotion = await this.waitlistService.promoteNextAfterSpotOpened(
+        studioId,
+        cancelled.scheduledClassId,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Waitlist promotion after staff cancel failed (booking ${bookingId} remains cancelled)`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+    return { cancelled: true, promotion };
   }
 
   async staffForceCheckIn(studioId: string, bookingId: string, actorUserId: string) {

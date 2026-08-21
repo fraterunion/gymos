@@ -31,6 +31,8 @@ import {
   templateEffectiveStartKey,
 } from './schedule-materialization';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
+import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
+import { assertStartsBeforeEnds } from './occurrence-interval';
 import {
   deriveSeriesStatus,
   matchesSeriesListFilter,
@@ -661,9 +663,14 @@ export class ScheduleSeriesService {
             ...(input.cancelReason ? { cancelReason: input.cancelReason } : {}),
           },
         });
+        const cascade = await cascadeClassCancellationInTx(tx, {
+          studioId: studio.id,
+          scheduledClassIds: plan.cancelIds,
+        });
+        return { cancelledCount: plan.cancelIds.length, ...cascade };
       }
 
-      return plan.cancelIds.length;
+      return { cancelledCount: 0, cancelledBookingCount: 0, expiredWaitlistCount: 0 };
     });
 
     await this.audit.log({
@@ -675,14 +682,16 @@ export class ScheduleSeriesService {
       metadata: {
         mode: input.mode,
         boundaryDateKey,
-        cancelledCount: result,
+        cancelledCount: result.cancelledCount,
+        cancelledBookingCount: result.cancelledBookingCount,
+        expiredWaitlistCount: result.expiredWaitlistCount,
         skippedDetachedCount: plan.skippedDetachedCount,
         affectedReservationCount: preview.impact.totalReservations,
         cancelReason: input.cancelReason ?? null,
       },
     });
 
-    return { boundaryDateKey, cancelledCount: result };
+    return { boundaryDateKey, cancelledCount: result.cancelledCount };
   }
 
   async getOccurrenceSeriesContext(studioId: string, scheduledClassId: string) {
@@ -1219,8 +1228,8 @@ export class ScheduleSeriesService {
 
         const dateKey = getStudioLocalDateKey(target.startsAt, studio.timezone);
         const startsAt = studioLocalTimeToUtc(dateKey, newStartTime, studio.timezone);
-        const durationMs =
-          (input.localEnd && input.localStart
+        const customSpanMs =
+          input.localEnd && input.localStart
             ? studioLocalTimeToUtc(
                 input.localEnd.date,
                 input.localEnd.time,
@@ -1231,8 +1240,17 @@ export class ScheduleSeriesService {
                 input.localStart.time,
                 studio.timezone,
               ).getTime()
-            : tpl.classTemplate.durationMinutes * 60_000);
+            : null;
+        const sameDayCustomEnd =
+          Boolean(input.localEnd && input.localStart) &&
+          input.localEnd!.date === input.localStart!.date &&
+          customSpanMs !== null &&
+          customSpanMs > 0;
+        const durationMs = sameDayCustomEnd
+          ? customSpanMs!
+          : tpl.classTemplate.durationMinutes * 60_000;
         const endsAt = new Date(startsAt.getTime() + durationMs);
+        assertStartsBeforeEnds(startsAt, endsAt);
 
         await tx.scheduledClass.update({
           where: { id: target.id },
@@ -1361,6 +1379,7 @@ export class ScheduleSeriesService {
         const endsAt = new Date(
           startsAt.getTime() + updatedTemplate.classTemplate.durationMinutes * 60_000,
         );
+        assertStartsBeforeEnds(startsAt, endsAt);
 
         await tx.scheduledClass.update({
           where: { id: target.id },
@@ -1452,6 +1471,8 @@ export class ScheduleSeriesService {
       });
 
       let updatedCount = 0;
+      let cancelledBookingCount = 0;
+      let expiredWaitlistCount = 0;
       for (const id of plan.toUpdateIds) {
         const target = futureRows.find((r) => r.id === id);
         if (!target) continue;
@@ -1483,6 +1504,12 @@ export class ScheduleSeriesService {
           where: { id: { in: plan.toCancelIds } },
           data: { status: ClassStatus.CANCELLED },
         });
+        const cascade = await cascadeClassCancellationInTx(tx, {
+          studioId: studio.id,
+          scheduledClassIds: plan.toCancelIds,
+        });
+        cancelledBookingCount = cascade.cancelledBookingCount;
+        expiredWaitlistCount = cascade.expiredWaitlistCount;
       }
 
       const materialized = await this.materializeTemplates(
@@ -1511,6 +1538,8 @@ export class ScheduleSeriesService {
           skippedDetachedCount: plan.skippedDetachedCount,
           skippedAttendanceCount: plan.skippedAttendanceCount,
           bookedOccurrencesAffected: plan.bookedCancellationCount,
+          cancelledBookingCount,
+          expiredWaitlistCount,
           affectedClassCount: updatedCount + plan.cancelledCount + materialized.generated,
           affectedReservationCount: impact.totalReservations,
         },
@@ -1532,12 +1561,18 @@ export class ScheduleSeriesService {
     cancelReason: string | undefined,
     impact: MutationImpact,
   ) {
-    await this.prisma.scheduledClass.update({
-      where: { id: occurrence.id },
-      data: {
-        status: ClassStatus.CANCELLED,
-        ...(cancelReason ? { cancelReason } : {}),
-      },
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.scheduledClass.update({
+        where: { id: occurrence.id },
+        data: {
+          status: ClassStatus.CANCELLED,
+          ...(cancelReason ? { cancelReason } : {}),
+        },
+      });
+      return cascadeClassCancellationInTx(tx, {
+        studioId,
+        scheduledClassIds: [occurrence.id],
+      });
     });
 
     await this.audit.log({
@@ -1551,6 +1586,8 @@ export class ScheduleSeriesService {
         scheduleTemplateId: occurrence.scheduleTemplateId,
         affectedClassCount: 1,
         affectedReservationCount: impact.totalReservations,
+        cancelledBookingCount: result.cancelledBookingCount,
+        expiredWaitlistCount: result.expiredWaitlistCount,
         cancelReason: cancelReason ?? null,
       },
     });
@@ -1588,20 +1625,35 @@ export class ScheduleSeriesService {
 
       // No successor template — soft-cancel materialized future rows only.
       // Includes DETACHED rows: explicit cancellation from boundary forward.
-      const cancelled = await tx.scheduledClass.updateMany({
+      const toCancel = await tx.scheduledClass.findMany({
         where: {
           studioId: studio.id,
           scheduleTemplateId: tpl.id,
           startsAt: { gte: occurrence.startsAt },
           status: ClassStatus.SCHEDULED,
         },
-        data: {
-          status: ClassStatus.CANCELLED,
-          ...(cancelReason ? { cancelReason } : {}),
-        },
+        select: { id: true },
       });
-
-      return cancelled.count;
+      const ids = toCancel.map((row) => row.id);
+      if (ids.length > 0) {
+        await tx.scheduledClass.updateMany({
+          where: { id: { in: ids } },
+          data: {
+            status: ClassStatus.CANCELLED,
+            ...(cancelReason ? { cancelReason } : {}),
+          },
+        });
+        const cascade = await cascadeClassCancellationInTx(tx, {
+          studioId: studio.id,
+          scheduledClassIds: ids,
+        });
+        return {
+          cancelledCount: ids.length,
+          cancelledBookingCount: cascade.cancelledBookingCount,
+          expiredWaitlistCount: cascade.expiredWaitlistCount,
+        };
+      }
+      return { cancelledCount: 0, cancelledBookingCount: 0, expiredWaitlistCount: 0 };
     });
 
     await this.audit.log({
@@ -1616,13 +1668,15 @@ export class ScheduleSeriesService {
         boundaryDateKey: occurrenceDateKey,
         predecessorEndDateKey: predecessorEndKey,
         successorTemplateId: null,
-        affectedClassCount: result,
+        affectedClassCount: result.cancelledCount,
         affectedReservationCount: impact.totalReservations,
+        cancelledBookingCount: result.cancelledBookingCount,
+        expiredWaitlistCount: result.expiredWaitlistCount,
         cancelReason: cancelReason ?? null,
       },
     });
 
-    return { cancelledCount: result };
+    return { cancelledCount: result.cancelledCount };
   }
 
   private async cancelEntireSeries(
@@ -1642,20 +1696,35 @@ export class ScheduleSeriesService {
       });
 
       // Explicit entire-series cancellation includes DETACHED future rows intentionally.
-      const cancelled = await tx.scheduledClass.updateMany({
+      const toCancel = await tx.scheduledClass.findMany({
         where: {
           studioId: studio.id,
           scheduleTemplateId: tpl.id,
           startsAt: { gte: now },
           status: ClassStatus.SCHEDULED,
         },
-        data: {
-          status: ClassStatus.CANCELLED,
-          ...(cancelReason ? { cancelReason } : {}),
-        },
+        select: { id: true },
       });
-
-      return cancelled.count;
+      const ids = toCancel.map((row) => row.id);
+      if (ids.length > 0) {
+        await tx.scheduledClass.updateMany({
+          where: { id: { in: ids } },
+          data: {
+            status: ClassStatus.CANCELLED,
+            ...(cancelReason ? { cancelReason } : {}),
+          },
+        });
+        const cascade = await cascadeClassCancellationInTx(tx, {
+          studioId: studio.id,
+          scheduledClassIds: ids,
+        });
+        return {
+          cancelledCount: ids.length,
+          cancelledBookingCount: cascade.cancelledBookingCount,
+          expiredWaitlistCount: cascade.expiredWaitlistCount,
+        };
+      }
+      return { cancelledCount: 0, cancelledBookingCount: 0, expiredWaitlistCount: 0 };
     });
 
     await this.audit.log({
@@ -1668,13 +1737,15 @@ export class ScheduleSeriesService {
         scope: 'SERIES',
         previousTemplateId: tpl.id,
         includesDetachedOccurrences: true,
-        affectedClassCount: result,
+        affectedClassCount: result.cancelledCount,
         affectedReservationCount: impact.totalReservations,
+        cancelledBookingCount: result.cancelledBookingCount,
+        expiredWaitlistCount: result.expiredWaitlistCount,
         cancelReason: cancelReason ?? null,
       },
     });
 
-    return { cancelledCount: result };
+    return { cancelledCount: result.cancelledCount };
   }
 
   private async buildOccurrenceUpdateData(
@@ -1706,6 +1777,11 @@ export class ScheduleSeriesService {
         startsAt.getTime() +
           occurrence.scheduleTemplate.classTemplate.durationMinutes * 60_000,
       );
+    }
+    if (data.startsAt instanceof Date || data.endsAt instanceof Date) {
+      const nextStart = data.startsAt instanceof Date ? data.startsAt : occurrence.startsAt;
+      const nextEnd = data.endsAt instanceof Date ? data.endsAt : occurrence.endsAt;
+      assertStartsBeforeEnds(nextStart, nextEnd);
     }
     if (input.capacity !== undefined) data.capacity = input.capacity;
     if (input.instructorId !== undefined) {

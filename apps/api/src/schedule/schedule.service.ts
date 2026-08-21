@@ -21,6 +21,8 @@ import type {
 } from './dto/scheduled-class.dto';
 import type { StudioLocalDateTimeDto } from './dto/studio-local-datetime.dto';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
+import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
+import { assertStartsBeforeEnds } from './occurrence-interval';
 
 function scheduleInclude(studioId: string) {
   return {
@@ -322,6 +324,24 @@ export class ScheduleService {
     if (Object.keys(data).length === 0) {
       return existing;
     }
+
+    const transitioningToCancelled =
+      dto.status === ClassStatus.CANCELLED && existing.status !== ClassStatus.CANCELLED;
+
+    if (transitioningToCancelled) {
+      return this.prisma.$transaction(async (tx) => {
+        const updated = await tx.scheduledClass.update({
+          where: { id: scheduledClassId },
+          data,
+        });
+        await cascadeClassCancellationInTx(tx, {
+          studioId,
+          scheduledClassIds: [scheduledClassId],
+        });
+        return updated;
+      });
+    }
+
     return this.prisma.scheduledClass.update({
       where: { id: scheduledClassId },
       data,
@@ -339,14 +359,23 @@ export class ScheduleService {
     if (!existing) {
       throw new NotFoundException('Scheduled class not found');
     }
-    await this.prisma.scheduledClass.update({
-      where: { id: scheduledClassId },
-      data: {
-        status: ClassStatus.CANCELLED,
-        ...(dto?.cancelReason !== undefined && dto.cancelReason !== ''
-          ? { cancelReason: dto.cancelReason }
-          : {}),
-      },
+    if (existing.status === ClassStatus.CANCELLED) {
+      return;
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.scheduledClass.update({
+        where: { id: scheduledClassId },
+        data: {
+          status: ClassStatus.CANCELLED,
+          ...(dto?.cancelReason !== undefined && dto.cancelReason !== ''
+            ? { cancelReason: dto.cancelReason }
+            : {}),
+        },
+      });
+      await cascadeClassCancellationInTx(tx, {
+        studioId,
+        scheduledClassIds: [scheduledClassId],
+      });
     });
   }
 
@@ -416,22 +445,26 @@ export class ScheduleService {
     fallbackStart?: Date,
     fallbackEnd?: Date,
   ): { startsAt: Date; endsAt: Date } {
+    let startsAt: Date;
+    let endsAt: Date;
     if (localStart) {
-      const startsAt = studioLocalTimeToUtc(localStart.date, localStart.time, timezone);
-      const endsAt = localEnd
+      startsAt = studioLocalTimeToUtc(localStart.date, localStart.time, timezone);
+      endsAt = localEnd
         ? studioLocalTimeToUtc(localEnd.date, localEnd.time, timezone)
         : new Date(startsAt.getTime() + durationMinutes * 60_000);
-      return { startsAt, endsAt };
+    } else if (startTime && endTime) {
+      startsAt = startTime;
+      endsAt = endTime;
+    } else if (fallbackStart && fallbackEnd) {
+      startsAt = fallbackStart;
+      endsAt = fallbackEnd;
+    } else {
+      throw new BadRequestException(
+        'Provide localStart/localEnd or startTime/endTime for scheduling.',
+      );
     }
-    if (startTime && endTime) {
-      return { startsAt: startTime, endsAt: endTime };
-    }
-    if (fallbackStart && fallbackEnd) {
-      return { startsAt: fallbackStart, endsAt: fallbackEnd };
-    }
-    throw new BadRequestException(
-      'Provide localStart/localEnd or startTime/endTime for scheduling.',
-    );
+    assertStartsBeforeEnds(startsAt, endsAt);
+    return { startsAt, endsAt };
   }
 
   private async requireStudioTimezone(studioId: string) {

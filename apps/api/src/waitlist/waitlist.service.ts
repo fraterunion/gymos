@@ -14,7 +14,10 @@ import {
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { BookingAccessService } from '../bookings/booking-access.service';
 import { findMemberBookingTimeConflict } from '../bookings/booking-overlap.check';
+import { acquireMembershipUsageAdvisoryLock } from '../membership-usage/membership-usage-advisory-lock';
 import { PrismaService } from '../prisma/prisma.service';
+import { WaiverService } from '../waiver/waiver.service';
+import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
 const bypassSubscriptionRoles: ReadonlySet<Role> = new Set([
   Role.STAFF,
@@ -66,29 +69,63 @@ export class WaitlistService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bookingAccess: BookingAccessService,
+    private readonly waiverService: WaiverService,
   ) {}
+
+  /**
+   * Promote after a CONFIRMED seat was freed. Runs in its own transaction so a
+   * failed promotion cannot roll back the original cancellation.
+   */
+  async promoteNextAfterSpotOpened(
+    studioId: string,
+    scheduledClassId: string,
+  ): Promise<WaitlistPromotionDto | null> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await acquireBookingClassAdvisoryLock(tx, scheduledClassId);
+        return this.promoteNextAfterSpotOpenedInTx(tx, studioId, scheduledClassId);
+      },
+      { timeout: 15_000 },
+    );
+  }
 
   /**
    * Run inside an existing transaction after a CONFIRMED seat was freed.
    * Iterates candidates in waitlist order and promotes the first one whose
-   * access and overlap checks both pass. If no candidate is valid, returns null.
-   * If the promotion booking insert hits P2002, throws and rolls back the outer transaction.
+   * access, waiver, overlap, and uniqueness checks all pass.
+   * Ineligible candidates are skipped; uniqueness conflicts expire that entry.
    */
   async promoteNextAfterSpotOpenedInTx(
     tx: Prisma.TransactionClient,
     studioId: string,
     scheduledClassId: string,
   ): Promise<WaitlistPromotionDto | null> {
-    const confirmedCount = await tx.booking.count({
-      where: { studioId, scheduledClassId, status: BookingStatus.CONFIRMED },
-    });
+    const now = new Date();
     const scheduledClass = await tx.scheduledClass.findFirst({
       where: { id: scheduledClassId, studioId },
-      select: { capacity: true, startsAt: true, endsAt: true, classTemplateId: true },
+      select: {
+        capacity: true,
+        startsAt: true,
+        endsAt: true,
+        classTemplateId: true,
+        status: true,
+      },
     });
     if (!scheduledClass) {
       return null;
     }
+
+    if (scheduledClass.status !== ClassStatus.SCHEDULED || scheduledClass.startsAt <= now) {
+      await tx.waitlistEntry.updateMany({
+        where: { studioId, scheduledClassId, status: WaitlistStatus.WAITING },
+        data: { status: WaitlistStatus.EXPIRED },
+      });
+      return null;
+    }
+
+    const confirmedCount = await tx.booking.count({
+      where: { studioId, scheduledClassId, status: BookingStatus.CONFIRMED },
+    });
     if (confirmedCount >= scheduledClass.capacity) {
       return null;
     }
@@ -110,11 +147,39 @@ export class WaitlistService {
     }
 
     for (const candidate of candidates) {
+      const existingBooking = await tx.booking.findFirst({
+        where: {
+          studioId,
+          scheduledClassId,
+          userId: candidate.userId,
+          status: BookingStatus.CONFIRMED,
+        },
+        select: { id: true },
+      });
+      if (existingBooking) {
+        await tx.waitlistEntry.update({
+          where: { id: candidate.id },
+          data: { status: WaitlistStatus.EXPIRED },
+        });
+        continue;
+      }
+
       const membership = await tx.studioMembership.findFirst({
         where: { studioId, userId: candidate.userId, deletedAt: null },
         select: { role: true },
       });
       if (!membership) continue;
+
+      try {
+        await this.waiverService.assertMemberWaiverAccepted(studioId, candidate.userId);
+      } catch (e) {
+        if (e instanceof ForbiddenException) continue;
+        throw e;
+      }
+
+      if (!bypassSubscriptionRoles.has(membership.role)) {
+        await acquireMembershipUsageAdvisoryLock(tx, studioId, candidate.userId);
+      }
 
       try {
         await this.bookingAccess.assertAccess(
@@ -132,7 +197,6 @@ export class WaitlistService {
         throw e;
       }
 
-      // Mirrors the overlap guard in joinWaitlist and createBooking.
       if (!bypassSubscriptionRoles.has(membership.role)) {
         const overlap = await findMemberBookingTimeConflict(tx, {
           studioId,
@@ -143,6 +207,13 @@ export class WaitlistService {
           targetEndsAt: scheduledClass.endsAt,
         });
         if (overlap) continue;
+      }
+
+      const confirmedNow = await tx.booking.count({
+        where: { studioId, scheduledClassId, status: BookingStatus.CONFIRMED },
+      });
+      if (confirmedNow >= scheduledClass.capacity) {
+        return null;
       }
 
       try {
@@ -166,7 +237,11 @@ export class WaitlistService {
         };
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-          throw new ConflictException('Promotion failed due to a conflicting booking');
+          await tx.waitlistEntry.update({
+            where: { id: candidate.id },
+            data: { status: WaitlistStatus.EXPIRED },
+          });
+          continue;
         }
         throw e;
       }
@@ -176,6 +251,8 @@ export class WaitlistService {
   }
 
   async joinWaitlist(studioId: string, scheduledClassId: string, actorUserId: string) {
+    await this.waiverService.assertMemberWaiverAccepted(studioId, actorUserId);
+
     return this.prisma.$transaction(
       async (tx) => {
         await acquireBookingClassAdvisoryLock(tx, scheduledClassId);
@@ -190,7 +267,7 @@ export class WaitlistService {
           }),
           tx.studio.findUnique({
             where: { id: studioId },
-            select: { timezone: true },
+            select: { timezone: true, allowWaitlist: true },
           }),
         ]);
 
@@ -203,12 +280,19 @@ export class WaitlistService {
         if (!studio) {
           throw new NotFoundException('Studio not found');
         }
+        if (!studio.allowWaitlist) {
+          throw new ConflictException(MEMBER_ERRORS.waitlistDisabled);
+        }
         if (scheduledClass.status !== ClassStatus.SCHEDULED) {
-          throw new ConflictException('This class is not open for the waitlist');
+          throw new ConflictException(MEMBER_ERRORS.waitlistNotOpen);
         }
         const now = new Date();
         if (scheduledClass.startsAt <= now) {
-          throw new ConflictException('Cannot join the waitlist for a class that has already started');
+          throw new ConflictException(MEMBER_ERRORS.waitlistAlreadyStarted);
+        }
+
+        if (!bypassSubscriptionRoles.has(membership.role)) {
+          await acquireMembershipUsageAdvisoryLock(tx, studioId, actorUserId);
         }
 
         await this.bookingAccess.assertAccess(
@@ -222,10 +306,6 @@ export class WaitlistService {
           scheduledClass.id,
         );
 
-        // Overlap check — members cannot join a waitlist for a class that
-        // conflicts with an existing CONFIRMED booking. Back-to-back is allowed.
-        // Mirrors the same guard in BookingsService.createBooking.
-        // Staff/admin/instructor roles bypass this check.
         if (!bypassSubscriptionRoles.has(membership.role)) {
           const overlap = await findMemberBookingTimeConflict(tx, {
             studioId,
@@ -236,9 +316,7 @@ export class WaitlistService {
             targetEndsAt: scheduledClass.endsAt,
           });
           if (overlap) {
-            throw new ConflictException(
-              'You already have a class booked at this time. Cancel it before joining this waitlist.',
-            );
+            throw new ConflictException(MEMBER_ERRORS.waitlistOverlap);
           }
         }
 
@@ -250,7 +328,7 @@ export class WaitlistService {
           },
         });
         if (confirmedCount < scheduledClass.capacity) {
-          throw new ConflictException('Class has available spots — please book directly');
+          throw new ConflictException(MEMBER_ERRORS.waitlistBookDirectly);
         }
 
         const existingBooking = await tx.booking.findFirst({
@@ -262,7 +340,7 @@ export class WaitlistService {
           },
         });
         if (existingBooking) {
-          throw new ConflictException('Already booked for this class');
+          throw new ConflictException(MEMBER_ERRORS.alreadyBooked);
         }
 
         const promotedOrWaiting = await tx.waitlistEntry.findFirst({
@@ -274,7 +352,7 @@ export class WaitlistService {
           },
         });
         if (promotedOrWaiting) {
-          throw new ConflictException('Already on the waitlist for this class');
+          throw new ConflictException(MEMBER_ERRORS.alreadyOnWaitlist);
         }
 
         const agg = await tx.waitlistEntry.aggregate({
@@ -303,7 +381,7 @@ export class WaitlistService {
           };
         } catch (e) {
           if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-            throw new ConflictException('Already on the waitlist for this class');
+            throw new ConflictException(MEMBER_ERRORS.alreadyOnWaitlist);
           }
           throw e;
         }

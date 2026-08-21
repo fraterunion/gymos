@@ -97,7 +97,7 @@ describe('Waitlist (e2e)', () => {
       .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/waitlist`)
       .set('Authorization', `Bearer ${token}`)
       .expect(409);
-    expect((res.body as { message: string }).message).toContain('available spots');
+    expect((res.body as { message: string }).message).toContain('Hay lugares disponibles');
   });
 
   it('returns 403 when MEMBER has no subscription', async () => {

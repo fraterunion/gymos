@@ -1,7 +1,7 @@
 import { ClassCategory } from '@prisma/client';
+import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
-export const MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE =
-  'This membership does not include access to this class.';
+export const MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE = MEMBER_ERRORS.planRestricted;
 
 export type PlanClassAccessInput = {
   allClassesAccess: boolean;

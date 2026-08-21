@@ -101,7 +101,9 @@ describe('Waitlist promotion (e2e)', () => {
       .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/waitlist`)
       .set('Authorization', `Bearer ${wTok}`)
       .expect(409);
-    expect((joinAgain.body as { message: string }).message).toMatch(/booked|waitlist/i);
+    expect((joinAgain.body as { message: string }).message).toMatch(
+      /reservad|lista de espera|booked|waitlist/i,
+    );
   });
 
   it('returns cancelled:false when cancel is idempotent', async () => {

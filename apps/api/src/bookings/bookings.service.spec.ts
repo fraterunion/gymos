@@ -80,14 +80,14 @@ describe('BookingsService', () => {
   let prisma: { $transaction: jest.Mock };
   let bookingAccess: { assertAccess: jest.Mock };
   let waiverService: { assertMemberWaiverAccepted: jest.Mock };
-  let waitlistService: { promoteNextAfterSpotOpenedInTx: jest.Mock };
+  let waitlistService: { promoteNextAfterSpotOpened: jest.Mock };
 
   beforeEach(() => {
     jest.clearAllMocks();
 
     bookingAccess = { assertAccess: jest.fn().mockResolvedValue(undefined) };
     waiverService = { assertMemberWaiverAccepted: jest.fn().mockResolvedValue(undefined) };
-    waitlistService = { promoteNextAfterSpotOpenedInTx: jest.fn().mockResolvedValue(null) };
+    waitlistService = { promoteNextAfterSpotOpened: jest.fn().mockResolvedValue(null) };
     prisma = { $transaction: jest.fn() };
 
     service = new BookingsService(
@@ -217,7 +217,7 @@ describe('BookingsService', () => {
       });
       tx.booking.create.mockRejectedValue(p2002);
       await expect(service.createBooking(STUDIO_ID, CLASS_ID, USER_ID)).rejects.toMatchObject({
-        message: 'Already booked for this class',
+        message: 'Ya estás reservado en esta clase.',
       });
     });
   });

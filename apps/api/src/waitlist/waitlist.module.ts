@@ -5,10 +5,11 @@ import { MembershipUsageModule } from '../membership-usage/membership-usage.modu
 import { PrismaModule } from '../prisma/prisma.module';
 import { ClassWaitlistController } from './class-waitlist.controller';
 import { StudioWaitlistController } from './studio-waitlist.controller';
+import { WaiverModule } from '../waiver/waiver.module';
 import { WaitlistService } from './waitlist.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, MembershipUsageModule],
+  imports: [PrismaModule, AuthModule, MembershipUsageModule, WaiverModule],
   controllers: [ClassWaitlistController, StudioWaitlistController],
   providers: [WaitlistService, BookingAccessService],
   exports: [WaitlistService],

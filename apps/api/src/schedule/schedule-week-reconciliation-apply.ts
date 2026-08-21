@@ -5,6 +5,7 @@ import {
 } from '@prisma/client';
 import type { WeekReconciliationPlan } from './schedule-week-reconciliation';
 import { duplicateWeekCreateFields, type DuplicateWeekSeriesDesired } from './schedule-week-series-linkage';
+import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
 
 export const WEEK_RECONCILIATION_TX_OPTIONS = {
   /** Max wait to acquire a connection for the interactive transaction. */
@@ -117,6 +118,14 @@ export async function applyWeekReconciliationPlanBatched(
         cancelReason: WEEK_RECONCILIATION_REMOVE_CANCEL_REASON,
         exceptionKind: ScheduleOccurrenceExceptionKind.DETACHED,
       },
+    });
+  }
+
+  const removedIds = [...removePlainIds, ...removeDetachedIds];
+  if (removedIds.length > 0) {
+    await cascadeClassCancellationInTx(tx, {
+      studioId,
+      scheduledClassIds: removedIds,
     });
   }
 
