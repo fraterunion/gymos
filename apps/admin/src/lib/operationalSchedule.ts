@@ -10,4 +10,5 @@ export {
   weekDayKeysFromStart,
   weekOffsetFromMondayStartKey,
   mondayStartKeyForInstant,
+  shiftDateKey,
 } from '@gymos/utils';

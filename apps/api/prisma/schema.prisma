@@ -562,6 +562,7 @@ model ScheduledClass {
   attendances      Attendance[]
   qrTokens         QRToken[]
 
+  @@unique([studioId, classTemplateId, startsAt], map: "scheduled_classes_studio_template_starts_unique")
   @@index([studioId])
   @@index([studioId, startsAt])
   @@index([classTemplateId])

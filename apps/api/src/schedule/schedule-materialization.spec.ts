@@ -5,8 +5,9 @@ import {
   shouldSkipCandidate,
   indexExistingOccurrences,
   buildCandidatesForTemplateInRange,
+  utcGeneratorWindowToExistingQueryRange,
 } from './schedule-materialization';
-import { studioLocalDateKeyToUtcAnchor } from '../common/date/studio-local-date';
+import { getStudioLocalDateKey, studioLocalDateKeyToUtcAnchor } from '../common/date/studio-local-date';
 
 describe('schedule-materialization — series invariants', () => {
   const baseTemplate = {
@@ -138,5 +139,64 @@ describe('schedule-materialization — series invariants', () => {
       }).format(d);
     expect(fmt(before.startsAt)).toMatch(/07:00/);
     expect(fmt(after.startsAt)).toMatch(/07:00/);
+  });
+
+  describe('utcGeneratorWindowToExistingQueryRange — Aug-18 production failure shape', () => {
+    const TZ = 'America/Mexico_City';
+    const utcFrom = new Date('2026-08-18T00:00:00.000Z');
+    const utcTo = new Date('2026-08-19T00:00:00.000Z');
+    const existingStartsAt = new Date('2026-08-17T12:00:00.000Z');
+
+    it('extends existing-query range to include local Aug-17 occurrence before utcFrom', () => {
+      const { rangeStart, rangeEnd } = utcGeneratorWindowToExistingQueryRange(utcFrom, utcTo, TZ);
+      expect(existingStartsAt.getTime()).toBeGreaterThanOrEqual(rangeStart.getTime());
+      expect(existingStartsAt.getTime()).toBeLessThan(rangeEnd.getTime());
+      expect(getStudioLocalDateKey(utcFrom, TZ)).toBe('2026-08-17');
+    });
+
+    it('skips candidate when cancelled canonical row occupies the slot', () => {
+      const legsTemplate = {
+        id: 'tpl-legs',
+        classTemplateId: 'ct-legs',
+        instructorId: null,
+        dayOfWeek: 1,
+        startTime: '06:00',
+        capacity: 10,
+        startsAt: null,
+        endsAt: null,
+        intervalWeeks: 1,
+        createdAt: new Date('2026-06-30T07:50:37.691Z'),
+        classTemplate: {
+          id: 'ct-legs',
+          name: 'Legs + HIIT',
+          durationMinutes: 60,
+          defaultCapacity: 10,
+        },
+      };
+      const candidate = buildCandidatesForTemplateInRange(
+        legsTemplate,
+        TZ,
+        '2026-08-17',
+        '2026-08-18',
+      )[0]!;
+      expect(candidate.startsAt.toISOString()).toBe(existingStartsAt.toISOString());
+
+      const { dedupKeys, templateDateKeys } = indexExistingOccurrences(
+        [
+          {
+            classTemplateId: 'ct-legs',
+            startsAt: existingStartsAt,
+            scheduleTemplateId: null,
+            status: 'CANCELLED',
+          },
+        ],
+        TZ,
+      );
+      expect(shouldSkipCandidate(candidate, dedupKeys, templateDateKeys)).toBe(true);
+    });
+
+    it('raw UTC window alone would miss the existing row (documents pre-fix bug)', () => {
+      expect(existingStartsAt.getTime()).toBeLessThan(utcFrom.getTime());
+    });
   });
 });

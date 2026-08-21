@@ -128,6 +128,59 @@ describe('ScheduleGeneratorService', () => {
       expect(result.skipped).toBe(1);
     });
 
+    it('Aug-18 shape: skips Legs+HIIT when existing row UTC-starts before utcFrom (Mexico City)', async () => {
+      const utcFrom = new Date('2026-08-18T00:00:00.000Z');
+      const utcTo = new Date('2026-08-19T00:00:00.000Z');
+      (prisma.studio.findFirst as jest.Mock).mockResolvedValue(STUDIO);
+      (prisma.scheduleTemplate.findMany as jest.Mock).mockResolvedValue([
+        {
+          id: 'tpl-legs',
+          classTemplateId: 'ct-legs',
+          instructorId: null,
+          dayOfWeek: 1,
+          startTime: '06:00',
+          capacity: 10,
+          startsAt: null,
+          endsAt: null,
+          intervalWeeks: 1,
+          classTemplate: {
+            id: 'ct-legs',
+            name: 'Legs + HIIT',
+            durationMinutes: 60,
+            defaultCapacity: 10,
+          },
+        },
+      ]);
+
+      const existingStartsAt = new Date('2026-08-17T12:00:00.000Z');
+      (prisma.scheduledClass.findMany as jest.Mock).mockImplementation(({ where }) => {
+        const rows = [
+          {
+            classTemplateId: 'ct-legs',
+            startsAt: existingStartsAt,
+            scheduleTemplateId: null,
+            status: 'CANCELLED',
+          },
+        ];
+        const gte = where.startsAt.gte as Date;
+        const lt = where.startsAt.lt as Date;
+        expect(existingStartsAt.getTime()).toBeGreaterThanOrEqual(gte.getTime());
+        expect(existingStartsAt.getTime()).toBeLessThan(lt.getTime());
+        return rows.filter(
+          (r) => r.startsAt >= gte && r.startsAt < lt,
+        );
+      });
+
+      const result = await service.runGeneration('studio-1', utcFrom, utcTo, {
+        isDryRun: true,
+        triggeredBy: 'MANUAL',
+      });
+
+      expect(result.generated).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(prisma.scheduledClass.createMany).not.toHaveBeenCalled();
+    });
+
     it('does not match template with wrong dayOfWeek', async () => {
       (prisma.studio.findFirst as jest.Mock).mockResolvedValue(STUDIO);
       (prisma.scheduleTemplate.findMany as jest.Mock).mockResolvedValue([

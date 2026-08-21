@@ -16,8 +16,9 @@ export type AuditLogInput = {
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async log(input: AuditLogInput) {
-    return this.prisma.auditLog.create({
+  async log(input: AuditLogInput, tx?: Prisma.TransactionClient) {
+    const client = tx ?? this.prisma;
+    return client.auditLog.create({
       data: {
         studioId: input.studioId,
         actorUserId: input.actorUserId,

@@ -10,6 +10,7 @@ import {
   isTemplateActiveOnDateKey,
   MaterializableTemplate,
   shouldSkipCandidate,
+  utcGeneratorWindowToExistingQueryRange,
 } from '../schedule/schedule-materialization';
 import { occurrenceDedupKey } from '../schedule/schedule-occurrence-key';
 
@@ -212,10 +213,16 @@ export class ScheduleGeneratorService {
       return { generated: 0, skipped: 0, conflicts: 0, errors: 0, durationMs: Date.now() - t0, breakdown: {} };
     }
 
+    const { rangeStart, rangeEnd } = utcGeneratorWindowToExistingQueryRange(
+      utcFrom,
+      utcTo,
+      studio.timezone,
+    );
+
     const existingClasses = await this.prisma.scheduledClass.findMany({
       where: {
         studioId,
-        startsAt: { gte: utcFrom, lt: utcTo },
+        startsAt: { gte: rangeStart, lt: rangeEnd },
       },
       select: {
         classTemplateId: true,
@@ -286,6 +293,7 @@ export class ScheduleGeneratorService {
             capacity: c.capacity,
             status: ClassStatus.SCHEDULED,
           })),
+          skipDuplicates: true,
         });
       } catch {
         errors = toCreate.length;

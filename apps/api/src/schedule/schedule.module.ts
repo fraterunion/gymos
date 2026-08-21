@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SalesModule } from '../sales/sales.module';
+import { ScheduleOperationsController } from './schedule-operations.controller';
+import { ScheduleOperationsService } from './schedule-operations.service';
 import { ScheduleController } from './schedule.controller';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
 import { ScheduleSeriesController } from './schedule-series.controller';
@@ -10,8 +12,18 @@ import { ScheduleService } from './schedule.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, SalesModule],
-  controllers: [ScheduleController, ScheduleSeriesController],
-  providers: [ScheduleService, ScheduleSeriesService, ScheduleConflictsService],
-  exports: [ScheduleService, ScheduleSeriesService, ScheduleConflictsService],
+  controllers: [ScheduleController, ScheduleSeriesController, ScheduleOperationsController],
+  providers: [
+    ScheduleService,
+    ScheduleSeriesService,
+    ScheduleConflictsService,
+    ScheduleOperationsService,
+  ],
+  exports: [
+    ScheduleService,
+    ScheduleSeriesService,
+    ScheduleConflictsService,
+    ScheduleOperationsService,
+  ],
 })
 export class StudioScheduleModule {}

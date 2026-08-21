@@ -558,6 +558,7 @@ export class ScheduleSeriesService {
             capacity: c.capacity,
             status: ClassStatus.SCHEDULED,
           })),
+          skipDuplicates: true,
         });
         generated += toCreate.length;
       }

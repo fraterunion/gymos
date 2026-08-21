@@ -192,6 +192,37 @@ export function utcRangeToLocalDateKeys(
   return { fromDateKey, toDateKeyExclusive };
 }
 
+/**
+ * The schedule generator walks UTC calendar days in [utcFrom, utcTo) and resolves a
+ * studio-local date key at each step. Existing-row discovery must span every local
+ * calendar day that iteration can touch — not the raw UTC bounds alone.
+ *
+ * Production failure (Aug 2026): utcFrom = Aug 18 00:00Z still maps to Aug 17 local
+ * in America/Mexico_City, producing candidates whose startsAt can precede utcFrom.
+ */
+export function utcGeneratorWindowToExistingQueryRange(
+  utcFrom: Date,
+  utcTo: Date,
+  timezone: string,
+): { rangeStart: Date; rangeEnd: Date } {
+  const localDateKeys = new Set<string>();
+  const current = new Date(utcFrom);
+  while (current < utcTo) {
+    localDateKeys.add(getStudioLocalDateKey(current, timezone));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  if (localDateKeys.size === 0) {
+    return { rangeStart: utcFrom, rangeEnd: utcTo };
+  }
+  const sorted = [...localDateKeys].sort();
+  const firstKey = sorted[0]!;
+  const lastKey = sorted[sorted.length - 1]!;
+  return {
+    rangeStart: studioLocalDateKeyToUtcAnchor(firstKey, timezone),
+    rangeEnd: studioLocalDateKeyToUtcAnchor(addDaysToDateKey(lastKey, 1), timezone),
+  };
+}
+
 export function localDateKeyToStartsAtAnchor(dateKey: string, timezone: string): Date {
   return studioLocalDateKeyToUtcAnchor(dateKey, timezone);
 }

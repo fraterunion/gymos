@@ -14,6 +14,15 @@ import { fetchStaffInstructors, type StaffInstructorDto } from "@/lib/api/staff"
 import { calendarDayKeyInZone, todayKeyInZone } from "@/lib/datetime";
 import { classRosterHref } from "@/lib/classRosterNav";
 import {
+  BulkActionModal,
+  DuplicateClassModal,
+  DuplicateWeekModal,
+} from "@/app/schedule/ScheduleOperationsModals";
+import {
+  ScheduleModal,
+  type ScheduleModalState,
+} from "@/app/schedule/ScheduleModal";
+import {
   filterOperationalScheduleInWeek,
   mondayStartKeyForInstant,
   studioLocalDateKeyToUtcAnchor,
@@ -22,10 +31,8 @@ import {
   weekDayKeysFromStart,
   weekOffsetFromMondayStartKey,
 } from "@/lib/operationalSchedule";
-import {
-  ScheduleModal,
-  type ScheduleModalState,
-} from "@/app/schedule/ScheduleModal";
+import { canManageCalendarOperations } from "@/lib/scheduleCalendarAccess";
+import type { BulkOperation } from "@/lib/api/scheduleOperations";
 
 function formatTime(iso: string, tz: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -42,28 +49,109 @@ function formatDayHeader(dayKey: string, tz: string): { weekday: string; day: st
   return { weekday, day };
 }
 
+function CalendarOverflowMenu({
+  canManage,
+  onDuplicateWeek,
+  onToggleSelect,
+  selectMode,
+}: {
+  canManage: boolean;
+  onDuplicateWeek: () => void;
+  onToggleSelect: () => void;
+  selectMode: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!canManage) return null;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={adminSecondaryBtn}
+        aria-label="Más acciones"
+      >
+        •••
+      </button>
+      {open ? (
+        <>
+          <button type="button" className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 min-w-[200px] rounded-xl border border-zinc-200 bg-white py-1 shadow-lg">
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+              onClick={() => {
+                setOpen(false);
+                onDuplicateWeek();
+              }}
+            >
+              Duplicar esta semana
+            </button>
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+              onClick={() => {
+                setOpen(false);
+                onToggleSelect();
+              }}
+            >
+              {selectMode ? "Salir de selección" : "Seleccionar clases"}
+            </button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function ClassCard({
   cls,
   tz,
+  selectMode,
+  selected,
+  onToggleSelect,
   onViewRoster,
   onEdit,
+  onDuplicate,
 }: {
   cls: ScheduledClassDto;
   tz: string;
+  selectMode: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
   onViewRoster: () => void;
   onEdit: () => void;
+  onDuplicate: () => void;
 }) {
   const accentColor = cls.classTemplate.color;
+  const booked = cls.bookedCount ?? 0;
+  const waitlist = cls.waitlistCount ?? 0;
+  const occupancy =
+    booked >= cls.capacity
+      ? waitlist > 0
+        ? `${booked}/${cls.capacity} · +${waitlist} espera`
+        : `${booked}/${cls.capacity} · Llena`
+      : `${booked}/${cls.capacity} reservados`;
 
   return (
-    <div className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-left shadow-sm transition hover:border-zinc-300 hover:shadow">
+    <div
+      className={`w-full rounded-xl border bg-white p-2.5 text-left shadow-sm transition ${
+        selected ? "border-zinc-900 ring-1 ring-zinc-900" : "border-zinc-200 hover:border-zinc-300 hover:shadow"
+      }`}
+    >
+      {selectMode ? (
+        <label className="mb-1.5 flex items-center gap-2">
+          <input type="checkbox" checked={selected} onChange={onToggleSelect} />
+          <span className="text-[10px] text-zinc-500">Seleccionar</span>
+        </label>
+      ) : null}
       {accentColor ? (
         <div className="mb-1.5 h-0.5 w-8 rounded-full" style={{ backgroundColor: accentColor }} />
       ) : null}
       {cls.scheduleTemplateId ? (
         <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-indigo-500">Serie</p>
       ) : null}
-      <button type="button" onClick={onViewRoster} className="w-full text-left">
+      <button type="button" onClick={selectMode ? onToggleSelect : onViewRoster} className="w-full text-left">
         <p className="text-xs font-semibold leading-snug text-zinc-900">{cls.classTemplate.name}</p>
         <p className="mt-0.5 text-[11px] text-zinc-500">
           {formatTime(cls.startsAt, tz)} – {formatTime(cls.endsAt, tz)}
@@ -73,18 +161,26 @@ function ClassCard({
             {cls.instructor.firstName} {cls.instructor.lastName}
           </p>
         ) : null}
-        <p className="mt-1 text-[10px] text-zinc-400">
-          Cap. {cls.capacity}
-          {typeof cls.bookedCount === "number" ? ` · ${cls.bookedCount} reservadas` : ""}
-        </p>
+        <p className="mt-1 text-[10px] text-zinc-400">{occupancy}</p>
       </button>
-      <button
-        type="button"
-        onClick={onEdit}
-        className="mt-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 underline hover:text-zinc-800"
-      >
-        Editar
-      </button>
+      {!selectMode ? (
+        <div className="mt-1.5 flex gap-2">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 underline hover:text-zinc-800"
+          >
+            Editar
+          </button>
+          <button
+            type="button"
+            onClick={onDuplicate}
+            className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 underline hover:text-zinc-800"
+          >
+            Duplicar
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -94,6 +190,7 @@ export default function SchedulePage() {
   const searchParams = useSearchParams();
   const { selectedStudioId, selected, loading: studioLoading, error: studioError } = useDeskStudio();
   const tz = selected?.studio.timezone ?? "UTC";
+  const canManage = canManageCalendarOperations(selected?.role);
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [classes, setClasses] = useState<ScheduledClassDto[]>([]);
@@ -102,6 +199,11 @@ export default function SchedulePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ScheduleModalState>({ type: "closed" });
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [duplicateWeekOpen, setDuplicateWeekOpen] = useState(false);
+  const [duplicateClass, setDuplicateClass] = useState<ScheduledClassDto | null>(null);
+  const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(null);
 
   const urlWeekStart = searchParams.get("weekStart");
   const weekOffsetFromUrl = useMemo(() => {
@@ -201,6 +303,24 @@ export default function SchedulePage() {
     void load();
   };
 
+  const handleOpsDone = () => {
+    setDuplicateWeekOpen(false);
+    setDuplicateClass(null);
+    setBulkOperation(null);
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    void load();
+  };
+
+  const toggleClassSelected = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   if (studioLoading) {
     return <p className="text-sm text-zinc-500">Cargando estudios…</p>;
   }
@@ -262,6 +382,15 @@ export default function SchedulePage() {
               >
                 Programar clase
               </button>
+              <CalendarOverflowMenu
+                canManage={canManage}
+                selectMode={selectMode}
+                onDuplicateWeek={() => setDuplicateWeekOpen(true)}
+                onToggleSelect={() => {
+                  setSelectMode((v) => !v);
+                  setSelectedIds(new Set());
+                }}
+              />
             </>
           }
         />
@@ -326,8 +455,12 @@ export default function SchedulePage() {
                             key={cls.id}
                             cls={cls}
                             tz={tz}
+                            selectMode={selectMode}
+                            selected={selectedIds.has(cls.id)}
+                            onToggleSelect={() => toggleClassSelected(cls.id)}
                             onViewRoster={() => openClassRoster(cls)}
                             onEdit={() => setModal({ type: "edit", cls })}
+                            onDuplicate={() => setDuplicateClass(cls)}
                           />
                         ))}
                         <button
@@ -345,7 +478,69 @@ export default function SchedulePage() {
             </div>
           </div>
         </SurfaceCard>
+
+        {selectMode && selectedIds.size > 0 ? (
+          <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur">
+            <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-medium text-zinc-800">
+                {selectedIds.size} clases seleccionadas
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["CHANGE_INSTRUCTOR", "Cambiar instructor"],
+                    ["CHANGE_CAPACITY", "Cambiar capacidad"],
+                    ["MOVE_TIME", "Mover horario"],
+                    ["DUPLICATE", "Duplicar"],
+                    ["CANCEL", "Cancelar"],
+                  ] as const
+                ).map(([op, label]) => (
+                  <button
+                    key={op}
+                    type="button"
+                    className={adminSecondaryBtn}
+                    onClick={() => setBulkOperation(op)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
+
+      {duplicateWeekOpen ? (
+        <DuplicateWeekModal
+          studioId={selectedStudioId}
+          sourceWeekStart={weekBounds.startKey}
+          timezone={tz}
+          onClose={() => setDuplicateWeekOpen(false)}
+          onDone={handleOpsDone}
+        />
+      ) : null}
+
+      {duplicateClass ? (
+        <DuplicateClassModal
+          studioId={selectedStudioId}
+          cls={duplicateClass}
+          timezone={tz}
+          instructors={members}
+          onClose={() => setDuplicateClass(null)}
+          onDone={handleOpsDone}
+        />
+      ) : null}
+
+      {bulkOperation ? (
+        <BulkActionModal
+          studioId={selectedStudioId}
+          selectedIds={[...selectedIds]}
+          operation={bulkOperation}
+          instructors={members}
+          onClose={() => setBulkOperation(null)}
+          onDone={handleOpsDone}
+        />
+      ) : null}
 
       {modal.type !== "closed" ? (
         <ScheduleModal
