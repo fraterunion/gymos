@@ -287,7 +287,8 @@ export class BookingsService {
         ),
       )
       .map(({ scheduledClass, ...booking }) => {
-        const { classTemplate: _duration, ...publicClass } = scheduledClass;
+        const { classTemplate, ...publicClass } = scheduledClass;
+        void classTemplate;
         return { ...booking, scheduledClass: publicClass };
       });
   }
