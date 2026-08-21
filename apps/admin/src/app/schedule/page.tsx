@@ -17,6 +17,11 @@ import {
   DuplicateClassModal,
   DuplicateWeekModal,
 } from "@/app/schedule/ScheduleOperationsModals";
+import { CreateSeriesModal } from "@/app/schedule/CreateSeriesModal";
+import { EditSeriesModal } from "@/app/schedule/EditSeriesModal";
+import { FinishSeriesModal } from "@/app/schedule/FinishSeriesModal";
+import { SeriesDrawer } from "@/app/schedule/SeriesDrawer";
+import { SeriesView } from "@/app/schedule/SeriesView";
 import { SessionDrawer } from "@/app/schedule/SessionDrawer";
 import {
   ScheduleModal,
@@ -29,6 +34,7 @@ import {
 } from "@/lib/operationalSchedule";
 import {
   currentWeekStartKey,
+  mondayStartKeyForInstant,
   resolveDisplayWeekStartKey,
   shiftDisplayWeekStartKey,
   weekBoundsFromStartKey,
@@ -37,7 +43,11 @@ import {
   formatOccupancyLabel,
   occupancyToneClass,
 } from "@/lib/scheduleOccupancy";
-import { canManageCalendarOperations } from "@/lib/scheduleCalendarAccess";
+import {
+  canManageCalendarOperations,
+  canManageSeries,
+} from "@/lib/scheduleCalendarAccess";
+import type { SeriesDetail } from "@/lib/api/scheduleSeries";
 import type { BulkOperation } from "@/lib/api/scheduleOperations";
 
 function formatTime(iso: string, tz: string): string {
@@ -110,6 +120,37 @@ function CalendarOverflowMenu({
   );
 }
 
+function CalendarViewSwitch({
+  view,
+  onChange,
+}: {
+  view: "week" | "series";
+  onChange: (view: "week" | "series") => void;
+}) {
+  return (
+    <div className="flex rounded-xl border border-zinc-200">
+      <button
+        type="button"
+        onClick={() => onChange("week")}
+        className={`rounded-l-xl px-3 py-2 text-xs font-medium ${
+          view === "week" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50"
+        }`}
+      >
+        Semana
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("series")}
+        className={`rounded-r-xl border-l border-zinc-200 px-3 py-2 text-xs font-medium ${
+          view === "series" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50"
+        }`}
+      >
+        Series
+      </button>
+    </div>
+  );
+}
+
 function ClassCard({
   cls,
   tz,
@@ -174,6 +215,11 @@ export default function SchedulePage() {
   const { selectedStudioId, selected, loading: studioLoading, error: studioError } = useDeskStudio();
   const tz = selected?.studio.timezone ?? "UTC";
   const canManage = canManageCalendarOperations(selected?.role);
+  const canManageSeriesOps = canManageSeries(selected?.role);
+
+  const urlView = searchParams.get("view");
+  const urlSeries = searchParams.get("series");
+  const calendarView: "week" | "series" = urlView === "series" ? "series" : "week";
 
   const [displayWeekStartKey, setDisplayWeekStartKey] = useState<string | null>(null);
   const [classes, setClasses] = useState<ScheduledClassDto[]>([]);
@@ -189,8 +235,19 @@ export default function SchedulePage() {
   const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(null);
   const [sessionClassId, setSessionClassId] = useState<string | null>(null);
   const [opsFeedback, setOpsFeedback] = useState<string | null>(null);
+  const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
+  const [createSeriesOpen, setCreateSeriesOpen] = useState(false);
+  const [editSeriesDetail, setEditSeriesDetail] = useState<SeriesDetail | null>(null);
+  const [finishSeriesDetail, setFinishSeriesDetail] = useState<SeriesDetail | null>(null);
+  const [seriesRefreshKey, setSeriesRefreshKey] = useState(0);
 
   const urlWeekStart = searchParams.get("weekStart");
+
+  useEffect(() => {
+    if (calendarView === "series" && urlSeries) {
+      setSelectedSeriesId(urlSeries);
+    }
+  }, [calendarView, urlSeries]);
 
   useEffect(() => {
     if (!tz) return;
@@ -211,8 +268,55 @@ export default function SchedulePage() {
   );
 
   const clearWeekUrlParam = useCallback(() => {
-    if (urlWeekStart) router.replace("/schedule", { scroll: false });
-  }, [router, urlWeekStart]);
+    if (urlWeekStart) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("weekStart");
+      const qs = params.toString();
+      router.replace(qs ? `/schedule?${qs}` : "/schedule", { scroll: false });
+    }
+  }, [router, searchParams, urlWeekStart]);
+
+  const setCalendarView = useCallback(
+    (view: "week" | "series", seriesId?: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (view === "series") params.set("view", "series");
+      else {
+        params.delete("view");
+        params.delete("series");
+      }
+      if (seriesId) params.set("series", seriesId);
+      const qs = params.toString();
+      router.replace(qs ? `/schedule?${qs}` : "/schedule", { scroll: false });
+    },
+    [router, searchParams],
+  );
+
+  const openSeriesById = useCallback(
+    (seriesId: string) => {
+      setSessionClassId(null);
+      setSelectedSeriesId(seriesId);
+      setCalendarView("series", seriesId);
+    },
+    [setCalendarView],
+  );
+
+  const closeSeriesDrawer = useCallback(() => {
+    setSelectedSeriesId(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("series");
+    const qs = params.toString();
+    router.replace(qs ? `/schedule?${qs}` : "/schedule", { scroll: false });
+  }, [router, searchParams]);
+
+  const openOccurrenceFromSeries = useCallback(
+    (occurrenceId: string, startsAt: string) => {
+      setSelectedSeriesId(null);
+      setCalendarView("week");
+      setDisplayWeekStartKey(mondayStartKeyForInstant(startsAt, tz));
+      setSessionClassId(occurrenceId);
+    },
+    [setCalendarView, tz],
+  );
 
   const shiftWeek = useCallback(
     (delta: number) => {
@@ -260,6 +364,11 @@ export default function SchedulePage() {
       setLoading(false);
     }
   }, [selectedStudioId, queryRange.from, queryRange.to]);
+
+  const refreshSeries = useCallback(() => {
+    setSeriesRefreshKey((k) => k + 1);
+    void load();
+  }, [load]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
@@ -349,48 +458,61 @@ export default function SchedulePage() {
       <div className="space-y-6">
         <PageHeader
           title="Calendario"
-          subtitle={weekBounds.label}
+          subtitle={calendarView === "week" ? weekBounds.label : "Series recurrentes"}
           actions={
             <>
-              <button
-                type="button"
-                onClick={goToToday}
-                className={adminSecondaryBtn}
-              >
-                Hoy
-              </button>
-              <div className="flex rounded-xl border border-zinc-200">
+              <CalendarViewSwitch view={calendarView} onChange={setCalendarView} />
+              {calendarView === "week" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={goToToday}
+                    className={adminSecondaryBtn}
+                  >
+                    Hoy
+                  </button>
+                  <div className="flex rounded-xl border border-zinc-200">
+                    <button
+                      type="button"
+                      onClick={() => shiftWeek(-1)}
+                      className="rounded-l-xl px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => shiftWeek(1)}
+                      className="rounded-r-xl border-l border-zinc-200 px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    >
+                      ›
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setModal({ type: "create" })}
+                    className={adminPrimaryBtn}
+                  >
+                    Programar clase
+                  </button>
+                  <CalendarOverflowMenu
+                    canManage={canManage}
+                    selectMode={selectMode}
+                    onDuplicateWeek={() => setDuplicateWeekOpen(true)}
+                    onToggleSelect={() => {
+                      setSelectMode((v) => !v);
+                      setSelectedIds(new Set());
+                    }}
+                  />
+                </>
+              ) : canManageSeriesOps ? (
                 <button
                   type="button"
-                  onClick={() => shiftWeek(-1)}
-                  className="rounded-l-xl px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                  className={adminPrimaryBtn}
+                  onClick={() => setCreateSeriesOpen(true)}
                 >
-                  ‹
+                  + Nueva serie
                 </button>
-                <button
-                  type="button"
-                  onClick={() => shiftWeek(1)}
-                  className="rounded-r-xl border-l border-zinc-200 px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                >
-                  ›
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModal({ type: "create" })}
-                className={adminPrimaryBtn}
-              >
-                Programar clase
-              </button>
-              <CalendarOverflowMenu
-                canManage={canManage}
-                selectMode={selectMode}
-                onDuplicateWeek={() => setDuplicateWeekOpen(true)}
-                onToggleSelect={() => {
-                  setSelectMode((v) => !v);
-                  setSelectedIds(new Set());
-                }}
-              />
+              ) : null}
             </>
           }
         />
@@ -417,6 +539,17 @@ export default function SchedulePage() {
           </div>
         ) : null}
 
+        {calendarView === "series" ? (
+          <SeriesView
+            studioId={selectedStudioId}
+            timezone={tz}
+            canManage={canManageSeriesOps}
+            instructors={members}
+            refreshKey={seriesRefreshKey}
+            onSelectSeries={setSelectedSeriesId}
+            onCreateSeries={() => setCreateSeriesOpen(true)}
+          />
+        ) : (
         <SurfaceCard padding="sm" className="overflow-x-auto p-0">
           <div className="min-w-[700px]">
             <div className="grid grid-cols-7 border-b border-zinc-100">
@@ -489,8 +622,9 @@ export default function SchedulePage() {
             </div>
           </div>
         </SurfaceCard>
+        )}
 
-        {selectMode && selectedIds.size > 0 ? (
+        {calendarView === "week" && selectMode && selectedIds.size > 0 ? (
           <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur">
             <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3">
               <p className="text-sm font-medium text-zinc-800">
@@ -565,6 +699,63 @@ export default function SchedulePage() {
         />
       ) : null}
 
+      {createSeriesOpen ? (
+        <CreateSeriesModal
+          studioId={selectedStudioId}
+          timezone={tz}
+          templates={templates}
+          members={members}
+          onClose={() => setCreateSeriesOpen(false)}
+          onDone={() => {
+            setCreateSeriesOpen(false);
+            refreshSeries();
+          }}
+        />
+      ) : null}
+
+      {selectedSeriesId ? (
+        <SeriesDrawer
+          studioId={selectedStudioId}
+          seriesId={selectedSeriesId}
+          timezone={tz}
+          canManage={canManageSeriesOps}
+          refreshKey={seriesRefreshKey}
+          onClose={closeSeriesDrawer}
+          onEdit={(detail) => setEditSeriesDetail(detail)}
+          onFinish={(detail) => setFinishSeriesDetail(detail)}
+          onOpenOccurrence={openOccurrenceFromSeries}
+        />
+      ) : null}
+
+      {editSeriesDetail ? (
+        <EditSeriesModal
+          studioId={selectedStudioId}
+          timezone={tz}
+          detail={editSeriesDetail}
+          members={members}
+          onClose={() => setEditSeriesDetail(null)}
+          onDone={() => {
+            setEditSeriesDetail(null);
+            setSelectedSeriesId(null);
+            refreshSeries();
+          }}
+        />
+      ) : null}
+
+      {finishSeriesDetail ? (
+        <FinishSeriesModal
+          studioId={selectedStudioId}
+          timezone={tz}
+          detail={finishSeriesDetail}
+          onClose={() => setFinishSeriesDetail(null)}
+          onDone={() => {
+            setFinishSeriesDetail(null);
+            setSelectedSeriesId(null);
+            refreshSeries();
+          }}
+        />
+      ) : null}
+
       {sessionClassId ? (
         <SessionDrawer
           studioId={selectedStudioId}
@@ -572,6 +763,7 @@ export default function SchedulePage() {
           timezone={tz}
           role={selected?.role}
           onClose={() => setSessionClassId(null)}
+          onManageSeries={openSeriesById}
           onEdit={(classId) => {
             const cls = resolveClass(classId);
             setSessionClassId(null);

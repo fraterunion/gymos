@@ -107,6 +107,18 @@ export class EditSeriesOccurrenceDto {
   @IsOptional()
   @IsBoolean()
   confirmReservations?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(52)
+  intervalWeeks?: number;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && v !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  endsOn?: string | null;
 }
 
 export class CancelSeriesOccurrenceDto {

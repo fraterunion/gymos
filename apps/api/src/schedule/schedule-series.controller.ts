@@ -8,7 +8,7 @@ import {
   Param,
   Patch,
   Post,
-  Request,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -16,21 +16,34 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ScheduleSeriesService } from './schedule-series.service';
 import {
   CancelSeriesOccurrenceDto,
   CreateRecurringSeriesDto,
   EditSeriesOccurrenceDto,
 } from './dto/schedule-series.dto';
-
-interface AuthRequest {
-  user?: { id?: string };
-}
+import { FinishSeriesDto } from './dto/finish-series.dto';
+import { ListScheduleSeriesQueryDto } from './dto/list-schedule-series-query.dto';
 
 @Controller('studios/:studioId/schedule-series')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
 export class ScheduleSeriesController {
   constructor(private readonly seriesService: ScheduleSeriesService) {}
+
+  @Get()
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  list(
+    @Param('studioId') studioId: string,
+    @Query() query: ListScheduleSeriesQueryDto,
+  ) {
+    return this.seriesService.listSeries(studioId, {
+      status: query.status ?? 'all',
+      search: query.search,
+      instructorId: query.instructorId,
+    });
+  }
 
   @Post('preview')
   @UseGuards(RolesGuard)
@@ -49,13 +62,9 @@ export class ScheduleSeriesController {
   create(
     @Param('studioId') studioId: string,
     @Body() dto: CreateRecurringSeriesDto,
-    @Request() req: AuthRequest,
+    @CurrentUser('sub') actorUserId: string,
   ) {
-    return this.seriesService.createRecurringSeries(
-      studioId,
-      dto,
-      req.user?.id ?? 'unknown',
-    );
+    return this.seriesService.createRecurringSeries(studioId, dto, actorUserId);
   }
 
   @Get('occurrences/:scheduledClassId/context')
@@ -86,13 +95,13 @@ export class ScheduleSeriesController {
     @Param('studioId') studioId: string,
     @Param('scheduledClassId') scheduledClassId: string,
     @Body() dto: EditSeriesOccurrenceDto,
-    @Request() req: AuthRequest,
+    @CurrentUser('sub') actorUserId: string,
   ) {
     return this.seriesService.editOccurrence(
       studioId,
       scheduledClassId,
       dto,
-      req.user?.id ?? 'unknown',
+      actorUserId,
     );
   }
 
@@ -119,15 +128,49 @@ export class ScheduleSeriesController {
     @Param('studioId') studioId: string,
     @Param('scheduledClassId') scheduledClassId: string,
     @Body() dto: CancelSeriesOccurrenceDto,
-    @Request() req: AuthRequest,
+    @CurrentUser('sub') actorUserId: string,
   ) {
     return this.seriesService.cancelOccurrence(
       studioId,
       scheduledClassId,
       dto.scope,
-      req.user?.id ?? 'unknown',
+      actorUserId,
       dto.cancelReason,
       dto.confirmReservations,
     );
+  }
+
+  @Post(':seriesId/finish-preview')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  finishPreview(
+    @Param('studioId') studioId: string,
+    @Param('seriesId') seriesId: string,
+    @Body() dto: FinishSeriesDto,
+  ) {
+    return this.seriesService.previewFinishSeries(studioId, seriesId, dto);
+  }
+
+  @Post(':seriesId/finish')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  finish(
+    @Param('studioId') studioId: string,
+    @Param('seriesId') seriesId: string,
+    @Body() dto: FinishSeriesDto,
+    @CurrentUser('sub') actorUserId: string,
+  ) {
+    return this.seriesService.finishSeries(studioId, seriesId, dto, actorUserId);
+  }
+
+  @Get(':seriesId')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF)
+  getDetail(
+    @Param('studioId') studioId: string,
+    @Param('seriesId') seriesId: string,
+  ) {
+    return this.seriesService.getSeriesDetail(studioId, seriesId);
   }
 }

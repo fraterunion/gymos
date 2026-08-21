@@ -116,3 +116,59 @@ test("URL week is used only until display state is initialized", () => {
   );
   assert.equal(effectiveWeekStartKey(navigated), "2026-08-24");
 });
+
+test("SessionDrawer manage-series opens series view with template id", () => {
+  const openedFromSession: PageViewState = {
+    displayWeekStartKey: "2026-08-24",
+    urlWeekStart: null,
+    sessionClassId: "class-abc",
+    calendarView: "week",
+  };
+  const managed: PageViewState = {
+    ...openedFromSession,
+    sessionClassId: null,
+    calendarView: "series",
+    seriesId: "series-123",
+  };
+  assert.equal(managed.sessionClassId, null);
+  assert.equal(managed.calendarView, "series");
+  assert.equal(managed.seriesId, "series-123");
+  assert.equal(effectiveWeekStartKey(managed), "2026-08-24");
+});
+
+type PageViewState = PageNavState & { calendarView: "week" | "series"; seriesId?: string | null };
+
+function switchCalendarView(state: PageViewState, view: "week" | "series"): PageViewState {
+  return { ...state, calendarView: view };
+}
+
+test("Semana → Series → Semana preserves displayed week", () => {
+  const initial: PageViewState = {
+    displayWeekStartKey: "2026-08-24",
+    urlWeekStart: null,
+    sessionClassId: null,
+    calendarView: "week",
+  };
+  const toSeries = switchCalendarView(initial, "series");
+  const backToWeek = switchCalendarView(toSeries, "week");
+  assert.equal(effectiveWeekStartKey(backToWeek), "2026-08-24");
+});
+
+test("opening SessionDrawer from series occurrence navigation preserves target week", () => {
+  const occurrenceIso = "2026-09-03T13:15:00.000Z";
+  const weekStart = "2026-09-01";
+  const state: PageViewState = {
+    displayWeekStartKey: weekStart,
+    urlWeekStart: null,
+    sessionClassId: null,
+    calendarView: "series",
+  };
+  const opened: PageViewState = {
+    ...switchCalendarView(state, "week"),
+    sessionClassId: "class-abc",
+  };
+  assert.equal(effectiveWeekStartKey(opened), weekStart);
+  assert.equal(opened.sessionClassId, "class-abc");
+  assert.equal(opened.calendarView, "week");
+  assert.ok(new Date(occurrenceIso).toISOString());
+});

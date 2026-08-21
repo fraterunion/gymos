@@ -225,6 +225,7 @@ export function SessionDrawer({
   role,
   onClose,
   onEdit,
+  onManageSeries,
   onDuplicate,
   onCancel,
   onCalendarRefresh,
@@ -235,6 +236,7 @@ export function SessionDrawer({
   role: string | null | undefined;
   onClose: () => void;
   onEdit: (classId: string) => void;
+  onManageSeries?: (scheduleTemplateId: string) => void;
   onDuplicate: (classId: string) => void;
   onCancel: (classId: string) => void;
   onCalendarRefresh: () => void;
@@ -441,7 +443,16 @@ export function SessionDrawer({
                     <button
                       type="button"
                       className="mt-2 text-sm font-medium text-indigo-700 underline"
-                      onClick={() => onEdit(sessionClassIdOnly(session))}
+                      onClick={() => {
+                        if (
+                          session.seriesContext.isRecurring &&
+                          onManageSeries
+                        ) {
+                          onManageSeries(session.seriesContext.scheduleTemplateId);
+                          return;
+                        }
+                        onEdit(sessionClassIdOnly(session));
+                      }}
                     >
                       Administrar serie →
                     </button>

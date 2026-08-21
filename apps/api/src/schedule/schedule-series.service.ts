@@ -22,6 +22,7 @@ import { AuditService } from '../sales/audit.service';
 import {
   buildCandidatesForTemplateInRange,
   indexExistingOccurrences,
+  isLegacyUnboundedTemplate,
   isTemplateActiveOnDateKey,
   lastRecurrenceDateKeyStrictlyBefore,
   MaterializableTemplate,
@@ -30,6 +31,23 @@ import {
   templateEffectiveStartKey,
 } from './schedule-materialization';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
+import {
+  deriveSeriesStatus,
+  matchesSeriesListFilter,
+  occurrenceExceptionLabel,
+  recurrenceEndsOnKey,
+  recurrenceStartsOnKey,
+  SeriesUiStatus,
+  weekdayLabelEs,
+} from './schedule-series-projection';
+import {
+  lastScheduledLocalDateKey,
+  occurrenceEndsAtForDateKey,
+  occurrenceStartsAtForDateKey,
+  planFinishSeriesBoundary,
+  planSeriesRecurrenceReconciliation,
+  type FutureOccurrenceRow,
+} from './schedule-series-recurrence-reconcile';
 
 export type SeriesMutationScope = 'SINGLE' | 'FOLLOWING' | 'SERIES';
 
@@ -51,7 +69,38 @@ export type EditOccurrenceInput = {
   localEnd?: { date: string; time: string };
   capacity?: number;
   instructorId?: string | null;
+  intervalWeeks?: number;
+  /** undefined = unchanged, null = unbounded end */
+  endsOn?: string | null;
   confirmReservations?: boolean;
+};
+
+export type SeriesRecurrenceImpact = {
+  keptCount: number;
+  cancelledCount: number;
+  materializeCount: number;
+  skippedDetachedCount: number;
+  skippedAttendanceCount: number;
+  bookedOccurrencesAffected: number;
+  previousIntervalWeeks: number;
+  newIntervalWeeks: number;
+  previousEndsOn: string | null;
+  newEndsOn: string | null;
+};
+
+export type FinishSeriesInput = {
+  mode: 'AFTER_LAST_SCHEDULED' | 'ON_DATE';
+  boundaryDate?: string;
+  cancelReason?: string;
+  confirmReservations?: boolean;
+};
+
+export type FinishSeriesPreview = {
+  boundaryDateKey: string;
+  impact: MutationImpact;
+  cancelledCount: number;
+  bookedOccurrencesAffected: number;
+  skippedDetachedCount: number;
 };
 
 export type SeriesPreviewResult = {
@@ -66,6 +115,58 @@ export type MutationImpact = {
   affectedClassCount: number;
   classesWithReservations: number;
   totalReservations: number;
+};
+
+export type SeriesListFilter = {
+  status?: 'all' | 'active' | 'ended';
+  search?: string;
+  instructorId?: string;
+};
+
+export type SeriesListItemDto = {
+  id: string;
+  classTemplate: {
+    id: string;
+    name: string;
+    durationMinutes: number;
+    color: string | null;
+  };
+  instructor: { id: string; name: string } | null;
+  localSchedule: {
+    weekday: number;
+    weekdayLabel: string;
+    startsAtLocal: string;
+    durationMinutes: number;
+  };
+  recurrence: {
+    intervalWeeks: number;
+    startsOn: string | null;
+    endsOn: string | null;
+    isLegacy: boolean;
+  };
+  status: SeriesUiStatus;
+  nextOccurrence: {
+    id: string;
+    startsAt: string;
+    status: ClassStatus;
+    exception: 'DETACHED' | 'CANCELLED' | null;
+  } | null;
+  futureOccurrenceCount: number;
+  futureBookingCount: number;
+};
+
+export type SeriesDetailOccurrenceDto = {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  status: ClassStatus;
+  exception: 'DETACHED' | 'CANCELLED' | null;
+};
+
+export type SeriesDetailDto = SeriesListItemDto & {
+  capacity: number;
+  upcomingOccurrences: SeriesDetailOccurrenceDto[];
+  anchorOccurrenceId: string | null;
 };
 
 const DEFAULT_HORIZON_DAYS = 90;
@@ -221,6 +322,369 @@ export class ScheduleSeriesService {
     return createdTemplates;
   }
 
+  async listSeries(
+    studioId: string,
+    filter: SeriesListFilter = {},
+  ): Promise<SeriesListItemDto[]> {
+    const studio = await this.requireStudio(studioId);
+    const todayKey = getStudioLocalDateKey(new Date(), studio.timezone);
+    const now = new Date();
+
+    const templates = await this.prisma.scheduleTemplate.findMany({
+      where: { studioId, deletedAt: null },
+      include: {
+        classTemplate: {
+          select: {
+            id: true,
+            name: true,
+            durationMinutes: true,
+            color: true,
+            defaultCapacity: true,
+          },
+        },
+        instructor: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+    });
+
+    if (templates.length === 0) return [];
+
+    const templateIds = templates.map((t) => t.id);
+    const [futureRows, earliestByTemplate] = await Promise.all([
+      this.prisma.scheduledClass.findMany({
+        where: {
+          studioId,
+          scheduleTemplateId: { in: templateIds },
+          startsAt: { gte: now },
+        },
+        orderBy: { startsAt: 'asc' },
+        select: {
+          id: true,
+          scheduleTemplateId: true,
+          startsAt: true,
+          status: true,
+          exceptionKind: true,
+        },
+      }),
+      this.prisma.scheduledClass.groupBy({
+        by: ['scheduleTemplateId'],
+        where: { studioId, scheduleTemplateId: { in: templateIds } },
+        _min: { startsAt: true },
+      }),
+    ]);
+
+    const earliestMap = new Map(
+      earliestByTemplate.map((row) => [row.scheduleTemplateId!, row._min.startsAt]),
+    );
+
+    const futureByTemplate = new Map<string, typeof futureRows>();
+    for (const row of futureRows) {
+      if (!row.scheduleTemplateId) continue;
+      const arr = futureByTemplate.get(row.scheduleTemplateId) ?? [];
+      arr.push(row);
+      futureByTemplate.set(row.scheduleTemplateId, arr);
+    }
+
+    const futureScheduledIds = futureRows
+      .filter((r) => r.status === ClassStatus.SCHEDULED)
+      .map((r) => r.id);
+
+    const bookingAgg =
+      futureScheduledIds.length > 0
+        ? await this.prisma.booking.groupBy({
+            by: ['scheduledClassId'],
+            where: {
+              scheduledClassId: { in: futureScheduledIds },
+              status: BookingStatus.CONFIRMED,
+            },
+            _count: { _all: true },
+          })
+        : [];
+
+    const bookingsByClass = new Map(
+      bookingAgg.map((row) => [row.scheduledClassId, row._count._all]),
+    );
+
+    const items: SeriesListItemDto[] = [];
+    for (const tpl of templates) {
+      const occurrences = futureByTemplate.get(tpl.id) ?? [];
+      const futureScheduled = occurrences.filter((o) => o.status === ClassStatus.SCHEDULED);
+      const next = futureScheduled[0] ?? null;
+
+      let futureBookingCount = 0;
+      for (const occ of futureScheduled) {
+        futureBookingCount += bookingsByClass.get(occ.id) ?? 0;
+      }
+
+      const materializable = {
+        ...tpl,
+        classTemplate: tpl.classTemplate,
+      };
+      const status = deriveSeriesStatus(tpl, studio.timezone, todayKey);
+      const instructorName = tpl.instructor
+        ? `${tpl.instructor.firstName} ${tpl.instructor.lastName}`.trim()
+        : null;
+
+      const item: SeriesListItemDto = {
+        id: tpl.id,
+        classTemplate: {
+          id: tpl.classTemplate.id,
+          name: tpl.classTemplate.name,
+          durationMinutes: tpl.classTemplate.durationMinutes,
+          color: tpl.classTemplate.color,
+        },
+        instructor: tpl.instructor
+          ? { id: tpl.instructor.id, name: instructorName! }
+          : null,
+        localSchedule: {
+          weekday: tpl.dayOfWeek,
+          weekdayLabel: weekdayLabelEs(tpl.dayOfWeek),
+          startsAtLocal: tpl.startTime,
+          durationMinutes: tpl.classTemplate.durationMinutes,
+        },
+        recurrence: {
+          intervalWeeks: tpl.intervalWeeks,
+          startsOn: recurrenceStartsOnKey(
+            materializable,
+            studio.timezone,
+            earliestMap.get(tpl.id) ?? null,
+          ),
+          endsOn: recurrenceEndsOnKey(materializable, studio.timezone),
+          isLegacy: isLegacyUnboundedTemplate(materializable),
+        },
+        status,
+        nextOccurrence: next
+          ? {
+              id: next.id,
+              startsAt: next.startsAt.toISOString(),
+              status: next.status,
+              exception: occurrenceExceptionLabel(next.status, next.exceptionKind),
+            }
+          : null,
+        futureOccurrenceCount: futureScheduled.length,
+        futureBookingCount,
+      };
+
+      if (
+        matchesSeriesListFilter(
+          {
+            status: item.status,
+            classTemplateName: item.classTemplate.name,
+            instructorName,
+            instructorId: tpl.instructorId,
+          },
+          filter,
+        )
+      ) {
+        items.push(item);
+      }
+    }
+
+    return items;
+  }
+
+  async getSeriesDetail(studioId: string, templateId: string): Promise<SeriesDetailDto> {
+    const studio = await this.requireStudio(studioId);
+    const tpl = await this.requireTemplate(studioId, templateId);
+    const todayKey = getStudioLocalDateKey(new Date(), studio.timezone);
+    const now = new Date();
+
+    const [futureRows, earliestRow] = await Promise.all([
+      this.prisma.scheduledClass.findMany({
+        where: {
+          studioId,
+          scheduleTemplateId: tpl.id,
+          startsAt: { gte: now },
+        },
+        orderBy: { startsAt: 'asc' },
+        take: 6,
+        select: {
+          id: true,
+          startsAt: true,
+          endsAt: true,
+          status: true,
+          exceptionKind: true,
+        },
+      }),
+      this.prisma.scheduledClass.aggregate({
+        where: { studioId, scheduleTemplateId: tpl.id },
+        _min: { startsAt: true },
+      }),
+    ]);
+
+    const futureScheduled = await this.prisma.scheduledClass.findMany({
+      where: {
+        studioId,
+        scheduleTemplateId: tpl.id,
+        startsAt: { gte: now },
+        status: ClassStatus.SCHEDULED,
+      },
+      select: { id: true },
+    });
+
+    const impact = await this.countReservationImpact(futureScheduled.map((r) => r.id));
+    const materializable = { ...tpl, classTemplate: tpl.classTemplate };
+    const status = deriveSeriesStatus(tpl, studio.timezone, todayKey);
+    const instructorName = tpl.instructor
+      ? `${tpl.instructor.firstName} ${tpl.instructor.lastName}`.trim()
+      : null;
+
+    const nextScheduled = futureRows.find((o) => o.status === ClassStatus.SCHEDULED) ?? null;
+    const listCore: SeriesListItemDto = {
+      id: tpl.id,
+      classTemplate: {
+        id: tpl.classTemplate.id,
+        name: tpl.classTemplate.name,
+        durationMinutes: tpl.classTemplate.durationMinutes,
+        color: tpl.classTemplate.color,
+      },
+      instructor: tpl.instructor ? { id: tpl.instructor.id, name: instructorName! } : null,
+      localSchedule: {
+        weekday: tpl.dayOfWeek,
+        weekdayLabel: weekdayLabelEs(tpl.dayOfWeek),
+        startsAtLocal: tpl.startTime,
+        durationMinutes: tpl.classTemplate.durationMinutes,
+      },
+      recurrence: {
+        intervalWeeks: tpl.intervalWeeks,
+        startsOn: recurrenceStartsOnKey(
+          materializable,
+          studio.timezone,
+          earliestRow._min.startsAt,
+        ),
+        endsOn: recurrenceEndsOnKey(materializable, studio.timezone),
+        isLegacy: isLegacyUnboundedTemplate(materializable),
+      },
+      status,
+      nextOccurrence: nextScheduled
+        ? {
+            id: nextScheduled.id,
+            startsAt: nextScheduled.startsAt.toISOString(),
+            status: nextScheduled.status,
+            exception: occurrenceExceptionLabel(
+              nextScheduled.status,
+              nextScheduled.exceptionKind,
+            ),
+          }
+        : null,
+      futureOccurrenceCount: futureScheduled.length,
+      futureBookingCount: impact.totalReservations,
+    };
+
+    return {
+      ...listCore,
+      capacity: tpl.capacity ?? tpl.classTemplate.defaultCapacity,
+      upcomingOccurrences: futureRows.map((row) => ({
+        id: row.id,
+        startsAt: row.startsAt.toISOString(),
+        endsAt: row.endsAt.toISOString(),
+        status: row.status,
+        exception: occurrenceExceptionLabel(row.status, row.exceptionKind),
+      })),
+      anchorOccurrenceId: nextScheduled?.id ?? null,
+    };
+  }
+
+  async previewFinishSeries(
+    studioId: string,
+    templateId: string,
+    input: FinishSeriesInput,
+  ): Promise<FinishSeriesPreview> {
+    const studio = await this.requireStudio(studioId);
+    const tpl = await this.requireTemplate(studioId, templateId);
+    const boundaryDateKey = await this.resolveFinishBoundaryDateKey(
+      studio.id,
+      tpl.id,
+      studio.timezone,
+      input,
+    );
+    const futureRows = await this.loadFutureOccurrenceRows(studio.id, tpl.id);
+    const plan = planFinishSeriesBoundary(
+      { ...tpl, classTemplate: tpl.classTemplate },
+      studio.timezone,
+      boundaryDateKey,
+      futureRows,
+    );
+    const impact = await this.countReservationImpact(plan.cancelIds);
+    return {
+      boundaryDateKey,
+      impact,
+      cancelledCount: plan.cancelledCount,
+      bookedOccurrencesAffected: plan.bookedCancellationCount,
+      skippedDetachedCount: plan.skippedDetachedCount,
+    };
+  }
+
+  async finishSeries(
+    studioId: string,
+    templateId: string,
+    input: FinishSeriesInput,
+    actorUserId: string,
+  ) {
+    const preview = await this.previewFinishSeries(studioId, templateId, input);
+    if (
+      preview.bookedOccurrencesAffected > 0 &&
+      !input.confirmReservations
+    ) {
+      throw new BadRequestException({
+        message: 'Finalizing the series affects reservations and requires confirmation.',
+        preview,
+        requiresConfirmation: true,
+      });
+    }
+
+    const studio = await this.requireStudio(studioId);
+    const tpl = await this.requireTemplate(studioId, templateId);
+    const boundaryDateKey = preview.boundaryDateKey;
+    const futureRows = await this.loadFutureOccurrenceRows(studio.id, tpl.id);
+    const plan = planFinishSeriesBoundary(
+      { ...tpl, classTemplate: tpl.classTemplate },
+      studio.timezone,
+      boundaryDateKey,
+      futureRows,
+    );
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.scheduleTemplate.update({
+        where: { id: tpl.id },
+        data: {
+          endsAt: studioLocalDateKeyToUtcAnchor(boundaryDateKey, studio.timezone),
+          active: true,
+        },
+      });
+
+      if (plan.cancelIds.length > 0) {
+        await tx.scheduledClass.updateMany({
+          where: { id: { in: plan.cancelIds } },
+          data: {
+            status: ClassStatus.CANCELLED,
+            ...(input.cancelReason ? { cancelReason: input.cancelReason } : {}),
+          },
+        });
+      }
+
+      return plan.cancelIds.length;
+    });
+
+    await this.audit.log({
+      studioId: studio.id,
+      actorUserId,
+      action: 'SCHEDULE_SERIES_FINISHED',
+      entityType: 'ScheduleTemplate',
+      entityId: tpl.id,
+      metadata: {
+        mode: input.mode,
+        boundaryDateKey,
+        cancelledCount: result,
+        skippedDetachedCount: plan.skippedDetachedCount,
+        affectedReservationCount: preview.impact.totalReservations,
+        cancelReason: input.cancelReason ?? null,
+      },
+    });
+
+    return { boundaryDateKey, cancelledCount: result };
+  }
+
   async getOccurrenceSeriesContext(studioId: string, scheduledClassId: string) {
     const row = await this.prisma.scheduledClass.findFirst({
       where: { id: scheduledClassId, studioId },
@@ -256,12 +720,53 @@ export class ScheduleSeriesService {
     studioId: string,
     scheduledClassId: string,
     input: EditOccurrenceInput,
-  ): Promise<{ impact: MutationImpact; conflicts: ScheduleConflictsService['findConflictsForSlots'] extends (...args: never[]) => Promise<infer R> ? R : never }> {
+  ): Promise<{
+    impact: MutationImpact;
+    recurrenceImpact?: SeriesRecurrenceImpact;
+    conflicts: ScheduleConflictsService['findConflictsForSlots'] extends (...args: never[]) => Promise<infer R> ? R : never;
+  }> {
     const occurrence = await this.requireOccurrence(studioId, scheduledClassId);
-    const impact = await this.computeEditImpact(studioId, occurrence, input);
+    const studio = await this.requireStudio(studioId);
+
+    let recurrenceImpact: SeriesRecurrenceImpact | undefined;
+    if (
+      input.scope === 'SERIES' &&
+      occurrence.scheduleTemplate &&
+      this.hasRecurrenceFieldChanges(input)
+    ) {
+      recurrenceImpact = await this.computeSeriesRecurrenceImpact(
+        studio,
+        occurrence.scheduleTemplate,
+        input,
+      );
+    }
+
+    let impact: MutationImpact;
+    if (recurrenceImpact) {
+      const cancelBookingImpact = await this.countReservationImpact(
+        await this.bookedIdsFromPlan(
+          studioId,
+          occurrence.scheduleTemplate!.id,
+          occurrence.scheduleTemplate!,
+          input,
+          studio.timezone,
+        ),
+      );
+      impact = {
+        affectedClassCount:
+          recurrenceImpact.keptCount +
+          recurrenceImpact.cancelledCount +
+          recurrenceImpact.materializeCount,
+        classesWithReservations: cancelBookingImpact.classesWithReservations,
+        totalReservations: cancelBookingImpact.totalReservations,
+      };
+    } else {
+      impact = await this.computeEditImpact(studioId, occurrence, input);
+    }
+
     const slots = await this.buildEditSlots(studioId, occurrence, input);
     const conflicts = await this.conflicts.findConflictsForSlots(studioId, slots);
-    return { impact, conflicts };
+    return { impact, recurrenceImpact, conflicts };
   }
 
   async editOccurrence(
@@ -284,14 +789,17 @@ export class ScheduleSeriesService {
     const hasReservationImpact = preview.impact.totalReservations > 0;
     const hasTimeOrInstructorChange =
       input.localStart !== undefined || input.instructorId !== undefined;
+    const hasRecurrenceRemovalImpact =
+      (preview.recurrenceImpact?.bookedOccurrencesAffected ?? 0) > 0;
     if (
       hasReservationImpact &&
-      hasTimeOrInstructorChange &&
+      (hasTimeOrInstructorChange || hasRecurrenceRemovalImpact) &&
       !input.confirmReservations
     ) {
       throw new BadRequestException({
         message: 'Reservation impact requires confirmation.',
         impact: preview.impact,
+        recurrenceImpact: preview.recurrenceImpact,
         requiresConfirmation: true,
       });
     }
@@ -374,6 +882,26 @@ export class ScheduleSeriesService {
     });
     if (!tpl) throw new NotFoundException('Class template not found');
     return tpl;
+  }
+
+  private async requireTemplate(studioId: string, templateId: string) {
+    const row = await this.prisma.scheduleTemplate.findFirst({
+      where: { id: templateId, studioId, deletedAt: null },
+      include: {
+        classTemplate: {
+          select: {
+            id: true,
+            name: true,
+            durationMinutes: true,
+            color: true,
+            defaultCapacity: true,
+          },
+        },
+        instructor: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+    if (!row) throw new NotFoundException('Schedule series not found');
+    return row;
   }
 
   private async requireOccurrence(studioId: string, scheduledClassId: string) {
@@ -770,6 +1298,19 @@ export class ScheduleSeriesService {
     const newDayOfWeek = input.localStart
       ? getDayOfWeekFromDateKey(input.localStart.date)
       : tpl.dayOfWeek;
+    const hasRecurrenceChange = this.hasRecurrenceFieldChanges(input);
+
+    if (hasRecurrenceChange) {
+      return this.editEntireSeriesWithRecurrenceReconciliation(
+        studio,
+        tpl,
+        input,
+        actorUserId,
+        impact,
+        newStartTime,
+        newDayOfWeek,
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const updatedTemplate = await tx.scheduleTemplate.update({
@@ -852,6 +1393,135 @@ export class ScheduleSeriesService {
       });
 
       return { templateId: tpl.id, updatedCount };
+    });
+  }
+
+  private async editEntireSeriesWithRecurrenceReconciliation(
+    studio: { id: string; timezone: string },
+    tpl: NonNullable<Awaited<ReturnType<typeof this.requireOccurrence>>['scheduleTemplate']>,
+    input: EditOccurrenceInput,
+    actorUserId: string,
+    impact: MutationImpact,
+    newStartTime: string,
+    newDayOfWeek: number,
+  ) {
+    const horizonDays = await this.getHorizonDays(studio.id);
+    const futureRows = await this.loadFutureOccurrenceRows(studio.id, tpl.id);
+    const materializable = { ...tpl, classTemplate: tpl.classTemplate };
+    const plan = planSeriesRecurrenceReconciliation(
+      materializable,
+      {
+        intervalWeeks: input.intervalWeeks,
+        endsOn: input.endsOn,
+        startTime: newStartTime,
+        dayOfWeek: newDayOfWeek,
+        capacity: input.capacity,
+        instructorId: input.instructorId,
+      },
+      studio.timezone,
+      horizonDays,
+      futureRows,
+    );
+
+    const updatedTemplateData = {
+      startTime: newStartTime,
+      dayOfWeek: newDayOfWeek,
+      capacity: input.capacity ?? tpl.capacity,
+      instructorId: input.instructorId !== undefined ? input.instructorId : tpl.instructorId,
+      intervalWeeks: input.intervalWeeks ?? tpl.intervalWeeks,
+      endsAt:
+        input.endsOn === undefined
+          ? tpl.endsAt
+          : input.endsOn === null
+            ? null
+            : studioLocalDateKeyToUtcAnchor(input.endsOn, studio.timezone),
+    };
+
+    if (isLegacyUnboundedTemplate(materializable) && updatedTemplateData.endsAt === undefined) {
+      // preserve legacy null startsAt — endsAt/interval may still change
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updatedTemplate = await tx.scheduleTemplate.update({
+        where: { id: tpl.id },
+        data: {
+          ...updatedTemplateData,
+          ...(isLegacyUnboundedTemplate(materializable) ? { startsAt: null } : {}),
+        },
+        include: { classTemplate: true },
+      });
+
+      let updatedCount = 0;
+      for (const id of plan.toUpdateIds) {
+        const target = futureRows.find((r) => r.id === id);
+        if (!target) continue;
+        const dateKey = getStudioLocalDateKey(target.startsAt, studio.timezone);
+        const startsAt = occurrenceStartsAtForDateKey(updatedTemplate, dateKey, studio.timezone);
+        const endsAt = occurrenceEndsAtForDateKey(updatedTemplate, dateKey, studio.timezone);
+        await tx.scheduledClass.update({
+          where: { id },
+          data: {
+            startsAt,
+            endsAt,
+            capacity:
+              input.capacity ??
+              updatedTemplate.capacity ??
+              tpl.capacity ??
+              updatedTemplate.classTemplate.defaultCapacity,
+            instructorId:
+              input.instructorId !== undefined
+                ? input.instructorId
+                : updatedTemplate.instructorId,
+            exceptionKind: null,
+          },
+        });
+        updatedCount++;
+      }
+
+      if (plan.toCancelIds.length > 0) {
+        await tx.scheduledClass.updateMany({
+          where: { id: { in: plan.toCancelIds } },
+          data: { status: ClassStatus.CANCELLED },
+        });
+      }
+
+      const materialized = await this.materializeTemplates(
+        tx,
+        studio.id,
+        studio.timezone,
+        [updatedTemplate],
+        horizonDays,
+      );
+
+      await this.audit.log({
+        studioId: studio.id,
+        actorUserId,
+        action: 'SCHEDULE_SERIES_EDITED',
+        entityType: 'ScheduleTemplate',
+        entityId: tpl.id,
+        metadata: {
+          scope: 'SERIES',
+          previousIntervalWeeks: plan.previousIntervalWeeks,
+          newIntervalWeeks: plan.newIntervalWeeks,
+          previousEndsOn: plan.previousEndsOn,
+          newEndsOn: plan.newEndsOn,
+          keptCount: plan.keptCount,
+          cancelledCount: plan.cancelledCount,
+          materializeCount: materialized.generated,
+          skippedDetachedCount: plan.skippedDetachedCount,
+          skippedAttendanceCount: plan.skippedAttendanceCount,
+          bookedOccurrencesAffected: plan.bookedCancellationCount,
+          affectedClassCount: updatedCount + plan.cancelledCount + materialized.generated,
+          affectedReservationCount: impact.totalReservations,
+        },
+      });
+
+      return {
+        templateId: tpl.id,
+        updatedCount,
+        cancelledCount: plan.cancelledCount,
+        materializedCount: materialized.generated,
+      };
     });
   }
 
@@ -1192,6 +1862,136 @@ export class ScheduleSeriesService {
         excludeScheduledClassId: t.id,
       };
     });
+  }
+
+  private hasRecurrenceFieldChanges(input: EditOccurrenceInput): boolean {
+    return input.intervalWeeks !== undefined || input.endsOn !== undefined;
+  }
+
+  private async computeSeriesRecurrenceImpact(
+    studio: { id: string; timezone: string },
+    tpl: NonNullable<Awaited<ReturnType<typeof this.requireOccurrence>>['scheduleTemplate']>,
+    input: EditOccurrenceInput,
+  ): Promise<SeriesRecurrenceImpact> {
+    const horizonDays = await this.getHorizonDays(studio.id);
+    const futureRows = await this.loadFutureOccurrenceRows(studio.id, tpl.id);
+    const plan = planSeriesRecurrenceReconciliation(
+      { ...tpl, classTemplate: tpl.classTemplate },
+      {
+        intervalWeeks: input.intervalWeeks,
+        endsOn: input.endsOn,
+        startTime: input.localStart?.time,
+        dayOfWeek: input.localStart
+          ? getDayOfWeekFromDateKey(input.localStart.date)
+          : undefined,
+        capacity: input.capacity,
+        instructorId: input.instructorId,
+      },
+      studio.timezone,
+      horizonDays,
+      futureRows,
+    );
+    return {
+      keptCount: plan.keptCount,
+      cancelledCount: plan.cancelledCount,
+      materializeCount: plan.materializeCount,
+      skippedDetachedCount: plan.skippedDetachedCount,
+      skippedAttendanceCount: plan.skippedAttendanceCount,
+      bookedOccurrencesAffected: plan.bookedCancellationCount,
+      previousIntervalWeeks: plan.previousIntervalWeeks,
+      newIntervalWeeks: plan.newIntervalWeeks,
+      previousEndsOn: plan.previousEndsOn,
+      newEndsOn: plan.newEndsOn,
+    };
+  }
+
+  private async loadFutureOccurrenceRows(
+    studioId: string,
+    templateId: string,
+  ): Promise<FutureOccurrenceRow[]> {
+    const now = new Date();
+    const rows = await this.prisma.scheduledClass.findMany({
+      where: {
+        studioId,
+        scheduleTemplateId: templateId,
+        startsAt: { gte: now },
+      },
+      select: {
+        id: true,
+        startsAt: true,
+        status: true,
+        exceptionKind: true,
+        _count: {
+          select: {
+            bookings: { where: { status: BookingStatus.CONFIRMED } },
+            attendances: true,
+          },
+        },
+      },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      startsAt: row.startsAt,
+      status: row.status,
+      exceptionKind: row.exceptionKind,
+      confirmedBookingCount: row._count.bookings,
+      attendanceCount: row._count.attendances,
+    }));
+  }
+
+  private async bookedIdsFromPlan(
+    studioId: string,
+    templateId: string,
+    tpl: NonNullable<Awaited<ReturnType<typeof this.requireOccurrence>>['scheduleTemplate']>,
+    input: EditOccurrenceInput,
+    timezone: string,
+  ): Promise<string[]> {
+    const horizonDays = await this.getHorizonDays(studioId);
+    const futureRows = await this.loadFutureOccurrenceRows(studioId, templateId);
+    const plan = planSeriesRecurrenceReconciliation(
+      { ...tpl, classTemplate: tpl.classTemplate },
+      {
+        intervalWeeks: input.intervalWeeks,
+        endsOn: input.endsOn,
+        startTime: input.localStart?.time,
+        dayOfWeek: input.localStart
+          ? getDayOfWeekFromDateKey(input.localStart.date)
+          : undefined,
+        capacity: input.capacity,
+        instructorId: input.instructorId,
+      },
+      timezone,
+      horizonDays,
+      futureRows,
+    );
+    return plan.toCancelIds.filter((id) =>
+      futureRows.some((r) => r.id === id && r.confirmedBookingCount > 0),
+    );
+  }
+
+  private async resolveFinishBoundaryDateKey(
+    studioId: string,
+    templateId: string,
+    timezone: string,
+    input: FinishSeriesInput,
+  ): Promise<string> {
+    if (input.mode === 'ON_DATE') {
+      if (!input.boundaryDate) {
+        throw new BadRequestException('boundaryDate is required for ON_DATE finish mode.');
+      }
+      return input.boundaryDate;
+    }
+
+    const rows = await this.prisma.scheduledClass.findMany({
+      where: { studioId, scheduleTemplateId: templateId, status: ClassStatus.SCHEDULED },
+      select: { startsAt: true, status: true },
+      orderBy: { startsAt: 'desc' },
+    });
+    const lastKey = lastScheduledLocalDateKey(rows, timezone);
+    if (!lastKey) {
+      throw new BadRequestException('No scheduled classes exist to determine series boundary.');
+    }
+    return lastKey;
   }
 
   private async assertActiveStudioMember(studioId: string, userId: string) {
