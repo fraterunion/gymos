@@ -72,9 +72,10 @@ describe('Calendar 2.2 schedule operations (e2e)', () => {
     localDate: string,
     time = '07:00',
   ) {
+    const startsAt = studioLocalTimeToUtc(localDate, time, TZ);
     return createScheduledClass(prisma, studioId, templateId, {
-      startsAt: studioLocalTimeToUtc(localDate, time, TZ),
-      endsAt: studioLocalTimeToUtc(localDate, '08:00', TZ),
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + 60 * 60_000),
       capacity: 12,
     });
   }

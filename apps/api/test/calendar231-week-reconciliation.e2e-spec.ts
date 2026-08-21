@@ -63,9 +63,10 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     time = '07:00',
     overrides: Parameters<typeof createScheduledClass>[3] = {},
   ) {
+    const startsAt = studioLocalTimeToUtc(localDate, time, TZ);
     return createScheduledClass(prisma, studioId, templateId, {
-      startsAt: studioLocalTimeToUtc(localDate, time, TZ),
-      endsAt: studioLocalTimeToUtc(localDate, '08:00', TZ),
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + 60 * 60_000),
       capacity: 12,
       ...overrides,
     });
