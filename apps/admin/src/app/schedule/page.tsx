@@ -188,6 +188,7 @@ export default function SchedulePage() {
   const [duplicateClass, setDuplicateClass] = useState<ScheduledClassDto | null>(null);
   const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(null);
   const [sessionClassId, setSessionClassId] = useState<string | null>(null);
+  const [opsFeedback, setOpsFeedback] = useState<string | null>(null);
 
   const urlWeekStart = searchParams.get("weekStart");
 
@@ -304,12 +305,13 @@ export default function SchedulePage() {
     void load();
   };
 
-  const handleOpsDone = () => {
+  const handleOpsDone = (message?: string) => {
     setDuplicateWeekOpen(false);
     setDuplicateClass(null);
     setBulkOperation(null);
     setSelectMode(false);
     setSelectedIds(new Set());
+    if (message) setOpsFeedback(message);
     void load();
   };
 
@@ -392,6 +394,19 @@ export default function SchedulePage() {
             </>
           }
         />
+
+        {opsFeedback ? (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            {opsFeedback}
+            <button
+              type="button"
+              className="ml-3 font-semibold underline"
+              onClick={() => setOpsFeedback(null)}
+            >
+              Cerrar
+            </button>
+          </div>
+        ) : null}
 
         {error ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

@@ -232,12 +232,13 @@ export function DuplicateWeekModal({
   sourceWeekStart: string;
   timezone: string;
   onClose: () => void;
-  onDone: () => void;
+  onDone: (message?: string) => void;
 }) {
   const [repeatWeeks, setRepeatWeeks] = useState(4);
   const [selectedTargets, setSelectedTargets] = useState<Set<string>>(() => new Set());
   const [preview, setPreview] = useState<ScheduleOperationResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [executing, setExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmWarnings, setConfirmWarnings] = useState(false);
   const [confirmRemovals, setConfirmRemovals] = useState(false);
@@ -281,7 +282,8 @@ export function DuplicateWeekModal({
   }, [runPreview, targetWeekStarts]);
 
   async function handleExecute() {
-    setLoading(true);
+    if (executing) return;
+    setExecuting(true);
     setError(null);
     try {
       await executeDuplicateWeek(studioId, {
@@ -291,12 +293,14 @@ export function DuplicateWeekModal({
         confirmRemovals,
         idempotencyKey: newIdempotencyKey(),
       });
-      onDone();
+      onDone(`${targetWeekStarts.length} semanas actualizadas correctamente`);
     } catch (e) {
       if (e instanceof ApiError && e.body && typeof e.body === "object") {
         const body = e.body as {
           requiresConfirmation?: boolean;
           removedCount?: number;
+          code?: string;
+          message?: string;
         };
         if (body.requiresConfirmation) {
           if ((body.removedCount ?? 0) > 0) setConfirmRemovals(true);
@@ -306,13 +310,16 @@ export function DuplicateWeekModal({
               ? "Hay clases adicionales que se retirarán. Confirma para continuar."
               : "Hay advertencias. Confirma para continuar.",
           );
-          setLoading(false);
+          return;
+        }
+        if (body.message) {
+          setError(body.message);
           return;
         }
       }
       setError(e instanceof ApiError ? e.message : "No se pudo duplicar la semana");
     } finally {
-      setLoading(false);
+      setExecuting(false);
     }
   }
 
@@ -375,7 +382,7 @@ export function DuplicateWeekModal({
         {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
 
         <div className="mt-6 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className={adminSecondaryBtn} disabled={loading}>
+          <button type="button" onClick={onClose} className={adminSecondaryBtn} disabled={loading || executing}>
             Cancelar
           </button>
           <button
@@ -384,13 +391,16 @@ export function DuplicateWeekModal({
             className={adminPrimaryBtn}
             disabled={
               loading ||
+              executing ||
               targetWeekStarts.length === 0 ||
               weekDuplicateExecuteDisabled(preview) ||
               ((preview?.removedCount ?? 0) > 0 && !confirmRemovals)
             }
           >
-            {loading
-              ? "Procesando…"
+            {executing
+              ? "Aplicando calendario…"
+              : loading
+                ? "Procesando…"
               : weekDuplicateExecuteDisabled(preview) && preview
                 ? "No hay cambios que aplicar"
                 : confirmWarnings || confirmRemovals

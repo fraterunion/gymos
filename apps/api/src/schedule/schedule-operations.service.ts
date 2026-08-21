@@ -11,6 +11,7 @@ import {
   WaitlistStatus,
 } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import {
   addDaysToDateKey,
   getStudioLocalDateKey,
@@ -38,6 +39,11 @@ import {
   type ScheduleOperationResult,
   type ScheduleReconciliationItem,
 } from './schedule-operation-result';
+import {
+  applyWeekReconciliationPlanBatched,
+  boundedAuditClassIds,
+  WEEK_RECONCILIATION_TX_OPTIONS,
+} from './schedule-week-reconciliation-apply';
 import {
   buildWeekReconciliationPlan,
   planToOperationCounts,
@@ -180,82 +186,93 @@ export class ScheduleOperationsService {
     const action = 'SCHEDULE_WEEK_DUPLICATED';
     const targetWeeks = this.resolveTargetWeeks(dto);
 
-    return this.prisma.$transaction(async (tx) => {
-      await acquireWeekReconciliationLocks(tx, studioId, targetWeeks);
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await acquireWeekReconciliationLocks(tx, studioId, targetWeeks);
 
-      if (dto.idempotencyKey) {
-        await acquireOperationAdvisoryLock(tx, studioId, action, dto.idempotencyKey);
-        const replay = await this.findIdempotentReplayTx(
-          tx,
-          studioId,
-          action,
-          dto.idempotencyKey,
-        );
-        if (replay) return replay;
-      }
+        if (dto.idempotencyKey) {
+          await acquireOperationAdvisoryLock(tx, studioId, action, dto.idempotencyKey);
+          const replay = await this.findIdempotentReplayTx(
+            tx,
+            studioId,
+            action,
+            dto.idempotencyKey,
+          );
+          if (replay) return replay;
+        }
 
-      const studio = await this.requireStudio(studioId);
-      const { plan, conflicts, existingRows, instructorNames } =
-        await this.buildDuplicateWeekReconciliation(
-          studioId,
+        const studio = await this.requireStudio(studioId);
+        const { plan, conflicts, existingRows, instructorNames } =
+          await this.buildDuplicateWeekReconciliation(
+            studioId,
+            studio.timezone,
+            dto.sourceWeekStart,
+            targetWeeks,
+            tx,
+          );
+        const preview = this.reconciliationPlanToResult(
+          plan,
+          conflicts,
           studio.timezone,
-          dto.sourceWeekStart,
-          targetWeeks,
-          tx,
+          existingRows,
+          instructorNames,
         );
-      const preview = this.reconciliationPlanToResult(
-        plan,
-        conflicts,
-        studio.timezone,
-        existingRows,
-        instructorNames,
-      );
-      this.assertWeekReconciliationAllowed(preview, dto);
+        this.assertWeekReconciliationAllowed(preview, dto);
 
-      const applied = await this.applyWeekReconciliationPlanTx(
-        tx,
-        studioId,
-        plan,
-      );
+        const applied = await applyWeekReconciliationPlanBatched(tx, studioId, plan);
 
-      const result = emptyOperationResult({
-        ...preview,
-        createdCount: applied.createdCount,
-        updatedCount: applied.updatedCount,
-        removedCount: applied.removedCount,
-        cancelledCount: applied.removedCount,
-        reusedCount: applied.reusedCount,
-        affectedClassIds: applied.affectedClassIds,
-      });
+        const result = emptyOperationResult({
+          proposedCount: preview.proposedCount,
+          createdCount: applied.createdCount,
+          updatedCount: applied.updatedCount,
+          removedCount: applied.removedCount,
+          cancelledCount: applied.removedCount,
+          reusedCount: applied.reusedCount,
+          reviewCount: preview.reviewCount,
+          blockedCount: preview.blockedCount,
+          warningCount: preview.warningCount,
+          affectedReservationCount: preview.affectedReservationCount,
+          conflicts: preview.conflicts,
+          affectedClassIds: applied.affectedClassIds,
+        });
 
-      await this.audit.log(
-        {
-          studioId,
-          actorUserId,
-          action,
-          entityType: 'ScheduleOperation',
-          entityId: dto.sourceWeekStart,
-          metadata: {
-            idempotencyKey: dto.idempotencyKey ?? null,
-            sourceWeekStart: dto.sourceWeekStart,
-            targetWeekStarts: targetWeeks,
-            createdCount: result.createdCount,
-            reusedCount: result.reusedCount,
-            updatedCount: result.updatedCount,
-            removedCount: result.removedCount,
-            cancelledCount: result.cancelledCount,
-            reviewCount: result.reviewCount,
-            blockedCount: result.blockedCount,
-            affectedReservationCount: result.affectedReservationCount,
-            affectedClassIds: applied.affectedClassIds,
-            result,
+        const auditIds = boundedAuditClassIds(applied.affectedClassIds);
+        const compactResult: ScheduleOperationResult = {
+          ...result,
+          conflicts: [],
+        };
+        await this.audit.log(
+          {
+            studioId,
+            actorUserId,
+            action,
+            entityType: 'ScheduleOperation',
+            entityId: dto.sourceWeekStart,
+            metadata: {
+              idempotencyKey: dto.idempotencyKey ?? null,
+              sourceWeekStart: dto.sourceWeekStart,
+              targetWeekStarts: targetWeeks,
+              proposedCount: preview.proposedCount,
+              createdCount: result.createdCount,
+              reusedCount: result.reusedCount,
+              updatedCount: result.updatedCount,
+              removedCount: result.removedCount,
+              cancelledCount: result.cancelledCount,
+              reviewCount: result.reviewCount,
+              blockedCount: result.blockedCount,
+              affectedReservationCount: result.affectedReservationCount,
+              ...auditIds,
+              result: compactResult,
+            },
           },
-        },
-        dto.idempotencyKey ? tx : undefined,
-      );
+          dto.idempotencyKey ? tx : undefined,
+        );
 
-      return result;
-    });
+        return result;
+      }, WEEK_RECONCILIATION_TX_OPTIONS);
+    } catch (error) {
+      this.rethrowWeekReconciliationExecuteError(error);
+    }
   }
 
   async previewBulk(
@@ -704,108 +721,56 @@ export class ScheduleOperationsService {
     const hardConflicts = preview.conflicts.filter((c) => c.severity === 'BLOCKING');
     if (preview.blockedCount > 0 || hardConflicts.length > 0) {
       throw new ConflictException({
-        message: 'Blocking conflicts prevent this week reconciliation.',
+        message:
+          'Hay clases con reservaciones o asistencias que requieren revisión manual.',
         conflicts: hardConflicts,
       });
     }
     if (preview.reviewCount > 0) {
       throw new BadRequestException({
-        message: 'Extra classes with reservations require manual review before reconciliation.',
+        message:
+          'Hay clases con reservaciones o asistencias que requieren revisión manual.',
         reviewCount: preview.reviewCount,
         requiresConfirmation: true,
       });
     }
     if (preview.removedCount > 0 && !dto.confirmRemovals) {
       throw new BadRequestException({
-        message: 'Removing extra classes requires confirmation.',
+        message: 'Hay clases adicionales que se retirarán. Confirma para continuar.',
         removedCount: preview.removedCount,
         requiresConfirmation: true,
       });
     }
     if (preview.warningCount > 0 && !dto.confirmWarnings) {
       throw new BadRequestException({
-        message: 'Warnings require confirmation.',
+        message: 'Hay advertencias. Confirma para continuar.',
         conflicts: preview.conflicts.filter((c) => c.severity === 'WARNING'),
         requiresConfirmation: true,
       });
     }
   }
 
-  private async applyWeekReconciliationPlanTx(
-    tx: Prisma.TransactionClient,
-    studioId: string,
-    plan: WeekReconciliationPlan,
-  ): Promise<{
-    affectedClassIds: string[];
-    createdCount: number;
-    updatedCount: number;
-    removedCount: number;
-    reusedCount: number;
-  }> {
-    const affectedIds: string[] = [];
-    let createdCount = 0;
-    let updatedCount = 0;
-    let removedCount = 0;
-    let reusedCount = 0;
-
-    for (const action of plan.actions) {
-      switch (action.kind) {
-        case 'REUSE':
-          if (action.existingId) {
-            affectedIds.push(action.existingId);
-            reusedCount++;
-          }
-          break;
-        case 'UPDATE':
-          if (action.existingId && action.patch) {
-            await tx.scheduledClass.update({
-              where: { id: action.existingId },
-              data: action.patch,
-            });
-            affectedIds.push(action.existingId);
-            updatedCount++;
-          }
-          break;
-        case 'CREATE':
-          if (action.slot) {
-            const outcome = await insertScheduledOccurrenceOrSkip(tx, {
-              studioId,
-              classTemplateId: action.slot.classTemplateId,
-              instructorId: action.slot.instructorId,
-              startsAt: action.slot.startsAt,
-              endsAt: action.slot.endsAt,
-              capacity: action.slot.capacity,
-              scheduleTemplateId: null,
-              exceptionKind: null,
-            });
-            if (outcome.outcome === 'created') {
-              affectedIds.push(outcome.id);
-              createdCount++;
-            }
-          }
-          break;
-        case 'REMOVE':
-          if (action.existingId && action.patch) {
-            await tx.scheduledClass.update({
-              where: { id: action.existingId },
-              data: action.patch,
-            });
-            affectedIds.push(action.existingId);
-            removedCount++;
-          }
-          break;
-        default:
-          break;
+  private rethrowWeekReconciliationExecuteError(error: unknown): never {
+    if (error instanceof ConflictException || error instanceof BadRequestException) {
+      throw error;
+    }
+    if (error instanceof PrismaClientKnownRequestError) {
+      if (error.code === 'P2028') {
+        throw new ConflictException({
+          message:
+            'La operación tardó demasiado mientras se aplicaba el calendario. Revisa la vista previa e inténtalo de nuevo.',
+          code: 'WEEK_RECONCILIATION_TIMEOUT',
+        });
+      }
+      if (error.code === 'P2002') {
+        throw new ConflictException({
+          message:
+            'La semana cambió mientras preparábamos la operación. Revisa la vista previa e inténtalo de nuevo.',
+          code: 'WEEK_RECONCILIATION_CONFLICT',
+        });
       }
     }
-
-    return {
-      affectedClassIds: affectedIds,
-      createdCount,
-      updatedCount,
-      removedCount,
-      reusedCount,
-    };
+    throw error;
   }
 
   private async previewSlots(
