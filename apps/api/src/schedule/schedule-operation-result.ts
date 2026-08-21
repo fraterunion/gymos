@@ -9,12 +9,33 @@ export type ScheduleOperationResult = {
   skippedCount: number;
   /** Idempotent skip: canonical slot already occupied (not an error). */
   skippedAlreadyExistsCount: number;
+  /** Week reconciliation: existing row matches desired config exactly. */
+  reusedCount: number;
+  /** Week reconciliation: empty extra classes soft-cancelled. */
+  removedCount: number;
+  /** Week reconciliation: extras with reservations requiring manual review. */
+  reviewCount: number;
   warningCount: number;
   blockedCount: number;
   affectedReservationCount: number;
   conflicts: ScheduleConflict[];
   affectedClassIds: string[];
   idempotentReplay?: boolean;
+  reconciliationItems?: ScheduleReconciliationItem[];
+};
+
+export type ScheduleReconciliationItem = {
+  kind: 'CREATE' | 'REUSE' | 'UPDATE' | 'REMOVE' | 'REVIEW' | 'BLOCK';
+  scheduledClassId?: string;
+  classTemplateName?: string;
+  localDateKey?: string;
+  startTime?: string;
+  dateLabel?: string;
+  timeLabel?: string;
+  actionLabel?: string;
+  detail?: string;
+  bookingCount?: number;
+  message?: string;
 };
 
 export function emptyOperationResult(
@@ -27,6 +48,9 @@ export function emptyOperationResult(
     cancelledCount: 0,
     skippedCount: 0,
     skippedAlreadyExistsCount: 0,
+    reusedCount: 0,
+    removedCount: 0,
+    reviewCount: 0,
     warningCount: 0,
     blockedCount: 0,
     affectedReservationCount: 0,

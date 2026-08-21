@@ -19,6 +19,10 @@ import {
 } from "@/lib/api/scheduleOperations";
 import { shiftDateKey } from "@/lib/operationalSchedule";
 import { formatScheduleConflict } from "@/lib/scheduleConflictCopy";
+import {
+  formatReconciliationPreviewLine,
+  visibleReconciliationItems,
+} from "@/lib/scheduleReconciliationPreview";
 
 function isoToLocalParts(iso: string, tz: string): { date: string; time: string } {
   const date = new Intl.DateTimeFormat("en-CA", {
@@ -57,6 +61,106 @@ function previewHardBlockCount(preview: ScheduleOperationResult | null): number 
 function duplicateExecuteDisabled(preview: ScheduleOperationResult | null): boolean {
   if (!preview) return true;
   return preview.createdCount === 0 || previewHardBlockCount(preview) > 0;
+}
+
+function weekDuplicateExecuteDisabled(preview: ScheduleOperationResult | null): boolean {
+  if (!preview) return true;
+  if (previewHardBlockCount(preview) > 0) return true;
+  if ((preview.reviewCount ?? 0) > 0) return true;
+  const changeCount =
+    preview.createdCount + preview.updatedCount + (preview.removedCount ?? 0);
+  return changeCount === 0 && (preview.reusedCount ?? 0) === 0;
+}
+
+function WeekReconciliationPreview({ preview }: { preview: ScheduleOperationResult | null }) {
+  if (!preview) return null;
+
+  const instructorWarnings = preview.conflicts.filter(
+    (c) => c.kind === "INSTRUCTOR_OVERLAP" && c.severity === "WARNING",
+  ).length;
+  const hardBlocks = preview.conflicts.filter(
+    (c) => c.severity === "BLOCKING" && c.kind !== "DUPLICATE_OCCURRENCE",
+  ).length;
+  const reviewItems =
+    preview.reconciliationItems?.filter((i) => i.kind === "REVIEW" || i.kind === "BLOCK") ?? [];
+  const affectedItems = visibleReconciliationItems(
+    preview.reconciliationItems?.filter((i) => i.kind !== "BLOCK"),
+  );
+
+  return (
+    <div className="mt-4 space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
+      <p className="font-medium text-zinc-900">Así quedarán las semanas seleccionadas</p>
+      <ul className="space-y-1 text-sm">
+        <li>
+          <span className="font-semibold text-emerald-700">{preview.createdCount}</span> clases nuevas
+        </li>
+        <li>
+          <span className="font-semibold text-zinc-600">{preview.reusedCount ?? 0}</span> clases sin cambios
+        </li>
+        <li>
+          <span className="font-semibold text-indigo-700">{preview.updatedCount}</span> clases se actualizarán
+        </li>
+        {(preview.removedCount ?? 0) > 0 ? (
+          <li>
+            <span className="font-semibold text-amber-700">{preview.removedCount}</span> clases adicionales se retirarán
+          </li>
+        ) : null}
+        {preview.affectedReservationCount > 0 ? (
+          <li>
+            <span className="font-semibold text-amber-800">{preview.affectedReservationCount}</span> reservaciones afectadas
+          </li>
+        ) : null}
+        {(preview.reviewCount ?? 0) > 0 ? (
+          <li>
+            <span className="font-semibold text-red-700">{preview.reviewCount}</span> requieren revisión
+          </li>
+        ) : null}
+        {instructorWarnings > 0 ? (
+          <li>
+            <span className="font-semibold text-amber-700">{instructorWarnings}</span> conflictos de instructor — revisar
+          </li>
+        ) : null}
+        {hardBlocks > 0 ? (
+          <li>
+            <span className="font-semibold text-red-700">{hardBlocks}</span> bloqueadas
+          </li>
+        ) : null}
+      </ul>
+      {affectedItems.length > 0 ? (
+        <ul className="max-h-40 space-y-2 overflow-y-auto text-xs text-zinc-700">
+          {affectedItems.map((item, i) => (
+            <li key={i} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2 whitespace-pre-line">
+              {formatReconciliationPreviewLine(item)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {reviewItems.length > 0 ? (
+        <ul className="max-h-32 overflow-y-auto text-xs text-zinc-600">
+          {reviewItems.slice(0, 8).map((item, i) => (
+            <li key={i}>
+              {item.message ??
+                (item.bookingCount
+                  ? `${item.bookingCount} reservaciones existentes — requiere revisión.`
+                  : "Requiere revisión.")}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {hardBlocks > 0 || instructorWarnings > 0 ? (
+        <ul className="max-h-32 overflow-y-auto text-xs text-zinc-600">
+          {preview.conflicts
+            .filter((c) => c.kind !== "DUPLICATE_OCCURRENCE")
+            .slice(0, 8)
+            .map((c, i) => (
+              <li key={i}>
+                [{c.severity === "WARNING" ? "Aviso" : "Bloqueo"}] {formatScheduleConflict(c)}
+              </li>
+            ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function PreviewSummary({ preview }: { preview: ScheduleOperationResult | null }) {
@@ -136,6 +240,7 @@ export function DuplicateWeekModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmWarnings, setConfirmWarnings] = useState(false);
+  const [confirmRemovals, setConfirmRemovals] = useState(false);
 
   const futureWeeks = useMemo(() => {
     const out: string[] = [];
@@ -183,15 +288,24 @@ export function DuplicateWeekModal({
         sourceWeekStart,
         targetWeekStarts,
         confirmWarnings,
+        confirmRemovals,
         idempotencyKey: newIdempotencyKey(),
       });
       onDone();
     } catch (e) {
       if (e instanceof ApiError && e.body && typeof e.body === "object") {
-        const body = e.body as { requiresConfirmation?: boolean };
+        const body = e.body as {
+          requiresConfirmation?: boolean;
+          removedCount?: number;
+        };
         if (body.requiresConfirmation) {
-          setConfirmWarnings(true);
-          setError("Hay advertencias. Confirma para continuar.");
+          if ((body.removedCount ?? 0) > 0) setConfirmRemovals(true);
+          else setConfirmWarnings(true);
+          setError(
+            (body.removedCount ?? 0) > 0
+              ? "Hay clases adicionales que se retirarán. Confirma para continuar."
+              : "Hay advertencias. Confirma para continuar.",
+          );
           setLoading(false);
           return;
         }
@@ -247,7 +361,17 @@ export function DuplicateWeekModal({
           ))}
         </div>
 
-        <PreviewSummary preview={preview} />
+        <WeekReconciliationPreview preview={preview} />
+        {(preview?.removedCount ?? 0) > 0 ? (
+          <label className="mt-3 flex items-center gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              checked={confirmRemovals}
+              onChange={(e) => setConfirmRemovals(e.target.checked)}
+            />
+            Confirmo retirar clases adicionales vacías
+          </label>
+        ) : null}
         {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
 
         <div className="mt-6 flex justify-end gap-2">
@@ -258,15 +382,20 @@ export function DuplicateWeekModal({
             type="button"
             onClick={() => void handleExecute()}
             className={adminPrimaryBtn}
-            disabled={loading || targetWeekStarts.length === 0 || duplicateExecuteDisabled(preview)}
+            disabled={
+              loading ||
+              targetWeekStarts.length === 0 ||
+              weekDuplicateExecuteDisabled(preview) ||
+              ((preview?.removedCount ?? 0) > 0 && !confirmRemovals)
+            }
           >
             {loading
               ? "Procesando…"
-              : duplicateExecuteDisabled(preview) && preview && preview.createdCount === 0
-                ? "No hay nada que duplicar"
-                : confirmWarnings
+              : weekDuplicateExecuteDisabled(preview) && preview
+                ? "No hay cambios que aplicar"
+                : confirmWarnings || confirmRemovals
                   ? "Confirmar y duplicar"
-                  : "Duplicar"}
+                  : "Duplicar semana"}
           </button>
         </div>
       </div>

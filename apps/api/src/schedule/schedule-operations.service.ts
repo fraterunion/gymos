@@ -8,6 +8,7 @@ import {
   BookingStatus,
   ClassStatus,
   ScheduleOccurrenceExceptionKind,
+  WaitlistStatus,
 } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import {
@@ -29,13 +30,21 @@ import {
   OccurrenceSlot,
   ScheduleConflictsService,
 } from './schedule-conflicts.service';
-import { acquireOperationAdvisoryLock } from './schedule-occurrence-concurrency';
+import { acquireOperationAdvisoryLock, acquireWeekReconciliationLocks } from './schedule-occurrence-concurrency';
 import { insertScheduledOccurrenceOrSkip } from './schedule-occurrence-insert';
 import {
   buildPreviewResult,
   emptyOperationResult,
   type ScheduleOperationResult,
+  type ScheduleReconciliationItem,
 } from './schedule-operation-result';
+import {
+  buildWeekReconciliationPlan,
+  planToOperationCounts,
+  type DesiredWeekSlot,
+  type ExistingWeekRow,
+  type WeekReconciliationPlan,
+} from './schedule-week-reconciliation';
 
 type ProposedSlot = OccurrenceSlot & {
   sourceScheduledClassId?: string;
@@ -147,13 +156,20 @@ export class ScheduleOperationsService {
   ): Promise<ScheduleOperationResult> {
     const studio = await this.requireStudio(studioId);
     const targetWeeks = this.resolveTargetWeeks(dto);
-    const slots = await this.buildDuplicateWeekSlots(
-      studioId,
+    const { plan, conflicts, existingRows, instructorNames } =
+      await this.buildDuplicateWeekReconciliation(
+        studioId,
+        studio.timezone,
+        dto.sourceWeekStart,
+        targetWeeks,
+      );
+    return this.reconciliationPlanToResult(
+      plan,
+      conflicts,
       studio.timezone,
-      dto.sourceWeekStart,
-      targetWeeks,
+      existingRows,
+      instructorNames,
     );
-    return this.previewSlots(studioId, slots);
   }
 
   async executeDuplicateWeek(
@@ -162,11 +178,11 @@ export class ScheduleOperationsService {
     actorUserId: string,
   ): Promise<ScheduleOperationResult> {
     const action = 'SCHEDULE_WEEK_DUPLICATED';
-    const preview = await this.previewDuplicateWeek(studioId, dto);
-    this.assertPreviewAllowed(preview, dto.confirmWarnings);
     const targetWeeks = this.resolveTargetWeeks(dto);
 
     return this.prisma.$transaction(async (tx) => {
+      await acquireWeekReconciliationLocks(tx, studioId, targetWeeks);
+
       if (dto.idempotencyKey) {
         await acquireOperationAdvisoryLock(tx, studioId, action, dto.idempotencyKey);
         const replay = await this.findIdempotentReplayTx(
@@ -179,24 +195,37 @@ export class ScheduleOperationsService {
       }
 
       const studio = await this.requireStudio(studioId);
-      const slots = await this.buildDuplicateWeekSlots(
-        studioId,
+      const { plan, conflicts, existingRows, instructorNames } =
+        await this.buildDuplicateWeekReconciliation(
+          studioId,
+          studio.timezone,
+          dto.sourceWeekStart,
+          targetWeeks,
+          tx,
+        );
+      const preview = this.reconciliationPlanToResult(
+        plan,
+        conflicts,
         studio.timezone,
-        dto.sourceWeekStart,
-        targetWeeks,
+        existingRows,
+        instructorNames,
       );
-      const { createdIds, skippedAlreadyExistsCount } = await this.createStandaloneSlotsTx(
+      this.assertWeekReconciliationAllowed(preview, dto);
+
+      const applied = await this.applyWeekReconciliationPlanTx(
         tx,
         studioId,
-        slots,
+        plan,
       );
 
       const result = emptyOperationResult({
         ...preview,
-        createdCount: createdIds.length,
-        skippedCount: preview.proposedCount - createdIds.length,
-        skippedAlreadyExistsCount,
-        affectedClassIds: createdIds,
+        createdCount: applied.createdCount,
+        updatedCount: applied.updatedCount,
+        removedCount: applied.removedCount,
+        cancelledCount: applied.removedCount,
+        reusedCount: applied.reusedCount,
+        affectedClassIds: applied.affectedClassIds,
       });
 
       await this.audit.log(
@@ -210,8 +239,15 @@ export class ScheduleOperationsService {
             idempotencyKey: dto.idempotencyKey ?? null,
             sourceWeekStart: dto.sourceWeekStart,
             targetWeekStarts: targetWeeks,
-            createdCount: createdIds.length,
-            skippedCount: result.skippedCount,
+            createdCount: result.createdCount,
+            reusedCount: result.reusedCount,
+            updatedCount: result.updatedCount,
+            removedCount: result.removedCount,
+            cancelledCount: result.cancelledCount,
+            reviewCount: result.reviewCount,
+            blockedCount: result.blockedCount,
+            affectedReservationCount: result.affectedReservationCount,
+            affectedClassIds: applied.affectedClassIds,
             result,
           },
         },
@@ -454,6 +490,324 @@ export class ScheduleOperationsService {
     });
   }
 
+  private async buildDuplicateWeekReconciliation(
+    studioId: string,
+    timezone: string,
+    sourceWeekStart: string,
+    targetWeekStarts: string[],
+    tx?: Prisma.TransactionClient,
+  ): Promise<{
+    plan: WeekReconciliationPlan;
+    conflicts: Awaited<ReturnType<ScheduleConflictsService['findConflictsForSlots']>>;
+    existingRows: ExistingWeekRow[];
+    instructorNames: Map<string, string>;
+  }> {
+    const db = tx ?? this.prisma;
+    const desiredSlots = await this.buildDuplicateWeekSlots(
+      studioId,
+      timezone,
+      sourceWeekStart,
+      targetWeekStarts,
+      db,
+    );
+    const existingRows = await this.loadTargetWeekExistingRows(
+      studioId,
+      timezone,
+      targetWeekStarts,
+      db,
+    );
+    const instructorNames = await this.loadInstructorNameMap(
+      studioId,
+      desiredSlots,
+      existingRows,
+      db,
+    );
+    const plan = buildWeekReconciliationPlan(desiredSlots, existingRows);
+    const conflictSlots: OccurrenceSlot[] = [];
+    for (const action of plan.actions) {
+      if (action.kind === 'CREATE' && action.slot) {
+        conflictSlots.push(action.slot);
+      }
+      if (action.kind === 'UPDATE' && action.slot && action.existingId) {
+        conflictSlots.push({
+          ...action.slot,
+          excludeScheduledClassId: action.existingId,
+        });
+      }
+    }
+    const conflicts =
+      conflictSlots.length > 0
+        ? await this.conflicts.findConflictsForSlots(studioId, conflictSlots)
+        : [];
+    return { plan, conflicts, existingRows, instructorNames };
+  }
+
+  private async loadInstructorNameMap(
+    studioId: string,
+    desiredSlots: DesiredWeekSlot[],
+    existingRows: ExistingWeekRow[],
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<Map<string, string>> {
+    const ids = new Set<string>();
+    for (const slot of desiredSlots) {
+      if (slot.instructorId) ids.add(slot.instructorId);
+    }
+    for (const row of existingRows) {
+      if (row.instructorId) ids.add(row.instructorId);
+    }
+    if (ids.size === 0) return new Map();
+
+    const rows = await db.user.findMany({
+      where: {
+        id: { in: [...ids] },
+        studioMemberships: { some: { studioId } },
+      },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    return new Map(
+      rows.map((r) => [r.id, `${r.firstName} ${r.lastName}`.trim()]),
+    );
+  }
+
+  private async loadTargetWeekExistingRows(
+    studioId: string,
+    timezone: string,
+    targetWeekStarts: string[],
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<ExistingWeekRow[]> {
+    if (targetWeekStarts.length === 0) return [];
+    const ranges = targetWeekStarts.map((weekStart) => ({
+      gte: studioLocalDateKeyToUtcAnchor(weekStart, timezone),
+      lt: studioLocalDateKeyToUtcAnchor(addDaysToDateKey(weekStart, 7), timezone),
+    }));
+    const rows = await db.scheduledClass.findMany({
+      where: {
+        studioId,
+        OR: ranges.map((r) => ({ startsAt: r })),
+        classTemplate: { deletedAt: null },
+      },
+      select: {
+        id: true,
+        classTemplateId: true,
+        instructorId: true,
+        startsAt: true,
+        endsAt: true,
+        capacity: true,
+        status: true,
+        scheduleTemplateId: true,
+        exceptionKind: true,
+        classTemplate: { select: { name: true } },
+        instructor: { select: { firstName: true, lastName: true } },
+        _count: {
+          select: {
+            bookings: { where: { status: BookingStatus.CONFIRMED } },
+            attendances: true,
+            waitlist: { where: { status: WaitlistStatus.WAITING } },
+          },
+        },
+      },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      classTemplateId: row.classTemplateId,
+      instructorId: row.instructorId,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      capacity: row.capacity,
+      status: row.status,
+      scheduleTemplateId: row.scheduleTemplateId,
+      exceptionKind: row.exceptionKind,
+      bookingCount: row._count.bookings,
+      attendanceCount: row._count.attendances,
+      waitlistCount: row._count.waitlist,
+      classTemplateName: row.classTemplate.name,
+      instructorFirstName: row.instructor?.firstName ?? null,
+      instructorLastName: row.instructor?.lastName ?? null,
+    }));
+  }
+
+  private reconciliationPlanToResult(
+    plan: WeekReconciliationPlan,
+    conflicts: Awaited<ReturnType<ScheduleConflictsService['findConflictsForSlots']>>,
+    timezone: string,
+    existingRows: ExistingWeekRow[],
+    instructorNames: Map<string, string>,
+  ): ScheduleOperationResult {
+    const hardBlocks = conflicts.filter(
+      (c) => c.severity === 'BLOCKING' && c.kind !== 'DUPLICATE_OCCURRENCE',
+    );
+    const warnings = conflicts.filter((c) => c.severity === 'WARNING');
+    const counts = planToOperationCounts(plan);
+    const existingById = new Map(existingRows.map((row) => [row.id, row]));
+    const reconciliationItems: ScheduleReconciliationItem[] = plan.actions
+      .filter((a) => a.kind !== 'REUSE')
+      .map((action) => {
+        const existing = action.existingId ? existingById.get(action.existingId) : undefined;
+        const classTemplateName =
+          action.slot?.classTemplateName ?? existing?.classTemplateName;
+        const localDateKey = action.slot?.localDateKey;
+        const startTime = action.slot
+          ? getStudioLocalHHmm(action.slot.startsAt, timezone)
+          : existing
+            ? getStudioLocalHHmm(existing.startsAt, timezone)
+            : undefined;
+        const dateLabel = localDateKey
+          ? this.formatReconciliationDateLabel(localDateKey, timezone)
+          : existing
+            ? this.formatReconciliationDateLabel(
+                getStudioLocalDateKey(existing.startsAt, timezone),
+                timezone,
+              )
+            : undefined;
+        const timeLabel = startTime ? this.formatReconciliationTimeLabel(startTime) : undefined;
+        const detail = this.buildReconciliationItemDetail(
+          action,
+          existing,
+          instructorNames,
+        );
+        return {
+          kind: action.kind,
+          classTemplateName,
+          localDateKey,
+          startTime,
+          dateLabel,
+          timeLabel,
+          actionLabel: this.reconciliationActionLabel(action.kind, action.bookingCount),
+          detail,
+          bookingCount: action.bookingCount,
+          message: action.message,
+        };
+      });
+
+    return emptyOperationResult({
+      proposedCount: counts.proposedCount,
+      createdCount: counts.createdCount,
+      updatedCount: counts.updatedCount,
+      cancelledCount: counts.cancelledCount,
+      removedCount: counts.removedCount,
+      reusedCount: counts.reusedCount,
+      reviewCount: counts.reviewCount,
+      blockedCount: counts.blockedCount + hardBlocks.length,
+      warningCount: warnings.length,
+      affectedReservationCount: counts.affectedReservationCount,
+      conflicts: [
+        ...conflicts.filter((c) => c.kind !== 'DUPLICATE_OCCURRENCE'),
+      ],
+      reconciliationItems,
+    });
+  }
+
+  private assertWeekReconciliationAllowed(
+    preview: ScheduleOperationResult,
+    dto: DuplicateWeekDto,
+  ) {
+    const hardConflicts = preview.conflicts.filter((c) => c.severity === 'BLOCKING');
+    if (preview.blockedCount > 0 || hardConflicts.length > 0) {
+      throw new ConflictException({
+        message: 'Blocking conflicts prevent this week reconciliation.',
+        conflicts: hardConflicts,
+      });
+    }
+    if (preview.reviewCount > 0) {
+      throw new BadRequestException({
+        message: 'Extra classes with reservations require manual review before reconciliation.',
+        reviewCount: preview.reviewCount,
+        requiresConfirmation: true,
+      });
+    }
+    if (preview.removedCount > 0 && !dto.confirmRemovals) {
+      throw new BadRequestException({
+        message: 'Removing extra classes requires confirmation.',
+        removedCount: preview.removedCount,
+        requiresConfirmation: true,
+      });
+    }
+    if (preview.warningCount > 0 && !dto.confirmWarnings) {
+      throw new BadRequestException({
+        message: 'Warnings require confirmation.',
+        conflicts: preview.conflicts.filter((c) => c.severity === 'WARNING'),
+        requiresConfirmation: true,
+      });
+    }
+  }
+
+  private async applyWeekReconciliationPlanTx(
+    tx: Prisma.TransactionClient,
+    studioId: string,
+    plan: WeekReconciliationPlan,
+  ): Promise<{
+    affectedClassIds: string[];
+    createdCount: number;
+    updatedCount: number;
+    removedCount: number;
+    reusedCount: number;
+  }> {
+    const affectedIds: string[] = [];
+    let createdCount = 0;
+    let updatedCount = 0;
+    let removedCount = 0;
+    let reusedCount = 0;
+
+    for (const action of plan.actions) {
+      switch (action.kind) {
+        case 'REUSE':
+          if (action.existingId) {
+            affectedIds.push(action.existingId);
+            reusedCount++;
+          }
+          break;
+        case 'UPDATE':
+          if (action.existingId && action.patch) {
+            await tx.scheduledClass.update({
+              where: { id: action.existingId },
+              data: action.patch,
+            });
+            affectedIds.push(action.existingId);
+            updatedCount++;
+          }
+          break;
+        case 'CREATE':
+          if (action.slot) {
+            const outcome = await insertScheduledOccurrenceOrSkip(tx, {
+              studioId,
+              classTemplateId: action.slot.classTemplateId,
+              instructorId: action.slot.instructorId,
+              startsAt: action.slot.startsAt,
+              endsAt: action.slot.endsAt,
+              capacity: action.slot.capacity,
+              scheduleTemplateId: null,
+              exceptionKind: null,
+            });
+            if (outcome.outcome === 'created') {
+              affectedIds.push(outcome.id);
+              createdCount++;
+            }
+          }
+          break;
+        case 'REMOVE':
+          if (action.existingId && action.patch) {
+            await tx.scheduledClass.update({
+              where: { id: action.existingId },
+              data: action.patch,
+            });
+            affectedIds.push(action.existingId);
+            removedCount++;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    return {
+      affectedClassIds: affectedIds,
+      createdCount,
+      updatedCount,
+      removedCount,
+      reusedCount,
+    };
+  }
+
   private async previewSlots(
     studioId: string,
     slots: ProposedSlot[],
@@ -505,12 +859,13 @@ export class ScheduleOperationsService {
     timezone: string,
     sourceWeekStart: string,
     targetWeekStarts: string[],
-  ): Promise<ProposedSlot[]> {
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<DesiredWeekSlot[]> {
     const sourceEnd = addDaysToDateKey(sourceWeekStart, 7);
     const rangeStart = studioLocalDateKeyToUtcAnchor(sourceWeekStart, timezone);
     const rangeEnd = studioLocalDateKeyToUtcAnchor(sourceEnd, timezone);
 
-    const sources = await this.prisma.scheduledClass.findMany({
+    const sources = await db.scheduledClass.findMany({
       where: {
         studioId,
         status: ClassStatus.SCHEDULED,
@@ -524,10 +879,11 @@ export class ScheduleOperationsService {
         startsAt: true,
         endsAt: true,
         capacity: true,
+        classTemplate: { select: { name: true } },
       },
     });
 
-    const slots: ProposedSlot[] = [];
+    const slots: DesiredWeekSlot[] = [];
     for (const targetWeekStart of targetWeekStarts) {
       for (const src of sources) {
         const sourceDayKey = getStudioLocalDateKey(src.startsAt, timezone);
@@ -540,12 +896,14 @@ export class ScheduleOperationsService {
 
         slots.push({
           classTemplateId: src.classTemplateId,
+          classTemplateName: src.classTemplate.name,
           instructorId: src.instructorId,
           startsAt,
           endsAt,
           capacity: src.capacity,
           sourceScheduledClassId: src.id,
           localDateKey: targetDayKey,
+          targetWeekStart,
         });
       }
     }
@@ -796,6 +1154,80 @@ export class ScheduleOperationsService {
       }
     }
     return null;
+  }
+
+  private formatReconciliationDateLabel(localDateKey: string, timezone: string): string {
+    return new Intl.DateTimeFormat('es-MX', {
+      timeZone: timezone,
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    }).format(new Date(`${localDateKey}T12:00:00Z`));
+  }
+
+  private formatReconciliationTimeLabel(hhmm: string): string {
+    const [hourStr, minuteStr] = hhmm.split(':');
+    const hour = Number(hourStr);
+    const minute = Number(minuteStr);
+    const period = hour >= 12 ? 'p.m.' : 'a.m.';
+    const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+    return minute === 0 ? `${hour12} ${period}` : `${hour12}:${minuteStr} ${period}`;
+  }
+
+  private reconciliationActionLabel(
+    kind: string,
+    bookingCount?: number,
+  ): string {
+    switch (kind) {
+      case 'CREATE':
+        return 'Se creará';
+      case 'UPDATE':
+        return bookingCount && bookingCount > 0
+          ? 'Se actualizará · reservaciones existentes'
+          : 'Se actualizará';
+      case 'REMOVE':
+        return 'Se retirará';
+      case 'REVIEW':
+        return 'Requiere revisión';
+      case 'BLOCK':
+        return 'Bloqueada';
+      default:
+        return '';
+    }
+  }
+
+  private buildReconciliationItemDetail(
+    action: WeekReconciliationPlan['actions'][number],
+    existing: ExistingWeekRow | undefined,
+    instructorNames: Map<string, string>,
+  ): string | undefined {
+    if (action.message) return action.message;
+    if (action.kind === 'UPDATE' && action.slot && existing) {
+      const parts: string[] = [];
+      if (existing.instructorId !== action.slot.instructorId) {
+        const from = existing.instructorId
+          ? instructorNames.get(existing.instructorId) ?? 'Sin instructor'
+          : 'Sin instructor';
+        const to = action.slot.instructorId
+          ? instructorNames.get(action.slot.instructorId) ?? 'Sin instructor'
+          : 'Sin instructor';
+        parts.push(`Cambiará instructor: ${from} → ${to}`);
+      }
+      if (existing.capacity !== action.slot.capacity) {
+        parts.push(`Capacidad: ${existing.capacity} → ${action.slot.capacity}`);
+      }
+      if (action.bookingCount && action.bookingCount > 0) {
+        parts.push(`${action.bookingCount} reservación(es) existente(s)`);
+      }
+      return parts.length ? parts.join(' · ') : undefined;
+    }
+    if (action.kind === 'REVIEW' && action.bookingCount) {
+      return `${action.bookingCount} reservación(es) existente(s)`;
+    }
+    if (action.kind === 'BLOCK' && action.attendanceCount) {
+      return 'Tiene historial de asistencia';
+    }
+    return undefined;
   }
 
   private async requireStudio(studioId: string) {

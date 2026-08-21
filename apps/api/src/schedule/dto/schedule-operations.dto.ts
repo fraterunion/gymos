@@ -78,6 +78,11 @@ export class DuplicateWeekDto {
   @IsBoolean()
   confirmWarnings?: boolean;
 
+  /** Confirm removing empty extra classes not present in the source week. */
+  @IsOptional()
+  @IsBoolean()
+  confirmRemovals?: boolean;
+
   @IsOptional()
   @IsString()
   @MaxLength(64)

@@ -310,9 +310,9 @@ describe('Calendar 2.2 concurrency hardening (e2e)', () => {
     );
 
     expect(result.createdCount).toBe(0);
-    expect(result.skippedAlreadyExistsCount).toBeGreaterThan(0);
+    expect(result.updatedCount).toBe(1);
     const row = await prisma.scheduledClass.findUnique({ where: { id: existing.id } });
-    expect(row?.capacity).toBe(8);
+    expect(row?.capacity).toBe(12);
     const bookingAfter = await prisma.booking.findUnique({ where: { id: booking.id } });
     expect(bookingAfter?.scheduledClassId).toBe(existing.id);
   });

@@ -30,6 +30,37 @@ export function operationAdvisoryLockKeys(
   return [digest.readInt32BE(0), digest.readInt32BE(4)];
 }
 
+/** Deterministic sorted unique studio-local Monday keys for week reconciliation. */
+export function sortedUniqueTargetWeekStarts(targetWeekStarts: string[]): string[] {
+  return [...new Set(targetWeekStarts)].sort();
+}
+
+/** Advisory lock key for one studio + target week reconciliation scope. */
+export function weekReconciliationAdvisoryLockKeys(
+  studioId: string,
+  targetWeekStart: string,
+): [number, number] {
+  const digest = createHash('sha256')
+    .update(`week-reconcile|${studioId}|${targetWeekStart}`)
+    .digest();
+  return [digest.readInt32BE(0), digest.readInt32BE(4)];
+}
+
+export async function acquireWeekReconciliationLocks(
+  tx: Prisma.TransactionClient,
+  studioId: string,
+  targetWeekStarts: string[],
+): Promise<void> {
+  for (const weekStart of sortedUniqueTargetWeekStarts(targetWeekStarts)) {
+    const [k1, k2] = weekReconciliationAdvisoryLockKeys(studioId, weekStart);
+    await tx.$executeRawUnsafe(
+      'SELECT pg_advisory_xact_lock($1::integer, $2::integer)',
+      k1,
+      k2,
+    );
+  }
+}
+
 export async function acquireOperationAdvisoryLock(
   tx: Prisma.TransactionClient,
   studioId: string,

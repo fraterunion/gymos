@@ -204,7 +204,7 @@ describe('Calendar 2.2 schedule operations (e2e)', () => {
       admin.id,
     );
 
-    expect(result.skippedCount).toBe(1);
+    expect(result.reusedCount).toBe(1);
     expect(result.createdCount).toBe(0);
     const atSlot = await prisma.scheduledClass.findMany({
       where: { startsAt: studioLocalTimeToUtc('2026-08-25', '07:00', TZ) },

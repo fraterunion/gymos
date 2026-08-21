@@ -14,12 +14,30 @@ export type ScheduleOperationResult = {
   cancelledCount: number;
   skippedCount: number;
   skippedAlreadyExistsCount: number;
+  reusedCount?: number;
+  removedCount?: number;
+  reviewCount?: number;
   warningCount: number;
   blockedCount: number;
   affectedReservationCount: number;
   conflicts: ScheduleOperationConflict[];
   affectedClassIds: string[];
   idempotentReplay?: boolean;
+  reconciliationItems?: ScheduleReconciliationItem[];
+};
+
+export type ScheduleReconciliationItem = {
+  kind: "CREATE" | "REUSE" | "UPDATE" | "REMOVE" | "REVIEW" | "BLOCK";
+  scheduledClassId?: string;
+  classTemplateName?: string;
+  localDateKey?: string;
+  startTime?: string;
+  dateLabel?: string;
+  timeLabel?: string;
+  actionLabel?: string;
+  detail?: string;
+  bookingCount?: number;
+  message?: string;
 };
 
 export type BulkOperation =
@@ -50,6 +68,7 @@ export async function executeDuplicateWeek(
     targetWeekStarts?: string[];
     repeatWeeks?: number;
     confirmWarnings?: boolean;
+    confirmRemovals?: boolean;
     idempotencyKey?: string;
   },
 ): Promise<ScheduleOperationResult> {

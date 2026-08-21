@@ -24,12 +24,15 @@ import {
 } from "@/app/schedule/ScheduleModal";
 import {
   filterOperationalScheduleInWeek,
-  mondayStartKeyForInstant,
   studioWeekQueryRangeIso,
-  weekBoundsInZone,
   weekDayKeysFromStart,
-  weekOffsetFromMondayStartKey,
 } from "@/lib/operationalSchedule";
+import {
+  currentWeekStartKey,
+  resolveDisplayWeekStartKey,
+  shiftDisplayWeekStartKey,
+  weekBoundsFromStartKey,
+} from "@/lib/scheduleWeekNavigation";
 import {
   formatOccupancyLabel,
   occupancyToneClass,
@@ -172,7 +175,7 @@ export default function SchedulePage() {
   const tz = selected?.studio.timezone ?? "UTC";
   const canManage = canManageCalendarOperations(selected?.role);
 
-  const [weekOffset, setWeekOffset] = useState(0);
+  const [displayWeekStartKey, setDisplayWeekStartKey] = useState<string | null>(null);
   const [classes, setClasses] = useState<ScheduledClassDto[]>([]);
   const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
   const [members, setMembers] = useState<StaffInstructorDto[]>([]);
@@ -187,26 +190,46 @@ export default function SchedulePage() {
   const [sessionClassId, setSessionClassId] = useState<string | null>(null);
 
   const urlWeekStart = searchParams.get("weekStart");
-  const weekOffsetFromUrl = useMemo(() => {
-    if (!urlWeekStart) return null;
-    const mondayKey = mondayStartKeyForInstant(urlWeekStart, tz);
-    return weekOffsetFromMondayStartKey(mondayKey, tz);
-  }, [urlWeekStart, tz]);
-  const effectiveWeekOffset = weekOffsetFromUrl ?? weekOffset;
 
-  const shiftWeek = useCallback(
-    (delta: number) => {
-      const base = weekOffsetFromUrl ?? weekOffset;
-      setWeekOffset(base + delta);
-      if (urlWeekStart) router.replace("/schedule");
-    },
-    [router, urlWeekStart, weekOffset, weekOffsetFromUrl],
+  useEffect(() => {
+    if (!tz) return;
+    setDisplayWeekStartKey((prev) => {
+      if (prev !== null) return prev;
+      return resolveDisplayWeekStartKey(null, urlWeekStart, tz);
+    });
+  }, [tz, urlWeekStart]);
+
+  const effectiveWeekStartKey = useMemo(
+    () => resolveDisplayWeekStartKey(displayWeekStartKey, urlWeekStart, tz),
+    [displayWeekStartKey, urlWeekStart, tz],
   );
 
   const weekBounds = useMemo(
-    () => weekBoundsInZone(tz, effectiveWeekOffset),
-    [tz, effectiveWeekOffset],
+    () => weekBoundsFromStartKey(effectiveWeekStartKey, tz),
+    [effectiveWeekStartKey, tz],
   );
+
+  const clearWeekUrlParam = useCallback(() => {
+    if (urlWeekStart) router.replace("/schedule", { scroll: false });
+  }, [router, urlWeekStart]);
+
+  const shiftWeek = useCallback(
+    (delta: number) => {
+      setDisplayWeekStartKey((current) =>
+        shiftDisplayWeekStartKey(
+          current ?? resolveDisplayWeekStartKey(null, urlWeekStart, tz),
+          delta,
+        ),
+      );
+      clearWeekUrlParam();
+    },
+    [clearWeekUrlParam, tz, urlWeekStart],
+  );
+
+  const goToToday = useCallback(() => {
+    setDisplayWeekStartKey(currentWeekStartKey(tz));
+    clearWeekUrlParam();
+  }, [clearWeekUrlParam, tz]);
   const weekDays = useMemo(() => weekDayKeysFromStart(weekBounds.startKey), [weekBounds.startKey]);
   const queryRange = useMemo(
     () => studioWeekQueryRangeIso(weekBounds.startKey, weekBounds.endKey, tz),
@@ -329,10 +352,7 @@ export default function SchedulePage() {
             <>
               <button
                 type="button"
-                onClick={() => {
-                  setWeekOffset(0);
-                  if (urlWeekStart) router.replace("/schedule");
-                }}
+                onClick={goToToday}
                 className={adminSecondaryBtn}
               >
                 Hoy
