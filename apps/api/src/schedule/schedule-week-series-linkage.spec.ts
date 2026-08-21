@@ -38,7 +38,11 @@ function biweeklyTemplate(overrides = {}) {
   });
 }
 
-function slot(dateKey, time, overrides = {}) {
+function slot(
+  dateKey: string,
+  time: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     classTemplateId: 'class-1',
     instructorId: 'inst-1',
