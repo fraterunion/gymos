@@ -41,7 +41,7 @@ const PERIODS: { key: MemberAnalyticsPeriodKey; label: string }[] = [
   { key: "this_year", label: "Este año" },
 ];
 
-type TabKey = "resumen" | "actividad" | "retencion";
+type TabKey = "resumen" | "actividad";
 
 function KpiCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -232,8 +232,8 @@ export default function MemberAnalyticsPage() {
         </div>
       ) : null}
 
-      <div className="mb-4 flex gap-2">
-        {(["resumen", "actividad", "retencion"] as TabKey[]).map((key) => (
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {(["resumen", "actividad"] as TabKey[]).map((key) => (
           <button
             key={key}
             type="button"
@@ -243,9 +243,15 @@ export default function MemberAnalyticsPage() {
               tab === key ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-700",
             ].join(" ")}
           >
-            {key === "resumen" ? "Resumen" : key === "actividad" ? "Actividad" : "Retención"}
+            {key === "resumen" ? "Resumen" : "Actividad"}
           </button>
         ))}
+        <Link
+          href="/analytics/retention"
+          className="rounded-lg bg-zinc-100 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200"
+        >
+          Retención →
+        </Link>
       </div>
 
       {tab === "resumen" ? (
@@ -385,34 +391,6 @@ export default function MemberAnalyticsPage() {
             </div>
           </SurfaceCard>
         </div>
-      ) : null}
-
-      {tab === "retencion" && activity ? (
-        <SurfaceCard className="p-4">
-          <h3 className="mb-3 text-sm font-medium text-zinc-900">Requieren atención</h3>
-          {activity.requiresAttention.length === 0 ? (
-            <p className="text-sm text-zinc-500">Ningún miembro en riesgo o inactivo en este periodo.</p>
-          ) : (
-            <ul className="divide-y divide-zinc-100">
-              {activity.requiresAttention.map((m) => (
-                <li key={m.userId} className="flex flex-wrap items-start justify-between gap-3 py-3">
-                  <div>
-                    <button type="button" className="font-medium text-zinc-900" onClick={() => void openDrawer(m.userId)}>
-                      {m.firstName} {m.lastName}
-                    </button>
-                    <p className="text-xs text-zinc-500">{m.attentionReasons.join(" · ")}</p>
-                  </div>
-                  <span className={`${adminStatusPill} ${ENGAGEMENT_STATUS_CLASS[m.engagementStatus]}`}>
-                    {ENGAGEMENT_STATUS_LABELS[m.engagementStatus]}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="mt-4 text-xs text-zinc-500">
-            Solo miembros con membresía vigente. Retención por cohorte de suscripción diferida a Analytics 1.1.
-          </p>
-        </SurfaceCard>
       ) : null}
 
       {drawerMember ? (

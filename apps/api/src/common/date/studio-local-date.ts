@@ -92,6 +92,25 @@ export function addDaysToDateKey(dateKey: string, deltaDays: number): string {
 }
 
 /**
+ * Whole studio-local calendar days between two instants (toKey − fromKey).
+ * Example: last visit Aug 7 23:55 local → now Aug 21 00:05 local ⇒ 14.
+ * Does NOT use elapsed wall-clock hours.
+ */
+export function studioLocalCalendarDaysBetween(
+  from: Date,
+  to: Date,
+  timezone: string,
+): number {
+  const fromKey = getStudioLocalDateKey(from, timezone);
+  const toKey = getStudioLocalDateKey(to, timezone);
+  const [fy, fm, fd] = fromKey.split('-').map(Number);
+  const [ty, tm, td] = toKey.split('-').map(Number);
+  const fromUtc = Date.UTC(fy!, fm! - 1, fd!);
+  const toUtc = Date.UTC(ty!, tm! - 1, td!);
+  return Math.round((toUtc - fromUtc) / 86_400_000);
+}
+
+/**
  * Returns the studio-local time as an 'HH:mm' string (24-hour, zero-padded) for
  * a given UTC instant. Used to enforce time-window restrictions (e.g., Open Gym 10:00–17:00).
  *

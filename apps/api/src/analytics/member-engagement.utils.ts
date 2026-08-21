@@ -86,6 +86,17 @@ export function classifyEngagementHealth(input: MemberEngagementInput): {
     return { health: 'INACTIVE', reasons: ['Sin visitas en los últimos 30 días'], trendPct };
   }
 
+  // Observation (WATCH): mild decline with baseline, or 7–13 days since last visit.
+  if (trendPct !== null && trendPct <= -20 && trendPct > -SIGNIFICANT_DECLINE_PCT) {
+    reasons.push(`Frecuencia ↓${Math.abs(trendPct)}% vs. sus 30 días anteriores`);
+    return { health: 'WATCH', reasons, trendPct };
+  }
+
+  if (input.daysSinceLastVisit >= 7) {
+    reasons.push(`Última visita hace ${input.daysSinceLastVisit} días`);
+    return { health: 'WATCH', reasons, trendPct };
+  }
+
   return { health: 'HEALTHY', reasons, trendPct };
 }
 

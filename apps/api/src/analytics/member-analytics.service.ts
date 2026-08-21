@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { getStudioLocalDateKey } from '../common/date/studio-local-date';
+import { getStudioLocalDateKey, studioLocalCalendarDaysBetween } from '../common/date/studio-local-date';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
 import { SQL_ATTENDANCE_EXCLUDE } from './analytics-exclusion.utils';
@@ -513,9 +513,14 @@ export class MemberAnalyticsService {
     });
   }
 
-  private mapRow(raw: RawMemberStats, periodDays: number, now: Date): MemberAnalyticsRowDto {
+  private mapRow(
+    raw: RawMemberStats,
+    periodDays: number,
+    now: Date,
+    timezone: string,
+  ): MemberAnalyticsRowDto {
     const daysSinceLastVisit = raw.last_visit_at
-      ? Math.floor((now.getTime() - raw.last_visit_at.getTime()) / 86_400_000)
+      ? Math.max(0, studioLocalCalendarDaysBetween(raw.last_visit_at, now, timezone))
       : null;
     const engagement = classifyMemberEngagement({
       visitsLast30d: Number(raw.visits_30d),
@@ -599,14 +604,14 @@ export class MemberAnalyticsService {
 
     if (query.status) {
       rows = rows.filter((r) => {
-        const mapped = this.mapRow(r, periodDays, now);
+        const mapped = this.mapRow(r, periodDays, now, timezone);
         return mapped.engagementStatus === query.status;
       });
     }
 
     const sort = query.sort ?? 'visitsPeriod';
     const order = query.order ?? 'desc';
-    const mapped = rows.map((r) => this.mapRow(r, periodDays, now));
+    const mapped = rows.map((r) => this.mapRow(r, periodDays, now, timezone));
     mapped.sort((a, b) => {
       const av = (a as Record<string, unknown>)[sort];
       const bv = (b as Record<string, unknown>)[sort];
@@ -648,7 +653,7 @@ export class MemberAnalyticsService {
     const raw = rows.find((r) => r.user_id === userId);
     if (!raw) throw new NotFoundException('Member not found');
 
-    const base = this.mapRow(raw, periodDays, now);
+    const base = this.mapRow(raw, periodDays, now, timezone);
     const attended = Number(raw.attended_bookings_period);
     const noShows = Number(raw.no_shows_period);
     const attendanceRatePct =
@@ -715,21 +720,21 @@ export class MemberAnalyticsService {
     );
 
     const rows = await this.loadMemberStatsWithFavorites(studioId, timezone, windows.periodStart, windows.periodEnd, now);
-    const mapped = rows.map((r) => this.mapRow(r, periodDays, now));
+    const mapped = rows.map((r) => this.mapRow(r, periodDays, now, timezone));
 
     const topActive = [...mapped]
       .sort((a, b) => b.visitsPeriod - a.visitsPeriod || a.lastName.localeCompare(b.lastName))
       .slice(0, 10);
 
     const requiresAttention = rows
-      .map((raw) => this.mapRow(raw, periodDays, now))
+      .map((raw) => this.mapRow(raw, periodDays, now, timezone))
       .filter((m, idx) => {
         const raw = rows[idx]!;
         const engagement = classifyMemberEngagement({
           visitsLast30d: Number(raw.visits_30d),
           visitsPrior30d: Number(raw.visits_prior_30d),
           daysSinceLastVisit: raw.last_visit_at
-            ? Math.floor((now.getTime() - raw.last_visit_at.getTime()) / 86_400_000)
+            ? Math.max(0, studioLocalCalendarDaysBetween(raw.last_visit_at, now, timezone))
             : null,
           activeWeeksLast90d: Number(raw.active_weeks_90d),
           isEntitled: raw.is_entitled,

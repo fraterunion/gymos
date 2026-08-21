@@ -54,7 +54,7 @@ describe('member engagement health vs activity', () => {
     expect(result.reasons.some((r) => r.includes('↓'))).toBe(true);
   });
 
-  it('stable low-frequency member is not falsely at-risk', () => {
+  it('stable low-frequency mild decline is observation, not at-risk', () => {
     const result = classifyMemberEngagement({
       visitsLast30d: 3,
       visitsPrior30d: 4,
@@ -62,7 +62,7 @@ describe('member engagement health vs activity', () => {
       activeWeeksLast90d: 2,
       isEntitled: true,
     });
-    expect(result.health).toBe('HEALTHY');
+    expect(result.health).toBe('WATCH');
     expect(result.status).toBe('LOW_ACTIVITY');
   });
 

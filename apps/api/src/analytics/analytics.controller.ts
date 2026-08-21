@@ -8,6 +8,7 @@ import { AnalyticsService } from './analytics.service';
 import { ExecutiveDashboardService } from './executive-dashboard.service';
 import { FinancialActivityService } from './financial-activity.service';
 import { MemberAnalyticsService } from './member-analytics.service';
+import { RetentionAnalyticsService } from './retention-analytics.service';
 import type {
   FinancialActivityEventType,
   FinancialActivityMethod,
@@ -29,6 +30,7 @@ export class AnalyticsController {
     private readonly executiveDashboardService: ExecutiveDashboardService,
     private readonly financialActivityService: FinancialActivityService,
     private readonly memberAnalyticsService: MemberAnalyticsService,
+    private readonly retentionAnalyticsService: RetentionAnalyticsService,
   ) {}
 
   @Get('overview')
@@ -142,6 +144,59 @@ export class AnalyticsController {
       sort,
       order,
       status,
+      page: Number.isNaN(parsedPage) ? undefined : parsedPage,
+      limit: Number.isNaN(parsedLimit) ? undefined : parsedLimit,
+    });
+  }
+
+  /** Analytics 1.1 — attendance retention (owner/admin only). */
+  @Get('retention/summary')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getRetentionSummary(@Param('studioId') studioId: string) {
+    return this.retentionAnalyticsService.getSummary(studioId);
+  }
+
+  @Get('retention/activity')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getRetentionActivity(@Param('studioId') studioId: string) {
+    return this.retentionAnalyticsService.getActivity(studioId);
+  }
+
+  @Get('retention/members/:userId')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getRetentionMemberDetail(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.retentionAnalyticsService.getMemberDetail(studioId, userId);
+  }
+
+  @Get('retention/members')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getRetentionMembers(
+    @Param('studioId') studioId: string,
+    @Query('search') search?: string,
+    @Query('health') health?: string,
+    @Query('movement') movement?: string,
+    @Query('entitlement') entitlement?: string,
+    @Query('sort') sort?: string,
+    @Query('order') order?: 'asc' | 'desc',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedPage = parseInt(page ?? '', 10);
+    const parsedLimit = parseInt(limit ?? '', 10);
+    const entitlementKey =
+      entitlement === 'entitled' || entitlement === 'lapsed' || entitlement === 'all'
+        ? entitlement
+        : 'all';
+    return this.retentionAnalyticsService.listMembers(studioId, {
+      search,
+      health,
+      movement,
+      entitlement: entitlementKey,
+      sort,
+      order,
       page: Number.isNaN(parsedPage) ? undefined : parsedPage,
       limit: Number.isNaN(parsedLimit) ? undefined : parsedLimit,
     });

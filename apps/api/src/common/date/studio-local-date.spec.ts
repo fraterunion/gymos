@@ -2,9 +2,46 @@ import {
   addDaysToDateKey,
   getDayOfWeekFromDateKey,
   getStudioLocalDateKey,
+  studioLocalCalendarDaysBetween,
   studioLocalDateKeyToUtcAnchor,
   studioLocalTimeToUtc,
 } from './studio-local-date';
+
+describe('studioLocalCalendarDaysBetween', () => {
+  const TZ = 'America/Mexico_City';
+
+  it('counts studio-local calendar days (not elapsed hours)', () => {
+    // Aug 7 23:55 Mexico City = Aug 8 05:55 UTC
+    const last = new Date('2026-08-08T05:55:00.000Z');
+    // Aug 21 00:05 Mexico City = Aug 21 06:05 UTC
+    const now = new Date('2026-08-21T06:05:00.000Z');
+    expect(getStudioLocalDateKey(last, TZ)).toBe('2026-08-07');
+    expect(getStudioLocalDateKey(now, TZ)).toBe('2026-08-21');
+    expect(studioLocalCalendarDaysBetween(last, now, TZ)).toBe(14);
+    // Wall-clock hours < 14*24 but calendar days still 14
+    const hours = (now.getTime() - last.getTime()) / 3_600_000;
+    expect(hours).toBeLessThan(14 * 24);
+  });
+
+  it('handles DST-observing zones without inventing fractional days', () => {
+    // America/New_York spring forward 2026-03-08. Calendar dates still whole days.
+    const from = new Date('2026-03-07T05:00:00.000Z'); // Mar 7 00:00 EDT? actually EST
+    const to = new Date('2026-03-21T04:00:00.000Z'); // Mar 21 local
+    const days = studioLocalCalendarDaysBetween(from, to, 'America/New_York');
+    expect(Number.isInteger(days)).toBe(true);
+    expect(days).toBe(
+      (() => {
+        const a = getStudioLocalDateKey(from, 'America/New_York');
+        const b = getStudioLocalDateKey(to, 'America/New_York');
+        const [ay, am, ad] = a.split('-').map(Number);
+        const [by, bm, bd] = b.split('-').map(Number);
+        return Math.round(
+          (Date.UTC(by!, bm! - 1, bd!) - Date.UTC(ay!, am! - 1, ad!)) / 86_400_000,
+        );
+      })(),
+    );
+  });
+});
 
 // ── getStudioLocalDateKey ────────────────────────────────────────────────────
 
