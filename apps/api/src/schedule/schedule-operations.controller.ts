@@ -5,10 +5,10 @@ import {
   HttpStatus,
   Param,
   Post,
-  Request,
   UseGuards,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -19,10 +19,6 @@ import {
   DuplicateWeekDto,
 } from './dto/schedule-operations.dto';
 import { ScheduleOperationsService } from './schedule-operations.service';
-
-interface AuthRequest {
-  user?: { id?: string };
-}
 
 @Controller('studios/:studioId/schedule-operations')
 @UseGuards(JwtAuthGuard, StudioMemberGuard, RolesGuard)
@@ -43,13 +39,9 @@ export class ScheduleOperationsController {
   executeDuplicateWeek(
     @Param('studioId') studioId: string,
     @Body() dto: DuplicateWeekDto,
-    @Request() req: AuthRequest,
+    @CurrentUser('sub') actorUserId: string,
   ) {
-    return this.operations.executeDuplicateWeek(
-      studioId,
-      dto,
-      req.user?.id ?? 'unknown',
-    );
+    return this.operations.executeDuplicateWeek(studioId, dto, actorUserId);
   }
 
   @Post('classes/:scheduledClassId/duplicate/preview')
@@ -67,13 +59,13 @@ export class ScheduleOperationsController {
     @Param('studioId') studioId: string,
     @Param('scheduledClassId') scheduledClassId: string,
     @Body() dto: DuplicateClassDto,
-    @Request() req: AuthRequest,
+    @CurrentUser('sub') actorUserId: string,
   ) {
     return this.operations.executeDuplicateClass(
       studioId,
       scheduledClassId,
       dto,
-      req.user?.id ?? 'unknown',
+      actorUserId,
     );
   }
 
@@ -90,8 +82,8 @@ export class ScheduleOperationsController {
   executeBulk(
     @Param('studioId') studioId: string,
     @Body() dto: BulkScheduleOperationDto,
-    @Request() req: AuthRequest,
+    @CurrentUser('sub') actorUserId: string,
   ) {
-    return this.operations.executeBulk(studioId, dto, req.user?.id ?? 'unknown');
+    return this.operations.executeBulk(studioId, dto, actorUserId);
   }
 }

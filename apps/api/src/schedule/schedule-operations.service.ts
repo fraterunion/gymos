@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -59,6 +60,8 @@ type ProposedSlot = OccurrenceSlot & {
 
 @Injectable()
 export class ScheduleOperationsService {
+  private readonly logger = new Logger(ScheduleOperationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly conflicts: ScheduleConflictsService,
@@ -185,10 +188,32 @@ export class ScheduleOperationsService {
   ): Promise<ScheduleOperationResult> {
     const action = 'SCHEDULE_WEEK_DUPLICATED';
     const targetWeeks = this.resolveTargetWeeks(dto);
+    const startedAt = Date.now();
+
+    const logPhase = (
+      event: string,
+      extra: Record<string, string | number | boolean | null | undefined> = {},
+    ) => {
+      this.logger.log(
+        JSON.stringify({
+          event,
+          studioId,
+          targetWeekCount: targetWeeks.length,
+          elapsedMs: Date.now() - startedAt,
+          ...extra,
+        }),
+      );
+    };
 
     try {
+      logPhase('duplicateWeek.execute.start', {
+        sourceWeekStart: dto.sourceWeekStart,
+        idempotencyKey: dto.idempotencyKey ?? null,
+      });
+
       return await this.prisma.$transaction(async (tx) => {
         await acquireWeekReconciliationLocks(tx, studioId, targetWeeks);
+        logPhase('duplicateWeek.lock.done');
 
         if (dto.idempotencyKey) {
           await acquireOperationAdvisoryLock(tx, studioId, action, dto.idempotencyKey);
@@ -217,11 +242,27 @@ export class ScheduleOperationsService {
           existingRows,
           instructorNames,
         );
+        logPhase('duplicateWeek.plan.done', {
+          proposedCount: preview.proposedCount,
+          createdCount: preview.createdCount,
+          reusedCount: preview.reusedCount ?? 0,
+          updatedCount: preview.updatedCount,
+          removedCount: preview.removedCount ?? 0,
+          reviewCount: preview.reviewCount ?? 0,
+          blockedCount: preview.blockedCount,
+        });
+
         this.assertWeekReconciliationAllowed(preview, dto);
 
         const applied = await applyWeekReconciliationPlanBatched(tx, studioId, plan);
+        logPhase('duplicateWeek.apply.done', {
+          createdCount: applied.createdCount,
+          reusedCount: applied.reusedCount,
+          updatedCount: applied.updatedCount,
+          removedCount: applied.removedCount,
+        });
 
-        const result = emptyOperationResult({
+        const result = this.toJsonSafeOperationResult({
           proposedCount: preview.proposedCount,
           createdCount: applied.createdCount,
           updatedCount: applied.updatedCount,
@@ -237,10 +278,10 @@ export class ScheduleOperationsService {
         });
 
         const auditIds = boundedAuditClassIds(applied.affectedClassIds);
-        const compactResult: ScheduleOperationResult = {
+        const compactResult = this.toJsonSafeOperationResult({
           ...result,
           conflicts: [],
-        };
+        });
         await this.audit.log(
           {
             studioId,
@@ -265,12 +306,23 @@ export class ScheduleOperationsService {
               result: compactResult,
             },
           },
-          dto.idempotencyKey ? tx : undefined,
+          tx,
         );
+        logPhase('duplicateWeek.audit.done');
+
+        logPhase('duplicateWeek.execute.commit', {
+          createdCount: result.createdCount,
+          reusedCount: result.reusedCount,
+          updatedCount: result.updatedCount,
+          removedCount: result.removedCount,
+        });
 
         return result;
       }, WEEK_RECONCILIATION_TX_OPTIONS);
     } catch (error) {
+      logPhase('duplicateWeek.execute.failed', {
+        errorName: error instanceof Error ? error.name : 'unknown',
+      });
       this.rethrowWeekReconciliationExecuteError(error);
     }
   }
@@ -750,6 +802,16 @@ export class ScheduleOperationsService {
     }
   }
 
+  private toJsonSafeOperationResult(
+    input: Partial<ScheduleOperationResult>,
+  ): ScheduleOperationResult {
+    return emptyOperationResult({
+      ...input,
+      affectedClassIds: [...(input.affectedClassIds ?? [])],
+      conflicts: [...(input.conflicts ?? [])],
+    });
+  }
+
   private rethrowWeekReconciliationExecuteError(error: unknown): never {
     if (error instanceof ConflictException || error instanceof BadRequestException) {
       throw error;
@@ -767,6 +829,13 @@ export class ScheduleOperationsService {
           message:
             'La semana cambió mientras preparábamos la operación. Revisa la vista previa e inténtalo de nuevo.',
           code: 'WEEK_RECONCILIATION_CONFLICT',
+        });
+      }
+      if (error.code === 'P2003') {
+        throw new BadRequestException({
+          message:
+            'No se pudo registrar la operación del calendario. Vuelve a iniciar sesión e inténtalo de nuevo.',
+          code: 'WEEK_RECONCILIATION_AUDIT_ACTOR',
         });
       }
     }
