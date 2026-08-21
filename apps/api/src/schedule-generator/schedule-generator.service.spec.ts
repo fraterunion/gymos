@@ -240,6 +240,11 @@ describe('ScheduleGeneratorService', () => {
   describe('getStatus', () => {
     it('returns 0 futureDays when no future classes', async () => {
       (prisma.studio.findFirst as jest.Mock).mockResolvedValue(STUDIO);
+      (prisma.scheduleAutomationSettings.findUnique as jest.Mock).mockResolvedValue({
+        minFutureDays: 90,
+      });
+      (prisma.scheduleTemplate.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.scheduledClass.findMany as jest.Mock).mockResolvedValue([]);
       (prisma.scheduleTemplate.count as jest.Mock).mockResolvedValue(4);
       (prisma.scheduledClass.findFirst as jest.Mock).mockResolvedValue(null);
 
@@ -247,6 +252,7 @@ describe('ScheduleGeneratorService', () => {
       expect(status.futureDays).toBe(0);
       expect(status.templateCount).toBe(4);
       expect(status.lastClassDate).toBeNull();
+      expect(status.needsGeneration).toBe(false);
     });
   });
 });

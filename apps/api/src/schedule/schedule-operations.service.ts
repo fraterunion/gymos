@@ -52,6 +52,10 @@ import {
   type ExistingWeekRow,
   type WeekReconciliationPlan,
 } from './schedule-week-reconciliation';
+import {
+  applyDuplicateWeekSeriesLinkageToPlan,
+  enrichDuplicateWeekSlotsWithSeriesLinkage,
+} from './schedule-week-series-linkage';
 
 type ProposedSlot = OccurrenceSlot & {
   sourceScheduledClassId?: string;
@@ -572,12 +576,30 @@ export class ScheduleOperationsService {
     instructorNames: Map<string, string>;
   }> {
     const db = tx ?? this.prisma;
-    const desiredSlots = await this.buildDuplicateWeekSlots(
+    const desiredSlotsRaw = await this.buildDuplicateWeekSlots(
       studioId,
       timezone,
       sourceWeekStart,
       targetWeekStarts,
       db,
+    );
+    const templates = await db.scheduleTemplate.findMany({
+      where: { studioId, deletedAt: null },
+      select: {
+        id: true,
+        classTemplateId: true,
+        dayOfWeek: true,
+        startTime: true,
+        intervalWeeks: true,
+        startsAt: true,
+        endsAt: true,
+        active: true,
+      },
+    });
+    const desiredSlots = enrichDuplicateWeekSlotsWithSeriesLinkage(
+      desiredSlotsRaw,
+      templates,
+      timezone,
     );
     const existingRows = await this.loadTargetWeekExistingRows(
       studioId,
@@ -591,7 +613,8 @@ export class ScheduleOperationsService {
       existingRows,
       db,
     );
-    const plan = buildWeekReconciliationPlan(desiredSlots, existingRows);
+    const basePlan = buildWeekReconciliationPlan(desiredSlots, existingRows);
+    const plan = applyDuplicateWeekSeriesLinkageToPlan(basePlan, existingRows);
     const conflictSlots: OccurrenceSlot[] = [];
     for (const action of plan.actions) {
       if (action.kind === 'CREATE' && action.slot) {
@@ -913,6 +936,7 @@ export class ScheduleOperationsService {
         startsAt: true,
         endsAt: true,
         capacity: true,
+        scheduleTemplateId: true,
         classTemplate: { select: { name: true } },
       },
     });
@@ -936,6 +960,7 @@ export class ScheduleOperationsService {
           endsAt,
           capacity: src.capacity,
           sourceScheduledClassId: src.id,
+          sourceScheduleTemplateId: src.scheduleTemplateId,
           localDateKey: targetDayKey,
           targetWeekStart,
         });

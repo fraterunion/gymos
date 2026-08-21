@@ -12,6 +12,12 @@ import {
   shouldSkipCandidate,
   utcGeneratorWindowToExistingQueryRange,
 } from '../schedule/schedule-materialization';
+import {
+  computeTemplateCoverage,
+  loadLinkedFutureOccurrences,
+  type CoverageTemplate,
+  type StudioTemplateCoverage,
+} from './schedule-template-coverage';
 import { occurrenceDedupKey } from '../schedule/schedule-occurrence-key';
 
 export interface GenerationSummary {
@@ -36,6 +42,40 @@ const DEFAULT_HORIZON_DAYS = 90;
 export class ScheduleGeneratorService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Per-template linked recurrence coverage (Calendar 2.4.1). */
+  async getTemplateCoverage(
+    studioId: string,
+    minFutureDays: number,
+  ): Promise<StudioTemplateCoverage> {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { timezone: true },
+    });
+    if (!studio) throw new NotFoundException('Studio not found');
+
+    const templates = await this.prisma.scheduleTemplate.findMany({
+      where: { studioId, deletedAt: null },
+      include: {
+        classTemplate: {
+          select: {
+            id: true,
+            name: true,
+            durationMinutes: true,
+            defaultCapacity: true,
+          },
+        },
+      },
+    });
+
+    const linkedFuture = await loadLinkedFutureOccurrences(this.prisma, studioId);
+    return computeTemplateCoverage(
+      templates as CoverageTemplate[],
+      linkedFuture,
+      studio.timezone,
+      minFutureDays,
+    );
+  }
+
   /** Coverage stats: how far ahead the schedule currently extends. */
   async getStatus(studioId: string) {
     const studio = await this.prisma.studio.findFirst({
@@ -43,6 +83,12 @@ export class ScheduleGeneratorService {
       select: { timezone: true },
     });
     if (!studio) throw new NotFoundException('Studio not found');
+
+    const settings = await this.prisma.scheduleAutomationSettings.findUnique({
+      where: { studioId },
+    });
+    const minFutureDays = settings?.minFutureDays ?? DEFAULT_HORIZON_DAYS;
+    const coverage = await this.getTemplateCoverage(studioId, minFutureDays);
 
     const [templateCount, lastClass] = await Promise.all([
       this.prisma.scheduleTemplate.count({
@@ -61,7 +107,13 @@ export class ScheduleGeneratorService {
       ? Math.floor((lastClassDate.getTime() - now.getTime()) / 86_400_000)
       : 0;
 
-    return { lastClassDate, futureDays, templateCount };
+    return {
+      lastClassDate,
+      futureDays,
+      templateCount,
+      undercoveredTemplateCount: coverage.undercoveredTemplateCount,
+      needsGeneration: coverage.needsGeneration,
+    };
   }
 
   async preview(studioId: string, from: Date, to: Date): Promise<GenerationSummary> {

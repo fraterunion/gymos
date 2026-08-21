@@ -11,6 +11,9 @@ export type DesiredWeekSlot = {
   localDateKey: string;
   targetWeekStart: string;
   sourceScheduledClassId?: string;
+  sourceScheduleTemplateId?: string | null;
+  desiredScheduleTemplateId?: string | null;
+  detachedOffCadenceCopy?: boolean;
 };
 
 export type ExistingWeekRow = {
@@ -54,6 +57,7 @@ export type WeekReconciliationAction = {
     status?: ClassStatus;
     exceptionKind?: ScheduleOccurrenceExceptionKind | null;
     cancelReason?: string | null;
+    scheduleTemplateId?: string | null;
   };
 };
 

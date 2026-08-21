@@ -4,6 +4,7 @@ import {
   type Prisma,
 } from '@prisma/client';
 import type { WeekReconciliationPlan } from './schedule-week-reconciliation';
+import { duplicateWeekCreateFields, type DuplicateWeekSeriesDesired } from './schedule-week-series-linkage';
 
 export const WEEK_RECONCILIATION_TX_OPTIONS = {
   /** Max wait to acquire a connection for the interactive transaction. */
@@ -59,6 +60,7 @@ export async function applyWeekReconciliationPlanBatched(
         break;
       case 'CREATE':
         if (action.slot) {
+          const seriesFields = duplicateWeekCreateFields(action.slot as DuplicateWeekSeriesDesired);
           createRows.push({
             studioId,
             classTemplateId: action.slot.classTemplateId,
@@ -67,8 +69,8 @@ export async function applyWeekReconciliationPlanBatched(
             endsAt: action.slot.endsAt,
             capacity: action.slot.capacity,
             status: ClassStatus.SCHEDULED,
-            scheduleTemplateId: null,
-            exceptionKind: null,
+            scheduleTemplateId: seriesFields.scheduleTemplateId,
+            exceptionKind: seriesFields.exceptionKind,
           });
         }
         break;

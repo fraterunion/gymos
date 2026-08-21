@@ -18,6 +18,52 @@ export function isScheduledOccurrenceUniqueViolation(error: unknown): boolean {
   return true;
 }
 
+/** Advisory lock key for schedule generator automation (studio-scoped). */
+export function scheduleAutomationAdvisoryLockKeys(studioId: string): [number, number] {
+  const digest = createHash('sha256')
+    .update(`schedule-automation|${studioId}`)
+    .digest();
+  return [digest.readInt32BE(0), digest.readInt32BE(4)];
+}
+
+export async function acquireScheduleAutomationLock(
+  tx: Prisma.TransactionClient,
+  studioId: string,
+): Promise<void> {
+  const [k1, k2] = scheduleAutomationAdvisoryLockKeys(studioId);
+  await tx.$executeRawUnsafe(
+    'SELECT pg_advisory_xact_lock($1::integer, $2::integer)',
+    k1,
+    k2,
+  );
+}
+
+/** Session-scoped automation lock; returns false if another replica holds it. */
+export async function tryAcquireScheduleAutomationSessionLock(
+  prisma: { $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<unknown> },
+  studioId: string,
+): Promise<boolean> {
+  const [k1, k2] = scheduleAutomationAdvisoryLockKeys(studioId);
+  const rows = (await prisma.$executeRawUnsafe(
+    'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
+    k1,
+    k2,
+  )) as Array<{ acquired: boolean }>;
+  return Boolean(rows[0]?.acquired);
+}
+
+export async function releaseScheduleAutomationSessionLock(
+  prisma: { $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<unknown> },
+  studioId: string,
+): Promise<void> {
+  const [k1, k2] = scheduleAutomationAdvisoryLockKeys(studioId);
+  await prisma.$executeRawUnsafe(
+    'SELECT pg_advisory_unlock($1::integer, $2::integer)',
+    k1,
+    k2,
+  );
+}
+
 /** Stable 64-bit advisory lock keys for pg_advisory_xact_lock(int, int). */
 export function operationAdvisoryLockKeys(
   studioId: string,
