@@ -14,6 +14,8 @@ import {
   createUserWithPassword,
 } from './helpers/factories';
 import {
+  addDaysToDateKey,
+  getDayOfWeekFromDateKey,
   getStudioLocalDateKey,
   studioLocalDateKeyToUtcAnchor,
 } from '../src/common/date/studio-local-date';
@@ -154,14 +156,24 @@ describe('Calendar 2.4 series hardening (e2e)', () => {
     const studio = await createStudio(prisma, { timezone: MX });
     const tpl = await createClassTemplate(prisma, studio.id);
     const admin = await seedUser(studio.id, Role.ADMIN, 'admin');
-    await createWeeklySeries(studio.id, tpl.id, admin.id, MX);
+    let startsOn = addDaysToDateKey(getStudioLocalDateKey(new Date(), MX), 21);
+    while (getDayOfWeekFromDateKey(startsOn) !== 4) {
+      startsOn = addDaysToDateKey(startsOn, 1);
+    }
+    await createWeeklySeries(studio.id, tpl.id, admin.id, MX, startsOn);
 
     const template = await prisma.scheduleTemplate.findFirst({ where: { studioId: studio.id } });
+    const now = new Date();
     const futures = await prisma.scheduledClass.findMany({
-      where: { scheduleTemplateId: template!.id, status: ClassStatus.SCHEDULED },
+      where: {
+        scheduleTemplateId: template!.id,
+        status: ClassStatus.SCHEDULED,
+        startsAt: { gte: now },
+      },
       orderBy: { startsAt: 'asc' },
       take: 3,
     });
+    expect(futures.length).toBeGreaterThanOrEqual(2);
     const member = await createUserWithPassword(prisma, { email: `m-${Date.now()}@e2e.local` });
     await createMembership(prisma, member.id, studio.id, Role.MEMBER);
     await createConfirmedBooking(prisma, studio.id, futures[1]!.id, member.id);
