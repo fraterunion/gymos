@@ -8,6 +8,7 @@ import { FinancialActivityService } from './financial-activity.service';
 
 import { MemberAnalyticsService } from './member-analytics.service';
 import { RetentionAnalyticsService } from './retention-analytics.service';
+import { ClassScheduleAnalyticsService } from './class-schedule-analytics.service';
 
 @Module({
   imports: [PrismaModule, AuthModule],
@@ -18,6 +19,7 @@ import { RetentionAnalyticsService } from './retention-analytics.service';
     FinancialActivityService,
     MemberAnalyticsService,
     RetentionAnalyticsService,
+    ClassScheduleAnalyticsService,
   ],
 })
 export class AnalyticsModule {}

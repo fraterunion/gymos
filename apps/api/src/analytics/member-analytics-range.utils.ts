@@ -7,6 +7,7 @@ import {
 export type MemberAnalyticsPeriodKey =
   | 'this_month'
   | 'prev_month'
+  | 'last_7d'
   | 'last_30d'
   | 'last_90d'
   | 'this_year'
@@ -15,6 +16,7 @@ export type MemberAnalyticsPeriodKey =
 export const MEMBER_ANALYTICS_PERIOD_LABELS: Record<MemberAnalyticsPeriodKey, string> = {
   this_month: 'Este mes',
   prev_month: 'Mes anterior',
+  last_7d: 'Últimos 7 días',
   last_30d: 'Últimos 30 días',
   last_90d: 'Últimos 90 días',
   this_year: 'Este año',
@@ -54,6 +56,22 @@ export function memberAnalyticsPeriodWindows(
   customTo?: string,
 ): MemberAnalyticsPeriodWindows {
   const nowKey = getStudioLocalDateKey(now, timezone);
+
+  if (period === 'last_7d') {
+    const startKey = addDaysToDateKey(nowKey, -6);
+    const periodStart = studioLocalDateKeyToUtcAnchor(startKey, timezone);
+    const prevEnd = new Date(periodStart.getTime() - 1);
+    const prevStartKey = addDaysToDateKey(startKey, -7);
+    return {
+      period,
+      timezone,
+      periodStart,
+      periodEnd: now,
+      prevPeriodStart: studioLocalDateKeyToUtcAnchor(prevStartKey, timezone),
+      prevPeriodEnd: prevEnd,
+      isPartialPeriod: false,
+    };
+  }
 
   if (period === 'last_30d') {
     const startKey = addDaysToDateKey(nowKey, -29);

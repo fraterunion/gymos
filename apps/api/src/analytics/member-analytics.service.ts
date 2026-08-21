@@ -79,7 +79,7 @@ export class MemberAnalyticsService {
     to?: string,
     now = new Date(),
   ) {
-    const key = (['this_month', 'prev_month', 'last_30d', 'last_90d', 'this_year', 'custom'] as const).includes(
+    const key = (['this_month', 'prev_month', 'last_7d', 'last_30d', 'last_90d', 'this_year', 'custom'] as const).includes(
       period as MemberAnalyticsPeriodKey,
     )
       ? (period as MemberAnalyticsPeriodKey)

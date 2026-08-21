@@ -7,6 +7,7 @@ const tabs = [
   { href: "/analytics", label: "Resumen", exact: true },
   { href: "/analytics/members", label: "Miembros", exact: false },
   { href: "/analytics/retention", label: "Retención", exact: false },
+  { href: "/analytics/classes", label: "Clases y horarios", exact: false },
 ];
 
 export function AnalyticsSubNav() {

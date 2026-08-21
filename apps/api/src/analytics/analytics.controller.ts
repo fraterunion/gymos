@@ -9,6 +9,7 @@ import { ExecutiveDashboardService } from './executive-dashboard.service';
 import { FinancialActivityService } from './financial-activity.service';
 import { MemberAnalyticsService } from './member-analytics.service';
 import { RetentionAnalyticsService } from './retention-analytics.service';
+import { ClassScheduleAnalyticsService } from './class-schedule-analytics.service';
 import type {
   FinancialActivityEventType,
   FinancialActivityMethod,
@@ -31,6 +32,7 @@ export class AnalyticsController {
     private readonly financialActivityService: FinancialActivityService,
     private readonly memberAnalyticsService: MemberAnalyticsService,
     private readonly retentionAnalyticsService: RetentionAnalyticsService,
+    private readonly classScheduleAnalyticsService: ClassScheduleAnalyticsService,
   ) {}
 
   @Get('overview')
@@ -200,6 +202,69 @@ export class AnalyticsController {
       page: Number.isNaN(parsedPage) ? undefined : parsedPage,
       limit: Number.isNaN(parsedLimit) ? undefined : parsedLimit,
     });
+  }
+
+  /** Analytics 1.2 — class & schedule intelligence (owner/admin only). */
+  @Get('classes/summary')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getClassScheduleSummary(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.classScheduleAnalyticsService.getSummary(studioId, period, from, to);
+  }
+
+  @Get('classes/activity')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getClassScheduleActivity(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.classScheduleAnalyticsService.getActivity(studioId, period, from, to);
+  }
+
+  @Get('classes/templates/:classTemplateId')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getClassScheduleTemplateDetail(
+    @Param('studioId') studioId: string,
+    @Param('classTemplateId') classTemplateId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.classScheduleAnalyticsService.getTemplateDetail(
+      studioId,
+      classTemplateId,
+      period,
+      from,
+      to,
+    );
+  }
+
+  @Get('classes/templates')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getClassScheduleTemplates(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.classScheduleAnalyticsService.listTemplates(studioId, period, from, to);
+  }
+
+  @Get('classes/slots')
+  @Roles(Role.OWNER, Role.ADMIN)
+  getClassScheduleSlots(
+    @Param('studioId') studioId: string,
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.classScheduleAnalyticsService.listSlots(studioId, period, from, to);
   }
 
   /** Executive Dashboard 2.0 — owner/admin financial intelligence only. */
