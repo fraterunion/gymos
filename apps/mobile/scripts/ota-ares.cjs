@@ -3,26 +3,26 @@
 /**
  * Canonical ARES OTA workflow.
  *
- *   pnpm --filter mobile ota:ares              # verify + print plan (never publishes)
- *   pnpm --filter mobile ota:ares:publish      # verify, then publish to production-ares
+ *   pnpm --filter mobile ota:ares              # dry-run plan only (no Expo/EAS/network)
+ *   pnpm --filter mobile ota:ares:publish      # Expo verify, then publish to production-ares
  *
- * Always forces WHITELABEL_PROFILE=ares and EXPO_NO_DOTENV=1 so a developer's
- * gitignored apps/mobile/.env cannot poison the bundle. Uses the local
- * eas-cli from node_modules (pnpm exec), never a random Homebrew binary.
+ * Always forces WHITELABEL_PROFILE=ares and EXPO_NO_DOTENV=1 on the publish path
+ * so a developer's gitignored apps/mobile/.env cannot poison the bundle.
+ * Uses the local eas-cli from node_modules (pnpm exec), never a random Homebrew binary.
  *
- * Publishing is an explicit second command on purpose.
+ * Dry-run builds the plan from lib/aresReleaseEnv.cjs (shared contract). Live Expo
+ * resolution is proven by `pnpm --filter mobile config:verify:ares`, not by dry-run.
+ * Publish still runs Expo verify before any EAS network call.
  */
 
 const { execFileSync, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const {
   ARES_OTA_BRANCH,
-  ARES_OTA_CHANNEL,
-  ARES_PRODUCTION_API_URL,
-  ARES_PRODUCTION_STUDIO_SLUG,
   ARES_WHITELABEL_PROFILE,
   EAS_CLI_MIN_VERSION,
   aresReleaseChildEnv,
+  buildAresOtaPlan,
   easCliVersionSatisfies,
 } = require('../lib/aresReleaseEnv.cjs');
 const { resolveAresExpoConfig } = require('./verify-ares-env.cjs');
@@ -64,45 +64,46 @@ function assertLocalEasVersion(easBin, env) {
 function main() {
   const env = aresReleaseChildEnv(process.env);
 
+  if (!publish) {
+    const plan = buildAresOtaPlan({ publish: false });
+    // eslint-disable-next-line no-console -- CLI script
+    console.log('— ARES OTA dry-run (no Expo / no EAS / no publish) —');
+    // eslint-disable-next-line no-console -- CLI script
+    console.log(JSON.stringify(plan, null, 2));
+    // eslint-disable-next-line no-console -- CLI script
+    console.log(
+      '\nProve live Expo resolution separately:\n' +
+        '  pnpm --filter mobile config:verify:ares\n' +
+        '\nTo publish:\n' +
+        '  pnpm --filter mobile ota:ares:publish\n',
+    );
+    return;
+  }
+
   // eslint-disable-next-line no-console -- CLI script
-  console.log('— ARES OTA preflight —');
+  console.log('— ARES OTA publish preflight (Expo config) —');
   const resolved = resolveAresExpoConfig(env);
   // eslint-disable-next-line no-console -- CLI script
   console.log(JSON.stringify(resolved, null, 2));
 
+  if (resolved.slug === 'gymos-member') {
+    throw new Error(
+      'Refusing ARES OTA: Expo slug resolved to gymos-member (local template). ' +
+        `WHITELABEL_PROFILE=${ARES_WHITELABEL_PROFILE} was not applied.`,
+    );
+  }
+
   const easBin = findLocalEasBin();
   const easVersion = assertLocalEasVersion(easBin, env);
-
-  const plan = {
-    action: publish ? 'PUBLISH' : 'DRY-RUN (no publish)',
-    profile: ARES_WHITELABEL_PROFILE,
-    channel: ARES_OTA_CHANNEL,
-    branch: ARES_OTA_BRANCH,
-    EXPO_PUBLIC_API_URL: ARES_PRODUCTION_API_URL,
-    EXPO_PUBLIC_STUDIO_SLUG: ARES_PRODUCTION_STUDIO_SLUG,
+  const plan = buildAresOtaPlan({
+    publish: true,
     expoSlug: resolved.slug,
-    easCli: easVersion,
-    EXPO_NO_DOTENV: '1',
-  };
+    easCliVersion: easVersion,
+  });
   // eslint-disable-next-line no-console -- CLI script
   console.log('\n— plan —');
   // eslint-disable-next-line no-console -- CLI script
   console.log(JSON.stringify(plan, null, 2));
-
-  if (resolved.slug === 'gymos-member') {
-    throw new Error(
-      'Refusing ARES OTA: Expo slug resolved to gymos-member (local template). ' +
-        'WHITELABEL_PROFILE=ares was not applied.',
-    );
-  }
-
-  if (!publish) {
-    // eslint-disable-next-line no-console -- CLI script
-    console.log(
-      '\nDry run only. To publish:\n  pnpm --filter mobile ota:ares:publish\n',
-    );
-    return;
-  }
 
   // eslint-disable-next-line no-console -- CLI script
   console.log('\n— publishing JS update to production-ares —');

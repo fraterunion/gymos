@@ -101,6 +101,12 @@ function isClientProfile(profile) {
  * Load profile env, then root `.env` as a non-overriding fallback.
  * Callers must set WHITELABEL_PROFILE (and any intentional overrides) on `env` first.
  *
+ * When `env/.env.<profile>` is absent (gitignored on developer machines; never present
+ * in CI), the checked-in `env/.env.<profile>.example` is loaded instead. That file is
+ * the non-secret release contract for client profiles — without this fallback, CI cannot
+ * exercise the real Expo config path and a plain-node verifier can false-green locally
+ * while GitHub Actions has nothing to load.
+ *
  * @param {string} mobileRoot absolute path to apps/mobile
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} [env]
  * @returns {string} resolved profile name
@@ -108,10 +114,16 @@ function isClientProfile(profile) {
 function loadProfileEnvFiles(mobileRoot, env = process.env) {
   const profile = (env.WHITELABEL_PROFILE ?? 'local').trim() || 'local';
   const tenantFile = path.join(mobileRoot, 'env', `.env.${profile}`);
+  const tenantExample = path.join(mobileRoot, 'env', `.env.${profile}.example`);
   const rootEnv = path.join(mobileRoot, '.env');
 
   // Profile first: fills keys not already supplied by shell/EAS/CI.
-  applyEnvFile(tenantFile, env);
+  if (fs.existsSync(tenantFile)) {
+    applyEnvFile(tenantFile, env);
+  } else {
+    // Checked-in contract for CI / fresh clones (see env/.env.<profile>.example).
+    applyEnvFile(tenantExample, env);
+  }
   // Root `.env` last: local-dev convenience only — never clobber profile/EAS values.
   applyEnvFile(rootEnv, env);
   return profile;

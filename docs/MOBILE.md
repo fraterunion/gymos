@@ -26,6 +26,8 @@ White-label member app under `apps/mobile`. Each gym ships its own build; **nati
 
 **Expo dotenv preload:** Expo CLI loads root `.env` into `process.env` *before* `app.config.js` unless `EXPO_NO_DOTENV=1`. Those preloaded values look like intentional shell overrides to our loader, so a localhost / `ares-qa-demo` `.env` can beat `env/.env.ares`. All ARES release commands set `EXPO_NO_DOTENV=1` so the profile owns the release. Do not rename `.env` by hand to work around this.
 
+**Profile file vs example:** `env/.env.<profile>` is gitignored. When it is absent (CI, fresh clones), the checked-in `env/.env.<profile>.example` is loaded instead — that file is the non-secret release contract and must match `lib/aresReleaseEnv.cjs` / `eas.json` for ARES.
+
 Client profiles fail fast if the resolved API URL is loopback or the studio slug is a QA demo slug.
 
 Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev, or use **`env/.env.local`** with `WHITELABEL_PROFILE=local`. Values are inlined at **bundle** time for `EXPO_PUBLIC_*`; native config is resolved when Expo loads **`app.config.js`**.

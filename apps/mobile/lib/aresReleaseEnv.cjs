@@ -74,6 +74,29 @@ function easCliVersionSatisfies(version, minimum = EAS_CLI_MIN_VERSION) {
   return pat >= rPat;
 }
 
+/**
+ * Pure OTA release plan from the shared ARES contract.
+ * Does not spawn Expo or EAS — callers that need live Expo resolution run
+ * `config:verify:ares` / `resolveAresExpoConfig` separately; publish still must.
+ *
+ * @param {{ publish?: boolean, expoSlug?: string, easCliVersion?: string }} [opts]
+ */
+function buildAresOtaPlan(opts = {}) {
+  const publish = Boolean(opts.publish);
+  return {
+    action: publish ? 'PUBLISH' : 'DRY-RUN (no publish)',
+    profile: ARES_WHITELABEL_PROFILE,
+    channel: ARES_OTA_CHANNEL,
+    branch: ARES_OTA_BRANCH,
+    EXPO_PUBLIC_API_URL: ARES_PRODUCTION_API_URL,
+    EXPO_PUBLIC_STUDIO_SLUG: ARES_PRODUCTION_STUDIO_SLUG,
+    expoSlug: opts.expoSlug ?? null,
+    easCli: opts.easCliVersion ?? null,
+    EXPO_NO_DOTENV: '1',
+    publish,
+  };
+}
+
 module.exports = {
   ARES_PRODUCTION_API_URL,
   ARES_PRODUCTION_STUDIO_SLUG,
@@ -84,4 +107,5 @@ module.exports = {
   aresReleaseChildEnv,
   assertExpectedAresProductionEnv,
   easCliVersionSatisfies,
+  buildAresOtaPlan,
 };

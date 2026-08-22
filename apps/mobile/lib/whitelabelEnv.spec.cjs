@@ -301,3 +301,46 @@ test('Expo-preloaded root .env values are treated as already-set (preload hazard
     cleanup();
   }
 });
+
+test('checked-in .env.<profile>.example fills when real profile file is absent (CI)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gymos-wl-example-'));
+  const envDir = path.join(root, 'env');
+  fs.mkdirSync(envDir);
+  fs.writeFileSync(
+    path.join(envDir, '.env.ares.example'),
+    'EXPO_PUBLIC_API_URL=https://api-production-8a0e.up.railway.app\nEXPO_PUBLIC_STUDIO_SLUG=ares-fitness\n',
+  );
+  try {
+    /** @type {Record<string, string | undefined>} */
+    const env = { WHITELABEL_PROFILE: 'ares' };
+    loadProfileEnvFiles(root, env);
+    assert.equal(env.EXPO_PUBLIC_API_URL, 'https://api-production-8a0e.up.railway.app');
+    assert.equal(env.EXPO_PUBLIC_STUDIO_SLUG, 'ares-fitness');
+    assert.doesNotThrow(() => assertSafeResolvedEnv('ares', env));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('real profile file wins over .example when both exist', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gymos-wl-both-'));
+  const envDir = path.join(root, 'env');
+  fs.mkdirSync(envDir);
+  fs.writeFileSync(
+    path.join(envDir, '.env.ares.example'),
+    'EXPO_PUBLIC_API_URL=https://from-example.example\nEXPO_PUBLIC_STUDIO_SLUG=from-example\n',
+  );
+  fs.writeFileSync(
+    path.join(envDir, '.env.ares'),
+    'EXPO_PUBLIC_API_URL=https://api-production-8a0e.up.railway.app\nEXPO_PUBLIC_STUDIO_SLUG=ares-fitness\n',
+  );
+  try {
+    /** @type {Record<string, string | undefined>} */
+    const env = { WHITELABEL_PROFILE: 'ares' };
+    loadProfileEnvFiles(root, env);
+    assert.equal(env.EXPO_PUBLIC_API_URL, 'https://api-production-8a0e.up.railway.app');
+    assert.equal(env.EXPO_PUBLIC_STUDIO_SLUG, 'ares-fitness');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

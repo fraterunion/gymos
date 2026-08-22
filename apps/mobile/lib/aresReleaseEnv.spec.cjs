@@ -21,6 +21,7 @@ const {
   aresReleaseChildEnv,
   assertExpectedAresProductionEnv,
   easCliVersionSatisfies,
+  buildAresOtaPlan,
 } = require('./aresReleaseEnv.cjs');
 const {
   loadProfileEnvFiles,
@@ -182,13 +183,38 @@ test('10. aresReleaseChildEnv forces profile + EXPO_NO_DOTENV', () => {
   assert.equal(child.EXPO_PUBLIC_API_URL, 'http://localhost:3000');
 });
 
-test('11. ota:ares dry-run resolves plan without publishing', () => {
+test('11. buildAresOtaPlan dry-run uses shared contract without publishing', () => {
+  const plan = buildAresOtaPlan({ publish: false });
+  assert.equal(plan.action, 'DRY-RUN (no publish)');
+  assert.equal(plan.publish, false);
+  assert.equal(plan.profile, 'ares');
+  assert.equal(plan.channel, ARES_OTA_CHANNEL);
+  assert.equal(plan.branch, ARES_OTA_BRANCH);
+  assert.equal(plan.EXPO_PUBLIC_API_URL, ARES_PRODUCTION_API_URL);
+  assert.equal(plan.EXPO_PUBLIC_STUDIO_SLUG, ARES_PRODUCTION_STUDIO_SLUG);
+  assert.equal(plan.EXPO_NO_DOTENV, '1');
+});
+
+test('12. buildAresOtaPlan publish flag flips action only', () => {
+  const plan = buildAresOtaPlan({
+    publish: true,
+    expoSlug: 'gymos',
+    easCliVersion: 'eas-cli/22.2.0',
+  });
+  assert.equal(plan.action, 'PUBLISH');
+  assert.equal(plan.publish, true);
+  assert.equal(plan.expoSlug, 'gymos');
+  assert.equal(plan.channel, ARES_OTA_CHANNEL);
+  assert.equal(plan.EXPO_PUBLIC_API_URL, ARES_PRODUCTION_API_URL);
+});
+
+test('13. ota:ares CLI dry-run prints plan without Expo/EAS/publish', () => {
   const script = path.join(mobileRoot, 'scripts', 'ota-ares.cjs');
   const result = spawnSync(process.execPath, [script], {
     cwd: mobileRoot,
     env: aresReleaseChildEnv(process.env),
     encoding: 'utf8',
-    timeout: 120_000,
+    timeout: 30_000,
   });
   const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
   assert.equal(result.status, 0, out);
@@ -196,5 +222,7 @@ test('11. ota:ares dry-run resolves plan without publishing', () => {
   assert.match(out, new RegExp(ARES_OTA_CHANNEL));
   assert.match(out, new RegExp(ARES_PRODUCTION_API_URL.replace(/\./g, '\\.')));
   assert.match(out, /ares-fitness/);
+  assert.match(out, /config:verify:ares/);
   assert.doesNotMatch(out, /publishing JS update/);
+  assert.doesNotMatch(out, /ARES OTA publish preflight/);
 });

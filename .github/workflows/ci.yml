@@ -56,13 +56,11 @@ jobs:
       - name: Lint, typecheck, test, e2e, build
         run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api
 
-      # Lightweight mobile config safety net (env precedence + production fail-fast).
-      # Full mobile lint/typecheck stay out of this job; this catches the OTA .env override class of bug.
+      # Pure Node env-precedence + release-contract unit tests (no Expo CLI).
       - name: Mobile env precedence tests
         run: pnpm --filter mobile test:env
 
-      # Real Expo config pathway (EXPO_NO_DOTENV=1). Must stay green with a hazardous
-      # local .env present in developer machines; CI has no such .env, but this still
-      # pins ARES production URL + slug through app.config.js.
+      # Real Expo config pathway (EXPO_NO_DOTENV=1). Loads env/.env.ares when present,
+      # otherwise the checked-in env/.env.ares.example production contract (CI).
       - name: Mobile ARES config verify
         run: pnpm --filter mobile config:verify:ares

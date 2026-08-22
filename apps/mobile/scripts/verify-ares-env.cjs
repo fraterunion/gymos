@@ -46,13 +46,36 @@ function resolveAresExpoConfig(baseEnv = process.env) {
       env: childEnv,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
+      // Force pipes so Node always populates error.stdout / error.stderr
+      // (inherit leaves them undefined and CI failures look empty).
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (err) {
-    const stderr = err && typeof err === 'object' && 'stderr' in err ? String(err.stderr) : '';
-    const stdout = err && typeof err === 'object' && 'stdout' in err ? String(err.stdout) : '';
-    const detail = (stderr || stdout || (err instanceof Error ? err.message : String(err))).trim();
+    const stderr =
+      err && typeof err === 'object' && 'stderr' in err && err.stderr != null
+        ? String(err.stderr)
+        : '';
+    const stdout =
+      err && typeof err === 'object' && 'stdout' in err && err.stdout != null
+        ? String(err.stdout)
+        : '';
+    const status =
+      err && typeof err === 'object' && 'status' in err ? String(err.status) : '?';
+    const detail = [
+      stderr.trim() && `stderr:\n${stderr.trim()}`,
+      stdout.trim() && `stdout:\n${stdout.trim()}`,
+      err instanceof Error && err.message ? `message: ${err.message}` : '',
+      `exitStatus: ${status}`,
+      `cwd: ${mobileRoot}`,
+      `expoCli: ${expoCli}`,
+      `node: ${process.version}`,
+      `WHITELABEL_PROFILE=${childEnv.WHITELABEL_PROFILE}`,
+      `EXPO_NO_DOTENV=${childEnv.EXPO_NO_DOTENV}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     throw new Error(
-      `ARES config verification failed while running expo config (EXPO_NO_DOTENV=1).\n${detail}`,
+      `ARES config verification failed while running expo config (EXPO_NO_DOTENV=1).\n\n${detail}`,
     );
   }
 
