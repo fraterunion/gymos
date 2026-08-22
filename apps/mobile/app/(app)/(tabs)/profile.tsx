@@ -62,7 +62,7 @@ function membershipCreditsLine(
 const GUEST_FEATURES = [
   'Estado de membresía',
   'Historial de reservas',
-  'Check-in con QR',
+  'Check-in con Mi Pase',
   'Configuración de cuenta',
 ] as const;
 

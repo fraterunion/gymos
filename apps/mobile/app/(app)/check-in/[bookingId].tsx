@@ -22,6 +22,12 @@ import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 
+/**
+ * LEGACY — per-reservation check-in QR. Member Experience 1.3 moved check-in to the
+ * permanent Mi Pase / Apple Wallet credential, and no screen links here any more. The route
+ * and its backend endpoint stay alive because already-installed builds still navigate to it;
+ * remove both once those builds are gone (see generateQrForBooking in check-ins.service.ts).
+ */
 function friendlyApiMessage(e: unknown): string {
   if (e instanceof ApiError) {
     const m = e.message.toLowerCase();

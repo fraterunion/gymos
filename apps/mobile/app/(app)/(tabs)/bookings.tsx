@@ -65,7 +65,7 @@ function resolveBookingClassItem(
 const GUEST_FEATURES = [
   'Próximas reservas',
   'Listas de espera',
-  'Check-in con QR',
+  'Check-in con Mi Pase',
   'Historial de asistencia',
 ] as const;
 
@@ -253,7 +253,7 @@ export default function MyBookingsScreen() {
   const router = useRouter();
   const scheme = useColorScheme();
   const C = getColors(scheme);
-  const { primaryColor } = useBranding();
+  const { primaryColor, appDisplayName } = useBranding();
   const { user } = useAuth();
   const isGuest = user === null;
   const matched = useMemberStudio().matched;
@@ -332,6 +332,17 @@ export default function MyBookingsScreen() {
                   >
                     Próximas
                   </Text>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: C.textMute,
+                      lineHeight: 19,
+                      marginTop: -8,
+                      marginBottom: 14,
+                    }}
+                  >
+                    Al llegar, presenta Mi Pase desde {appDisplayName} o Apple Wallet.
+                  </Text>
                   {myBookings.map((b, i) => {
                     const cls = getClass(b.scheduledClassId);
                     const className = resolveClassName(b.scheduledClassId);
@@ -345,8 +356,6 @@ export default function MyBookingsScreen() {
                       },
                       'thumbnail',
                     );
-                    const showCheckIn = b.status === 'CONFIRMED';
-
                     return (
                       <ClassCard
                         key={b.id}
@@ -357,20 +366,6 @@ export default function MyBookingsScreen() {
                         index={i}
                         statusPill={bookingStatusPill(b.status)}
                         onPress={() => router.push(`/(app)/class/${b.scheduledClassId}`)}
-                        footer={
-                          showCheckIn ? (
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel="Abrir código QR"
-                              onPress={() => router.push(`/(app)/check-in/${b.id}`)}
-                              hitSlop={8}
-                            >
-                              <Text style={{ fontSize: 14, fontWeight: '600', color: C.text }}>
-                                Código QR →
-                              </Text>
-                            </Pressable>
-                          ) : undefined
-                        }
                       />
                     );
                   })}

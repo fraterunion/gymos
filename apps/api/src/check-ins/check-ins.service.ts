@@ -41,6 +41,7 @@ import {
   WALLET_NO_ELIGIBLE_BOOKING_MESSAGE,
   WALLET_WRONG_STUDIO_MESSAGE,
   type WalletEligibleBookingCandidate,
+  type WalletWalkInCandidate,
 } from './wallet-checkin.constants';
 
 const ENTITLEMENT_OVERRIDE_ROLES: ReadonlySet<Role> = new Set([Role.ADMIN, Role.OWNER]);
@@ -129,6 +130,13 @@ export class CheckInsService {
     private readonly walletCredentials: WalletCredentialService,
   ) {}
 
+  /**
+   * LEGACY — reservation-scoped check-in QR. Superseded by the permanent WalletCredential
+   * ("Mi Pase" / Apple Wallet): identity is what Front Desk scans now, and the member UX
+   * shipped in Member Experience 1.3 no longer links here. Kept fully operational because
+   * already-installed builds still call it, and because tokens are 5-minute single-use, so
+   * old clients drain on their own. Retire it when QRToken creation stops, not on a date.
+   */
   async generateQrForBooking(
     studioId: string,
     bookingId: string,
@@ -201,6 +209,7 @@ export class CheckInsService {
     return this.checkInWithBookingQrJwt(studioId, actorUserId, qrTokenRaw);
   }
 
+  /** LEGACY branch — see generateQrForBooking. Must keep accepting old clients' tokens. */
   private async checkInWithBookingQrJwt(
     studioId: string,
     actorUserId: string,
@@ -229,7 +238,7 @@ export class CheckInsService {
 
     const tokenHash = hashQrToken(qrTokenRaw);
 
-    return this.prisma.$transaction(async (tx) => {
+    const attendance = await this.prisma.$transaction(async (tx) => {
       const now = new Date();
 
       const claim = await tx.qRToken.updateMany({
@@ -286,6 +295,9 @@ export class CheckInsService {
         checkedInByUserId: null,
       });
     });
+
+    this.logCheckInCompleted('booking_qr', { studioId, attendance, actorUserId: null });
+    return attendance;
   }
 
   async checkInManual(
@@ -312,13 +324,16 @@ export class CheckInsService {
     const now = new Date();
     await this.assertBookingAndClassEligibleForCheckIn(booking, booking.scheduledClass, now);
 
-    return this.performCheckIn(this.prisma, {
+    const attendance = await this.performCheckIn(this.prisma, {
       studioId,
       scheduledClassId: booking.scheduledClassId,
       userId: booking.userId,
       method: CheckInMethod.MANUAL,
       checkedInByUserId: actorUserId,
     });
+
+    this.logCheckInCompleted('manual', { studioId, attendance, actorUserId });
+    return attendance;
   }
 
   /**
@@ -369,15 +384,38 @@ export class CheckInsService {
     }
 
     const now = new Date();
+    const memberName = `${membership.user.firstName} ${membership.user.lastName}`.trim();
     const resolved = await this.resolveEligibleBookingForMember(studioId, credential.userId, now);
 
     if (resolved.outcome === 'already_checked_in') {
       this.logWalletCheckInDenied(studioId, credential.id, WALLET_ALREADY_CHECKED_IN_MESSAGE);
-      throw new ConflictException(WALLET_ALREADY_CHECKED_IN_MESSAGE);
+      // Structured like the 'multiple' case so Front Desk can say "<name> ya registró entrada
+      // en <clase> · <hora>" instead of a bare code. `message` stays the raw code string so
+      // already-installed clients, which match on the message text, are unaffected.
+      throw new ConflictException({
+        statusCode: 409,
+        code: WALLET_ALREADY_CHECKED_IN_MESSAGE,
+        message: WALLET_ALREADY_CHECKED_IN_MESSAGE,
+        memberName,
+        attendedClass: resolved.attendedClass,
+      });
     }
     if (resolved.outcome === 'none') {
       this.logWalletCheckInDenied(studioId, credential.id, WALLET_NO_ELIGIBLE_BOOKING_MESSAGE);
-      throw new ConflictException(WALLET_NO_ELIGIBLE_BOOKING_MESSAGE);
+      // 41% of real attendance at ARES has no booking row, so a no-reservation scan must not
+      // dead-end. Returning the member plus the classes currently in the check-in window lets
+      // Front Desk launch the EXISTING walk-in path (POST /classes/:id/manual-attendance) with
+      // a known member and class — that endpoint, not this one, still decides whether the
+      // walk-in is actually allowed (entitlement, credits, override, audit).
+      const walkInCandidates = await this.resolveWalkInCandidates(studioId, credential.userId, now);
+      throw new ConflictException({
+        statusCode: 409,
+        code: WALLET_NO_ELIGIBLE_BOOKING_MESSAGE,
+        message: WALLET_NO_ELIGIBLE_BOOKING_MESSAGE,
+        memberId: credential.userId,
+        memberName,
+        walkInCandidates,
+      });
     }
     if (resolved.outcome === 'multiple') {
       this.logger.log(
@@ -396,7 +434,7 @@ export class CheckInsService {
         // about to check them in — this is not new exposure, just naming who staff are already
         // looking at, so the disambiguation UI can say "Selecciona la clase de <name>" instead
         // of a bare list of times.
-        memberName: `${membership.user.firstName} ${membership.user.lastName}`.trim(),
+        memberName,
         candidates: resolved.candidates,
       });
     }
@@ -425,12 +463,39 @@ export class CheckInsService {
         outcome: 'checked_in',
       }),
     );
+    this.logCheckInCompleted('wallet_credential', { studioId, attendance, actorUserId: null });
     return attendance;
   }
 
   private logWalletCheckInDenied(studioId: string, walletCredentialId: string | null, reason: string): void {
     this.logger.log(
       JSON.stringify({ event: 'wallet.checkin.denied', studioId, walletCredentialId, reason }),
+    );
+  }
+
+  /**
+   * The one place check-in SOURCE becomes observable. Attendance.method cannot answer this —
+   * permanent-credential and legacy booking-QR check-ins both persist CheckInMethod.QR with a
+   * null checkedInByUserId, so they are indistinguishable in the table. Emitting the
+   * discriminator here keeps adoption measurable with no migration and no new enum value.
+   *
+   * Only opaque ids are logged: never the scanned barcode, never the raw WalletCredential,
+   * never the booking QR JWT (see logWalletCheckInDenied / WalletCredentialService.resolve).
+   */
+  private logCheckInCompleted(
+    source: 'wallet_credential' | 'booking_qr' | 'manual',
+    input: { studioId: string; attendance: AttendanceSummary; actorUserId: string | null },
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        event: 'checkin.completed',
+        source,
+        studioId: input.studioId,
+        attendanceId: input.attendance.id,
+        scheduledClassId: input.attendance.scheduledClassId,
+        method: input.attendance.checkInMethod,
+        actorUserId: input.actorUserId,
+      }),
     );
   }
 
@@ -446,7 +511,7 @@ export class CheckInsService {
     now: Date,
   ): Promise<
     | { outcome: 'none' }
-    | { outcome: 'already_checked_in' }
+    | { outcome: 'already_checked_in'; attendedClass: WalletWalkInCandidate }
     | { outcome: 'multiple'; candidates: WalletEligibleBookingCandidate[] }
     | {
         outcome: 'one';
@@ -504,7 +569,17 @@ export class CheckInsService {
     const unattended = withinWindow.filter((b) => !attendedIds.has(b.scheduledClassId));
 
     if (unattended.length === 0) {
-      return { outcome: 'already_checked_in' };
+      // Every in-window booking is already attended. Name the earliest one so staff see which
+      // class the member is already in rather than an unexplained refusal.
+      const attended = withinWindow[0]!;
+      return {
+        outcome: 'already_checked_in',
+        attendedClass: {
+          scheduledClassId: attended.scheduledClassId,
+          className: attended.scheduledClass.classTemplate.name,
+          startsAt: attended.scheduledClass.startsAt.toISOString(),
+        },
+      };
     }
     if (unattended.length === 1) {
       return { outcome: 'one', booking: unattended[0]! };
@@ -518,6 +593,51 @@ export class CheckInsService {
         startsAt: b.scheduledClass.startsAt.toISOString(),
       })),
     };
+  }
+
+  /**
+   * Classes a no-reservation member could be walked into right now. Uses the SAME window as
+   * booking resolution (studio early-open + fixed late grace) so staff never see a class the
+   * scanner would refuse to check anyone into, and so no new timing threshold enters the
+   * system. Returns candidates only — every actual authorization decision (role, entitlement,
+   * credits, override, audit) stays in registerManualClassAttendance.
+   */
+  private async resolveWalkInCandidates(
+    studioId: string,
+    userId: string,
+    now: Date,
+  ): Promise<WalletWalkInCandidate[]> {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { checkInWindowMinutes: true },
+    });
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
+    }
+
+    const lowerBound = new Date(now.getTime() - CHECK_IN_LATE_GRACE_MINUTES * 60_000);
+    const upperBound = new Date(now.getTime() + studio.checkInWindowMinutes * 60_000);
+
+    const classes = await this.prisma.scheduledClass.findMany({
+      where: {
+        studioId,
+        status: ClassStatus.SCHEDULED,
+        startsAt: { gte: lowerBound, lte: upperBound },
+        // A class the member is already in is not a walk-in candidate; the unique constraint
+        // would reject it anyway, so filtering here just avoids offering a doomed action.
+        attendances: { none: { userId } },
+      },
+      include: { classTemplate: { select: { name: true } } },
+      orderBy: { startsAt: 'asc' },
+    });
+
+    return classes
+      .filter((c) => isWithinCheckInWindow(c.startsAt, now, studio.checkInWindowMinutes))
+      .map((c) => ({
+        scheduledClassId: c.id,
+        className: c.classTemplate.name,
+        startsAt: c.startsAt.toISOString(),
+      }));
   }
 
   async getBookingAttendance(

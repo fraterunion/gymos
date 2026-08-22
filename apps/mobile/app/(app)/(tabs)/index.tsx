@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -312,7 +312,7 @@ function CoachSpotlight({ classes }: { classes: ScheduledClassDto[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Next-session hero — full-bleed cinematic card with check-in CTA inside
+// Next-session hero — full-bleed cinematic card with Mi Pase CTA inside
 // ---------------------------------------------------------------------------
 
 function NextSessionHero({
@@ -321,14 +321,14 @@ function NextSessionHero({
   timeZone,
   primaryColor,
   onPress,
-  onCheckIn,
+  onShowPass,
 }: {
   booking: BookingWithClass;
   cls: { name: string; durationMinutes: number; instructorName: string | null; heroImageUri?: string | null } | null;
   timeZone: string;
   primaryColor: string;
   onPress: () => void;
-  onCheckIn: () => void;
+  onShowPass: () => void;
 }) {
   const time = formatClassTime(booking.scheduledClass.startsAt, timeZone);
   const scale = useSharedValue(1);
@@ -426,7 +426,8 @@ function NextSessionHero({
 
           <Pressable
             accessibilityRole="button"
-            onPress={(e) => { e.stopPropagation?.(); onCheckIn(); }}
+            accessibilityLabel="Abrir Mi Pase"
+            onPress={(e) => { e.stopPropagation?.(); onShowPass(); }}
             hitSlop={10}
           >
             <Text
@@ -437,7 +438,7 @@ function NextSessionHero({
                 letterSpacing: -0.1,
               }}
             >
-              Código QR →
+              Mi Pase →
             </Text>
           </Pressable>
         </View>
@@ -854,7 +855,7 @@ export default function HomeScreen() {
                 timeZone={timeZone}
                 primaryColor={primaryColor}
                 onPress={() => router.push(`/(app)/class/${nextBooking.scheduledClassId}`)}
-                onCheckIn={() => router.push(`/(app)/check-in/${nextBooking.id}`)}
+                onShowPass={() => router.push('/(app)/mi-pase' as Href)}
               />
             ) : null}
 

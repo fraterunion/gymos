@@ -397,4 +397,303 @@ describe('Wallet smart-booking check-in (e2e)', () => {
       expect((res.body as { userId: string }).userId).toBe(member.id);
     });
   });
+
+  /**
+   * Member Experience 1.3 — the permanent credential is the member's only QR, so a scan that
+   * finds no reservation must still identify WHO was scanned and what Front Desk can do next.
+   * None of this weakens the check-in decision itself: the walk-in remains a separate,
+   * separately-authorized call into the existing manual-attendance domain path.
+   */
+  describe('identity-based check-in (Member Experience 1.3)', () => {
+    type NoBookingBody = {
+      code: string;
+      memberId: string;
+      memberName: string;
+      walkInCandidates: { scheduledClassId: string; className: string; startsAt: string }[];
+    };
+
+    async function scanNoBooking(studioId: string, staffToken: string, rawCredential: string) {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studioId}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken: `gymos:v1:${rawCredential}` })
+        .expect(409);
+      return res.body as NoBookingBody;
+    }
+
+    it('identifies the member and offers the in-window class as a walk-in candidate', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const { member, staffToken } = await setupMemberAndStaff(studio.id, 'walkin-offer');
+      const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
+
+      const body = await scanNoBooking(studio.id, staffToken, rawCredential!);
+
+      expect(body.code).toBe('WALLET_NO_ELIGIBLE_BOOKING');
+      expect(body.memberId).toBe(member.id);
+      expect(body.memberName.length).toBeGreaterThan(0);
+      expect(body.walkInCandidates).toHaveLength(1);
+      expect(body.walkInCandidates[0]!.scheduledClassId).toBe(cls.id);
+
+      // Identifying the member must not have checked anyone in.
+      expect(await prisma.attendance.count({ where: { studioId: studio.id } })).toBe(0);
+    });
+
+    it('offers no walk-in candidate when nothing is in the check-in window', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesOutsideCheckInWindow();
+      await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const { member, staffToken } = await setupMemberAndStaff(studio.id, 'walkin-none');
+      const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
+
+      const body = await scanNoBooking(studio.id, staffToken, rawCredential!);
+      expect(body.walkInCandidates).toHaveLength(0);
+    });
+
+    it('excludes a class the member is already in from walk-in candidates', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const { member, staffToken } = await setupMemberAndStaff(studio.id, 'walkin-dupe');
+      await prisma.attendance.create({
+        data: { studioId: studio.id, scheduledClassId: cls.id, userId: member.id, method: 'MANUAL' },
+      });
+      const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
+
+      const body = await scanNoBooking(studio.id, staffToken, rawCredential!);
+      expect(body.walkInCandidates).toHaveLength(0);
+    });
+
+    it('names the member and the class they are already in on a repeat scan', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const { member, staffToken } = await setupMemberAndStaff(studio.id, 'already-detail');
+      await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+      const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
+      const barcode = `gymos:v1:${rawCredential}`;
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken: barcode })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken: barcode })
+        .expect(409);
+
+      const body = res.body as { code: string; memberName: string; attendedClass: { scheduledClassId: string } };
+      expect(body.code).toBe('WALLET_ALREADY_CHECKED_IN');
+      expect(body.memberName.length).toBeGreaterThan(0);
+      expect(body.attendedClass.scheduledClassId).toBe(cls.id);
+    });
+
+    it('the walk-in candidate can be registered through the existing manual-attendance path', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+
+      const member = await createUserWithPassword(prisma, { email: 'walkin-do-mem@e2e.local' });
+      const deskUser = await createUserWithPassword(prisma, { email: 'walkin-do-desk@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, deskUser.id, studio.id, Role.FRONT_DESK);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const deskToken = await loginAccessToken(app, deskUser.email, deskUser.password);
+      const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
+
+      const body = await scanNoBooking(studio.id, deskToken, rawCredential!);
+      const candidate = body.walkInCandidates[0]!;
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${candidate.scheduledClassId}/manual-attendance`)
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({ memberId: body.memberId })
+        .expect(201);
+
+      const attendance = await prisma.attendance.findUnique({
+        where: {
+          scheduledClassId_userId: { scheduledClassId: candidate.scheduledClassId, userId: member.id },
+        },
+      });
+      expect(attendance).not.toBeNull();
+      // Walk-in stays a walk-in: no booking is invented for it.
+      expect(await prisma.booking.count({ where: { studioId: studio.id, userId: member.id } })).toBe(0);
+    });
+
+    it('the walk-in path still enforces entitlement — the scanner does not bypass it', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+
+      const member = await createUserWithPassword(prisma, { email: 'walkin-noent-mem@e2e.local' });
+      const deskUser = await createUserWithPassword(prisma, { email: 'walkin-noent-desk@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createMembership(prisma, deskUser.id, studio.id, Role.FRONT_DESK);
+      const deskToken = await loginAccessToken(app, deskUser.email, deskUser.password);
+      const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
+
+      const body = await scanNoBooking(studio.id, deskToken, rawCredential!);
+      const candidate = body.walkInCandidates[0]!;
+
+      // No subscription — manual-attendance refuses, exactly as it does from the class roster.
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${candidate.scheduledClassId}/manual-attendance`)
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({ memberId: body.memberId });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(await prisma.attendance.count({ where: { studioId: studio.id } })).toBe(0);
+    });
+
+    it('the same permanent credential checks the member into two different bookings over time', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { member, staffToken } = await setupMemberAndStaff(studio.id, 'permanent');
+      const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
+      const barcode = `gymos:v1:${rawCredential}`;
+      const credentialBefore = await prisma.walletCredential.findFirstOrThrow({
+        where: { studioId: studio.id, userId: member.id },
+      });
+
+      const first = classTimesWithinCheckInWindow();
+      const clsA = await createScheduledClass(prisma, studio.id, tpl.id, {
+        startsAt: first.start,
+        endsAt: first.end,
+      });
+      await createConfirmedBooking(prisma, studio.id, clsA.id, member.id);
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken: barcode })
+        .expect(201);
+
+      // A later, separate reservation — the member's QR is unchanged and still resolves.
+      await prisma.scheduledClass.update({
+        where: { id: clsA.id },
+        data: { startsAt: new Date(Date.now() - 6 * 60 * 60 * 1000) },
+      });
+      const second = classTimesWithinCheckInWindow();
+      const clsB = await createScheduledClass(prisma, studio.id, tpl.id, {
+        startsAt: second.start,
+        endsAt: second.end,
+      });
+      await createConfirmedBooking(prisma, studio.id, clsB.id, member.id);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken: barcode })
+        .expect(201);
+
+      const credentialAfter = await prisma.walletCredential.findFirstOrThrow({
+        where: { studioId: studio.id, userId: member.id },
+      });
+      expect(credentialAfter.id).toBe(credentialBefore.id);
+      expect(credentialAfter.credentialHash).toBe(credentialBefore.credentialHash);
+      expect(credentialAfter.revokedAt).toBeNull();
+      expect(await prisma.walletCredential.count({ where: { studioId: studio.id, userId: member.id } })).toBe(1);
+    });
+
+    it('booking a class never issues or rotates a credential (QR is identity, not reservation)', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const plan = await createMembershipPlanForStudio(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const member = await createUserWithPassword(prisma, { email: 'book-nocred@e2e.local' });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await createActiveSubscription(prisma, studio.id, member.id, plan.id);
+      const memberToken = await loginAccessToken(app, member.email, member.password);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/bookings`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({})
+        .expect(201);
+
+      expect(await prisma.walletCredential.count({ where: { studioId: studio.id, userId: member.id } })).toBe(0);
+    });
+
+    /**
+     * Decision 14 release blocker, end to end: a member who has never opened Mi Pase and has
+     * no Apple Wallet pass must be able to get a working QR from the app alone. Apple Wallet
+     * is convenience, not a prerequisite.
+     */
+    it('a first-time member provisions Mi Pase in-app and that QR immediately checks them in', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const { member, staffToken } = await setupMemberAndStaff(studio.id, 'firsttime');
+      await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+      const memberToken = await loginAccessToken(app, member.email, member.password);
+
+      // Precondition: nothing provisioned yet.
+      expect(await prisma.walletCredential.count({ where: { studioId: studio.id, userId: member.id } })).toBe(0);
+
+      const passRes = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/wallet/credential`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({})
+        .expect(200);
+
+      const { barcode } = passRes.body as { barcode: string };
+      expect(barcode.startsWith('gymos:v1:')).toBe(true);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken: barcode })
+        .expect(201);
+
+      const attendance = await prisma.attendance.findUnique({
+        where: { scheduledClassId_userId: { scheduledClassId: cls.id, userId: member.id } },
+      });
+      expect(attendance).not.toBeNull();
+      expect(await prisma.walletCredential.count({ where: { studioId: studio.id, userId: member.id } })).toBe(1);
+    });
+
+    it('LEGACY: booking QR still generates, still scans, and is still single-use', async () => {
+      const studio = await createStudio(prisma);
+      const tpl = await createClassTemplate(prisma, studio.id);
+      const { start, end } = classTimesWithinCheckInWindow();
+      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt: start, endsAt: end });
+      const { member, staffToken } = await setupMemberAndStaff(studio.id, 'legacy-qr');
+      const booking = await createConfirmedBooking(prisma, studio.id, cls.id, member.id);
+      const memberToken = await loginAccessToken(app, member.email, member.password);
+
+      const qrRes = await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/bookings/${booking.id}/qr`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .expect(201);
+      const { qrToken } = qrRes.body as { qrToken: string };
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken })
+        .expect(201);
+
+      // Replay of the same legacy token is still rejected.
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${studio.id}/check-ins/qr`)
+        .set('Authorization', `Bearer ${staffToken}`)
+        .send({ qrToken })
+        .expect(409);
+
+      expect(
+        await prisma.attendance.count({ where: { scheduledClassId: cls.id, userId: member.id } }),
+      ).toBe(1);
+    });
+  });
 });

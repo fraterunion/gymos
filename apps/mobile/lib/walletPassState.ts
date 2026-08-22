@@ -120,6 +120,72 @@ export function parseMultipleCandidatesError(error: unknown): WalletMultipleCand
   return { memberName: typeof body.memberName === 'string' ? body.memberName : 'Miembro', candidates };
 }
 
+/** A class the scanned member could be walked into — never a reservation. */
+export type WalletWalkInCandidate = {
+  scheduledClassId: string;
+  className: string;
+  startsAt: string;
+};
+
+export type WalletNoBooking = {
+  memberId: string;
+  memberName: string;
+  walkInCandidates: WalletWalkInCandidate[];
+};
+
+function parseWalkInCandidates(value: unknown): WalletWalkInCandidate[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (c): c is WalletWalkInCandidate =>
+      typeof c === 'object' &&
+      c !== null &&
+      typeof (c as WalletWalkInCandidate).scheduledClassId === 'string' &&
+      typeof (c as WalletWalkInCandidate).className === 'string' &&
+      typeof (c as WalletWalkInCandidate).startsAt === 'string',
+  );
+}
+
+/**
+ * Extracts the identified member (and any walk-in options) from a WALLET_NO_ELIGIBLE_BOOKING
+ * response. The scan still failed to check anyone in — this only lets Front Desk see WHO was
+ * scanned and offer the separate walk-in action instead of a dead end. Returns null when the
+ * backend is older than Member Experience 1.3 and sent a bare message, so the caller falls
+ * back to plain error copy.
+ */
+export function parseNoEligibleBookingError(error: unknown): WalletNoBooking | null {
+  if (!isApiErrorShape(error)) return null;
+  const body = error.body as
+    | { code?: string; memberId?: unknown; memberName?: unknown; walkInCandidates?: unknown }
+    | undefined;
+  if (body?.code !== 'WALLET_NO_ELIGIBLE_BOOKING' || typeof body.memberId !== 'string') {
+    return null;
+  }
+  return {
+    memberId: body.memberId,
+    memberName: typeof body.memberName === 'string' ? body.memberName : 'Miembro',
+    walkInCandidates: parseWalkInCandidates(body.walkInCandidates),
+  };
+}
+
+export type WalletAlreadyCheckedIn = {
+  memberName: string;
+  attendedClass: WalletWalkInCandidate | null;
+};
+
+/** Extracts who/what for WALLET_ALREADY_CHECKED_IN so staff see the class, not just a refusal. */
+export function parseAlreadyCheckedInError(error: unknown): WalletAlreadyCheckedIn | null {
+  if (!isApiErrorShape(error)) return null;
+  const body = error.body as { code?: string; memberName?: unknown; attendedClass?: unknown } | undefined;
+  if (body?.code !== 'WALLET_ALREADY_CHECKED_IN') return null;
+  const [attendedClass] = parseWalkInCandidates(
+    body.attendedClass ? [body.attendedClass] : [],
+  );
+  return {
+    memberName: typeof body.memberName === 'string' ? body.memberName : 'Miembro',
+    attendedClass: attendedClass ?? null,
+  };
+}
+
 /** Front Desk copy for the Wallet-specific denial codes — mirrors staffScanErrorCopy's
  *  pattern for the existing booking-QR scanner, extended for Wallet credential scans. */
 export function walletScanErrorCopy(error: unknown): { title: string; message: string } | null {

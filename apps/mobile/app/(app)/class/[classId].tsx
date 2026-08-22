@@ -1,11 +1,12 @@
 import { useNavigation } from '@react-navigation/native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Alert, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { AuthRequiredModal } from '@/components/AuthRequiredModal';
+import { BookingConfirmedModal } from '@/components/BookingConfirmedModal';
 import { BrandButton } from '@/components/BrandButton';
 import { ImageSlot } from '@/components/ImageSlot';
 import { SubscriptionRequiredPanel } from '@/components/SubscriptionRequiredPanel';
@@ -185,6 +186,7 @@ export default function ClassDetailScreen() {
   const [authModalVisible, setAuthModalVisible] = useState(false);
   /** Set when the API rejects booking/waitlist because the class already started. */
   const [serverClassClosed, setServerClassClosed] = useState(false);
+  const [bookingConfirmed, setBookingConfirmed] = useState(false);
 
   const studioId = matched?.studio.id;
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
@@ -300,7 +302,11 @@ export default function ClassDetailScreen() {
   const isScheduled = cls?.status === 'SCHEDULED';
   const canReserve = isScheduled && !serverClassClosed;
 
-  async function run(action: () => Promise<void>) {
+  /**
+   * `confirmsBooking` is set only by the reserve actions, so cancelling or joining a
+   * waitlist never shows the reservation confirmation.
+   */
+  async function run(action: () => Promise<void>, confirmsBooking = false) {
     setInlineError(null);
     setSubscriptionRequired(false);
     setBusy(true);
@@ -310,6 +316,7 @@ export default function ClassDetailScreen() {
       setSubscriptionRequired(false);
       setServerClassClosed(false);
       await refreshActivity();
+      if (confirmsBooking) setBookingConfirmed(true);
     } catch (e) {
       if (isActiveSubscriptionRequiredError(e)) {
         setSubscriptionRequired(true);
@@ -415,7 +422,8 @@ export default function ClassDetailScreen() {
       };
       secondaryCTA = {
         label: 'Volver a intentar',
-        onPress: () => void run(async () => { await createClassBooking(memberStudioId, classId); }),
+        onPress: () =>
+          void run(async () => { await createClassBooking(memberStudioId, classId); }, true),
       };
     } else if (hasAccess === null) {
       primaryCTA = {
@@ -437,7 +445,8 @@ export default function ClassDetailScreen() {
     } else {
       primaryCTA = {
         label: 'Reservar clase',
-        onPress: () => void run(async () => { await createClassBooking(memberStudioId, classId); }),
+        onPress: () =>
+          void run(async () => { await createClassBooking(memberStudioId, classId); }, true),
       };
     }
   }
@@ -638,24 +647,6 @@ export default function ClassDetailScreen() {
             gap: 10,
           }}
         >
-          {booking ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push(`/(app)/check-in/${booking.id}`)}
-              style={{ paddingVertical: 10, alignItems: 'center' }}
-            >
-              <Text
-                style={{
-                  fontSize: 15,
-                  fontWeight: '700',
-                  color: C.text,
-                  letterSpacing: -0.2,
-                }}
-              >
-                QR de check-in →
-              </Text>
-            </Pressable>
-          ) : null}
           {primaryCTA ? (
             <BrandButton
               label={primaryCTA.label}
@@ -677,10 +668,17 @@ export default function ClassDetailScreen() {
         </View>
       ) : null}
 
+      <BookingConfirmedModal
+        visible={bookingConfirmed}
+        appDisplayName={appDisplayName}
+        accentColor={accentColor}
+        onDismiss={() => setBookingConfirmed(false)}
+      />
+
       <AuthRequiredModal
         visible={authModalVisible}
         title="Regístrate para reservar"
-        description="Regístrate para reservar clases, ver tu código QR y hacer check-in en recepción."
+        description="Regístrate para reservar clases y hacer check-in en recepción con Mi Pase."
         onPrimary={() => {
           setAuthModalVisible(false);
           router.push({

@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
   classifyWalletButtonError,
   deriveMiPaseState,
+  parseAlreadyCheckedInError,
   parseMultipleCandidatesError,
+  parseNoEligibleBookingError,
   walletScanErrorCopy,
 } from './walletPassState.ts';
 
@@ -157,4 +159,80 @@ test('walletScanErrorCopy gives distinct, friendly Spanish copy for every Wallet
 test('walletScanErrorCopy returns null for a non-Wallet error, letting the caller fall back', () => {
   assert.equal(walletScanErrorCopy(new ApiError('Already checked in', 409)), null);
   assert.equal(walletScanErrorCopy(new Error('boom')), null);
+});
+
+// The two codes below reach Front Desk as 403/401, which staffScanErrorCopy would otherwise
+// explain as the STAFF user's own permission/session problem. Wallet copy must win.
+test('wallet denials are never described as the staff user\'s own permission or session problem', () => {
+  const wrongStudio = walletScanErrorCopy(new ApiError('WALLET_WRONG_STUDIO', 403));
+  assert.doesNotMatch(wrongStudio!.message, /permiso/i);
+
+  const revoked = walletScanErrorCopy(new ApiError('WALLET_CREDENTIAL_REVOKED', 401));
+  assert.doesNotMatch(revoked!.message, /sesión|inicia sesión/i);
+});
+
+test('parseNoEligibleBookingError surfaces the identified member and walk-in options', () => {
+  const parsed = parseNoEligibleBookingError(
+    new ApiError('WALLET_NO_ELIGIBLE_BOOKING', 409, {
+      code: 'WALLET_NO_ELIGIBLE_BOOKING',
+      memberId: 'usr_1',
+      memberName: 'Apple Review',
+      walkInCandidates: [{ scheduledClassId: 'cls_1', className: 'Legs + HIIT', startsAt: '2026-08-22T13:00:00.000Z' }],
+    }),
+  );
+  assert.equal(parsed?.memberId, 'usr_1');
+  assert.equal(parsed?.memberName, 'Apple Review');
+  assert.equal(parsed?.walkInCandidates.length, 1);
+});
+
+test('parseNoEligibleBookingError tolerates a member with no walk-in options', () => {
+  const parsed = parseNoEligibleBookingError(
+    new ApiError('WALLET_NO_ELIGIBLE_BOOKING', 409, {
+      code: 'WALLET_NO_ELIGIBLE_BOOKING',
+      memberId: 'usr_1',
+      memberName: 'Apple Review',
+      walkInCandidates: [],
+    }),
+  );
+  assert.deepEqual(parsed?.walkInCandidates, []);
+});
+
+test('parseNoEligibleBookingError returns null for a pre-1.3 backend so the caller falls back to plain copy', () => {
+  assert.equal(parseNoEligibleBookingError(new ApiError('WALLET_NO_ELIGIBLE_BOOKING', 409)), null);
+  assert.equal(parseNoEligibleBookingError(new ApiError('WALLET_ALREADY_CHECKED_IN', 409, { code: 'WALLET_ALREADY_CHECKED_IN' })), null);
+});
+
+test('parseNoEligibleBookingError drops malformed walk-in candidates rather than rendering broken rows', () => {
+  const parsed = parseNoEligibleBookingError(
+    new ApiError('WALLET_NO_ELIGIBLE_BOOKING', 409, {
+      code: 'WALLET_NO_ELIGIBLE_BOOKING',
+      memberId: 'usr_1',
+      walkInCandidates: [{ scheduledClassId: 'cls_1' }, 'nope', null],
+    }),
+  );
+  assert.deepEqual(parsed?.walkInCandidates, []);
+  assert.equal(parsed?.memberName, 'Miembro');
+});
+
+test('parseAlreadyCheckedInError names the member and the class they are already in', () => {
+  const parsed = parseAlreadyCheckedInError(
+    new ApiError('WALLET_ALREADY_CHECKED_IN', 409, {
+      code: 'WALLET_ALREADY_CHECKED_IN',
+      memberName: 'Apple Review',
+      attendedClass: { scheduledClassId: 'cls_1', className: 'Legs + HIIT', startsAt: '2026-08-22T13:00:00.000Z' },
+    }),
+  );
+  assert.equal(parsed?.memberName, 'Apple Review');
+  assert.equal(parsed?.attendedClass?.className, 'Legs + HIIT');
+});
+
+test('parseAlreadyCheckedInError still identifies the member when class detail is missing', () => {
+  const parsed = parseAlreadyCheckedInError(
+    new ApiError('WALLET_ALREADY_CHECKED_IN', 409, {
+      code: 'WALLET_ALREADY_CHECKED_IN',
+      memberName: 'Apple Review',
+    }),
+  );
+  assert.equal(parsed?.memberName, 'Apple Review');
+  assert.equal(parsed?.attendedClass, null);
 });

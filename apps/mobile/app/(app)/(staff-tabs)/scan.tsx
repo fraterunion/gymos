@@ -23,7 +23,13 @@ import {
   staffScanErrorCopy,
 } from '@/lib/staffScanFeedback';
 import { canAccessStaffScan } from '@/lib/staffRole';
-import { parseMultipleCandidatesError } from '@/lib/walletPassState';
+import { formatClassTime } from '@/lib/datetime';
+import {
+  parseAlreadyCheckedInError,
+  parseMultipleCandidatesError,
+  parseNoEligibleBookingError,
+  walletScanErrorCopy,
+} from '@/lib/walletPassState';
 import { getColors, Radius, Space } from '@/constants/Theme';
 
 const SCAN_FRAME_SIZE = 248;
@@ -187,6 +193,7 @@ export default function StaffScanScreen() {
         const multiple = parseMultipleCandidatesError(e);
         if (multiple) {
           const selectParams = new URLSearchParams({
+            mode: 'booking',
             memberName: multiple.memberName,
             candidates: JSON.stringify(multiple.candidates),
             timeZone,
@@ -194,7 +201,40 @@ export default function StaffScanScreen() {
           router.push(`/(app)/staff-scan-select?${selectParams.toString()}` as Href);
           return;
         }
-        const { title, message } = staffScanErrorCopy(e);
+
+        // Identified the member but found no reservation. Hand the member (and any classes
+        // currently open for walk-in) to the result screen so staff can act instead of
+        // re-scanning; the walk-in itself remains a separate, explicit, authorized action.
+        const noBooking = parseNoEligibleBookingError(e);
+        if (noBooking) {
+          const noBookingParams = new URLSearchParams({
+            outcome: 'no_booking',
+            memberId: noBooking.memberId,
+            memberName: noBooking.memberName,
+            walkInCandidates: JSON.stringify(noBooking.walkInCandidates),
+            timeZone,
+          });
+          router.push(`/(app)/staff-scan-result?${noBookingParams.toString()}` as Href);
+          return;
+        }
+
+        const alreadyIn = parseAlreadyCheckedInError(e);
+        if (alreadyIn) {
+          const detail = alreadyIn.attendedClass
+            ? `${alreadyIn.attendedClass.className} · ${formatClassTime(alreadyIn.attendedClass.startsAt, timeZone)}`
+            : null;
+          const alreadyParams = new URLSearchParams({
+            outcome: 'error',
+            title: 'Ya registró entrada',
+            message: detail ? `${alreadyIn.memberName}\n${detail}` : alreadyIn.memberName,
+          });
+          router.push(`/(app)/staff-scan-result?${alreadyParams.toString()}` as Href);
+          return;
+        }
+
+        // Wallet denials first: they are 401/403/409s whose codes staffScanErrorCopy would
+        // otherwise mistake for the STAFF user's own session/permission problem.
+        const { title, message } = walletScanErrorCopy(e) ?? staffScanErrorCopy(e);
         const errorParams = new URLSearchParams({
           outcome: 'error',
           title,
@@ -275,7 +315,7 @@ export default function StaffScanScreen() {
               letterSpacing: -0.2,
             }}
           >
-            Apunta la cámara al código de check-in del miembro.
+            Apunta la cámara al pase del miembro.
           </Text>
         </Animated.View>
 
@@ -343,7 +383,7 @@ export default function StaffScanScreen() {
             lineHeight: 19,
           }}
         >
-          Los códigos QR expiran después de unos minutos.
+          Funciona con Mi Pase y Apple Wallet.
         </Text>
 
       </View>
