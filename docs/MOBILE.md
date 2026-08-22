@@ -18,13 +18,16 @@ White-label member app under `apps/mobile`. Each gym ships its own build; **nati
 
 ### White-label build profiles (Phase 5A)
 
-- **`WHITELABEL_PROFILE`** — Selects `apps/mobile/env/.env.<profile>` before `apps/mobile/.env`. Default **`local`** uses safe template defaults for native shell fields (internal dev only).
+- **`WHITELABEL_PROFILE`** — Selects `apps/mobile/env/.env.<profile>`. Default **`local`** uses safe template defaults for native shell fields (internal dev only).
 - **Native shell variables** — `APP_DISPLAY_NAME`, `APP_SCHEME`, `IOS_BUNDLE_IDENTIFIER`, `ANDROID_PACKAGE`, `APP_ICON_PATH`, `APP_SPLASH_PATH`, `APP_ADAPTIVE_ICON_PATH`, optional `EXPO_SLUG`. Documented in **`docs/WHITE_LABEL_BUILDS.md`** and **`docs/ENV_VARS.md`**.
 - **Examples** — `apps/mobile/env/.env.local.example`, `.env.ares.example`, `.env.pilates-toluca.example` (copy to drop `.example`).
 
-Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev, or use **`env/.env.local`** with `WHITELABEL_PROFILE=local`. Values are inlined at **bundle** time for `EXPO_PUBLIC_*`; native config is resolved when Expo loads **`app.config.ts`**.
+**Env precedence (highest → lowest):** explicit `process.env` (shell / EAS / CI) → `env/.env.<profile>` → root `apps/mobile/.env` as a **fill-only** fallback. Env files never overwrite a value that is already set. A local `.env` must not replace client/production profile values (this nearly shipped `localhost` / `ares-qa-demo` into an ARES OTA). Client profiles fail fast if the resolved API URL is loopback or the studio slug is a QA demo slug.
+
+Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev, or use **`env/.env.local`** with `WHITELABEL_PROFILE=local`. Values are inlined at **bundle** time for `EXPO_PUBLIC_*`; native config is resolved when Expo loads **`app.config.js`**.
 
 **Verify config:** `pnpm --filter mobile config:print`
+**Verify ARES safety:** `pnpm --filter mobile config:verify:ares`
 
 ### EAS Build profiles (Phase 5B)
 

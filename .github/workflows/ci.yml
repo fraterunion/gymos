@@ -55,3 +55,8 @@ jobs:
 
       - name: Lint, typecheck, test, e2e, build
         run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api
+
+      # Lightweight mobile config safety net (env precedence + production fail-fast).
+      # Full mobile lint/typecheck stay out of this job; this catches the OTA .env override class of bug.
+      - name: Mobile env precedence tests
+        run: pnpm --filter mobile test:env

@@ -2,7 +2,14 @@ import base from '@gymos/config/eslint';
 
 export default [
   {
-    ignores: ['app.config.js', 'metro.config.js', 'tailwind.config.js', 'babel.config.js', 'scripts/**'],
+    ignores: [
+      'app.config.js',
+      'metro.config.js',
+      'tailwind.config.js',
+      'babel.config.js',
+      'scripts/**',
+      '**/*.cjs',
+    ],
   },
   ...base,
 ];

@@ -52,7 +52,9 @@ Expected patterns once auth and API URL exist:
 
 ### Build-time native identity (`apps/mobile`, Expo config)
 
-These are read by **`app.config.ts`** when Expo resolves the config (not inlined by Metro unless also prefixed with `EXPO_PUBLIC_`). Use `apps/mobile/env/.env.<WHITELABEL_PROFILE>` — see **`docs/WHITE_LABEL_BUILDS.md`**.
+These are read by **`app.config.js`** when Expo resolves the config (not inlined by Metro unless also prefixed with `EXPO_PUBLIC_`). Use `apps/mobile/env/.env.<WHITELABEL_PROFILE>` — see **`docs/WHITE_LABEL_BUILDS.md`**.
+
+**Precedence:** explicit `process.env` (shell / EAS / CI) → `env/.env.<profile>` → root `apps/mobile/.env` (fill-only; never overwrites). Client profiles fail if the resolved API URL is loopback or the studio slug is a QA demo slug (`pnpm --filter mobile config:verify:ares`).
 
 | Variable | Purpose |
 |----------|---------|

@@ -1,5 +1,8 @@
-const fs = require('node:fs');
-const path = require('node:path');
+const {
+  loadProfileEnvFiles,
+  assertSafeResolvedEnv,
+  isClientProfile,
+} = require('./lib/whitelabelEnv.cjs');
 
 const MOBILE_ROOT = __dirname;
 
@@ -28,60 +31,6 @@ const ARES_PROFILE_DEFAULTS = {
   APP_ADAPTIVE_ICON_BG_COLOR: '#000000',
 };
 
-/**
- * Minimal .env parser (no dotenv package — works when node_modules is absent, e.g. EAS temp workspace).
- * - KEY=value lines; first '=' separates key from value
- * - Ignores blank lines and lines starting with #
- * - Double/single-quoted values: strip outer quotes only
- * - Unquoted: strips trailing ` # comment` (space + hash)
- * Matches prior dotenv.config({ override: true }): file entries always set process.env[key].
- */
-function applyEnvFile(absPath) {
-  if (!fs.existsSync(absPath)) return;
-  let raw;
-  try {
-    raw = fs.readFileSync(absPath, 'utf8');
-  } catch {
-    return;
-  }
-  const lines = raw.split(/\r?\n/);
-  for (const line of lines) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    if (eq <= 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = t.slice(eq + 1).trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    } else {
-      const hashIdx = value.search(/\s+#/);
-      if (hashIdx !== -1) {
-        value = value.slice(0, hashIdx).trimEnd();
-      }
-    }
-    process.env[key] = value;
-  }
-}
-
-function loadProfileEnvFiles() {
-  const profile = (process.env.WHITELABEL_PROFILE ?? 'local').trim() || 'local';
-  const tenantFile = path.join(MOBILE_ROOT, 'env', `.env.${profile}`);
-  const rootEnv = path.join(MOBILE_ROOT, '.env');
-
-  applyEnvFile(tenantFile);
-  applyEnvFile(rootEnv);
-  return profile;
-}
-
-function isClientProfile(profile) {
-  return profile !== 'local';
-}
-
 function profileDefaults(profile) {
   if (profile === 'ares') return { ...ARES_PROFILE_DEFAULTS };
   if (!isClientProfile(profile)) return { ...LOCAL_TEMPLATE_DEFAULTS };
@@ -106,7 +55,10 @@ function resolveAssetPath(profile, key) {
 }
 
 module.exports = ({ config }) => {
-  const profile = loadProfileEnvFiles();
+  // Precedence: explicit process.env > env/.env.<profile> > root .env (fill-only).
+  // See lib/whitelabelEnv.cjs — root `.env` must never clobber a client profile.
+  const profile = loadProfileEnvFiles(MOBILE_ROOT, process.env);
+  assertSafeResolvedEnv(profile, process.env);
 
   // APP_LAUNCHER_NAME → native iOS CFBundleDisplayName / Android android:label (home screen).
   // APP_DISPLAY_NAME  → in-app branding / store listing copy (Ares Training Club).
@@ -203,7 +155,7 @@ module.exports = ({ config }) => {
     extra: {
       ...config.extra,
       whitelabelProfile: profile,
-eas: {
+      eas: {
         projectId: '9f5697a5-b5cb-425b-850f-fa2f61068f20',
       },
     },
