@@ -13,7 +13,7 @@ import {
   WALLET_RECOVERY_INTEGRITY_ERROR_MESSAGE,
 } from './wallet-pass.constants';
 import { AppleWalletProvider } from './apple/apple-wallet-provider.service';
-import { WALLET_APPLE_NOT_CONFIGURED_MESSAGE } from './apple/apple-wallet.constants';
+import { APPLE_PASS_TEMPLATE_VERSION, WALLET_APPLE_NOT_CONFIGURED_MESSAGE } from './apple/apple-wallet.constants';
 import { extractBarcodeMessageFromPkpass } from './apple/pkpass-reader';
 import { GoogleWalletProvider } from './google/google-wallet-provider.service';
 import { WALLET_GOOGLE_NOT_CONFIGURED_MESSAGE } from './google/google-wallet.constants';
@@ -21,6 +21,15 @@ import { WALLET_GOOGLE_NOT_CONFIGURED_MESSAGE } from './google/google-wallet.con
 type MemberContext = { memberName: string; planName: string | null };
 
 const APPLE_DOWNLOAD_TOKEN_TTL_SECONDS = 90;
+
+/**
+ * A persisted .pkpass is served verbatim, so it keeps whatever presentation it was signed
+ * with until something explicitly invalidates it. `null` covers rows written before
+ * versioning existed and is therefore stale by definition.
+ */
+export function isStaleAppleArtifact(artifact: WalletPassArtifact): boolean {
+  return artifact.templateVersion !== APPLE_PASS_TEMPLATE_VERSION;
+}
 
 type AppleDownloadTokenPayload = {
   sub: string;
@@ -300,6 +309,8 @@ export class WalletPassService {
         throw new ConflictException(WALLET_PASS_REISSUE_REQUIRED_MESSAGE);
       }
       artifact = await this.provisionApple(credential.id, rawCredential, studioId, userId);
+    } else if (isStaleAppleArtifact(artifact)) {
+      artifact = await this.refreshStaleAppleArtifact(artifact, credential, rawCredential, studioId, userId);
     }
 
     if (rawCredential) {
@@ -436,6 +447,71 @@ export class WalletPassService {
     };
   }
 
+  /**
+   * Rebuilds a pass whose presentation is out of date, reusing the SAME WalletCredential.
+   *
+   * This is a visual refresh, not a security operation: the credential is never rotated or
+   * revoked, no second identity is created, and the barcode message is byte-identical, so an
+   * already-installed pass and the front-desk scanner keep resolving exactly as before. When
+   * the caller has no raw credential in hand (the usual case — raw is returned once, at
+   * issuance), it is recovered from the stale artifact itself, which embeds it in plaintext
+   * in pass.json, and then re-validated through the same primitive check-in scanning uses so
+   * a corrupt or mismatched artifact can never seed a rebuild.
+   *
+   * Any failure returns the existing artifact untouched. A signing outage or a bad asset must
+   * degrade to "member keeps the older-looking pass", never to a broken or absent one.
+   */
+  private async refreshStaleAppleArtifact(
+    artifact: WalletPassArtifact,
+    credential: WalletCredential,
+    rawCredential: string | null,
+    studioId: string,
+    userId: string,
+  ): Promise<WalletPassArtifact> {
+    try {
+      let raw = rawCredential;
+      if (!raw) {
+        const recovered = await this.tryRecoverAppleBarcode(credential);
+        if (!recovered) {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'wallet.apple.template_refresh',
+              outcome: 'skipped_unrecoverable_credential',
+              studioId,
+              walletCredentialId: credential.id,
+            }),
+          );
+          return artifact;
+        }
+        raw = recovered.slice(WALLET_CREDENTIAL_PREFIX.length);
+      }
+
+      const refreshed = await this.provisionApple(credential.id, raw, studioId, userId);
+      this.logger.log(
+        JSON.stringify({
+          event: 'wallet.apple.template_refresh',
+          outcome: 'regenerated',
+          studioId,
+          walletCredentialId: credential.id,
+          fromTemplateVersion: artifact.templateVersion,
+          toTemplateVersion: APPLE_PASS_TEMPLATE_VERSION,
+        }),
+      );
+      return refreshed;
+    } catch (e) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'wallet.apple.template_refresh',
+          outcome: 'failed_serving_existing_artifact',
+          studioId,
+          walletCredentialId: credential.id,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      );
+      return artifact;
+    }
+  }
+
   private async provisionApple(
     walletCredentialId: string,
     rawCredential: string,
@@ -457,10 +533,17 @@ export class WalletPassService {
     // Uint8Array<ArrayBufferLike> (could be a SharedArrayBuffer), so newer @types/node
     // rejects it directly even though the runtime value is always fine here.
     const pkpassBytes = Uint8Array.from(pkpassData);
+    // Upsert keyed on (walletCredentialId, platform) — a refresh replaces the row's bytes in
+    // place rather than adding a second artifact for the same credential.
     const artifact = await this.prisma.walletPassArtifact.upsert({
       where: { walletCredentialId_platform: { walletCredentialId, platform: WalletPassPlatform.APPLE } },
-      create: { walletCredentialId, platform: WalletPassPlatform.APPLE, pkpassData: pkpassBytes },
-      update: { pkpassData: pkpassBytes },
+      create: {
+        walletCredentialId,
+        platform: WalletPassPlatform.APPLE,
+        pkpassData: pkpassBytes,
+        templateVersion: APPLE_PASS_TEMPLATE_VERSION,
+      },
+      update: { pkpassData: pkpassBytes, templateVersion: APPLE_PASS_TEMPLATE_VERSION },
     });
     this.logger.log(
       JSON.stringify({ event: 'wallet.apple.pass_generated', studioId, walletCredentialId }),
@@ -500,7 +583,10 @@ export class WalletPassService {
     userId: string,
   ): Promise<void> {
     const existing = await this.findArtifact(walletCredentialId, WalletPassPlatform.APPLE);
-    if (existing || !this.appleProvider.isConfigured()) return;
+    if (!this.appleProvider.isConfigured()) return;
+    // Raw is in hand here, so a stale artifact can be refreshed on the spot — merely opening
+    // Mi Pase brings the member's pass up to the current presentation.
+    if (existing && !isStaleAppleArtifact(existing)) return;
     try {
       await this.provisionApple(walletCredentialId, rawCredential, studioId, userId);
     } catch (e) {

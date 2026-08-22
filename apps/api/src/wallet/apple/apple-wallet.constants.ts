@@ -21,3 +21,18 @@ export const APPLE_WALLET_ENV_KEYS = [
 ] as const;
 
 export const PASS_FORMAT_VERSION = 1;
+
+/**
+ * Presentation version of the .pkpass this codebase produces. A signed pass is persisted as a
+ * WalletPassArtifact and served verbatim forever, so shipping a new design does NOT reach any
+ * member who already has an artifact — and deleting the pass from the iPhone does not touch
+ * the stored row. This constant is the invalidation signal: an artifact recorded with a
+ * different version is rebuilt from the SAME WalletCredential on next access.
+ *
+ * BUMP THIS whenever buildPassJson's structure or the bundled brand assets change.
+ * `apple-pass-template-fingerprint.spec.ts` fails if you forget.
+ *
+ *   1 — initial static pass: no logo, plan in secondaryFields, studio accent as background
+ *   2 — Member Experience 1.2: brand logo images, plan in headerFields, graphite surface
+ */
+export const APPLE_PASS_TEMPLATE_VERSION = 2;

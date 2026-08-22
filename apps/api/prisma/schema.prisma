@@ -714,7 +714,12 @@ model WalletPassArtifact {
   platform           WalletPassPlatform
   pkpassData         Bytes?             @map("pkpass_data")
   googleObjectId     String?            @map("google_object_id")
+  /// Presentation version the artifact was built with (see APPLE_PASS_TEMPLATE_VERSION).
+  /// NULL means "built before versioning existed" and is always treated as stale. Apple-only
+  /// today; Google objects are updated in place by the Google API and carry no version.
+  templateVersion    Int?               @map("template_version")
   createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at")
 
   walletCredential WalletCredential @relation(fields: [walletCredentialId], references: [id], onDelete: Cascade)
 
