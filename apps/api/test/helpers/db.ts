@@ -11,6 +11,7 @@ export async function truncateAll(prisma: PrismaClient): Promise<void> {
       "stripe_webhook_events",
       "payments",
       "qr_tokens",
+      "wallet_credentials",
       "attendances",
       "waitlist_entries",
       "bookings",

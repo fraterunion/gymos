@@ -23,6 +23,7 @@ import {
   staffScanErrorCopy,
 } from '@/lib/staffScanFeedback';
 import { canAccessStaffScan } from '@/lib/staffRole';
+import { parseMultipleCandidatesError } from '@/lib/walletPassState';
 import { getColors, Radius, Space } from '@/constants/Theme';
 
 const SCAN_FRAME_SIZE = 248;
@@ -183,6 +184,16 @@ export default function StaffScanScreen() {
         });
         router.push(`/(app)/staff-scan-result?${successParams.toString()}` as Href);
       } catch (e) {
+        const multiple = parseMultipleCandidatesError(e);
+        if (multiple) {
+          const selectParams = new URLSearchParams({
+            memberName: multiple.memberName,
+            candidates: JSON.stringify(multiple.candidates),
+            timeZone,
+          });
+          router.push(`/(app)/staff-scan-select?${selectParams.toString()}` as Href);
+          return;
+        }
         const { title, message } = staffScanErrorCopy(e);
         const errorParams = new URLSearchParams({
           outcome: 'error',

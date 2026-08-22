@@ -1,6 +1,6 @@
 import { initStripe, useStripe } from '@/lib/stripe';
 import { createURL } from 'expo-linking';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -1493,6 +1493,34 @@ export default function MembershipScreen() {
             {appDisplayName}
           </Text>
         </Animated.View>
+
+        {/* Mi Pase — permanent member identity, independent of subscription state (a member
+            with no active plan history still has an identity worth showing/adding to Wallet). */}
+        {!isGuest ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Ver mi pase de miembro"
+            onPress={() => router.push('/(app)/mi-pase' as Href)}
+            hitSlop={8}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: C.surface1,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: C.separator,
+              paddingVertical: 16,
+              paddingHorizontal: 18,
+              marginBottom: 24,
+            }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '600', color: C.text, letterSpacing: -0.2 }}>
+              Mi Pase
+            </Text>
+            <Text style={{ fontSize: 15, color: C.textMute }}>→</Text>
+          </Pressable>
+        ) : null}
 
         {error ? (
           <Text style={{ fontSize: 13, color: C.negative, marginBottom: 16 }}>{error}</Text>

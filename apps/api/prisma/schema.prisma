@@ -266,6 +266,7 @@ model Studio {
   memberOperationalNotes     MemberOperationalNote[]
   planClassAccess            MembershipPlanClassAccess[]
   dayPassClassAccess         DayPassClassAccess[]
+  walletCredentials          WalletCredential[]
 
   @@map("studios")
 }
@@ -291,6 +292,7 @@ model User {
   attendances         Attendance[]
   attendancesRecorded Attendance[]       @relation("AttendanceRecordedBy")
   qrTokens            QRToken[]
+  walletCredentials   WalletCredential[]
   payments            Payment[]
   refreshTokens       RefreshToken[]
   instructedClasses           ScheduledClass[]        @relation("ScheduledClassInstructor")
@@ -661,6 +663,63 @@ model QRToken {
   @@index([studioId])
   @@index([studioId, expiresAt])
   @@map("qr_tokens")
+}
+
+/// Long-lived, opaque, member-identity credential for Apple/Google Wallet + in-app "Mi Pase".
+/// Non-authoritative: a valid, unrevoked credential only resolves to a member — every scan still
+/// re-runs live GymOS authorization (existing booking eligibility rules). Never grants access itself.
+/// The raw credential is generated once at issuance and is NEVER persisted — only its SHA-256 hash.
+/// One ACTIVE (revokedAt IS NULL) row per (studioId, userId) is enforced by a partial unique index
+/// added by hand in this model's migration (Prisma's schema DSL has no `WHERE` clause for @@unique).
+model WalletCredential {
+  id             String    @id @default(cuid())
+  studioId       String    @map("studio_id")
+  userId         String    @map("user_id")
+  credentialHash String    @unique @map("credential_hash")
+  revokedAt      DateTime? @map("revoked_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([studioId, userId])
+  @@index([studioId])
+  walletPassArtifacts WalletPassArtifact[]
+  @@map("wallet_credentials")
+}
+
+enum WalletPassPlatform {
+  APPLE
+  GOOGLE
+}
+
+/// Durable record that a platform pass has been provisioned for a WalletCredential, so a
+/// repeat "Add to Wallet" tap can re-deliver the SAME pass without ever needing the raw
+/// credential value again (which Phase 1 deliberately never persists). Never grants access
+/// by itself — identical to WalletCredential in that respect.
+/// APPLE: pkpassData holds the fully signed .pkpass bytes, re-served as-is on every request.
+/// This repo has no object-storage integration today (checked: no S3/GCS/bucket config or
+/// SDK anywhere), so Postgres bytea is the proportionate choice at this scale — one small
+/// (tens of KB) blob per issued credential, read rarely, always via an authenticated,
+/// per-member-scoped query identical in shape to every other query in this codebase. Revisit
+/// only if/when object storage is introduced for an unrelated reason.
+/// GOOGLE: no blob — the GenericObject lives durably on Google's own servers once created via
+/// REST insert; googleObjectId is only a local pointer so a repeat request can mint a fresh
+/// "Add to Google Wallet" JWT referencing the existing object instead of recreating it.
+model WalletPassArtifact {
+  id                 String             @id @default(cuid())
+  walletCredentialId String             @map("wallet_credential_id")
+  platform           WalletPassPlatform
+  pkpassData         Bytes?             @map("pkpass_data")
+  googleObjectId     String?            @map("google_object_id")
+  createdAt          DateTime           @default(now()) @map("created_at")
+
+  walletCredential WalletCredential @relation(fields: [walletCredentialId], references: [id], onDelete: Cascade)
+
+  @@unique([walletCredentialId, platform])
+  @@map("wallet_pass_artifacts")
 }
 
 model RefreshToken {

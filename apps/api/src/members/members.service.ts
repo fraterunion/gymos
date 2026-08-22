@@ -21,7 +21,7 @@ import {
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
-import { assertEligibleForCheckIn } from '../check-ins/check-in-eligibility';
+import { CheckInsService } from '../check-ins/check-ins.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
@@ -69,6 +69,7 @@ export class MembersService {
     private readonly stripeService: StripeService,
     private readonly membershipUsage: MembershipUsageService,
     private readonly subscriptionLifecycle: SubscriptionLifecycleService,
+    private readonly checkInsService: CheckInsService,
   ) {}
 
   // ── Simple list (legacy — kept for compatibility) ──────────────────────────
@@ -1028,53 +1029,33 @@ export class MembersService {
     return { cancelled: true, promotion };
   }
 
+  /**
+   * PHASE 3.1 canonicalization: this used to duplicate booking lookup, eligibility
+   * checking, and the Attendance write inline. Audit found "force" overrides nothing
+   * booking-QR/manual/Wallet check-in don't already allow — same eligibility rules
+   * (assertEligibleForCheckIn), same P2002-on-duplicate handling, no entitlement/window/
+   * capacity override of any kind. It differs only in URL shape (userId+bookingId in the
+   * path vs bookingId in the body) and its controller's narrower role gate (OWNER/ADMIN/
+   * STAFF — no FRONT_DESK), which is preserved unchanged by leaving that route's @Roles
+   * guard untouched; delegating here only removes the duplicated write, it does not widen
+   * who can reach it. Response shape kept identical (`{success, attendance: {method, ...}}`)
+   * so the mobile/admin clients already coupled to it need no changes.
+   */
   async staffForceCheckIn(studioId: string, bookingId: string, actorUserId: string) {
-    const booking = await this.prisma.booking.findFirst({
-      where: { id: bookingId, studioId },
-      include: {
-        user: { select: { deletedAt: true } },
-        scheduledClass: true,
+    const summary = await this.checkInsService.checkInManual(studioId, actorUserId, bookingId);
+    return {
+      success: true,
+      attendance: {
+        id: summary.id,
+        studioId: summary.studioId,
+        scheduledClassId: summary.scheduledClassId,
+        userId: summary.userId,
+        method: summary.checkInMethod,
+        checkedInAt: summary.checkedInAt,
+        checkedInByUserId: summary.checkedInByUserId,
+        user: summary.user,
       },
-    });
-    if (!booking) throw new NotFoundException('Booking not found');
-    if (booking.user.deletedAt) throw new ForbiddenException();
-
-    const studio = await this.prisma.studio.findFirst({
-      where: { id: studioId, deletedAt: null },
-      select: { checkInWindowMinutes: true },
-    });
-    if (!studio) throw new NotFoundException('Studio not found');
-
-    const now = new Date();
-    assertEligibleForCheckIn(
-      booking,
-      booking.scheduledClass,
-      now,
-      studio.checkInWindowMinutes,
-    );
-
-    try {
-      const attendance = await this.prisma.attendance.create({
-        data: {
-          studioId,
-          scheduledClassId: booking.scheduledClassId,
-          userId: booking.userId,
-          method: CheckInMethod.MANUAL,
-          checkedInByUserId: actorUserId,
-        },
-        include: {
-          user: {
-            select: { id: true, email: true, firstName: true, lastName: true, phone: true },
-          },
-        },
-      });
-      return { success: true, attendance };
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new ConflictException('Already checked in');
-      }
-      throw e;
-    }
+    };
   }
 
   // ── Subscription management ────────────────────────────────────────────────

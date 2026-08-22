@@ -11,6 +11,7 @@
     "build": "expo export -p web --output-dir dist",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test lib/walletPassState.spec.ts",
     "clean": "rm -rf dist .expo .turbo",
     "config:print": "node scripts/print-app-config.cjs",
     "eas:config:ares": "cross-env WHITELABEL_PROFILE=ares node scripts/print-app-config.cjs",

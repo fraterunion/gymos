@@ -85,6 +85,24 @@ export async function submitStaffQrScan(
   });
 }
 
+/**
+ * Staff Mode: check in one explicitly-selected booking (STAFF | INSTRUCTOR | ADMIN | OWNER).
+ * This is the canonical `performCheckIn` path (same as QR scanning) — used to resolve
+ * Wallet's WALLET_MULTIPLE_ELIGIBLE_BOOKINGS ambiguity once staff picks a candidate.
+ * Deliberately calls POST /check-ins/manual, not the separate /members/:id/bookings/:id/check-in
+ * route — that route predates the Phase 1 canonical-check-in refactor and still carries its
+ * own independent eligibility logic; this one always has, matching the QR path exactly.
+ */
+export async function submitStaffManualCheckIn(
+  studioId: string,
+  bookingId: string,
+): Promise<AttendanceSummaryDto> {
+  return apiRequest<AttendanceSummaryDto>(`/studios/${studioId}/check-ins/manual`, {
+    method: 'POST',
+    body: JSON.stringify({ bookingId }),
+  });
+}
+
 /** Staff Mode: confirmed bookings for a scheduled class. */
 export async function fetchClassRoster(
   studioId: string,
