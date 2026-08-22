@@ -7,12 +7,12 @@ describe('WalletPassBrandingResolver', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
-  it('falls back to the premium black/white default when no custom brand color is set', async () => {
+  it('resolves the premium graphite/white credential palette', async () => {
     prisma.studio.findFirst.mockResolvedValue({
       name: 'ARES Training Club',
+      slug: 'ares-fitness',
       brandLogoUrl: null,
       logoUrl: null,
-      brandPrimaryColor: null,
       supportEmail: null,
       supportPhone: null,
       privacyUrl: null,
@@ -22,17 +22,21 @@ describe('WalletPassBrandingResolver', () => {
     const branding = await resolver.resolve('studio-1');
 
     expect(branding.organizationName).toBe('ARES Training Club');
+    expect(branding.studioSlug).toBe('ares-fitness');
     expect(branding.backgroundColorRgb).toBe('rgb(10,10,10)');
     expect(branding.backgroundColorHex).toBe('#0a0a0a');
     expect(branding.foregroundColorRgb).toBe('rgb(255,255,255)');
   });
 
-  it('uses the studio brandPrimaryColor when configured, in both rgb() and hex form', async () => {
+  // brandPrimaryColor is an accent (a 3px rule in the app), not a surface. Painting a whole
+  // pass with it made contrast depend on whatever hex a studio saved — a light brand colour
+  // would have rendered white text on a white pass.
+  it('never lets a studio accent colour become the pass background', async () => {
     prisma.studio.findFirst.mockResolvedValue({
       name: 'Pilates Plus',
+      slug: 'pilates-plus',
       brandLogoUrl: 'https://cdn.example.com/logo.png',
       logoUrl: null,
-      brandPrimaryColor: '#FF6600',
       supportEmail: 'hola@pilatesplus.mx',
       supportPhone: null,
       privacyUrl: null,
@@ -41,8 +45,8 @@ describe('WalletPassBrandingResolver', () => {
 
     const branding = await resolver.resolve('studio-2');
 
-    expect(branding.backgroundColorRgb).toBe('rgb(255,102,0)');
-    expect(branding.backgroundColorHex).toBe('#ff6600');
+    expect(branding.backgroundColorRgb).toBe('rgb(10,10,10)');
+    expect(branding.backgroundColorHex).toBe('#0a0a0a');
     expect(branding.logoUrl).toBe('https://cdn.example.com/logo.png');
     expect(branding.termsUrl).toBe('https://pilatesplus.mx/terms');
   });

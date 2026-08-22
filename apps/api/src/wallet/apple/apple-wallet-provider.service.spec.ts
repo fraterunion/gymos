@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import JSZip from 'jszip';
 import { AppleWalletProvider } from './apple-wallet-provider.service';
@@ -6,6 +7,7 @@ import type { WalletPassBranding } from '../wallet-pass-branding.resolver';
 
 const branding: WalletPassBranding = {
   organizationName: 'ARES Training Club',
+  studioSlug: 'ares-fitness',
   logoUrl: null,
   supportEmail: 'hola@ares.mx',
   supportPhone: null,
@@ -82,7 +84,17 @@ describe('AppleWalletProvider — real signing pipeline (throwaway test certific
 
     const zip = await JSZip.loadAsync(pkpass);
     const names = Object.keys(zip.files).sort();
-    expect(names).toEqual(['icon.png', 'icon@2x.png', 'icon@3x.png', 'manifest.json', 'pass.json', 'signature']);
+    expect(names).toEqual([
+      'icon.png',
+      'icon@2x.png',
+      'icon@3x.png',
+      'logo.png',
+      'logo@2x.png',
+      'logo@3x.png',
+      'manifest.json',
+      'pass.json',
+      'signature',
+    ]);
 
     const passJsonRaw = await zip.file('pass.json')!.async('string');
     const passJson = JSON.parse(passJsonRaw) as { serialNumber: string; barcodes: Array<{ message: string }> };
@@ -91,8 +103,21 @@ describe('AppleWalletProvider — real signing pipeline (throwaway test certific
 
     const manifestRaw = await zip.file('manifest.json')!.async('string');
     const manifest = JSON.parse(manifestRaw) as Record<string, string>;
-    expect(Object.keys(manifest).sort()).toEqual(['icon.png', 'icon@2x.png', 'icon@3x.png', 'pass.json']);
-    expect(manifest['pass.json']).toMatch(/^[0-9a-f]{40}$/); // sha1 hex
+    // Wallet refuses a pass whose manifest disagrees with the packaged files, so every asset
+    // in the zip (bar manifest.json/signature) must be hashed here.
+    expect(Object.keys(manifest).sort()).toEqual([
+      'icon.png',
+      'icon@2x.png',
+      'icon@3x.png',
+      'logo.png',
+      'logo@2x.png',
+      'logo@3x.png',
+      'pass.json',
+    ]);
+    for (const name of Object.keys(manifest)) {
+      const file = await zip.file(name)!.async('nodebuffer');
+      expect(manifest[name]).toBe(createHash('sha1').update(file).digest('hex'));
+    }
 
     const signature = await zip.file('signature')!.async('nodebuffer');
     expect(signature.length).toBeGreaterThan(0);
@@ -122,5 +147,36 @@ describe('AppleWalletProvider — real signing pipeline (throwaway test certific
     const zip = await JSZip.loadAsync(pkpass);
     const passJsonRaw = await zip.file('pass.json')!.async('string');
     expect(passJsonRaw).not.toMatch(/"user.?id"|"studio.?id"/i);
+  });
+
+  maybeIt('still issues an identifiable pass for a studio with no checked-in artwork', async () => {
+    const provider = new AppleWalletProvider(
+      configWith({
+        WALLET_APPLE_TEAM_ID: 'TEAM123',
+        WALLET_APPLE_PASS_TYPE_ID: 'pass.co.gymos.member',
+        WALLET_APPLE_SIGNING_CERT_P12_BASE64: fixture!.p12Base64,
+        WALLET_APPLE_SIGNING_CERT_PASSWORD: fixture!.p12Password,
+        WALLET_APPLE_WWDR_CERT_PEM_BASE64: fixture!.wwdrPemBase64,
+      }),
+    );
+    const pkpass = await provider.buildPkpass({
+      walletCredentialId: 'wc_test_3',
+      rawCredential: 'raw3',
+      memberName: 'Test',
+      planName: 'Full Access',
+      branding: { ...branding, studioSlug: 'a-studio-with-no-assets', organizationName: 'Pilates Toluca' },
+    });
+
+    const zip = await JSZip.loadAsync(pkpass);
+    expect(Object.keys(zip.files).sort()).toEqual([
+      'icon.png',
+      'icon@2x.png',
+      'icon@3x.png',
+      'manifest.json',
+      'pass.json',
+      'signature',
+    ]);
+    const passJson = JSON.parse(await zip.file('pass.json')!.async('string')) as { logoText?: string };
+    expect(passJson.logoText).toBe('Pilates Toluca');
   });
 });

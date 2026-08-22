@@ -14,7 +14,12 @@ export type PkpassInput = {
   labelColorRgb: string;
   supportEmail: string | null;
   termsUrl: string | null;
+  /** True when the bundle ships a real `logo.png`. Drives `logoText`: Wallet renders the two
+   *  side by side, so a studio with brand artwork must not also repeat its name as text. */
+  hasLogoImage: boolean;
 };
+
+type PassField = { key: string; label: string; value: string };
 
 export type PassJson = {
   formatVersion: number;
@@ -23,10 +28,12 @@ export type PassJson = {
   serialNumber: string;
   organizationName: string;
   description: string;
+  logoText?: string;
   generic: {
-    primaryFields: Array<{ key: string; label: string; value: string }>;
-    secondaryFields: Array<{ key: string; label: string; value: string }>;
-    backFields: Array<{ key: string; label: string; value: string }>;
+    headerFields: PassField[];
+    primaryFields: PassField[];
+    secondaryFields: PassField[];
+    backFields: PassField[];
   };
   barcodes: Array<{ format: string; message: string; messageEncoding: string }>;
   backgroundColor: string;
@@ -38,9 +45,20 @@ export type PassJson = {
  * Pure — no signing, no I/O. Deliberately omits webServiceURL/authenticationToken
  * (Option A+: static pass, no APNs) and locations/beacons (no relevance features this
  * phase). The pass never claims current access — see the disclaimer backField.
+ *
+ * Field placement is driven by what iOS Wallet keeps visible while the pass sits COLLAPSED
+ * beneath another card in the stack: only the logo (image or `logoText`) and the header
+ * fields. Everything else — primary, secondary, back — is revealed just on tap. The plan
+ * therefore lives in `headerFields` rather than `secondaryFields`, so a member glancing at a
+ * stacked Wallet sees the club and their membership tier without opening anything.
  */
 export function buildPassJson(input: PkpassInput): PassJson {
-  const backFields: PassJson['generic']['backFields'] = [
+  const backFields: PassField[] = [
+    {
+      key: 'about',
+      label: 'MEMBRESÍA',
+      value: `Este pase identifica tu membresía en ${input.organizationName}.`,
+    },
     { key: 'disclaimer', label: 'ACCESO', value: 'El acceso se confirma en recepción.' },
   ];
   if (input.supportEmail) {
@@ -50,7 +68,9 @@ export function buildPassJson(input: PkpassInput): PassJson {
     backFields.push({ key: 'terms', label: 'TÉRMINOS', value: input.termsUrl });
   }
 
-  const secondaryFields: PassJson['generic']['secondaryFields'] = input.planName
+  // A member with no active plan keeps a fully valid identity credential — the header simply
+  // carries nothing rather than asserting a status the membership data doesn't support.
+  const headerFields: PassField[] = input.planName
     ? [{ key: 'plan', label: 'PLAN', value: input.planName }]
     : [];
 
@@ -61,9 +81,11 @@ export function buildPassJson(input: PkpassInput): PassJson {
     serialNumber: input.serialNumber,
     organizationName: input.organizationName,
     description: `${input.organizationName} — Pase de miembro`,
+    ...(input.hasLogoImage ? {} : { logoText: input.organizationName }),
     generic: {
+      headerFields,
       primaryFields: [{ key: 'name', label: 'MIEMBRO', value: input.memberName }],
-      secondaryFields,
+      secondaryFields: [],
       backFields,
     },
     barcodes: [{ format: 'PKBarcodeFormatQR', message: input.barcodeMessage, messageEncoding: 'iso-8859-1' }],

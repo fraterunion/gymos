@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type WalletPassBranding = {
   organizationName: string;
+  /** Selects the studio's checked-in Wallet artwork (see wallet-brand-assets.ts). */
+  studioSlug: string;
   logoUrl: string | null;
   supportEmail: string | null;
   supportPhone: string | null;
@@ -17,44 +19,32 @@ export type WalletPassBranding = {
 };
 
 /**
- * Default ARES-style visual identity — premium, minimal, black/graphite/white. Every studio
- * gets this unless it has set its own brandPrimaryColor; there is nothing ARES-specific in
- * this module itself, only the fallback aesthetic (see Phase B/2B: "closer to Apple Fitness
- * / Equinox, not a coupon"), which any future tenant inherits until they customize it.
+ * The pass surface is deliberately a fixed graphite/white credential palette rather than the
+ * studio's `brandPrimaryColor`.
+ *
+ * `brandPrimaryColor` is an ACCENT — the mobile app paints it as a 3px rule on top of a
+ * `#0A0A0A` card (see mi-pase.tsx), never as a full-bleed surface. Stretching it across the
+ * whole pass both diverged from the in-app Mi Pase card and made contrast a function of
+ * whatever hex a studio happened to save: ARES' `#0f172a` rendered as flat navy, and a light
+ * brand colour would have produced white-on-white text. Brand identity belongs to the logo
+ * image, which is Apple's intended mechanism and how premium passes actually work.
  */
-const DEFAULT_BACKGROUND_HEX = '#0a0a0a';
-const DEFAULT_BACKGROUND_RGB = 'rgb(10,10,10)';
-const DEFAULT_FOREGROUND_RGB = 'rgb(255,255,255)';
-const DEFAULT_LABEL_RGB = 'rgb(160,160,160)';
-
-function normalizeHex(hex: string | null): string | null {
-  if (!hex) return null;
-  const match = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
-  return match ? `#${match[1]!.toLowerCase()}` : null;
-}
+const PASS_BACKGROUND_HEX = '#0a0a0a';
+const PASS_BACKGROUND_RGB = 'rgb(10,10,10)';
+const PASS_FOREGROUND_RGB = 'rgb(255,255,255)';
+const PASS_LABEL_RGB = 'rgb(160,160,160)';
 
 const brandingSelect = {
   name: true,
+  slug: true,
   brandLogoUrl: true,
   logoUrl: true,
-  brandPrimaryColor: true,
   supportEmail: true,
   supportPhone: true,
   privacyUrl: true,
   termsUrl: true,
   deletedAt: true,
 } as const;
-
-function hexToRgbFunction(hex: string | null): string | null {
-  if (!hex) return null;
-  const match = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
-  if (!match) return null;
-  const value = match[1]!;
-  const r = parseInt(value.slice(0, 2), 16);
-  const g = parseInt(value.slice(2, 4), 16);
-  const b = parseInt(value.slice(4, 6), 16);
-  return `rgb(${r},${g},${b})`;
-}
 
 @Injectable()
 export class WalletPassBrandingResolver {
@@ -71,15 +61,16 @@ export class WalletPassBrandingResolver {
 
     return {
       organizationName: studio.name,
+      studioSlug: studio.slug,
       logoUrl: studio.brandLogoUrl ?? studio.logoUrl ?? null,
       supportEmail: studio.supportEmail,
       supportPhone: studio.supportPhone,
       privacyUrl: studio.privacyUrl,
       termsUrl: studio.termsUrl,
-      backgroundColorRgb: hexToRgbFunction(studio.brandPrimaryColor) ?? DEFAULT_BACKGROUND_RGB,
-      backgroundColorHex: normalizeHex(studio.brandPrimaryColor) ?? DEFAULT_BACKGROUND_HEX,
-      foregroundColorRgb: DEFAULT_FOREGROUND_RGB,
-      labelColorRgb: DEFAULT_LABEL_RGB,
+      backgroundColorRgb: PASS_BACKGROUND_RGB,
+      backgroundColorHex: PASS_BACKGROUND_HEX,
+      foregroundColorRgb: PASS_FOREGROUND_RGB,
+      labelColorRgb: PASS_LABEL_RGB,
     };
   }
 }

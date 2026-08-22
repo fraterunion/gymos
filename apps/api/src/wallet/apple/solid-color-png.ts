@@ -2,12 +2,11 @@ import { deflateSync } from 'node:zlib';
 
 /**
  * Generates a minimal valid solid-color PNG at the given size, with no external asset
- * pipeline or image-processing dependency. Used as the Wallet icon/logo fallback for a
- * studio that hasn't configured brand image assets yet — this repo has no object-storage
- * or image-fetch pipeline today (see WalletPassBrandingResolver), and pulling one in only
- * to rasterize a studio's `brandLogoUrl` into Wallet-spec icon sizes is disproportionate
- * for this phase. Real per-studio icon/logo assets are a documented follow-up, not a
- * blocker — an installable, structurally valid pass does not require them.
+ * pipeline or image-processing dependency. Used as the Wallet icon fallback for a studio with
+ * no checked-in artwork (see wallet-brand-assets.ts): `icon.png` is mandatory, so a pass still
+ * needs *something* there. Such a studio is identified by `logoText` instead, since this repo
+ * has no object-storage or image-fetch pipeline that could rasterize its `brandLogoUrl` into
+ * Wallet-spec sizes.
  */
 export function solidColorPng(size: number, rgb: readonly [number, number, number]): Buffer {
   const [r, g, b] = rgb;

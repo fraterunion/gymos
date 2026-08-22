@@ -14,6 +14,7 @@ describe('buildPassJson', () => {
     labelColorRgb: 'rgb(160,160,160)',
     supportEmail: 'hola@ares.mx',
     termsUrl: 'https://ares.mx/terminos',
+    hasLogoImage: true,
   };
 
   it('never embeds userId/studioId — only the opaque barcode message', () => {
@@ -48,21 +49,51 @@ describe('buildPassJson', () => {
     expect(pass.labelColor).toBe('rgb(160,160,160)');
   });
 
-  it('shows the member name and plan name as visible fields', () => {
+  it('shows the member name as the primary field', () => {
     const pass = buildPassJson(base);
     expect(pass.generic.primaryFields).toEqual([{ key: 'name', label: 'MIEMBRO', value: 'Ivonne Araujo' }]);
-    expect(pass.generic.secondaryFields).toEqual([{ key: 'plan', label: 'PLAN', value: 'Full Access' }]);
+  });
+
+  // The collapsed Wallet stack only exposes the logo and the header fields, so the plan lives
+  // in the header — a member must be able to read club + tier without opening the pass.
+  it('puts the plan in headerFields so it survives the collapsed Wallet stack', () => {
+    const pass = buildPassJson(base);
+    expect(pass.generic.headerFields).toEqual([{ key: 'plan', label: 'PLAN', value: 'Full Access' }]);
+    expect(pass.generic.secondaryFields).toEqual([]);
   });
 
   it('omits the plan field entirely when the member has no plan', () => {
     const pass = buildPassJson({ ...base, planName: null });
-    expect(pass.generic.secondaryFields).toEqual([]);
+    expect(pass.generic.headerFields).toEqual([]);
+    // Identity is never destroyed by a missing plan — the member name still renders.
+    expect(pass.generic.primaryFields).toEqual([{ key: 'name', label: 'MIEMBRO', value: 'Ivonne Araujo' }]);
+  });
+
+  it('omits logoText when real logo artwork ships, so Wallet never renders both', () => {
+    expect(buildPassJson(base).logoText).toBeUndefined();
+  });
+
+  it('falls back to logoText for a studio with no checked-in Wallet artwork', () => {
+    const pass = buildPassJson({ ...base, hasLogoImage: false });
+    expect(pass.logoText).toBe('ARES Training Club');
   });
 
   it('always includes the "access confirmed at front desk" disclaimer', () => {
     const pass = buildPassJson(base);
     const disclaimer = pass.generic.backFields.find((f) => f.key === 'disclaimer');
     expect(disclaimer?.value).toBe('El acceso se confirma en recepción.');
+  });
+
+  it('explains what the pass is on the back, naming the studio from canonical data', () => {
+    const pass = buildPassJson(base);
+    const about = pass.generic.backFields.find((f) => f.key === 'about');
+    expect(about?.value).toBe('Este pase identifica tu membresía en ARES Training Club.');
+  });
+
+  it('never exposes a phone number or any contact detail that was not supplied', () => {
+    const pass = buildPassJson({ ...base, supportEmail: null, termsUrl: null });
+    const keys = pass.generic.backFields.map((f) => f.key);
+    expect(keys).toEqual(['about', 'disclaimer']);
   });
 
   it('never sets webServiceURL/authenticationToken (static pass, no APNs this phase)', () => {

@@ -9,6 +9,7 @@ import type { WalletPassBranding } from '../wallet-pass-branding.resolver';
 
 const branding: WalletPassBranding = {
   organizationName: 'ARES Training Club',
+  studioSlug: 'ares-fitness',
   logoUrl: null,
   supportEmail: 'hola@ares.mx',
   supportPhone: null,

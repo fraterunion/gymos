@@ -8,6 +8,7 @@ import { APPLE_WALLET_ENV_KEYS, WALLET_APPLE_NOT_CONFIGURED_MESSAGE } from './ap
 import { buildPassJson, parseRgbFunction } from './pkpass-builder';
 import { loadP12, signManifest } from './pkpass-signer';
 import { solidColorPng } from './solid-color-png';
+import { loadAppleBrandImages } from './wallet-brand-assets';
 
 export type BuildPkpassInput = {
   walletCredentialId: string;
@@ -42,6 +43,12 @@ export class AppleWalletProvider {
   async buildPkpass(input: BuildPkpassInput): Promise<Buffer> {
     const cfg = this.requireConfig();
 
+    // A studio with checked-in Wallet artwork gets its real icon + logo; anyone else keeps the
+    // generated placeholder icons and falls back to `logoText` inside buildPassJson, so the
+    // collapsed pass is still identifiable either way.
+    const brandImages = loadAppleBrandImages(input.branding.studioSlug);
+    const images: Record<string, Buffer> = brandImages ?? this.placeholderIcons(input.branding.backgroundColorRgb);
+
     const passJson = buildPassJson({
       passTypeIdentifier: cfg.passTypeIdentifier,
       teamIdentifier: cfg.teamIdentifier,
@@ -55,20 +62,16 @@ export class AppleWalletProvider {
       labelColorRgb: input.branding.labelColorRgb,
       supportEmail: input.branding.supportEmail,
       termsUrl: input.branding.termsUrl,
+      hasLogoImage: !!brandImages,
     });
     const passJsonBuffer = Buffer.from(JSON.stringify(passJson), 'utf8');
 
-    const [r, g, b] = parseRgbFunction(input.branding.backgroundColorRgb);
-    const icon = solidColorPng(29, [r, g, b]);
-    const icon2x = solidColorPng(58, [r, g, b]);
-    const icon3x = solidColorPng(87, [r, g, b]);
-
-    const manifest = {
-      'pass.json': sha1Hex(passJsonBuffer),
-      'icon.png': sha1Hex(icon),
-      'icon@2x.png': sha1Hex(icon2x),
-      'icon@3x.png': sha1Hex(icon3x),
-    };
+    // Every file in the bundle except manifest.json and signature must be hashed here — Wallet
+    // rejects a pass whose manifest omits, or disagrees with, any packaged asset.
+    const manifest: Record<string, string> = { 'pass.json': sha1Hex(passJsonBuffer) };
+    for (const [name, data] of Object.entries(images)) {
+      manifest[name] = sha1Hex(data);
+    }
     const manifestBuffer = Buffer.from(JSON.stringify(manifest), 'utf8');
 
     const certificate = loadP12(cfg.p12Base64, cfg.p12Password);
@@ -79,11 +82,20 @@ export class AppleWalletProvider {
     zip.file('pass.json', passJsonBuffer);
     zip.file('manifest.json', manifestBuffer);
     zip.file('signature', signature);
-    zip.file('icon.png', icon);
-    zip.file('icon@2x.png', icon2x);
-    zip.file('icon@3x.png', icon3x);
+    for (const [name, data] of Object.entries(images)) {
+      zip.file(name, data);
+    }
 
     return zip.generateAsync({ type: 'nodebuffer' });
+  }
+
+  private placeholderIcons(backgroundColorRgb: string): Record<string, Buffer> {
+    const [r, g, b] = parseRgbFunction(backgroundColorRgb);
+    return {
+      'icon.png': solidColorPng(29, [r, g, b]),
+      'icon@2x.png': solidColorPng(58, [r, g, b]),
+      'icon@3x.png': solidColorPng(87, [r, g, b]),
+    };
   }
 
   private requireConfig(): AppleWalletConfig {

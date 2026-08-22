@@ -12,6 +12,7 @@ const { publicKey, privateKey } = generateKeyPairSync('rsa', {
 
 const branding: WalletPassBranding = {
   organizationName: 'ARES Training Club',
+  studioSlug: 'ares-fitness',
   logoUrl: null,
   supportEmail: null,
   supportPhone: null,
