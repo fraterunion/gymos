@@ -12,7 +12,7 @@ import { registerManualClassAttendance } from '@/lib/api/checkInsApi';
 import { formatClassTime } from '@/lib/datetime';
 import { canRegisterManualAttendance } from '@/lib/staffRole';
 import { staffScanErrorCopy } from '@/lib/staffScanFeedback';
-import type { WalletWalkInCandidate } from '@/lib/walletPassState';
+import { formatOpenGymHour, type WalletWalkInCandidate } from '@/lib/walletPassState';
 import { getColors, Radius, Space } from '@/constants/Theme';
 
 function searchParam(value: string | string[] | undefined): string | undefined {
@@ -79,6 +79,8 @@ export default function StaffScanResultScreen() {
     checkedInAt?: string | string[];
     timeZone?: string | string[];
     membershipPlanName?: string | string[];
+    windowStart?: string | string[];
+    windowEnd?: string | string[];
     classInProgressName?: string | string[];
     classInProgressTime?: string | string[];
   }>();
@@ -106,6 +108,15 @@ export default function StaffScanResultScreen() {
   const membershipPlanName = searchParam(params.membershipPlanName)?.trim() || null;
   const classInProgressName = searchParam(params.classInProgressName);
   const classInProgressTime = searchParam(params.classInProgressTime);
+
+  // A plan with no configured window includes Open Gym with no hour restriction. Say exactly
+  // that — showing a fabricated range would misrepresent the member's own membership to them.
+  const windowStart = searchParam(params.windowStart);
+  const windowEnd = searchParam(params.windowEnd);
+  const scheduleLabel =
+    windowStart && windowEnd
+      ? `${formatOpenGymHour(windowStart)} – ${formatOpenGymHour(windowEnd)}`
+      : 'Sin restricción';
 
   const memberId = searchParam(params.memberId);
   const walkInCandidates = parseWalkInCandidates(searchParam(params.walkInCandidates));
@@ -277,6 +288,7 @@ export default function StaffScanResultScreen() {
                 <View style={{ alignSelf: 'stretch' }}>
                   <DetailRow label="Membresía" value={membershipPlanName ?? '—'} />
                   <DetailRow label="Estado" value="Activa" />
+                  <DetailRow label="Horario" value={scheduleLabel} />
                   <DetailRow label="Entrada" value={checkedInLabel} />
                 </View>
                 {classInProgressName ? (

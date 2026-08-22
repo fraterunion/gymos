@@ -15,15 +15,19 @@ const prisma = new PrismaClient();
 
 const ARES_SLUG = 'ares-fitness';
 
-/** Must stay identical to the VALUES list in the migration's backfill statement. */
-const TARGET_CONFIG: Record<string, { start: string; end: string }> = {
+/**
+ * The intended end state after BOTH Open Gym migrations: 20260822200000 sets the windows, and
+ * 20260822210000 corrects Full Access to unrestricted. A null window means Open Gym is included
+ * with no hour restriction, which is what Full Access is sold as.
+ */
+const TARGET_CONFIG: Record<string, { start: string | null; end: string | null }> = {
   'Basic Access': { start: '11:00', end: '22:00' },
-  'Full Access': { start: '11:00', end: '22:00' },
+  'Full Access': { start: null, end: null },
   'Open Gym': { start: '11:00', end: '17:00' },
 };
 
-function fmt(value: string | null): string {
-  return value ?? '—';
+function describeWindow(start: string | null, end: string | null): string {
+  return start === null || end === null ? 'sin restricción' : `${start}–${end}`;
 }
 
 async function main() {
@@ -68,10 +72,12 @@ async function main() {
       },
     });
 
+    const current = describeWindow(plan.openGymWindowStart, plan.openGymWindowEnd);
+
     if (!target) {
       rows.push(
-        `  UNCHANGED  ${plan.name.padEnd(22)} openGym=${String(plan.openGymAccess).padEnd(5)} ` +
-          `window=${fmt(plan.openGymWindowStart)}–${fmt(plan.openGymWindowEnd)}  members=${entitledMembers}`,
+        `  UNCHANGED   ${plan.name.padEnd(21)} openGym=${String(plan.openGymAccess).padEnd(5)} ` +
+          `window=${current}  members=${entitledMembers}`,
       );
       continue;
     }
@@ -83,8 +89,8 @@ async function main() {
 
     if (alreadyCorrect) {
       rows.push(
-        `  ALREADY OK ${plan.name.padEnd(22)} openGym=true  ` +
-          `window=${target.start}–${target.end}  members=${entitledMembers}`,
+        `  ALREADY OK  ${plan.name.padEnd(21)} openGym=true  ` +
+          `window=${describeWindow(target.start, target.end)}  members=${entitledMembers}`,
       );
       continue;
     }
@@ -93,7 +99,7 @@ async function main() {
     rows.push(
       `  WILL CHANGE ${plan.name.padEnd(21)} ` +
         `openGym: ${plan.openGymAccess} -> true, ` +
-        `window: ${fmt(plan.openGymWindowStart)}–${fmt(plan.openGymWindowEnd)} -> ${target.start}–${target.end}  ` +
+        `window: ${current} -> ${describeWindow(target.start, target.end)}  ` +
         `members=${entitledMembers}  (plan id ${plan.id})`,
     );
   }

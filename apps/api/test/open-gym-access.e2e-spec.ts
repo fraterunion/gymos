@@ -228,6 +228,96 @@ describe('Open Gym facility access (e2e)', () => {
     expect(bookings).toBe(0);
   });
 
+  // ── Unrestricted access (ARES Full Access) ────────────────────────────────────────────
+  //
+  // Full Access grants Open Gym with NO window, matching its "Sin restricciones de horario"
+  // copy. These run at whatever the real clock says, which is the point: there is no hour at
+  // which they may fail.
+
+  const unrestricted: PlanShape = {
+    name: 'Full Access',
+    openGymAccess: true,
+    openGymWindowStart: null,
+    openGymWindowEnd: null,
+  };
+
+  it('admits an unrestricted plan at the current hour, whatever it is, and reports no window', async () => {
+    const ctx = await setupScenario(unrestricted);
+
+    const res = await scan(ctx.studio.id, ctx.staffToken, ctx.barcode).expect(201);
+    const body = res.body as {
+      type: string;
+      openGym: { membershipPlanName: string; windowStart: string | null; windowEnd: string | null };
+    };
+
+    expect(body.type).toBe('OPEN_GYM');
+    expect(body.openGym.membershipPlanName).toBe('Full Access');
+    // Null, not a fabricated 00:00–23:59: Front Desk renders "Sin restricción" from this.
+    expect(body.openGym.windowStart).toBeNull();
+    expect(body.openGym.windowEnd).toBeNull();
+  });
+
+  it('admits an unrestricted plan in a studio whose local time is the far side of the world', async () => {
+    // Same instant, wildly different local clocks. An unrestricted plan must not care.
+    for (const timezone of ['Pacific/Kiritimati', 'Pacific/Niue', 'Asia/Tokyo']) {
+      const ctx = await setupScenario(unrestricted, { timezone });
+      const res = await scan(ctx.studio.id, ctx.staffToken, ctx.barcode).expect(201);
+      expect((res.body as { type: string }).type).toBe('OPEN_GYM');
+    }
+  });
+
+  it('still refuses an unrestricted plan when the membership is not current', async () => {
+    const ctx = await setupScenario(unrestricted, { subscriptionExpired: true });
+
+    const res = await scan(ctx.studio.id, ctx.staffToken, ctx.barcode).expect(409);
+    expect((res.body as { code: string }).code).toBe('WALLET_MEMBERSHIP_NOT_ENTITLED');
+    expect(await prisma.attendance.count()).toBe(0);
+  });
+
+  it('still gives an applicable reservation priority over unrestricted Open Gym', async () => {
+    const ctx = await setupScenario(unrestricted);
+    const { startsAt, endsAt } = classStartingSoon();
+    const cls = await createScheduledClass(prisma, ctx.studio.id, ctx.template.id, {
+      startsAt,
+      endsAt,
+    });
+    await createConfirmedBooking(prisma, ctx.studio.id, cls.id, ctx.member.id);
+
+    const res = await scan(ctx.studio.id, ctx.staffToken, ctx.barcode).expect(201);
+    const body = res.body as { type: string; scheduledClassId: string };
+    expect(body.type).toBe('CLASS');
+    expect(body.scheduledClassId).toBe(cls.id);
+  });
+
+  it('still deduplicates a repeat scan on an unrestricted plan', async () => {
+    const ctx = await setupScenario(unrestricted);
+
+    const first = await scan(ctx.studio.id, ctx.staffToken, ctx.barcode).expect(201);
+    const second = await scan(ctx.studio.id, ctx.staffToken, ctx.barcode).expect(201);
+
+    expect((second.body as { id: string }).id).toBe((first.body as { id: string }).id);
+    expect(await prisma.attendance.count({ where: { studioId: ctx.studio.id } })).toBe(1);
+  });
+
+  it('creates no booking and no class attendance on an unrestricted plan', async () => {
+    const ctx = await setupScenario(unrestricted);
+    const { startsAt, endsAt } = classStartingSoon();
+    const cls = await createScheduledClass(prisma, ctx.studio.id, ctx.template.id, {
+      startsAt,
+      endsAt,
+    });
+
+    await scan(ctx.studio.id, ctx.staffToken, ctx.barcode).expect(201);
+
+    expect(await prisma.booking.count()).toBe(0);
+    expect(await prisma.attendance.count({ where: { scheduledClassId: cls.id } })).toBe(0);
+    expect(
+      await prisma.attendance.count({
+        where: { studioId: ctx.studio.id, type: CheckInType.OPEN_GYM },
+      }),
+    ).toBe(1);
+  });
+
   // ── Case E/F/G: denials ───────────────────────────────────────────────────────────────
 
   it('denies with OUTSIDE_HOURS, and reports the plan window, when the local time is closed', async () => {

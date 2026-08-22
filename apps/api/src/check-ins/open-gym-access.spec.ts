@@ -1,3 +1,4 @@
+import { getStudioLocalHHmm, studioLocalTimeToUtc } from '../common/date/studio-local-date';
 import { evaluateOpenGymEligibility, isWithinOpenGymWindow, type OpenGymPlanPolicy } from './open-gym-access';
 
 /**
@@ -24,11 +25,16 @@ const basicAccess = plan({
   openGymWindowStart: '11:00',
   openGymWindowEnd: '22:00',
 });
+/**
+ * Full Access is unrestricted: openGymAccess with NO window. Its plan copy promises "Sin
+ * restricciones de horario", so encoding any range here — including a cosmetic 00:00–23:59 —
+ * would create a restriction that can refuse a member, which is exactly what it must not do.
+ */
 const fullAccess = plan({
   membershipPlanId: 'full',
   membershipPlanName: 'Full Access',
-  openGymWindowStart: '11:00',
-  openGymWindowEnd: '22:00',
+  openGymWindowStart: null,
+  openGymWindowEnd: null,
 });
 const openGymPlan = plan({
   membershipPlanId: 'og',
@@ -161,6 +167,83 @@ describe('evaluateOpenGymEligibility — ARES plan matrix', () => {
 
   it('a member with no entitled subscription is not_entitled, never not_included', () => {
     expect(evaluateOpenGymEligibility([], AT_1200_LOCAL, ARES_TZ)).toEqual({
+      outcome: 'not_entitled',
+    });
+  });
+});
+
+describe('evaluateOpenGymEligibility — hour boundary matrix', () => {
+  /** The UTC instant at which the ARES studio clock reads this local 'HH:mm'. */
+  function atAresLocal(hhmm: string): Date {
+    return studioLocalTimeToUtc('2026-08-24', hhmm, ARES_TZ);
+  }
+
+  it('the local-time helper round-trips, so the cases below assert what they claim', () => {
+    for (const hhmm of ['00:01', '10:59', '11:00', '17:00', '22:00', '23:59']) {
+      expect(getStudioLocalHHmm(atAresLocal(hhmm), ARES_TZ)).toBe(hhmm);
+    }
+  });
+
+  describe('Full Access — unrestricted, admits at every hour', () => {
+    it.each(['00:01', '10:59', '11:00', '21:59', '22:00', '23:59'])(
+      'allows entry at %s local',
+      (hhmm) => {
+        expect(evaluateOpenGymEligibility([fullAccess], atAresLocal(hhmm), ARES_TZ)).toEqual({
+          outcome: 'allowed',
+          membershipPlanId: 'full',
+          membershipPlanName: 'Full Access',
+          windowStart: null,
+          windowEnd: null,
+        });
+      },
+    );
+  });
+
+  describe('Basic Access — 11:00 to 22:00', () => {
+    it.each([
+      ['10:59', 'outside_hours'],
+      ['11:00', 'allowed'],
+      ['21:59', 'allowed'],
+      ['22:00', 'outside_hours'],
+    ])('at %s local the outcome is %s', (hhmm, expected) => {
+      expect(evaluateOpenGymEligibility([basicAccess], atAresLocal(hhmm), ARES_TZ)).toMatchObject({
+        outcome: expected,
+      });
+    });
+  });
+
+  describe('Open Gym plan — 11:00 to 17:00', () => {
+    it.each([
+      ['10:59', 'outside_hours'],
+      ['11:00', 'allowed'],
+      ['16:59', 'allowed'],
+      ['17:00', 'outside_hours'],
+    ])('at %s local the outcome is %s', (hhmm, expected) => {
+      expect(evaluateOpenGymEligibility([openGymPlan], atAresLocal(hhmm), ARES_TZ)).toMatchObject({
+        outcome: expected,
+      });
+    });
+  });
+
+  describe('Pro and Booty Lab — never, at any hour', () => {
+    it.each(['00:01', '10:59', '11:00', '16:00', '21:59', '23:59'])(
+      'denies both plans at %s local',
+      (hhmm) => {
+        const at = atAresLocal(hhmm);
+        expect(evaluateOpenGymEligibility([proPlan], at, ARES_TZ)).toEqual({
+          outcome: 'not_included',
+        });
+        expect(evaluateOpenGymEligibility([bootyLab], at, ARES_TZ)).toEqual({
+          outcome: 'not_included',
+        });
+      },
+    );
+  });
+
+  it('unrestricted access still requires a current membership', () => {
+    // The empty list is how the caller reports "no currently-entitled subscription". Being
+    // unrestricted must never become a way around that check.
+    expect(evaluateOpenGymEligibility([], atAresLocal('12:00'), ARES_TZ)).toEqual({
       outcome: 'not_entitled',
     });
   });

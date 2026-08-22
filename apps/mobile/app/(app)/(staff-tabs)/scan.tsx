@@ -188,6 +188,13 @@ export default function StaffScanScreen() {
             checkedInAt: attendance.checkedInAt,
             timeZone,
           });
+          // Only sent when the plan actually restricts hours. Their absence is what tells the
+          // result screen to say "Sin restricción" rather than invent a clock range.
+          const { windowStart, windowEnd } = attendance.openGym ?? {};
+          if (windowStart && windowEnd) {
+            openGymParams.set('windowStart', windowStart);
+            openGymParams.set('windowEnd', windowEnd);
+          }
           const inProgress = attendance.openGym?.classInProgress;
           if (inProgress) {
             openGymParams.set('classInProgressName', inProgress.className);

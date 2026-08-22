@@ -375,8 +375,14 @@ model MembershipPlan {
   /// enabled here. Never inferred from `description` copy.
   openGymAccess         Boolean @default(false) @map("open_gym_access")
   /// Local door-access window (HH:mm, 24h, studio timezone), evaluated against the CURRENT time
-  /// at scan. Both bounds set together or both null; null means no hour restriction. Compared
-  /// as [start, end) so an end of "22:00" denies 22:00 exactly.
+  /// at scan. Compared as [start, end) so an end of "22:00" denies 22:00 exactly.
+  ///
+  /// Both bounds are set together or both are null, and the three states are distinct:
+  ///   openGymAccess=false, bounds null      -> Open Gym not included
+  ///   openGymAccess=true,  bounds null      -> included, no hour restriction
+  ///   openGymAccess=true,  bounds non-null  -> included within that window
+  /// Unrestricted access is absence of a window, never an artificial 00:00-23:59 range: a real
+  /// range is a policy someone can be refused by, and "no policy" must not look like one.
   openGymWindowStart    String? @map("open_gym_window_start")
   openGymWindowEnd      String? @map("open_gym_window_end")
   createdAt        DateTime        @default(now()) @map("created_at")
