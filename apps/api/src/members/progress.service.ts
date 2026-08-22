@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { CheckInType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { OPEN_GYM_LABEL } from '../check-ins/open-gym.constants';
 import type {
   LeaderboardDto,
   LeaderboardEntryDto,
@@ -43,14 +45,18 @@ export class ProgressService {
     const timezone = studio.timezone;
     const monthBounds = getCurrentStudioMonthBounds(timezone, now);
     const attendanceWhere = { studioId, userId } as const;
+    // A class visit is dated by when the class ran; an Open Gym visit has no class, so it is
+    // dated by when the member walked in. Expressed as an OR rather than switching everything
+    // to checkedInAt so class bucketing stays bit-for-bit identical to before.
     const monthWhere = {
       ...attendanceWhere,
-      scheduledClass: {
-        startsAt: {
-          gte: monthBounds.start,
-          lt: monthBounds.end,
+      OR: [
+        { scheduledClass: { startsAt: { gte: monthBounds.start, lt: monthBounds.end } } },
+        {
+          type: CheckInType.OPEN_GYM,
+          checkedInAt: { gte: monthBounds.start, lt: monthBounds.end },
         },
-      },
+      ],
     };
 
     const [totalCheckIns, monthCheckIns, recentRows, breakdownRows] =
@@ -60,6 +66,8 @@ export class ProgressService {
         this.prisma.attendance.findMany({
           where: attendanceWhere,
           select: {
+            type: true,
+            checkedInAt: true,
             scheduledClass: {
               select: {
                 startsAt: true,
@@ -68,12 +76,14 @@ export class ProgressService {
               },
             },
           },
-          orderBy: { scheduledClass: { startsAt: 'desc' } },
+          orderBy: { checkedInAt: 'desc' },
           take: 10,
         }),
         this.prisma.attendance.findMany({
           where: attendanceWhere,
           select: {
+            type: true,
+            checkedInAt: true,
             scheduledClass: {
               select: {
                 startsAt: true,
@@ -84,17 +94,29 @@ export class ProgressService {
         }),
       ]);
 
+    type BreakdownTemplate = NonNullable<
+      (typeof breakdownRows)[number]['scheduledClass']
+    >['classTemplate'];
+
     const templateCounts = new Map<
       string,
-      {
-        classTemplate: (typeof breakdownRows)[number]['scheduledClass']['classTemplate'];
-        checkIns: number;
-      }
+      { classTemplate: BreakdownTemplate; checkIns: number }
     >();
 
     const attendedWeeks = new Set<string>();
 
     for (const row of breakdownRows) {
+      // Streaks measure showing up, so an Open Gym visit counts. It is dated by check-in time
+      // because it has no class to borrow a date from.
+      attendedWeeks.add(
+        getIsoWeekKey(row.scheduledClass?.startsAt ?? row.checkedInAt, timezone),
+      );
+
+      // The class breakdown and favourite class are about classes; independent training has no
+      // template to attribute and is intentionally excluded from both.
+      if (!row.scheduledClass) {
+        continue;
+      }
       const template = row.scheduledClass.classTemplate;
       const existing = templateCounts.get(template.id);
       if (existing) {
@@ -105,9 +127,6 @@ export class ProgressService {
           checkIns: 1,
         });
       }
-      attendedWeeks.add(
-        getIsoWeekKey(row.scheduledClass.startsAt, timezone),
-      );
     }
 
     const classBreakdown: MemberProgressClassBreakdownItemDto[] = [...templateCounts.values()]
@@ -135,6 +154,16 @@ export class ProgressService {
 
     const recentActivity: MemberProgressRecentActivityItemDto[] = recentRows.map(
       (row) => {
+        // Open Gym appears in the feed so it cannot contradict totalCheckIns, which counts it.
+        // It has no template, category or coach.
+        if (!row.scheduledClass) {
+          return {
+            date: row.checkedInAt.toISOString(),
+            className: OPEN_GYM_LABEL,
+            category: null,
+            coachName: null,
+          };
+        }
         const instructor = row.scheduledClass.instructor;
         return {
           date: row.scheduledClass.startsAt.toISOString(),
@@ -226,15 +255,17 @@ export class ProgressService {
       >`
         SELECT a.user_id, u.first_name, u.last_name, COUNT(*)::bigint AS check_ins
         FROM attendances a
-        INNER JOIN scheduled_classes sc ON sc.id = a.scheduled_class_id
+        -- LEFT JOIN so Open Gym visits (no class) are counted. A class visit is still dated by
+        -- its class start, so per-class ranking is unchanged; only Open Gym uses check-in time.
+        LEFT JOIN scheduled_classes sc ON sc.id = a.scheduled_class_id
         INNER JOIN studio_memberships sm
           ON sm.user_id = a.user_id
           AND sm.studio_id = a.studio_id
           AND sm.deleted_at IS NULL
         INNER JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
         WHERE a.studio_id = ${studioId}
-          AND sc.starts_at >= ${periodBounds.start}
-          AND sc.starts_at < ${periodBounds.end}
+          AND COALESCE(sc.starts_at, a.checked_in_at) >= ${periodBounds.start}
+          AND COALESCE(sc.starts_at, a.checked_in_at) < ${periodBounds.end}
         GROUP BY a.user_id, u.first_name, u.last_name
         ORDER BY check_ins DESC, a.user_id ASC
       `;

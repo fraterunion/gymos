@@ -167,6 +167,96 @@ export function parseNoEligibleBookingError(error: unknown): WalletNoBooking | n
   };
 }
 
+/**
+ * A member who reached the door but may not enter for independent training. Distinct from
+ * WalletNoBooking: the question answered here is about the person's entitlement, not about
+ * whether a class was reserved.
+ */
+export type WalletOpenGymDenial = {
+  reason: 'not_included' | 'outside_hours' | 'not_entitled';
+  memberId: string;
+  memberName: string;
+  /** Present only for 'outside_hours'. Studio-local 'HH:mm'. */
+  membershipPlanName: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  /** Classes staff may still walk the member into, despite the Open Gym refusal. */
+  walkInCandidates: WalletWalkInCandidate[];
+};
+
+const OPEN_GYM_DENIAL_REASONS: Record<string, WalletOpenGymDenial['reason']> = {
+  WALLET_OPEN_GYM_NOT_INCLUDED: 'not_included',
+  WALLET_OPEN_GYM_OUTSIDE_HOURS: 'outside_hours',
+  WALLET_MEMBERSHIP_NOT_ENTITLED: 'not_entitled',
+};
+
+/**
+ * Extracts an Open Gym refusal so Front Desk can state the actual reason ("no incluye Open Gym",
+ * "fuera de horario") instead of the generic "sin reserva", which describes a class and tells
+ * staff nothing about why this member cannot come in.
+ */
+export function parseOpenGymDenialError(error: unknown): WalletOpenGymDenial | null {
+  if (!isApiErrorShape(error)) return null;
+  const body = error.body as
+    | {
+        code?: string;
+        memberId?: unknown;
+        memberName?: unknown;
+        membershipPlanName?: unknown;
+        windowStart?: unknown;
+        windowEnd?: unknown;
+        walkInCandidates?: unknown;
+      }
+    | undefined;
+  const reason = body?.code ? OPEN_GYM_DENIAL_REASONS[body.code] : undefined;
+  if (!reason || typeof body?.memberId !== 'string') return null;
+  return {
+    reason,
+    memberId: body.memberId,
+    memberName: typeof body.memberName === 'string' ? body.memberName : 'Miembro',
+    membershipPlanName:
+      typeof body.membershipPlanName === 'string' ? body.membershipPlanName : null,
+    windowStart: typeof body.windowStart === 'string' ? body.windowStart : null,
+    windowEnd: typeof body.windowEnd === 'string' ? body.windowEnd : null,
+    walkInCandidates: parseWalkInCandidates(body.walkInCandidates),
+  };
+}
+
+/** Converts a 24-hour 'HH:mm' into the 12-hour form ARES staff and members read. */
+export function formatOpenGymHour(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  const hour = Number(hStr);
+  const minute = mStr ?? '00';
+  if (!Number.isFinite(hour)) return hhmm;
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  return `${display}:${minute} ${suffix}`;
+}
+
+/** Front Desk title + body for each Open Gym refusal. */
+export function openGymDenialCopy(denial: WalletOpenGymDenial): {
+  title: string;
+  message: string;
+} {
+  if (denial.reason === 'not_entitled') {
+    return {
+      title: 'Membresía no vigente',
+      message: 'Este miembro no tiene una membresía activa. Revisa su estado de pago.',
+    };
+  }
+  if (denial.reason === 'not_included') {
+    return {
+      title: 'Acceso no incluido',
+      message: 'Tu membresía no incluye acceso Open Gym.',
+    };
+  }
+  const hours =
+    denial.windowStart && denial.windowEnd
+      ? `Tu membresía permite Open Gym de ${formatOpenGymHour(denial.windowStart)} a ${formatOpenGymHour(denial.windowEnd)}.`
+      : 'Tu membresía no permite Open Gym en este horario.';
+  return { title: 'Fuera de horario de Open Gym', message: hours };
+}
+
 export type WalletAlreadyCheckedIn = {
   memberName: string;
   attendedClass: WalletWalkInCandidate | null;
@@ -212,6 +302,24 @@ export function walletScanErrorCopy(error: unknown): { title: string; message: s
   }
   if (m.includes('WALLET_ALREADY_CHECKED_IN')) {
     return { title: 'Ya registrado', message: 'Este miembro ya hizo check-in para esta clase.' };
+  }
+  // Fallbacks for the Open Gym denials. The scanner normally handles these via
+  // parseOpenGymDenialError, which can also name the plan's hours; these apply only when the
+  // structured body is missing, so staff still see the real reason instead of a generic failure.
+  if (m.includes('WALLET_OPEN_GYM_NOT_INCLUDED')) {
+    return { title: 'Acceso no incluido', message: 'Tu membresía no incluye acceso Open Gym.' };
+  }
+  if (m.includes('WALLET_OPEN_GYM_OUTSIDE_HOURS')) {
+    return {
+      title: 'Fuera de horario de Open Gym',
+      message: 'Tu membresía no permite Open Gym en este horario.',
+    };
+  }
+  if (m.includes('WALLET_MEMBERSHIP_NOT_ENTITLED')) {
+    return {
+      title: 'Membresía no vigente',
+      message: 'Este miembro no tiene una membresía activa. Revisa su estado de pago.',
+    };
   }
   return null;
 }

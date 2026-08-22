@@ -271,6 +271,12 @@ export class MemberAnalyticsService {
         SELECT
           a.user_id,
           COUNT(*) FILTER (WHERE a.checked_in_at >= ${periodStart} AND a.checked_in_at <= ${periodEnd}) AS visits_period,
+          -- Class-only subset of visits_period. A walk-in means attending a CLASS without
+          -- having booked it, so the walk-in derivation below must not see Open Gym visits,
+          -- which have no booking by definition and would otherwise all be counted as walk-ins.
+          COUNT(*) FILTER (
+            WHERE a.type = 'CLASS' AND a.checked_in_at >= ${periodStart} AND a.checked_in_at <= ${periodEnd}
+          ) AS class_visits_period,
           COUNT(*) FILTER (WHERE a.checked_in_at >= ${thirtyStart}) AS visits_30d,
           COUNT(*) FILTER (WHERE a.checked_in_at >= ${sixtyStart} AND a.checked_in_at < ${thirtyStart}) AS visits_prior_30d,
           COUNT(*) FILTER (WHERE a.checked_in_at >= ${ninetyStart}) AS visits_90d,
@@ -332,7 +338,7 @@ export class MemberAnalyticsService {
         ARRAY[]::text[] AS week_start_keys,
         COALESCE(ba.bookings_period, 0) AS bookings_period,
         COALESCE(ab.attended_bookings_period, 0) AS attended_bookings_period,
-        GREATEST(COALESCE(aa.visits_period, 0) - COALESCE(ab.attended_bookings_period, 0), 0) AS walk_ins_period,
+        GREATEST(COALESCE(aa.class_visits_period, 0) - COALESCE(ab.attended_bookings_period, 0), 0) AS walk_ins_period,
         COALESCE(ba.no_shows_period, 0) AS no_shows_period
       FROM member_base mb
       LEFT JOIN attendance_agg aa ON aa.user_id = mb.user_id

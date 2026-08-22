@@ -22,6 +22,7 @@ import {
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { CheckInsService } from '../check-ins/check-ins.service';
+import { OPEN_GYM_LABEL } from '../check-ins/open-gym.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
@@ -1284,7 +1285,9 @@ export class MembersService {
     }
 
     for (const a of attendances) {
-      events.push({ type: 'CHECKED_IN', title: a.method === CheckInMethod.MANUAL ? 'Manual attendance' : 'Checked in', description: a.scheduledClass.classTemplate.name, actor: a.checkedInBy ? `${a.checkedInBy.firstName} ${a.checkedInBy.lastName}` : null, occurredAt: a.checkedInAt });
+      // Open Gym has no class to name; it is still a real visit and belongs on the timeline.
+      const description = a.scheduledClass ? a.scheduledClass.classTemplate.name : OPEN_GYM_LABEL;
+      events.push({ type: 'CHECKED_IN', title: a.method === CheckInMethod.MANUAL ? 'Manual attendance' : 'Checked in', description, actor: a.checkedInBy ? `${a.checkedInBy.firstName} ${a.checkedInBy.lastName}` : null, occurredAt: a.checkedInAt });
     }
 
     for (const s of subscriptions) {

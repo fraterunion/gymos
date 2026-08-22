@@ -95,7 +95,7 @@ describe('Wallet smart-booking check-in (e2e)', () => {
     expect(credentialRow?.lastUsedAt).not.toBeNull();
   });
 
-  it('returns WALLET_NO_ELIGIBLE_BOOKING when the member has no bookings at all', async () => {
+  it('denies a member with no bookings and no membership, creating no attendance', async () => {
     const studio = await createStudio(prisma);
     const { member, staffToken } = await setupMemberAndStaff(studio.id, 'zero');
     const { rawCredential } = await walletCredentials.issue(studio.id, member.id);
@@ -105,7 +105,13 @@ describe('Wallet smart-booking check-in (e2e)', () => {
       .set('Authorization', `Bearer ${staffToken}`)
       .send({ qrToken: `gymos:v1:${rawCredential}` })
       .expect(409);
-    expect(String((res.body as { message: unknown }).message)).toContain('WALLET_NO_ELIGIBLE_BOOKING');
+    // Since Open Gym shipped, "no reservation" is no longer a verdict on its own: the scan
+    // falls through to facility access, and this member is refused for the real reason —
+    // they have no entitled subscription at all.
+    expect(String((res.body as { message: unknown }).message)).toContain(
+      'WALLET_MEMBERSHIP_NOT_ENTITLED',
+    );
+    expect(await prisma.attendance.count({ where: { studioId: studio.id } })).toBe(0);
   });
 
   it('a cancelled booking is not an eligible candidate (falls through to WALLET_NO_ELIGIBLE_BOOKING)', async () => {
@@ -155,10 +161,18 @@ describe('Wallet smart-booking check-in (e2e)', () => {
       .set('Authorization', `Bearer ${staffToken}`)
       .send({ qrToken: `gymos:v1:${rawCredential}` })
       .expect(409);
-    expect(String((res.body as { message: unknown }).message)).toContain('WALLET_NO_ELIGIBLE_BOOKING');
+    // The booking is real but its class is hours away, so it is not an eligible candidate.
+    // The scan therefore falls through to facility access, which this member has no
+    // membership for — and critically, the future booking is never consumed.
+    expect(String((res.body as { message: unknown }).message)).toContain(
+      'WALLET_MEMBERSHIP_NOT_ENTITLED',
+    );
+    expect(await prisma.attendance.count({ where: { studioId: studio.id } })).toBe(0);
+    const booking = await prisma.booking.findFirstOrThrow({ where: { scheduledClassId: cls.id } });
+    expect(booking.status).toBe(BookingStatus.CONFIRMED);
   });
 
-  it('returns WALLET_ALREADY_CHECKED_IN, not WALLET_NO_ELIGIBLE_BOOKING, for a repeat scan', async () => {
+  it('returns WALLET_ALREADY_CHECKED_IN, not a facility-access denial, for a repeat scan', async () => {
     const studio = await createStudio(prisma);
     const tpl = await createClassTemplate(prisma, studio.id);
     const { start, end } = classTimesWithinCheckInWindow();
@@ -431,7 +445,10 @@ describe('Wallet smart-booking check-in (e2e)', () => {
 
       const body = await scanNoBooking(studio.id, staffToken, rawCredential!);
 
-      expect(body.code).toBe('WALLET_NO_ELIGIBLE_BOOKING');
+      // The denial reason changed with Open Gym (this member has no membership), but the
+      // identification contract Front Desk depends on is unchanged: who was scanned, and
+      // which classes they could still be walked into.
+      expect(body.code).toBe('WALLET_MEMBERSHIP_NOT_ENTITLED');
       expect(body.memberId).toBe(member.id);
       expect(body.memberName.length).toBeGreaterThan(0);
       expect(body.walkInCandidates).toHaveLength(1);

@@ -76,10 +76,14 @@ export function staffScanErrorCopy(error: unknown): { title: string; message: st
 }
 
 export async function resolveStaffScanClassDetails(
-  scheduledClassId: string,
+  /** Null for a visit with no class (Open Gym); falls back to the same copy as a lookup miss. */
+  scheduledClassId: string | null,
   studioSlug: string,
   timeZone: string,
 ): Promise<{ className: string; classStartTime: string }> {
+  if (!scheduledClassId) {
+    return { className: 'Clase programada', classStartTime: '—' };
+  }
   const { from, to } = buildScheduleQueryRange();
   try {
     const classes = await fetchPublicSchedule(studioSlug, from, to);

@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   BookingStatus,
   CheckInMethod,
+  CheckInType,
   ClassStatus,
   Prisma,
   Role,
@@ -38,11 +39,17 @@ import {
   WALLET_CREDENTIAL_REVOKED_MESSAGE,
   WALLET_MEMBER_NOT_ACTIVE_MESSAGE,
   WALLET_MULTIPLE_ELIGIBLE_BOOKINGS_CODE,
-  WALLET_NO_ELIGIBLE_BOOKING_MESSAGE,
   WALLET_WRONG_STUDIO_MESSAGE,
   type WalletEligibleBookingCandidate,
   type WalletWalkInCandidate,
 } from './wallet-checkin.constants';
+import {
+  OPEN_GYM_DEDUPE_WINDOW_MINUTES,
+  WALLET_MEMBERSHIP_NOT_ENTITLED_CODE,
+  WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
+  WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
+} from './open-gym.constants';
+import { evaluateOpenGymEligibility, type OpenGymPlanPolicy } from './open-gym-access';
 
 const ENTITLEMENT_OVERRIDE_ROLES: ReadonlySet<Role> = new Set([Role.ADMIN, Role.OWNER]);
 
@@ -76,10 +83,31 @@ export type QrTokenResponse = {
   expiresAt: Date;
 };
 
+/**
+ * Informational context attached to an Open Gym visit. Everything here is display-only —
+ * none of it associates the member with a class.
+ */
+export type OpenGymContext = {
+  membershipPlanName: string;
+  /** Studio-local 'HH:mm' bounds of the plan's door policy; null when unrestricted. */
+  windowStart: string | null;
+  windowEnd: string | null;
+  /**
+   * A class inside its check-in window at the moment of the scan, offered so Front Desk can
+   * show "Clase en curso: ..." as secondary text. The member is NOT a participant: no booking,
+   * no roster entry, no capacity effect, no credit.
+   */
+  classInProgress: WalletWalkInCandidate | null;
+  /** True when this scan matched a very recent visit and reused it instead of creating one. */
+  deduplicated: boolean;
+};
+
 export type AttendanceSummary = {
   id: string;
   studioId: string;
-  scheduledClassId: string;
+  /** Null exactly when `type` is OPEN_GYM. */
+  scheduledClassId: string | null;
+  type: CheckInType;
   userId: string;
   checkInMethod: CheckInMethod;
   checkedInAt: Date;
@@ -91,6 +119,8 @@ export type AttendanceSummary = {
     lastName: string;
     phone: string | null;
   };
+  /** Present only when `type` is OPEN_GYM. */
+  openGym?: OpenGymContext;
 };
 
 type QrJwtPayload = {
@@ -401,21 +431,11 @@ export class CheckInsService {
       });
     }
     if (resolved.outcome === 'none') {
-      this.logWalletCheckInDenied(studioId, credential.id, WALLET_NO_ELIGIBLE_BOOKING_MESSAGE);
-      // 41% of real attendance at ARES has no booking row, so a no-reservation scan must not
-      // dead-end. Returning the member plus the classes currently in the check-in window lets
-      // Front Desk launch the EXISTING walk-in path (POST /classes/:id/manual-attendance) with
-      // a known member and class — that endpoint, not this one, still decides whether the
-      // walk-in is actually allowed (entitlement, credits, override, audit).
-      const walkInCandidates = await this.resolveWalkInCandidates(studioId, credential.userId, now);
-      throw new ConflictException({
-        statusCode: 409,
-        code: WALLET_NO_ELIGIBLE_BOOKING_MESSAGE,
-        message: WALLET_NO_ELIGIBLE_BOOKING_MESSAGE,
-        memberId: credential.userId,
-        memberName,
-        walkInCandidates,
-      });
+      // No applicable reservation does NOT mean no right to be here. A scan at the door is
+      // first a request for gym access; a class check-in is the special case where the member
+      // happens to have booked something starting right now. Fall through to Open Gym rather
+      // than reporting "sin reserva", which describes a class and not a person's entitlement.
+      return this.checkInOpenGym(studioId, credential.userId, memberName, now, credential.id);
     }
     if (resolved.outcome === 'multiple') {
       this.logger.log(
@@ -467,6 +487,194 @@ export class CheckInsService {
     return attendance;
   }
 
+  /**
+   * Facility access for a member with no applicable reservation — the branch that used to be a
+   * flat WALLET_NO_ELIGIBLE_BOOKING rejection.
+   *
+   * Entitlement comes from structured MembershipPlan fields on the member's currently-entitled
+   * subscriptions. Plan description copy is never consulted, and neither is
+   * ClassTemplate.isOpenGymSlot: door hours differ per plan, so they cannot live on a shared
+   * class template.
+   *
+   * Never touches class state. The row written here has a NULL scheduledClassId (enforced by a
+   * DB CHECK constraint against `type`), so it cannot enter a roster, occupy capacity, consume a
+   * credit, or be seen by any credit/occupancy query — every one of those INNER JOINs
+   * scheduled_classes.
+   */
+  private async checkInOpenGym(
+    studioId: string,
+    userId: string,
+    memberName: string,
+    now: Date,
+    walletCredentialId: string | null,
+  ): Promise<AttendanceSummary> {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { timezone: true },
+    });
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
+    }
+
+    const entitledPlans = await this.resolveOpenGymPlanPolicies(studioId, userId, now);
+    const eligibility = evaluateOpenGymEligibility(entitledPlans, now, studio.timezone);
+
+    if (eligibility.outcome !== 'allowed') {
+      // Front Desk keeps the existing walk-in escalation on every denial: a member who cannot
+      // enter for Open Gym may still legitimately be added to a class in progress, and that
+      // path (POST /classes/:id/manual-attendance) remains the only authority on whether the
+      // walk-in itself is permitted.
+      const walkInCandidates = await this.resolveWalkInCandidates(studioId, userId, now);
+      const base = { statusCode: 409, memberId: userId, memberName, walkInCandidates };
+
+      if (eligibility.outcome === 'not_entitled') {
+        this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_MEMBERSHIP_NOT_ENTITLED_CODE);
+        throw new ConflictException({
+          ...base,
+          code: WALLET_MEMBERSHIP_NOT_ENTITLED_CODE,
+          message: WALLET_MEMBERSHIP_NOT_ENTITLED_CODE,
+        });
+      }
+      if (eligibility.outcome === 'not_included') {
+        this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_OPEN_GYM_NOT_INCLUDED_CODE);
+        throw new ConflictException({
+          ...base,
+          code: WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
+          message: WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
+        });
+      }
+      this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE);
+      throw new ConflictException({
+        ...base,
+        code: WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
+        message: WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
+        membershipPlanName: eligibility.membershipPlanName,
+        windowStart: eligibility.windowStart,
+        windowEnd: eligibility.windowEnd,
+        localTime: eligibility.localTime,
+      });
+    }
+
+    const { attendance, deduplicated } = await this.prisma.$transaction(async (tx) => {
+      // Same per-member lock the walk-in path takes, so a member cannot be concurrently
+      // registered into a class and given an Open Gym visit for the same arrival.
+      await acquireMembershipUsageAdvisoryLock(tx, studioId, userId);
+      return this.writeOpenGymVisit(tx, studioId, userId, now);
+    });
+
+    // Secondary display text only. Resolved after the write so a slow lookup can never delay
+    // the door decision, and deliberately reusing the walk-in candidate query so no new
+    // "is a class happening" time threshold enters the system.
+    const walkInCandidates = await this.resolveWalkInCandidates(studioId, userId, now);
+
+    const summary: AttendanceSummary = {
+      ...attendance,
+      openGym: {
+        membershipPlanName: eligibility.membershipPlanName,
+        windowStart: eligibility.windowStart,
+        windowEnd: eligibility.windowEnd,
+        classInProgress: walkInCandidates[0] ?? null,
+        deduplicated,
+      },
+    };
+
+    if (walletCredentialId) {
+      await this.walletCredentials.touchLastUsed(walletCredentialId);
+    }
+    this.logger.log(
+      JSON.stringify({
+        event: 'wallet.checkin.resolved',
+        studioId,
+        walletCredentialId,
+        outcome: deduplicated ? 'open_gym_deduplicated' : 'open_gym_checked_in',
+        membershipPlanId: eligibility.membershipPlanId,
+      }),
+    );
+    this.logCheckInCompleted('wallet_credential', { studioId, attendance: summary, actorUserId: null });
+    return summary;
+  }
+
+  /**
+   * Creates the Open Gym visit, unless the member was already scanned within the last few
+   * minutes — in which case the existing visit is returned as a success.
+   *
+   * Deliberately a short time window rather than a unique constraint on (member, day): a member
+   * who trains in the morning and returns in the evening made two genuine visits, and a daily
+   * constraint would silently discard exactly the traffic and frequency data this record exists
+   * to capture. The read and the write are serialized by the caller's advisory lock, so two
+   * simultaneous scans cannot both miss the check and insert.
+   */
+  private async writeOpenGymVisit(
+    tx: Prisma.TransactionClient,
+    studioId: string,
+    userId: string,
+    now: Date,
+  ): Promise<{ attendance: AttendanceSummary; deduplicated: boolean }> {
+    const dedupeSince = new Date(now.getTime() - OPEN_GYM_DEDUPE_WINDOW_MINUTES * 60_000);
+    const recent = await tx.attendance.findFirst({
+      where: {
+        studioId,
+        userId,
+        type: CheckInType.OPEN_GYM,
+        checkedInAt: { gte: dedupeSince },
+      },
+      orderBy: { checkedInAt: 'desc' },
+      include: { user: { select: attendanceUserSelect } },
+    });
+    if (recent) {
+      return { attendance: this.toAttendanceSummary(recent), deduplicated: true };
+    }
+
+    const created = await tx.attendance.create({
+      data: {
+        studioId,
+        scheduledClassId: null,
+        type: CheckInType.OPEN_GYM,
+        userId,
+        method: CheckInMethod.QR,
+        checkedInByUserId: null,
+      },
+      include: { user: { select: attendanceUserSelect } },
+    });
+    return { attendance: this.toAttendanceSummary(created), deduplicated: false };
+  }
+
+  /**
+   * Open Gym door policy for every subscription the member is currently entitled under, using
+   * the same `currentlyEntitledSubscriptionWhere` predicate as booking access — so "expired",
+   * "paused" and "cancelled but still inside a paid entitlement window" mean exactly what they
+   * already mean everywhere else in the system. An empty result is read downstream as "no valid
+   * membership", never as "no Open Gym".
+   */
+  private async resolveOpenGymPlanPolicies(
+    studioId: string,
+    userId: string,
+    now: Date,
+  ): Promise<OpenGymPlanPolicy[]> {
+    const subscriptions = await this.prisma.subscription.findMany({
+      where: { studioId, userId, ...currentlyEntitledSubscriptionWhere(now) },
+      select: {
+        membershipPlan: {
+          select: {
+            id: true,
+            name: true,
+            openGymAccess: true,
+            openGymWindowStart: true,
+            openGymWindowEnd: true,
+          },
+        },
+      },
+    });
+
+    return subscriptions.map((s) => ({
+      membershipPlanId: s.membershipPlan.id,
+      membershipPlanName: s.membershipPlan.name,
+      openGymAccess: s.membershipPlan.openGymAccess,
+      openGymWindowStart: s.membershipPlan.openGymWindowStart,
+      openGymWindowEnd: s.membershipPlan.openGymWindowEnd,
+    }));
+  }
+
   private logWalletCheckInDenied(studioId: string, walletCredentialId: string | null, reason: string): void {
     this.logger.log(
       JSON.stringify({ event: 'wallet.checkin.denied', studioId, walletCredentialId, reason }),
@@ -492,6 +700,7 @@ export class CheckInsService {
         source,
         studioId: input.studioId,
         attendanceId: input.attendance.id,
+        checkInType: input.attendance.type,
         scheduledClassId: input.attendance.scheduledClassId,
         method: input.attendance.checkInMethod,
         actorUserId: input.actorUserId,
@@ -881,6 +1090,7 @@ export class CheckInsService {
             data: {
               studioId,
               scheduledClassId,
+              type: CheckInType.CLASS,
               userId: memberId,
               method: CheckInMethod.MANUAL,
               checkedInByUserId: actorUserId,
@@ -1003,6 +1213,9 @@ export class CheckInsService {
         data: {
           studioId: input.studioId,
           scheduledClassId: input.scheduledClassId,
+          // Every path through here is a class check-in by construction — Open Gym visits are
+          // written by writeOpenGymVisit, which is the only writer allowed to omit a class.
+          type: CheckInType.CLASS,
           userId: input.userId,
           method: input.method,
           checkedInByUserId: input.checkedInByUserId,
@@ -1023,6 +1236,7 @@ export class CheckInsService {
       id: row.id,
       studioId: row.studioId,
       scheduledClassId: row.scheduledClassId,
+      type: row.type,
       userId: row.userId,
       checkInMethod: row.method,
       checkedInAt: row.checkedInAt,

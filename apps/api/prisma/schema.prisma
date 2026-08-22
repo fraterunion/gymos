@@ -79,6 +79,15 @@ enum CheckInMethod {
   KIOSK
 }
 
+/// Discriminates what a physical visit represents. CLASS rows carry a scheduledClassId and
+/// keep every pre-existing class behaviour (roster, capacity, credits, show rate). OPEN_GYM
+/// rows have no scheduledClassId and represent independent training — a real facility visit
+/// that visit-based metrics must count, but which is never class participation.
+enum CheckInType {
+  CLASS
+  OPEN_GYM
+}
+
 enum PaymentStatus {
   PENDING
   SUCCEEDED
@@ -360,6 +369,16 @@ model MembershipPlan {
   allClassesAccess    Boolean         @default(true) @map("all_classes_access")
   /// When set, fixed-duration Stripe Prices and GymOS entitlement cycles both use this day count.
   entitlementDays  Int?            @map("entitlement_days")
+  /// Open Gym (facility door access for independent training). Deliberately plan-level and NOT
+  /// derived from ClassTemplate.isOpenGymSlot: door policy differs per plan, whereas a template
+  /// is a single shared object. Deny-by-default — a plan grants Open Gym only when explicitly
+  /// enabled here. Never inferred from `description` copy.
+  openGymAccess         Boolean @default(false) @map("open_gym_access")
+  /// Local door-access window (HH:mm, 24h, studio timezone), evaluated against the CURRENT time
+  /// at scan. Both bounds set together or both null; null means no hour restriction. Compared
+  /// as [start, end) so an end of "22:00" denies 22:00 exactly.
+  openGymWindowStart    String? @map("open_gym_window_start")
+  openGymWindowEnd      String? @map("open_gym_window_end")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   deletedAt        DateTime?       @map("deleted_at")
@@ -620,26 +639,39 @@ model WaitlistEntry {
   @@map("waitlist_entries")
 }
 
+/// A physical visit to the studio. `type` discriminates what the visit represents:
+///   CLASS    — scheduledClassId is NOT NULL; unchanged legacy behaviour in every consumer.
+///   OPEN_GYM — scheduledClassId is NULL; independent training, never class participation.
+/// A DB CHECK constraint enforces that pairing, so no code path can produce a CLASS row
+/// without a class or an OPEN_GYM row attached to one.
 model Attendance {
   id                  String        @id @default(cuid())
   studioId            String        @map("studio_id")
-  scheduledClassId    String        @map("scheduled_class_id")
+  /// Null exactly when type = OPEN_GYM. Class-scoped queries INNER JOIN scheduled_classes and
+  /// therefore exclude Open Gym rows for free — that is load-bearing for credits and capacity.
+  scheduledClassId    String?       @map("scheduled_class_id")
+  type                CheckInType   @default(CLASS)
   userId              String        @map("user_id")
   method              CheckInMethod
   checkedInAt         DateTime      @default(now()) @map("checked_in_at")
   /// Staff/instructor who performed a manual check-in; null for QR or other methods.
   checkedInByUserId String?       @map("checked_in_by_user_id")
 
-  studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
-  scheduledClass ScheduledClass @relation(fields: [scheduledClassId], references: [id], onDelete: Restrict)
-  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
-  checkedInBy    User?          @relation("AttendanceRecordedBy", fields: [checkedInByUserId], references: [id], onDelete: SetNull)
+  studio         Studio          @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  scheduledClass ScheduledClass? @relation(fields: [scheduledClassId], references: [id], onDelete: Restrict)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  checkedInBy    User?           @relation("AttendanceRecordedBy", fields: [checkedInByUserId], references: [id], onDelete: SetNull)
 
+  /// Still one class attendance per member per class. Postgres treats NULLs as distinct, so this
+  /// intentionally does not constrain OPEN_GYM rows — repeat visits in a day are legitimate data
+  /// and accidental double scans are de-duplicated by a short time window in the service instead.
   @@unique([scheduledClassId, userId])
   @@index([studioId])
   @@index([studioId, scheduledClassId])
   @@index([studioId, userId])
   @@index([studioId, userId, checkedInAt])
+  /// Serves both the Open Gym double-scan lookup and gym-traffic/Open-Gym-usage reporting.
+  @@index([studioId, type, checkedInAt])
   @@map("attendances")
 }
 

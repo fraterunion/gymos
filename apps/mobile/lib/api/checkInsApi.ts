@@ -6,10 +6,28 @@ export type QrTokenResponse = {
   expiresAt: string;
 };
 
+export type CheckInTypeDto = 'CLASS' | 'OPEN_GYM';
+
+/** Context for a facility visit. Present only when `type` is OPEN_GYM. */
+export type OpenGymContextDto = {
+  membershipPlanName: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  /**
+   * A class inside its check-in window at the moment of the scan, for secondary display only.
+   * The member is NOT a participant in it.
+   */
+  classInProgress: { scheduledClassId: string; className: string; startsAt: string } | null;
+  deduplicated: boolean;
+};
+
 export type AttendanceSummaryDto = {
   id: string;
   studioId: string;
-  scheduledClassId: string;
+  /** Null exactly when `type` is OPEN_GYM. */
+  scheduledClassId: string | null;
+  /** Absent on responses from an API older than the Open Gym release; treat as CLASS. */
+  type?: CheckInTypeDto;
   userId: string;
   checkInMethod: string;
   checkedInAt: string;
@@ -21,6 +39,7 @@ export type AttendanceSummaryDto = {
     lastName: string;
     phone: string | null;
   };
+  openGym?: OpenGymContextDto;
 };
 
 export type BookingAttendanceResponse = {
@@ -49,7 +68,7 @@ type StaffForceCheckInResponse = {
   attendance: {
     id: string;
     studioId: string;
-    scheduledClassId: string;
+    scheduledClassId: string | null;
     userId: string;
     method: string;
     checkedInAt: string;

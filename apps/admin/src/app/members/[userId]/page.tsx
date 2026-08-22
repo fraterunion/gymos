@@ -1760,7 +1760,7 @@ export default function MemberProfilePage() {
                   <p className="mt-3 text-sm font-medium text-zinc-900">{profile.operations.nextBooking?.scheduledClass.classTemplate.name ?? "Sin reserva futura"}</p>
                   {profile.operations.nextBooking ? <p className="text-sm text-zinc-500">{fmtDateTime(profile.operations.nextBooking.scheduledClass.startsAt)}</p> : null}
                   <p className="mt-2 text-xs text-zinc-400">{profile.bookingStats.upcomingCount} {profile.bookingStats.upcomingCount === 1 ? "reserva próxima" : "reservas próximas"}</p>
-                  <div className="mt-4 border-t border-zinc-100 pt-4"><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm text-zinc-800">{profile.operations.lastVisit ? `${fmtDateTime(profile.operations.lastVisit.checkedInAt)} · ${profile.operations.lastVisit.scheduledClass.classTemplate.name}` : "Nunca ha asistido"}</p></div>
+                  <div className="mt-4 border-t border-zinc-100 pt-4"><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm text-zinc-800">{profile.operations.lastVisit ? `${fmtDateTime(profile.operations.lastVisit.checkedInAt)} · ${profile.operations.lastVisit.scheduledClass?.classTemplate.name ?? "Open Gym"}` : "Nunca ha asistido"}</p></div>
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-zinc-900">Estado de membresía</h2>

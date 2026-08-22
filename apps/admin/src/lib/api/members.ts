@@ -230,7 +230,7 @@ export type MemberProfile = {
     creditsRemaining: number | null;
   }) | null;
   operations: {
-    lastVisit: { checkedInAt: string; method: string; scheduledClass: { id: string; startsAt: string; classTemplate: { name: string } } } | null;
+    lastVisit: { checkedInAt: string; method: string; type: CheckInType; scheduledClass: { id: string; startsAt: string; classTemplate: { name: string } } | null } | null;
     nextBooking: { id: string; scheduledClass: { id: string; startsAt: string; classTemplate: { name: string } } } | null;
     lastPayment: (MemberPayment & { paymentMethod: string; membershipPlan: { id: string; name: string } | null }) | null;
     recentNoShows: number;
@@ -308,17 +308,21 @@ export type MemberBookingsResponse = {
   summary: { upcoming: number; completed: number; cancelled: number; noShows: number };
 };
 
+export type CheckInType = "CLASS" | "OPEN_GYM";
+
 export type MemberAttendance = {
   id: string;
   checkedInAt: string;
   method: "QR" | "MANUAL" | "KIOSK";
   checkedInByUserId: string | null;
+  type: CheckInType;
+  /** Null exactly when type is OPEN_GYM — independent training has no class. */
   scheduledClass: {
     id: string;
     startsAt: string;
     endsAt: string;
     classTemplate: { id: string; name: string; color: string | null };
-  };
+  } | null;
 };
 
 export type MemberAttendanceResponse = {

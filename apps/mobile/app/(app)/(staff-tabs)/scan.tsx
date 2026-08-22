@@ -25,9 +25,11 @@ import {
 import { canAccessStaffScan } from '@/lib/staffRole';
 import { formatClassTime } from '@/lib/datetime';
 import {
+  openGymDenialCopy,
   parseAlreadyCheckedInError,
   parseMultipleCandidatesError,
   parseNoEligibleBookingError,
+  parseOpenGymDenialError,
   walletScanErrorCopy,
 } from '@/lib/walletPassState';
 import { getColors, Radius, Space } from '@/constants/Theme';
@@ -174,6 +176,30 @@ export default function StaffScanScreen() {
       try {
         const attendance = await submitStaffQrScan(studioId, qrToken);
         const memberName = `${attendance.user.firstName} ${attendance.user.lastName}`.trim();
+
+        // Gym access, not class attendance. Rendered as its own success state so staff can
+        // tell at a glance what the member is here for, and never fetches class details —
+        // the member is not associated with any class.
+        if (attendance.type === 'OPEN_GYM') {
+          const openGymParams = new URLSearchParams({
+            outcome: 'open_gym',
+            memberName,
+            membershipPlanName: attendance.openGym?.membershipPlanName ?? '',
+            checkedInAt: attendance.checkedInAt,
+            timeZone,
+          });
+          const inProgress = attendance.openGym?.classInProgress;
+          if (inProgress) {
+            openGymParams.set('classInProgressName', inProgress.className);
+            openGymParams.set(
+              'classInProgressTime',
+              formatClassTime(inProgress.startsAt, timeZone),
+            );
+          }
+          router.push(`/(app)/staff-scan-result?${openGymParams.toString()}` as Href);
+          return;
+        }
+
         const classDetails = await resolveStaffScanClassDetails(
           attendance.scheduledClassId,
           studioSlug,
@@ -202,9 +228,29 @@ export default function StaffScanScreen() {
           return;
         }
 
+        // The member was identified but may not enter for independent training. Show why —
+        // "no incluye Open Gym" or "fuera de horario" — rather than the old "sin reserva",
+        // which described a class and left staff guessing. Walk-in stays available.
+        const openGymDenial = parseOpenGymDenialError(e);
+        if (openGymDenial) {
+          const { title, message } = openGymDenialCopy(openGymDenial);
+          const denialParams = new URLSearchParams({
+            outcome: 'denied',
+            title,
+            message,
+            memberName: openGymDenial.memberName,
+            memberId: openGymDenial.memberId,
+            walkInCandidates: JSON.stringify(openGymDenial.walkInCandidates),
+            timeZone,
+          });
+          router.push(`/(app)/staff-scan-result?${denialParams.toString()}` as Href);
+          return;
+        }
+
         // Identified the member but found no reservation. Hand the member (and any classes
         // currently open for walk-in) to the result screen so staff can act instead of
         // re-scanning; the walk-in itself remains a separate, explicit, authorized action.
+        // Only reachable from an API older than the Open Gym release.
         const noBooking = parseNoEligibleBookingError(e);
         if (noBooking) {
           const noBookingParams = new URLSearchParams({
