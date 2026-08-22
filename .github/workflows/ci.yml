@@ -60,3 +60,9 @@ jobs:
       # Full mobile lint/typecheck stay out of this job; this catches the OTA .env override class of bug.
       - name: Mobile env precedence tests
         run: pnpm --filter mobile test:env
+
+      # Real Expo config pathway (EXPO_NO_DOTENV=1). Must stay green with a hazardous
+      # local .env present in developer machines; CI has no such .env, but this still
+      # pins ARES production URL + slug through app.config.js.
+      - name: Mobile ARES config verify
+        run: pnpm --filter mobile config:verify:ares

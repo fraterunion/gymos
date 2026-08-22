@@ -205,10 +205,26 @@ Structured JSON events (no secrets):
 ## Local validation (mobile only)
 
 ```bash
-cd apps/mobile
-WHITELABEL_PROFILE=ares npx expo config --json
-WHITELABEL_PROFILE=ares npx expo export --platform android
+# Real Expo config pathway (same as export / OTA). Requires EXPO_NO_DOTENV=1 for client profiles
+# so a hazardous root .env cannot masquerade as an intentional override.
+pnpm --filter mobile config:verify:ares
+pnpm --filter mobile eas:config:ares
+
+# Manual equivalent:
+EXPO_NO_DOTENV=1 WHITELABEL_PROFILE=ares pnpm --filter mobile exec expo config --json
+EXPO_NO_DOTENV=1 WHITELABEL_PROFILE=ares pnpm --filter mobile exec expo export --platform android
 ```
+
+### ARES OTA (canonical)
+
+```bash
+pnpm --filter mobile config:verify:ares   # must print ok: true with production API + ares-fitness
+pnpm --filter mobile ota:ares             # dry-run plan only
+pnpm --filter mobile ota:ares:publish     # publishes to channel/branch production-ares
+pnpm --filter mobile eas:version          # local eas-cli; must satisfy eas.json (>= 18.12.1)
+```
+
+Do **not** run bare `eas update` without `WHITELABEL_PROFILE=ares` and `EXPO_NO_DOTENV=1` — that resolves the local template slug (`gymos-member`) and/or can bake localhost from root `.env`.
 
 ## API endpoints (operators)
 

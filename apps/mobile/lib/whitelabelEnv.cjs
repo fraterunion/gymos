@@ -3,7 +3,7 @@
 /**
  * White-label env resolution for Expo `app.config.js`.
  *
- * Precedence (highest → lowest):
+ * Precedence (highest → lowest), once this loader runs:
  *   1. explicit process.env already set by shell / EAS / CI
  *   2. selected profile file: env/.env.<WHITELABEL_PROFILE>
  *   3. local root `.env` — fills keys that are still unset only
@@ -11,6 +11,18 @@
  * Env files MAY fill missing values. They MUST NOT overwrite existing values.
  * A developer's gitignored root `.env` must never silently replace a client
  * profile's production API URL, studio slug, or native identity.
+ *
+ * ## Expo CLI dotenv preload (critical)
+ *
+ * By default Expo CLI loads `apps/mobile/.env` into `process.env` *before*
+ * `app.config.js` is evaluated (`env: load .env`). Those values then look like
+ * intentional shell overrides to this loader, so a localhost / ares-qa-demo
+ * root `.env` can beat `env/.env.ares` and poison a release.
+ *
+ * Release / verify / OTA commands MUST set `EXPO_NO_DOTENV=1` so Expo skips
+ * that preload and this loader owns precedence. Plain-node scripts that only
+ * call `loadProfileEnvFiles` without going through Expo can false-green —
+ * always verify ARES via `config:verify:ares` (expo config pathway).
  */
 
 const fs = require('node:fs');

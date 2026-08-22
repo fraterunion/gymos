@@ -22,12 +22,38 @@ White-label member app under `apps/mobile`. Each gym ships its own build; **nati
 - **Native shell variables** — `APP_DISPLAY_NAME`, `APP_SCHEME`, `IOS_BUNDLE_IDENTIFIER`, `ANDROID_PACKAGE`, `APP_ICON_PATH`, `APP_SPLASH_PATH`, `APP_ADAPTIVE_ICON_PATH`, optional `EXPO_SLUG`. Documented in **`docs/WHITE_LABEL_BUILDS.md`** and **`docs/ENV_VARS.md`**.
 - **Examples** — `apps/mobile/env/.env.local.example`, `.env.ares.example`, `.env.pilates-toluca.example` (copy to drop `.example`).
 
-**Env precedence (highest → lowest):** explicit `process.env` (shell / EAS / CI) → `env/.env.<profile>` → root `apps/mobile/.env` as a **fill-only** fallback. Env files never overwrite a value that is already set. A local `.env` must not replace client/production profile values (this nearly shipped `localhost` / `ares-qa-demo` into an ARES OTA). Client profiles fail fast if the resolved API URL is loopback or the studio slug is a QA demo slug.
+**Env precedence (highest → lowest), once our loader runs:** explicit `process.env` (shell / EAS / CI) → `env/.env.<profile>` → root `apps/mobile/.env` as a **fill-only** fallback. Env files never overwrite a value that is already set.
+
+**Expo dotenv preload:** Expo CLI loads root `.env` into `process.env` *before* `app.config.js` unless `EXPO_NO_DOTENV=1`. Those preloaded values look like intentional shell overrides to our loader, so a localhost / `ares-qa-demo` `.env` can beat `env/.env.ares`. All ARES release commands set `EXPO_NO_DOTENV=1` so the profile owns the release. Do not rename `.env` by hand to work around this.
+
+Client profiles fail fast if the resolved API URL is loopback or the studio slug is a QA demo slug.
 
 Copy `apps/mobile/.env.example` to `apps/mobile/.env` for local dev, or use **`env/.env.local`** with `WHITELABEL_PROFILE=local`. Values are inlined at **bundle** time for `EXPO_PUBLIC_*`; native config is resolved when Expo loads **`app.config.js`**.
 
-**Verify config:** `pnpm --filter mobile config:print`
-**Verify ARES safety:** `pnpm --filter mobile config:verify:ares`
+**Verify config (native identity):** `pnpm --filter mobile config:print`
+**Verify ARES safety (real Expo path):** `pnpm --filter mobile config:verify:ares`
+
+### ARES production OTA
+
+| Step | Command | Publishes? |
+|------|---------|------------|
+| Verify | `pnpm --filter mobile config:verify:ares` | No |
+| Dry-run plan | `pnpm --filter mobile ota:ares` | No |
+| Publish | `pnpm --filter mobile ota:ares:publish` | Yes — `production-ares` |
+
+Always:
+
+- Profile: `ares` (`WHITELABEL_PROFILE=ares`)
+- Channel / branch: `production-ares`
+- Runtime: `appVersion` policy (currently `1.1`)
+- API: `https://api-production-8a0e.up.railway.app`
+- Slug: `ares-fitness`
+- Local `eas-cli` from the workspace (`pnpm exec eas`), not a global Homebrew binary
+- `EXPO_NO_DOTENV=1` (set by the scripts)
+
+A local root `.env` pointing at localhost / `ares-qa-demo` is expected on developer machines and must **not** be trusted implicitly for release. The verify/OTA scripts ignore Expo's `.env` preload and assert the production values above before any publish.
+
+OTA publish is a production release action — wait for explicit approval (see root `AGENTS.md`).
 
 ### EAS Build profiles (Phase 5B)
 

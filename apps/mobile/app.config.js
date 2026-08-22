@@ -56,7 +56,8 @@ function resolveAssetPath(profile, key) {
 
 module.exports = ({ config }) => {
   // Precedence: explicit process.env > env/.env.<profile> > root .env (fill-only).
-  // See lib/whitelabelEnv.cjs — root `.env` must never clobber a client profile.
+  // Release commands must set EXPO_NO_DOTENV=1 so Expo does not preload root
+  // `.env` before this file runs (see lib/whitelabelEnv.cjs).
   const profile = loadProfileEnvFiles(MOBILE_ROOT, process.env);
   assertSafeResolvedEnv(profile, process.env);
 
@@ -155,6 +156,10 @@ module.exports = ({ config }) => {
     extra: {
       ...config.extra,
       whitelabelProfile: profile,
+      // Exposed so `expo config --json` (and config:verify:ares) can assert the
+      // same EXPO_PUBLIC_* values Metro will inline — without re-parsing dotenv.
+      expoPublicApiUrl: process.env.EXPO_PUBLIC_API_URL?.trim() ?? '',
+      expoPublicStudioSlug: process.env.EXPO_PUBLIC_STUDIO_SLUG?.trim() ?? '',
       eas: {
         projectId: '9f5697a5-b5cb-425b-850f-fa2f61068f20',
       },

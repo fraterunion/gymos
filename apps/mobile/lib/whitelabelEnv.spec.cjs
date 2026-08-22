@@ -277,3 +277,27 @@ test('client profile missing studio slug fails fast', () => {
     /EXPO_PUBLIC_STUDIO_SLUG is missing/,
   );
 });
+
+test('Expo-preloaded root .env values are treated as already-set (preload hazard)', () => {
+  // Documents why release commands need EXPO_NO_DOTENV=1: once Expo has copied
+  // root `.env` into process.env, the profile file cannot override those keys.
+  const { root, cleanup } = makeTempMobileRoot({
+    profile: 'ares',
+    profileEnv:
+      'EXPO_PUBLIC_API_URL=https://api-production-8a0e.up.railway.app\nEXPO_PUBLIC_STUDIO_SLUG=ares-fitness\n',
+    rootEnv: 'EXPO_PUBLIC_API_URL=http://localhost:3000\nEXPO_PUBLIC_STUDIO_SLUG=ares-qa-demo\n',
+  });
+  try {
+    /** @type {Record<string, string | undefined>} */
+    const env = {
+      WHITELABEL_PROFILE: 'ares',
+      EXPO_PUBLIC_API_URL: 'http://localhost:3000',
+      EXPO_PUBLIC_STUDIO_SLUG: 'ares-qa-demo',
+    };
+    loadProfileEnvFiles(root, env);
+    assert.equal(env.EXPO_PUBLIC_API_URL, 'http://localhost:3000');
+    assert.throws(() => assertSafeResolvedEnv('ares', env), /Unsafe production/);
+  } finally {
+    cleanup();
+  }
+});
