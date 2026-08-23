@@ -2,6 +2,7 @@ import { ApiError } from '@/lib/api/errors';
 import { fetchPublicSchedule } from '@/lib/api/publicScheduleApi';
 import { scheduledClassTitle } from '@/lib/classUtils';
 import { buildScheduleQueryRange, formatClassTime } from '@/lib/datetime';
+import { resolveStaffScanErrorCopy } from '@/lib/staffScanErrorCopy';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 
 export type StaffScanSuccessDetails = {
@@ -11,68 +12,41 @@ export type StaffScanSuccessDetails = {
   checkedInAt: string;
 };
 
+/** Duck-typed like walletPassState — keeps callers free of instanceof-only ApiError checks. */
+function isStaffScanApiError(
+  error: unknown,
+): error is { message: string; status: number; body?: unknown } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { message?: unknown }).message === 'string' &&
+    typeof (error as { status?: unknown }).status === 'number'
+  );
+}
+
+/**
+ * Front Desk scan / walk-in refusal copy.
+ * Membership-expired recognition lives in resolveStaffScanErrorCopy (tested in isolation).
+ */
 export function staffScanErrorCopy(error: unknown): { title: string; message: string } {
-  if (!(error instanceof ApiError)) {
+  if (!isStaffScanApiError(error)) {
     return {
       title: 'Error de red',
       message: 'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.',
     };
   }
 
-  const raw = error.message;
-  const m = raw.toLowerCase();
+  const resolved = resolveStaffScanErrorCopy(error.message, error.status);
 
-  if (m.includes('already checked in')) {
+  // Enrich generic fallback with member-facing API mapping when we have a real ApiError.
+  if (resolved.title === 'Check-in fallido' && error instanceof ApiError) {
     return {
-      title: 'Ya registrado',
-      message: 'Este miembro ya hizo check-in para esta clase.',
+      title: resolved.title,
+      message: userFacingApiMessage(error, resolved.message),
     };
   }
 
-  if (
-    m.includes('already used') ||
-    m.includes('expired') ||
-    m.includes('invalid qr') ||
-    m.includes('invalid or expired')
-  ) {
-    return {
-      title: 'Código QR expirado o inválido',
-      message: 'Pide al miembro que actualice su código QR desde la pantalla de reservas e inténtalo de nuevo.',
-    };
-  }
-
-  if (m.includes('time window') || m.includes('not available outside') || m.includes('not yet available')) {
-    return {
-      title: 'Ventana de check-in cerrada',
-      message: 'El check-in abre 15 minutos antes de la clase y cierra 30 minutos después de que inicia.',
-    };
-  }
-
-  if (error.status === 403) {
-    return {
-      title: 'Sin autorización',
-      message: 'Tu cuenta no tiene permiso para registrar miembros en este estudio.',
-    };
-  }
-
-  if (error.status === 401) {
-    return {
-      title: 'Sin autorización',
-      message: 'Tu sesión puede haber expirado. Inicia sesión de nuevo e intenta escanear otra vez.',
-    };
-  }
-
-  if (error.status >= 500) {
-    return {
-      title: 'Error de red',
-      message: 'El servicio del estudio no está disponible por el momento. Inténtalo de nuevo en un momento.',
-    };
-  }
-
-  return {
-    title: 'Check-in fallido',
-    message: userFacingApiMessage(error, 'No pudimos completar este check-in. Inténtalo de nuevo.'),
-  };
+  return resolved;
 }
 
 export async function resolveStaffScanClassDetails(

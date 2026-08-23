@@ -247,6 +247,9 @@ export default function StaffScanScreen() {
             message,
             memberName: openGymDenial.memberName,
             memberId: openGymDenial.memberId,
+            openGymDenialReason: openGymDenial.reason,
+            // Candidates may still be present for not_entitled; the result screen hides the
+            // walk-in CTA for that reason. Entitled denials keep the class escalation path.
             walkInCandidates: JSON.stringify(openGymDenial.walkInCandidates),
             timeZone,
           });

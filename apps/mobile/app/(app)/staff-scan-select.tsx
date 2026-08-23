@@ -97,7 +97,7 @@ export default function StaffScanSelectScreen() {
           </Text>
           <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22, marginBottom: 24 }}>
             {isWalkIn
-              ? `Registrarás la entrada de ${memberName} sin reserva en:`
+              ? `Registrarás a ${memberName} en una clase:`
               : `${memberName} tiene más de una reservación disponible en este momento:`}
           </Text>
 
