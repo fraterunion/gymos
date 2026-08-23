@@ -12,6 +12,10 @@ import { registerManualClassAttendance } from '@/lib/api/checkInsApi';
 import { formatClassTime } from '@/lib/datetime';
 import { canRegisterManualAttendance } from '@/lib/staffRole';
 import { staffScanErrorCopy } from '@/lib/staffScanFeedback';
+import {
+  CLASS_WALK_IN_CTA_LABEL,
+  shouldOfferClassWalkInEscalation,
+} from '@/lib/staffWalkInEscalation';
 import { formatOpenGymHour, type WalletWalkInCandidate } from '@/lib/walletPassState';
 import { getColors, Radius, Space } from '@/constants/Theme';
 
@@ -83,6 +87,8 @@ export default function StaffScanResultScreen() {
     windowEnd?: string | string[];
     classInProgressName?: string | string[];
     classInProgressTime?: string | string[];
+    /** Open Gym denial reason — used to hide walk-in for not_entitled. */
+    openGymDenialReason?: string | string[];
   }>();
 
   const outcome = searchParam(params.outcome);
@@ -120,14 +126,17 @@ export default function StaffScanResultScreen() {
 
   const memberId = searchParam(params.memberId);
   const walkInCandidates = parseWalkInCandidates(searchParam(params.walkInCandidates));
+  const openGymDenialReason = searchParam(params.openGymDenialReason);
   // Role is re-checked here, not trusted from navigation params: the scan tab admits STAFF,
   // but walk-in attendance is FRONT_DESK | ADMIN | OWNER only. The API enforces this too.
-  // Offered on Open Gym refusals as well — a member who cannot train independently may still
-  // legitimately be added to a class that is running.
-  const walkInAllowed =
-    (isNoBooking || isDenied) &&
-    canRegisterManualAttendance(matched?.role) &&
-    walkInCandidates.length > 0;
+  // Entitled members who cannot use Open Gym may still be walked into a class; members with
+  // no membership (not_entitled) get denial only — no escalation from this screen.
+  const walkInAllowed = shouldOfferClassWalkInEscalation({
+    outcome,
+    openGymDenialReason,
+    canRegisterManualAttendance: canRegisterManualAttendance(matched?.role),
+    walkInCandidateCount: walkInCandidates.length,
+  });
 
   function scanAnother() {
     if (router.canGoBack()) {
@@ -390,7 +399,7 @@ export default function StaffScanResultScreen() {
             {walkInAllowed ? (
               <View style={{ alignSelf: 'stretch', marginTop: 20 }}>
                 <BrandButton
-                  label="Registrar entrada sin reserva"
+                  label={CLASS_WALK_IN_CTA_LABEL}
                   variant="white"
                   accentColor={primaryColor}
                   loading={walkInBusy}
