@@ -146,7 +146,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
     await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
     const admin = await seedAdmin(studio.id);
 
     const result = await ops.executeDuplicateWeek(
@@ -162,10 +162,104 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
 
     expect(result.removedCount).toBe(1);
     expect(result.createdCount).toBe(1);
-    const extra = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-08-25', '08:00', TZ) },
+    expect(result.cancelledCount).toBe(0);
+    expect(await prisma.scheduledClass.findUnique({ where: { id: extra.id } })).toBeNull();
+    const tombstones = await prisma.scheduledClass.count({
+      where: {
+        studioId: studio.id,
+        status: ClassStatus.CANCELLED,
+        cancelReason: 'Removed by week reconciliation',
+      },
     });
-    expect(extra?.status).toBe(ClassStatus.CANCELLED);
+    expect(tombstones).toBe(0);
+
+    // Slot is free for a normal manual create (insert, not reactivate).
+    const created = await prisma.scheduledClass.create({
+      data: {
+        studioId: studio.id,
+        classTemplateId: tpl.id,
+        startsAt: studioLocalTimeToUtc('2026-08-25', '08:00', TZ),
+        endsAt: studioLocalTimeToUtc('2026-08-25', '09:00', TZ),
+        capacity: 12,
+        status: ClassStatus.SCHEDULED,
+      },
+    });
+    expect(created.id).not.toBe(extra.id);
+    expect(created.status).toBe(ClassStatus.SCHEDULED);
+  });
+
+  it('soft-cancels series-linked empty extras (exception store)', async () => {
+    const studio = await createStudio(prisma, { timezone: TZ });
+    const tpl = await createClassTemplate(prisma, studio.id);
+    const series = await prisma.scheduleTemplate.create({
+      data: {
+        studioId: studio.id,
+        classTemplateId: tpl.id,
+        dayOfWeek: 2,
+        startTime: '08:00',
+        startsAt: null,
+        intervalWeeks: 1,
+        active: true,
+      },
+    });
+    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    await prisma.scheduledClass.update({
+      where: { id: extra.id },
+      data: { scheduleTemplateId: series.id },
+    });
+    const admin = await seedAdmin(studio.id);
+
+    const result = await ops.executeDuplicateWeek(
+      studio.id,
+      {
+        sourceWeekStart: SOURCE_WEEK,
+        targetWeekStarts: [TARGET_WEEK],
+        confirmWarnings: true,
+        confirmRemovals: true,
+      },
+      admin.id,
+    );
+
+    expect(result.removedCount).toBe(1);
+    expect(result.cancelledCount).toBe(1);
+    const row = await prisma.scheduledClass.findUnique({ where: { id: extra.id } });
+    expect(row?.status).toBe(ClassStatus.CANCELLED);
+    expect(row?.cancelReason).toBe('Removed by week reconciliation');
+    expect(row?.exceptionKind).toBe(ScheduleOccurrenceExceptionKind.DETACHED);
+    expect(row?.scheduleTemplateId).toBe(series.id);
+  });
+
+  it('records audit removal metadata after hard-deleting a standalone extra', async () => {
+    const studio = await createStudio(prisma, { timezone: TZ });
+    const tpl = await createClassTemplate(prisma, studio.id);
+    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    const admin = await seedAdmin(studio.id);
+
+    await ops.executeDuplicateWeek(
+      studio.id,
+      {
+        sourceWeekStart: SOURCE_WEEK,
+        targetWeekStarts: [TARGET_WEEK],
+        confirmWarnings: true,
+        confirmRemovals: true,
+        idempotencyKey: `audit-hard-delete-${Date.now()}`,
+      },
+      admin.id,
+    );
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { studioId: studio.id, action: 'SCHEDULE_WEEK_DUPLICATED' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(audit).toBeTruthy();
+    expect(audit?.entityId).toBe(SOURCE_WEEK);
+    const meta = audit?.metadata as Record<string, unknown>;
+    expect(meta.removedCount).toBe(1);
+    expect(meta.hardDeletedCount).toBe(1);
+    expect(meta.softCancelledCount).toBe(0);
+    expect(meta.affectedClassIds).toEqual(expect.arrayContaining([extra.id]));
   });
 
   it('updates instructor on same canonical slot', async () => {
@@ -356,10 +450,10 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     expect(second.idempotentReplay).toBe(true);
   });
 
-  it('generator after reconciliation does not recreate removed slot', async () => {
+  it('generator after reconciliation does not recreate removed series-linked slot', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await prisma.scheduleTemplate.create({
+    const series = await prisma.scheduleTemplate.create({
       data: {
         studioId: studio.id,
         classTemplateId: tpl.id,
@@ -371,7 +465,11 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
       },
     });
     await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    await prisma.scheduledClass.update({
+      where: { id: extra.id },
+      data: { scheduleTemplateId: series.id },
+    });
     const admin = await seedAdmin(studio.id);
 
     await ops.executeDuplicateWeek(
@@ -384,6 +482,10 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
       },
       admin.id,
     );
+
+    const removed = await prisma.scheduledClass.findUnique({ where: { id: extra.id } });
+    expect(removed?.status).toBe(ClassStatus.CANCELLED);
+    expect(removed?.exceptionKind).toBe(ScheduleOccurrenceExceptionKind.DETACHED);
 
     const before = await prisma.scheduledClass.count({
       where: {

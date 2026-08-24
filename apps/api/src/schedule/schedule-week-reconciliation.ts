@@ -29,13 +29,58 @@ export type ExistingWeekRow = {
   status: ClassStatus;
   scheduleTemplateId: string | null;
   exceptionKind: ScheduleOccurrenceExceptionKind | null;
+  /** CONFIRMED bookings only (operational history). */
   bookingCount: number;
+  /** Any Attendance row (operational history). */
   attendanceCount: number;
+  /** WAITING waitlist only (operational history). */
   waitlistCount: number;
+  /**
+   * All Booking rows (any status). Restrict FK — blocks hard-delete even when
+   * operational history is empty (e.g. already-cancelled bookings).
+   */
+  totalBookingCount?: number;
+  /**
+   * All WaitlistEntry rows (any status). Restrict FK — same as totalBookingCount.
+   */
+  totalWaitlistCount?: number;
   classTemplateName: string;
   instructorFirstName?: string | null;
   instructorLastName?: string | null;
 };
+
+/** How REMOVE materializes for an empty future extra. */
+export type WeekReconciliationRemovalMode = 'HARD_DELETE' | 'SOFT_CANCEL';
+
+/**
+ * Empty future standalone extras are schedule state: hard-delete.
+ * Series-linked / detached / Restrict-child rows stay soft-cancelled (exception store / FK safety).
+ */
+export function weekReconciliationRemovalMode(
+  row: Pick<
+    ExistingWeekRow,
+    | 'scheduleTemplateId'
+    | 'exceptionKind'
+    | 'totalBookingCount'
+    | 'totalWaitlistCount'
+    | 'bookingCount'
+    | 'attendanceCount'
+    | 'waitlistCount'
+  >,
+): WeekReconciliationRemovalMode {
+  const hasRestrictChildren =
+    (row.totalBookingCount ?? row.bookingCount) > 0 ||
+    (row.totalWaitlistCount ?? row.waitlistCount) > 0 ||
+    row.attendanceCount > 0;
+  if (
+    row.scheduleTemplateId != null ||
+    row.exceptionKind != null ||
+    hasRestrictChildren
+  ) {
+    return 'SOFT_CANCEL';
+  }
+  return 'HARD_DELETE';
+}
 
 export type WeekReconciliationActionKind =
   | 'REUSE'
@@ -53,6 +98,8 @@ export type WeekReconciliationAction = {
   attendanceCount?: number;
   waitlistCount?: number;
   message?: string;
+  /** Set on REMOVE: hard-delete standalone empties; soft-cancel series/FK-bound rows. */
+  removalMode?: WeekReconciliationRemovalMode;
   patch?: {
     instructorId?: string | null;
     capacity?: number;
@@ -257,17 +304,27 @@ export function buildWeekReconciliationPlan(
     }
 
     removedCount++;
-    actions.push({
-      kind: 'REMOVE',
-      existingId: row.id,
-      patch: {
-        status: ClassStatus.CANCELLED,
-        cancelReason: 'Removed by week reconciliation',
-        ...(row.scheduleTemplateId
-          ? { exceptionKind: ScheduleOccurrenceExceptionKind.DETACHED }
-          : {}),
-      },
-    });
+    const removalMode = weekReconciliationRemovalMode(row);
+    if (removalMode === 'HARD_DELETE') {
+      actions.push({
+        kind: 'REMOVE',
+        existingId: row.id,
+        removalMode: 'HARD_DELETE',
+      });
+    } else {
+      actions.push({
+        kind: 'REMOVE',
+        existingId: row.id,
+        removalMode: 'SOFT_CANCEL',
+        patch: {
+          status: ClassStatus.CANCELLED,
+          cancelReason: 'Removed by week reconciliation',
+          ...(row.scheduleTemplateId
+            ? { exceptionKind: ScheduleOccurrenceExceptionKind.DETACHED }
+            : {}),
+        },
+      });
+    }
   }
 
   return {

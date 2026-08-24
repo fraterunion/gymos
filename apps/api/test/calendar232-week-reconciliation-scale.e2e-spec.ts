@@ -166,7 +166,8 @@ describe('Calendar 2.3.2 duplicate-week scale (e2e)', () => {
     expect(elapsedMs).toBeLessThan(30_000);
 
     const afterCount = await prisma.scheduledClass.count({ where: { studioId: studio.id } });
-    expect(afterCount - beforeCount).toBe(expectedCreates);
+    // Hard-delete empties: net = creates − removes (no CANCELLED tombstones left behind).
+    expect(afterCount - beforeCount).toBe(expectedCreates - expectedRemoves);
     const removedRows = await prisma.scheduledClass.count({
       where: {
         studioId: studio.id,
@@ -174,7 +175,7 @@ describe('Calendar 2.3.2 duplicate-week scale (e2e)', () => {
         cancelReason: 'Removed by week reconciliation',
       },
     });
-    expect(removedRows).toBe(expectedRemoves);
+    expect(removedRows).toBe(0);
     await assertNoDuplicateCanonicalKeys(studio.id);
   }, 120_000);
 

@@ -1,6 +1,9 @@
-import { ClassStatus } from '@prisma/client';
-import { buildWeekReconciliationPlan } from './schedule-week-reconciliation';
-import type { DesiredWeekSlot, ExistingWeekRow } from './schedule-week-reconciliation';
+import { ClassStatus, ScheduleOccurrenceExceptionKind } from '@prisma/client';
+import {
+  buildWeekReconciliationPlan,
+  type DesiredWeekSlot,
+  type ExistingWeekRow,
+} from './schedule-week-reconciliation';
 
 const NOW = new Date('2026-08-20T12:00:00.000Z');
 
@@ -78,8 +81,83 @@ describe('buildWeekReconciliationPlan', () => {
     );
     expect(plan.removedCount).toBe(1);
     expect(plan.actions[0]?.kind).toBe('REMOVE');
+    expect(plan.actions[0]?.removalMode).toBe('HARD_DELETE');
+    expect(plan.actions[0]?.patch).toBeUndefined();
   });
 
+  it('soft-cancels series-linked empty extras instead of hard-deleting', () => {
+    const plan = buildWeekReconciliationPlan(
+      [],
+      [
+        existing({
+          id: 'extra-series',
+          classTemplateId: 'tpl-extra',
+          scheduleTemplateId: 'st-1',
+        }),
+      ],
+      NOW,
+    );
+    expect(plan.removedCount).toBe(1);
+    expect(plan.actions[0]?.removalMode).toBe('SOFT_CANCEL');
+    expect(plan.actions[0]?.patch?.status).toBe(ClassStatus.CANCELLED);
+    expect(plan.actions[0]?.patch?.exceptionKind).toBe(
+      ScheduleOccurrenceExceptionKind.DETACHED,
+    );
+  });
+
+  it('soft-cancels empty extras that still have Restrict FK children', () => {
+    const plan = buildWeekReconciliationPlan(
+      [],
+      [
+        existing({
+          id: 'extra-fk',
+          classTemplateId: 'tpl-extra',
+          totalBookingCount: 1,
+          bookingCount: 0,
+        }),
+      ],
+      NOW,
+    );
+    expect(plan.actions[0]?.removalMode).toBe('SOFT_CANCEL');
+  });
+
+  it('blocks already-started extras from removal', () => {
+    const plan = buildWeekReconciliationPlan(
+      [],
+      [
+        existing({
+          id: 'past-extra',
+          classTemplateId: 'tpl-extra',
+          startsAt: new Date('2026-08-19T13:00:00.000Z'),
+          endsAt: new Date('2026-08-19T14:00:00.000Z'),
+        }),
+      ],
+      NOW,
+    );
+    expect(plan.blockedCount).toBe(1);
+    expect(plan.actions[0]?.kind).toBe('BLOCK');
+    expect(plan.removedCount).toBe(0);
+  });
+
+  it('flags extras with waitlist for review', () => {
+    const plan = buildWeekReconciliationPlan(
+      [],
+      [existing({ id: 'extra-1', waitlistCount: 2 })],
+      NOW,
+    );
+    expect(plan.reviewCount).toBe(1);
+    expect(plan.actions[0]?.kind).toBe('REVIEW');
+  });
+
+  it('blocks extras with attendance', () => {
+    const plan = buildWeekReconciliationPlan(
+      [],
+      [existing({ id: 'extra-1', attendanceCount: 1 })],
+      NOW,
+    );
+    expect(plan.blockedCount).toBe(1);
+    expect(plan.actions[0]?.kind).toBe('BLOCK');
+  });
   it('flags extras with bookings for review', () => {
     const plan = buildWeekReconciliationPlan(
       [],

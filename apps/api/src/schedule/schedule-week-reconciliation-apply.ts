@@ -22,6 +22,7 @@ export const WEEK_RECONCILIATION_AUDIT_ID_CAP = 200;
 
 const CREATE_BATCH_SIZE = 500;
 const UPDATE_BATCH_SIZE = 100;
+const DELETE_BATCH_SIZE = 100;
 
 export type WeekReconciliationApplyResult = {
   affectedClassIds: string[];
@@ -29,6 +30,10 @@ export type WeekReconciliationApplyResult = {
   updatedCount: number;
   removedCount: number;
   reusedCount: number;
+  /** Soft-cancelled extras (series-linked / FK-bound). */
+  softCancelledCount: number;
+  /** Physically deleted empty standalone extras. */
+  hardDeletedCount: number;
 };
 
 function patchGroupKey(data: Prisma.ScheduledClassUpdateInput): string {
@@ -44,6 +49,7 @@ export async function applyWeekReconciliationPlanBatched(
   plan: WeekReconciliationPlan,
 ): Promise<WeekReconciliationApplyResult> {
   const createRows: Prisma.ScheduledClassCreateManyInput[] = [];
+  const removeHardDeleteIds: string[] = [];
   const removePlainIds: string[] = [];
   const removeDetachedIds: string[] = [];
   const updates: Array<{ id: string; data: Prisma.ScheduledClassUpdateInput }> = [];
@@ -76,12 +82,14 @@ export async function applyWeekReconciliationPlanBatched(
         }
         break;
       case 'REMOVE':
-        if (action.existingId) {
-          if (action.patch?.exceptionKind === ScheduleOccurrenceExceptionKind.DETACHED) {
-            removeDetachedIds.push(action.existingId);
-          } else {
-            removePlainIds.push(action.existingId);
-          }
+        if (!action.existingId) break;
+        if (action.removalMode === 'HARD_DELETE') {
+          removeHardDeleteIds.push(action.existingId);
+        } else if (action.patch?.exceptionKind === ScheduleOccurrenceExceptionKind.DETACHED) {
+          removeDetachedIds.push(action.existingId);
+        } else {
+          // Default / SOFT_CANCEL without DETACHED (incl. legacy callers omitting removalMode).
+          removePlainIds.push(action.existingId);
         }
         break;
       default:
@@ -100,6 +108,8 @@ export async function applyWeekReconciliationPlanBatched(
     createdIds.push(...rows.map((row) => row.id));
   }
 
+  // Soft-cancels first (cascade bookings), then hard-deletes. FK failures on delete
+  // abort the transaction — never continue after a partial apply.
   if (removePlainIds.length > 0) {
     await tx.scheduledClass.updateMany({
       where: { id: { in: removePlainIds }, studioId },
@@ -121,12 +131,26 @@ export async function applyWeekReconciliationPlanBatched(
     });
   }
 
-  const removedIds = [...removePlainIds, ...removeDetachedIds];
-  if (removedIds.length > 0) {
+  const softCancelledIds = [...removePlainIds, ...removeDetachedIds];
+  if (softCancelledIds.length > 0) {
     await cascadeClassCancellationInTx(tx, {
       studioId,
-      scheduledClassIds: removedIds,
+      scheduledClassIds: softCancelledIds,
     });
+  }
+
+  if (removeHardDeleteIds.length > 0) {
+    for (let i = 0; i < removeHardDeleteIds.length; i += DELETE_BATCH_SIZE) {
+      const idBatch = removeHardDeleteIds.slice(i, i + DELETE_BATCH_SIZE);
+      const deleted = await tx.scheduledClass.deleteMany({
+        where: { id: { in: idBatch }, studioId },
+      });
+      if (deleted.count !== idBatch.length) {
+        throw new Error(
+          `Week reconciliation hard-delete expected ${idBatch.length} row(s), deleted ${deleted.count}`,
+        );
+      }
+    }
   }
 
   const updatesByPatch = new Map<
@@ -157,18 +181,20 @@ export async function applyWeekReconciliationPlanBatched(
     }
   }
 
+  const removedIds = [...removeHardDeleteIds, ...removePlainIds, ...removeDetachedIds];
   return {
     affectedClassIds: [
       ...reusedIds,
       ...createdIds,
-      ...removePlainIds,
-      ...removeDetachedIds,
+      ...removedIds,
       ...updatedIds,
     ],
     createdCount: createdIds.length,
     updatedCount,
-    removedCount: removePlainIds.length + removeDetachedIds.length,
+    removedCount: removedIds.length,
     reusedCount: reusedIds.length,
+    softCancelledCount: softCancelledIds.length,
+    hardDeletedCount: removeHardDeleteIds.length,
   };
 }
 

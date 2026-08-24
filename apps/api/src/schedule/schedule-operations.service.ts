@@ -273,7 +273,8 @@ export class ScheduleOperationsService {
           createdCount: applied.createdCount,
           updatedCount: applied.updatedCount,
           removedCount: applied.removedCount,
-          cancelledCount: applied.removedCount,
+          // Soft-cancels only; hard-deletes are counted in removedCount / audit hardDeletedCount.
+          cancelledCount: applied.softCancelledCount,
           reusedCount: applied.reusedCount,
           reviewCount: preview.reviewCount,
           blockedCount: preview.blockedCount,
@@ -294,6 +295,7 @@ export class ScheduleOperationsService {
             actorUserId,
             action,
             entityType: 'ScheduleOperation',
+            // Week start key — not a ScheduledClass FK; survives hard-delete of extras.
             entityId: dto.sourceWeekStart,
             metadata: {
               idempotencyKey: dto.idempotencyKey ?? null,
@@ -305,6 +307,8 @@ export class ScheduleOperationsService {
               updatedCount: result.updatedCount,
               removedCount: result.removedCount,
               cancelledCount: result.cancelledCount,
+              hardDeletedCount: applied.hardDeletedCount,
+              softCancelledCount: applied.softCancelledCount,
               reviewCount: result.reviewCount,
               blockedCount: result.blockedCount,
               affectedReservationCount: result.affectedReservationCount,
@@ -714,6 +718,29 @@ export class ScheduleOperationsService {
         },
       },
     });
+    // Restrict-FK child totals (any status) for hard-delete eligibility — separate from
+    // operational-history filters above.
+    const restrictChildCounts =
+      rows.length === 0
+        ? []
+        : await db.scheduledClass.findMany({
+            where: { id: { in: rows.map((r) => r.id) } },
+            select: {
+              id: true,
+              _count: {
+                select: {
+                  bookings: true,
+                  waitlist: true,
+                },
+              },
+            },
+          });
+    const restrictById = new Map(
+      restrictChildCounts.map((r) => [
+        r.id,
+        { totalBookingCount: r._count.bookings, totalWaitlistCount: r._count.waitlist },
+      ]),
+    );
     return rows.map((row) => ({
       id: row.id,
       classTemplateId: row.classTemplateId,
@@ -727,6 +754,8 @@ export class ScheduleOperationsService {
       bookingCount: row._count.bookings,
       attendanceCount: row._count.attendances,
       waitlistCount: row._count.waitlist,
+      totalBookingCount: restrictById.get(row.id)?.totalBookingCount ?? row._count.bookings,
+      totalWaitlistCount: restrictById.get(row.id)?.totalWaitlistCount ?? row._count.waitlist,
       classTemplateName: row.classTemplate.name,
       instructorFirstName: row.instructor?.firstName ?? null,
       instructorLastName: row.instructor?.lastName ?? null,
