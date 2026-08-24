@@ -409,3 +409,127 @@ describe('GET /studios/:studioId/billing/reconciliation-audit', () => {
     expect(await prisma.stripeWebhookEvent.count()).toBe(webhooksBefore);
   });
 });
+
+describe('Membership plan Stripe price sync (e2e)', () => {
+  let app: INestApplication;
+  let prisma: PrismaService;
+  let stripe: StripeService;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    prisma = app.get(PrismaService);
+    stripe = app.get(StripeService);
+  });
+
+  beforeEach(async () => {
+    await truncateAll(prisma);
+    jest.clearAllMocks();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('allows OWNER to rotate sale Price on financial edit; STAFF is forbidden', async () => {
+    const studio = await createStudio(prisma);
+    const plan = await prisma.membershipPlan.create({
+      data: {
+        studioId: studio.id,
+        name: 'Basic Access',
+        priceCents: 130000,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+        active: true,
+        stripeProductId: 'prod_e2e_basic',
+        stripePriceId: 'price_old_1300',
+      },
+    });
+
+    (stripe.createRecurringPrice as jest.Mock).mockResolvedValue({
+      id: 'price_new_1000',
+      object: 'price',
+      unit_amount: 100000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_e2e_basic',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const owner = await createUserWithPassword(prisma, {
+      email: 'owner-plan-sync@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, owner.id, studio.id, Role.OWNER);
+    const ownerToken = await loginAccessToken(app, owner.email, owner.password);
+
+    const staff = await createUserWithPassword(prisma, {
+      email: 'staff-plan-sync@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, staff.id, studio.id, Role.STAFF);
+    const staffToken = await loginAccessToken(app, staff.email, staff.password);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ priceCents: 100000 })
+      .expect(403);
+
+    const res = await request(app.getHttpServer())
+      .patch(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ priceCents: 100000 })
+      .expect(200);
+
+    expect((res.body as { stripePriceId: string; priceCents: number }).stripePriceId).toBe(
+      'price_new_1000',
+    );
+    expect((res.body as { priceCents: number }).priceCents).toBe(100000);
+    expect(stripe.createRecurringPrice).toHaveBeenCalled();
+    expect(stripe.deactivatePrice).toHaveBeenCalledWith('price_old_1300');
+
+    const persisted = await prisma.membershipPlan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(persisted.stripePriceId).toBe('price_new_1000');
+    expect(persisted.priceCents).toBe(100000);
+  });
+
+  it('rejects checkout when catalog priceCents mismatches linked Stripe Price', async () => {
+    const studio = await createStudio(prisma);
+    const plan = await prisma.membershipPlan.create({
+      data: {
+        studioId: studio.id,
+        name: 'Mismatched Plan',
+        priceCents: 100000,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+        active: true,
+        stripeProductId: 'prod_e2e_mismatch',
+        stripePriceId: 'price_stale_1300',
+      },
+    });
+
+    (stripe.retrievePrice as jest.Mock).mockResolvedValue({
+      id: 'price_stale_1300',
+      object: 'price',
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_e2e_mismatch',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const member = await createUserWithPassword(prisma, {
+      email: 'member-mismatch@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    const token = await loginAccessToken(app, member.email, member.password);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}/checkout`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(400);
+
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+});

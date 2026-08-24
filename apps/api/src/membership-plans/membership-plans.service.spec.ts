@@ -21,7 +21,13 @@ describe('MembershipPlansService class access', () => {
   };
 
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const service = new MembershipPlansService(prisma as never, audit as never);
+  const stripe = {
+    createRecurringPrice: jest.fn(),
+    createProductForPlan: jest.fn(),
+    retrievePrice: jest.fn(),
+    deactivatePrice: jest.fn().mockResolvedValue({}),
+  };
+  const service = new MembershipPlansService(prisma as never, audit as never, stripe as never);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -144,6 +150,12 @@ describe('MembershipPlansService class access', () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-1',
       studioId: 'studio-1',
+      priceCents: 1000,
+      currency: 'usd',
+      billingInterval: BillingInterval.MONTHLY,
+      entitlementDays: null,
+      stripeProductId: null,
+      stripePriceId: null,
       allClassesAccess: false,
       allowedCategories: [],
       classTemplateAccess: [{ classTemplateId: 't1' }],
@@ -249,6 +261,12 @@ describe('MembershipPlansService class access', () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-booty',
       studioId: 'studio-1',
+      priceCents: 90000,
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      entitlementDays: null,
+      stripeProductId: null,
+      stripePriceId: null,
       allClassesAccess: false,
       allowedCategories: [],
       classTemplateAccess: [{ classTemplateId: 't1' }],
@@ -268,6 +286,7 @@ describe('MembershipPlansService class access', () => {
 
     await service.updatePlan('studio-1', 'plan-booty', { entitlementDays: 45 });
 
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
     expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ entitlementDays: 45 }) }),
     );
@@ -277,6 +296,12 @@ describe('MembershipPlansService class access', () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-booty',
       studioId: 'studio-1',
+      priceCents: 90000,
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      entitlementDays: 45,
+      stripeProductId: null,
+      stripePriceId: null,
       allClassesAccess: false,
       allowedCategories: [],
       classTemplateAccess: [{ classTemplateId: 't1' }],
@@ -298,5 +323,302 @@ describe('MembershipPlansService class access', () => {
 
     const updateCall = prisma.membershipPlan.update.mock.calls[0][0];
     expect(updateCall.data).not.toHaveProperty('entitlementDays');
+  });
+});
+
+describe('MembershipPlansService Stripe price rotation', () => {
+  const prisma = {
+    studio: { findFirst: jest.fn() },
+    classTemplate: { findMany: jest.fn() },
+    membershipPlan: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    membershipPlanClassAccess: {
+      createMany: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    $transaction: jest.fn(),
+  };
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const stripe = {
+    createRecurringPrice: jest.fn(),
+    createProductForPlan: jest.fn(),
+    retrievePrice: jest.fn(),
+    deactivatePrice: jest.fn().mockResolvedValue({}),
+    updateSubscription: jest.fn(),
+    cancelSubscription: jest.fn(),
+    scheduleSubscriptionPriceChangeAtPeriodEnd: jest.fn(),
+  };
+  const service = new MembershipPlansService(prisma as never, audit as never, stripe as never);
+
+  const basePlan = {
+    id: 'plan-basic',
+    studioId: 'studio-1',
+    name: 'Basic Access',
+    priceCents: 130000,
+    currency: 'mxn',
+    billingInterval: BillingInterval.MONTHLY,
+    entitlementDays: null,
+    stripeProductId: 'prod_basic',
+    stripePriceId: 'price_old_1300',
+    allClassesAccess: true,
+    allowedCategories: [],
+    classTemplateAccess: [],
+    description: null,
+    classCredits: null,
+    active: true,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    stripe.deactivatePrice.mockResolvedValue({});
+    prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
+      fn(prisma),
+    );
+  });
+
+  it('does not create a Stripe Price when financial fields are unchanged', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      classTemplateAccess: [],
+    });
+
+    await service.updatePlan('studio-1', 'plan-basic', {
+      description: 'Updated copy',
+      priceCents: 130000,
+    }, 'admin-1');
+
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ description: 'Updated copy' }),
+      }),
+    );
+  });
+
+  it('rotates Stripe Price on 1300 → 1000 and updates GymOS stripePriceId', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      priceCents: 100000,
+      stripePriceId: 'price_new_1000',
+      classTemplateAccess: [],
+    });
+
+    const result = await service.updatePlan(
+      'studio-1',
+      'plan-basic',
+      { priceCents: 100000 },
+      'admin-1',
+    );
+
+    expect(stripe.createRecurringPrice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: 'prod_basic',
+        unitAmount: 100000,
+        currency: 'mxn',
+        interval: 'month',
+        metadata: expect.objectContaining({
+          gymosPlanId: 'plan-basic',
+          previousStripePriceId: 'price_old_1300',
+          intendedPriceCents: '100000',
+          source: 'membership_plan_edit',
+        }),
+      }),
+      expect.objectContaining({
+        idempotencyKey: 'plan-price:plan-basic:100000:mxn:month:1',
+      }),
+    );
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          priceCents: 100000,
+          stripePriceId: 'price_new_1000',
+          stripeProductId: 'prod_basic',
+        }),
+      }),
+    );
+    expect(stripe.deactivatePrice).toHaveBeenCalledWith('price_old_1300');
+    expect(result.stripePriceId).toBe('price_new_1000');
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          stripePriceRotated: true,
+          previousStripePriceId: 'price_old_1300',
+          newStripePriceId: 'price_new_1000',
+          oldPriceCents: 130000,
+          newPriceCents: 100000,
+        }),
+      }),
+    );
+  });
+
+  it('leaves GymOS unchanged when Stripe Price create fails', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.createRecurringPrice.mockRejectedValue(new Error('stripe down'));
+
+    await expect(
+      service.updatePlan('studio-1', 'plan-basic', { priceCents: 100000 }, 'admin-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.membershipPlan.update).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('retries with the same idempotency key after DB failure (no uncontrolled duplicates)', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    prisma.$transaction
+      .mockRejectedValueOnce(new Error('db down'))
+      .mockImplementationOnce(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      priceCents: 100000,
+      stripePriceId: 'price_new_1000',
+      classTemplateAccess: [],
+    });
+
+    await expect(
+      service.updatePlan('studio-1', 'plan-basic', { priceCents: 100000 }, 'admin-1'),
+    ).rejects.toThrow('db down');
+
+    // Retry succeeds; Stripe called again with same idempotency key (Stripe returns same Price).
+    await service.updatePlan('studio-1', 'plan-basic', { priceCents: 100000 }, 'admin-1');
+
+    expect(stripe.createRecurringPrice).toHaveBeenCalledTimes(2);
+    const keys = stripe.createRecurringPrice.mock.calls.map((c) => c[1]?.idempotencyKey);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toBe('plan-price:plan-basic:100000:mxn:month:1');
+  });
+
+  it('does not rotate Price for cash-only plans (no Stripe ids)', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      ...basePlan,
+      stripeProductId: null,
+      stripePriceId: null,
+    });
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      stripeProductId: null,
+      stripePriceId: null,
+      priceCents: 100000,
+      classTemplateAccess: [],
+    });
+
+    await service.updatePlan('studio-1', 'plan-basic', { priceCents: 100000 });
+
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ priceCents: 100000 }) }),
+    );
+  });
+
+  it('ignores client-supplied stale stripePriceId during rotation', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      priceCents: 100000,
+      stripePriceId: 'price_new_1000',
+      classTemplateAccess: [],
+    });
+
+    await service.updatePlan('studio-1', 'plan-basic', {
+      priceCents: 100000,
+      stripePriceId: 'price_old_1300',
+    });
+
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ stripePriceId: 'price_new_1000' }),
+      }),
+    );
+  });
+
+  it('does not mutate existing Stripe subscriptions when rotating sale Price', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      priceCents: 100000,
+      stripePriceId: 'price_new_1000',
+      classTemplateAccess: [],
+    });
+
+    await service.updatePlan('studio-1', 'plan-basic', { priceCents: 100000 }, 'admin-1');
+
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(stripe.cancelSubscription).not.toHaveBeenCalled();
+    expect(stripe.scheduleSubscriptionPriceChangeAtPeriodEnd).not.toHaveBeenCalled();
+  });
+
+  it('keeps new Price cutover when old Price deactivation fails', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    stripe.deactivatePrice.mockRejectedValue(new Error('stripe archive failed'));
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      priceCents: 100000,
+      stripePriceId: 'price_new_1000',
+      classTemplateAccess: [],
+    });
+
+    const result = await service.updatePlan(
+      'studio-1',
+      'plan-basic',
+      { priceCents: 100000 },
+      'admin-1',
+    );
+
+    expect(result.stripePriceId).toBe('price_new_1000');
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ stripePriceId: 'price_new_1000' }),
+      }),
+    );
+    expect(stripe.deactivatePrice).toHaveBeenCalledWith('price_old_1300');
+  });
+
+  it('rotates Stripe Price when entitlementDays changes (maps to day interval)', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      ...basePlan,
+      priceCents: 80000,
+      stripePriceId: 'price_monthly',
+    });
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_day_45' });
+    prisma.membershipPlan.findUniqueOrThrow.mockResolvedValue({
+      ...basePlan,
+      priceCents: 80000,
+      entitlementDays: 45,
+      stripePriceId: 'price_day_45',
+      classTemplateAccess: [],
+    });
+
+    await service.updatePlan('studio-1', 'plan-basic', { entitlementDays: 45 }, 'admin-1');
+
+    expect(stripe.createRecurringPrice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        unitAmount: 80000,
+        interval: 'day',
+        intervalCount: 45,
+      }),
+      expect.objectContaining({
+        idempotencyKey: 'plan-price:plan-basic:80000:mxn:day:45',
+      }),
+    );
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          entitlementDays: 45,
+          stripePriceId: 'price_day_45',
+        }),
+      }),
+    );
   });
 });

@@ -65,7 +65,9 @@ export function createE2eStripeServiceMock(config: {
       object: 'price',
       unit_amount: 1000,
       currency: 'usd',
-      recurring: { interval: 'month' },
+      active: true,
+      product: 'prod_e2e_test',
+      recurring: { interval: 'month', interval_count: 1 },
     } as Stripe.Price),
 
     createProductForPlan: jest.fn().mockResolvedValue({
@@ -76,6 +78,17 @@ export function createE2eStripeServiceMock(config: {
     createRecurringPrice: jest.fn().mockResolvedValue({
       id: 'price_e2e_test',
       object: 'price',
+      unit_amount: 1000,
+      currency: 'usd',
+      active: true,
+      product: 'prod_e2e_test',
+      recurring: { interval: 'month', interval_count: 1 },
+    } as Stripe.Price),
+
+    deactivatePrice: jest.fn().mockResolvedValue({
+      id: 'price_e2e_archived',
+      object: 'price',
+      active: false,
     } as Stripe.Price),
   } as unknown as StripeService;
 }

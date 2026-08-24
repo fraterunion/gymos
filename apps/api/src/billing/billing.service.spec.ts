@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BillingService } from './billing.service';
 
 const stripe = {
@@ -47,55 +47,69 @@ beforeEach(() => jest.clearAllMocks());
 // ── ensureMembershipPlanStripePrice ───────────────────────────────────────────
 
 describe('BillingService.ensureMembershipPlanStripePrice', () => {
-  it('returns existing stripePriceId without calling retrievePrice or createRecurringPrice', async () => {
+  it('returns existing stripePriceId when Stripe Price matches plan catalog', async () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-basic',
       name: 'Basic Access',
       priceCents: 100000,
       currency: 'mxn',
       billingInterval: 'MONTHLY',
+      entitlementDays: null,
       stripeProductId: 'prod_basic',
-      stripePriceId: 'price_1TiPaiGuUoCXNOREdIeDGSgc',
+      stripePriceId: 'price_match',
       deletedAt: null,
       active: true,
+      studioId: 'studio-1',
+    });
+    stripe.retrievePrice.mockResolvedValue({
+      id: 'price_match',
+      unit_amount: 100000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_basic',
+      recurring: { interval: 'month', interval_count: 1 },
     });
 
     const service = buildService();
     const result = await service.ensureMembershipPlanStripePrice('plan-basic');
 
     expect(result).toEqual({
-      priceId: 'price_1TiPaiGuUoCXNOREdIeDGSgc',
+      priceId: 'price_match',
       productId: 'prod_basic',
     });
-
-    // Stripe is authoritative — must NOT retrieve or replace the existing price
-    expect(stripe.retrievePrice).not.toHaveBeenCalled();
+    expect(stripe.retrievePrice).toHaveBeenCalledWith('price_match');
     expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
-    expect(prisma.membershipPlan.update).not.toHaveBeenCalled();
   });
 
-  it('returns existing stripePriceId even when local priceCents differs from Stripe amount (ARES Basic drift scenario)', async () => {
-    // ARES Basic Access has local priceCents=100000 (MXN 1,000) but Stripe charges MXN 1,300.
-    // The old code would detect "out of sync" and create a new Stripe Price at MXN 1,000 —
-    // silently cutting revenue by MXN 300 per new subscriber.
-    // The fix: trust the existing stripePriceId unconditionally.
+  it('rejects checkout when local priceCents differs from Stripe Price amount', async () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-basic',
       name: 'Basic Access',
-      priceCents: 100000,    // stale local value — MXN 1,000
+      priceCents: 100000,
       currency: 'mxn',
       billingInterval: 'MONTHLY',
+      entitlementDays: null,
       stripeProductId: 'prod_basic',
-      stripePriceId: 'price_1TiPaiGuUoCXNOREdIeDGSgc',  // Stripe charges MXN 1,300
+      stripePriceId: 'price_1TiPaiGuUoCXNOREdIeDGSgc',
       deletedAt: null,
       active: true,
+      studioId: 'studio-1',
+    });
+    stripe.retrievePrice.mockResolvedValue({
+      id: 'price_1TiPaiGuUoCXNOREdIeDGSgc',
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_basic',
+      recurring: { interval: 'month', interval_count: 1 },
     });
 
     const service = buildService();
-    const result = await service.ensureMembershipPlanStripePrice('plan-basic');
-
-    expect(result.priceId).toBe('price_1TiPaiGuUoCXNOREdIeDGSgc');
+    await expect(service.ensureMembershipPlanStripePrice('plan-basic')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
     expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
   it('creates a new Stripe Price when stripePriceId is null', async () => {
@@ -105,10 +119,12 @@ describe('BillingService.ensureMembershipPlanStripePrice', () => {
       priceCents: 80000,
       currency: 'mxn',
       billingInterval: 'MONTHLY',
+      entitlementDays: null,
       stripeProductId: 'prod_new',
       stripePriceId: null,
       deletedAt: null,
       active: true,
+      studioId: 'studio-1',
     });
     stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new' });
     prisma.membershipPlan.update.mockResolvedValue({});
@@ -130,6 +146,7 @@ describe('BillingService.ensureMembershipPlanStripePrice', () => {
       id: 'plan-booty', name: 'Booty Lab', priceCents: 80000, currency: 'mxn',
       billingInterval: 'MONTHLY', entitlementDays: 45,
       stripeProductId: 'prod_booty', stripePriceId: null, deletedAt: null, active: true,
+      studioId: 'studio-1',
     });
     stripe.createRecurringPrice.mockResolvedValue({ id: 'price_booty_45d' });
     prisma.membershipPlan.update.mockResolvedValue({});
@@ -149,10 +166,12 @@ describe('BillingService.ensureMembershipPlanStripePrice', () => {
       priceCents: 60000,
       currency: 'usd',
       billingInterval: 'YEARLY',
+      entitlementDays: null,
       stripeProductId: null,
       stripePriceId: null,
       deletedAt: null,
       active: true,
+      studioId: 'studio-1',
     });
     stripe.createProductForPlan.mockResolvedValue({ id: 'prod_brand_new' });
     stripe.createRecurringPrice.mockResolvedValue({ id: 'price_brand_new' });
@@ -413,5 +432,26 @@ describe('BillingService.checkPlanPricingIntegrity', () => {
     expect(result).toHaveLength(2);
     expect(result.find((r) => r.planId === 'plan-basic')?.status).toBe('price_mismatch');
     expect(result.find((r) => r.planId === 'plan-full')?.status).toBe('healthy');
+  });
+
+  it('treats catalog as healthy after rotation even when legacy subscribers remain on old Price', async () => {
+    // Integrity compares MembershipPlan.stripePriceId only — never subscription rows.
+    prisma.membershipPlan.findMany.mockResolvedValue([
+      { ...basePlan, priceCents: 100000, stripePriceId: 'price_new_1000' },
+    ]);
+    stripe.retrievePrice.mockResolvedValue({
+      unit_amount: 100000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const service = buildService();
+    const result = await service.checkPlanPricingIntegrity('studio-1');
+
+    expect(result[0].status).toBe('healthy');
+    expect(result[0].stripePriceId).toBe('price_new_1000');
+    expect(stripe.retrievePrice).toHaveBeenCalledWith('price_new_1000');
+    expect(stripe.retrievePrice).not.toHaveBeenCalledWith('price_old_1300');
   });
 });

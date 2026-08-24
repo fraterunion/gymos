@@ -316,11 +316,26 @@ function PlanModal({
       entitlementDays: form.fixedDuration
         ? parseInt(form.entitlementDays, 10)
         : null,
-      stripeProductId: form.stripeProductId.trim() || null,
-      stripePriceId: form.stripePriceId.trim() || null,
       allClassesAccess: form.allClassesAccess,
       classTemplateIds: form.allClassesAccess ? [] : form.selectedTemplateIds,
     };
+
+    // When financial identity changes, let the API rotate Stripe Prices.
+    // Do not send stale stripePriceId from the form or it would overwrite the new Price.
+    const financialChanged =
+      !!editing &&
+      (cents !== editing.priceCents ||
+        form.currency.trim().toLowerCase() !== editing.currency.toLowerCase() ||
+        form.billingInterval !== editing.billingInterval ||
+        (form.fixedDuration
+          ? parseInt(form.entitlementDays, 10)
+          : null) !== (editing.entitlementDays ?? null));
+
+    if (!financialChanged) {
+      input.stripeProductId = form.stripeProductId.trim() || null;
+      input.stripePriceId = form.stripePriceId.trim() || null;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -330,11 +345,19 @@ function PlanModal({
           active: form.active,
         });
       } else {
-        await createMembershipPlan(studioId, input);
+        await createMembershipPlan(studioId, {
+          ...input,
+          stripeProductId: form.stripeProductId.trim() || null,
+          stripePriceId: form.stripePriceId.trim() || null,
+        });
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo guardar el plan.");
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "No pudimos actualizar el precio. No se realizaron cambios. Intenta nuevamente.";
+      setError(message);
     } finally {
       setSaving(false);
     }
@@ -603,8 +626,9 @@ function PlanModal({
               Vinculación de cobro
             </p>
             <p className="text-[11px] text-zinc-500">
-              Guardar este plan no modifica automáticamente Stripe. Solo actualiza la
-              configuración local de GymOS.
+              Si cambias el precio, la moneda o el ciclo de cobro, GymOS sincroniza
+              automáticamente el precio de venta actual con Stripe. Los miembros que ya
+              están suscritos conservan su precio histórico.
             </p>
             {editing ? (
               <div className="grid grid-cols-2 gap-2 rounded-lg border border-zinc-200 bg-white p-3 text-xs">

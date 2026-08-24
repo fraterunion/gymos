@@ -4,11 +4,12 @@ import { BillingModule } from '../billing/billing.module';
 import { EnrollmentModule } from '../enrollment/enrollment.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SalesModule } from '../sales/sales.module';
+import { StripeModule } from '../stripe/stripe.module';
 import { MembershipPlansController } from './membership-plans.controller';
 import { MembershipPlansService } from './membership-plans.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, BillingModule, EnrollmentModule, SalesModule],
+  imports: [PrismaModule, AuthModule, BillingModule, EnrollmentModule, SalesModule, StripeModule],
   controllers: [MembershipPlansController],
   providers: [MembershipPlansService],
   exports: [MembershipPlansService],

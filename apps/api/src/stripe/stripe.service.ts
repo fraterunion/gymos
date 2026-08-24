@@ -83,22 +83,35 @@ export class StripeService {
     });
   }
 
-  async createRecurringPrice(params: {
-    productId: string;
-    unitAmount: number;
-    currency: string;
-    interval: Stripe.PriceCreateParams.Recurring.Interval;
-    intervalCount?: number;
-  }): Promise<Stripe.Price> {
-    return this.getClient().prices.create({
-      product: params.productId,
-      unit_amount: params.unitAmount,
-      currency: params.currency.toLowerCase(),
-      recurring: {
-        interval: params.interval,
-        ...(params.intervalCount ? { interval_count: params.intervalCount } : {}),
+  async createRecurringPrice(
+    params: {
+      productId: string;
+      unitAmount: number;
+      currency: string;
+      interval: Stripe.PriceCreateParams.Recurring.Interval;
+      intervalCount?: number;
+      metadata?: Record<string, string>;
+    },
+    options?: Stripe.RequestOptions,
+  ): Promise<Stripe.Price> {
+    return this.getClient().prices.create(
+      {
+        product: params.productId,
+        unit_amount: params.unitAmount,
+        currency: params.currency.toLowerCase(),
+        recurring: {
+          interval: params.interval,
+          ...(params.intervalCount ? { interval_count: params.intervalCount } : {}),
+        },
+        ...(params.metadata ? { metadata: params.metadata } : {}),
       },
-    });
+      options,
+    );
+  }
+
+  /** Archive a Price for new sales. Existing subscriptions on it remain valid in Stripe. */
+  async deactivatePrice(priceId: string): Promise<Stripe.Price> {
+    return this.getClient().prices.update(priceId, { active: false });
   }
 
   async createOneTimePrice(params: {

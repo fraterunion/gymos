@@ -12,6 +12,10 @@ import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { billingIntervalToStripeRecurring } from './stripe-plan-interval';
+import {
+  planStripeRecurring,
+  stripePriceMatchesPlan,
+} from '../membership-plans/membership-plan-stripe-price';
 
 export type PlanIntegrityStatus =
   | 'healthy'
@@ -298,10 +302,8 @@ export class BillingService {
     let priceId = plan.stripePriceId;
 
     if (!priceId) {
-      // No Stripe Price exists yet — create one from local metadata.
-      const recurring = plan.entitlementDays != null
-        ? { interval: 'day' as const, intervalCount: plan.entitlementDays }
-        : billingIntervalToStripeRecurring(plan.billingInterval);
+      // No Stripe Price exists yet — create one from local catalog identity.
+      const recurring = planStripeRecurring(plan);
       const price = await this.stripe.createRecurringPrice({
         productId,
         unitAmount: plan.priceCents,
@@ -313,11 +315,27 @@ export class BillingService {
         where: { id: plan.id },
         data: { stripePriceId: priceId, stripeProductId: productId },
       });
+    } else {
+      // Existing Price must match the plan's current sale configuration.
+      // Never charge a mismatched Stripe Price (e.g. GymOS 1000 vs Stripe 1300).
+      const price = await this.stripe.retrievePrice(priceId);
+      const match = stripePriceMatchesPlan(price, {
+        priceCents: plan.priceCents,
+        currency: plan.currency,
+        billingInterval: plan.billingInterval,
+        entitlementDays: plan.entitlementDays,
+      });
+      if (!match.ok) {
+        throw new BadRequestException(
+          'La configuración de cobro del plan no coincide con Stripe. Un administrador debe sincronizar el precio del plan antes de continuar.',
+        );
+      }
+      const product = price.product;
+      const priceProductId = typeof product === 'string' ? product : product?.id ?? null;
+      if (priceProductId) {
+        productId = priceProductId;
+      }
     }
-    // If a Stripe Price already exists, trust it unconditionally.
-    // Stripe is authoritative for Stripe-backed plans; local priceCents is a
-    // display field only. Replacing the existing price because local data diverged
-    // would silently bill future subscribers the wrong amount.
 
     if (!productId || !priceId) {
       throw new Error('Stripe product/price sync failed to persist ids');
