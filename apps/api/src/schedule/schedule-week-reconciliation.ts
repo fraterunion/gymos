@@ -1,5 +1,8 @@
 import { ClassStatus, ScheduleOccurrenceExceptionKind } from '@prisma/client';
+import { hasOperationalHistory } from './schedule-occurrence-history';
 import { occurrenceDedupKey } from './schedule-occurrence-key';
+
+export { hasOperationalHistory } from './schedule-occurrence-history';
 
 export type DesiredWeekSlot = {
   classTemplateId: string;
@@ -78,10 +81,6 @@ function slotsEquivalent(existing: ExistingWeekRow, desired: DesiredWeekSlot): b
     existing.capacity === desired.capacity &&
     existing.endsAt.getTime() === desired.endsAt.getTime()
   );
-}
-
-function hasOperationalHistory(row: ExistingWeekRow): boolean {
-  return row.bookingCount > 0 || row.attendanceCount > 0 || row.waitlistCount > 0;
 }
 
 function buildUpdatePatch(

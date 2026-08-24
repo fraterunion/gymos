@@ -23,6 +23,14 @@ import type { StudioLocalDateTimeDto } from './dto/studio-local-datetime.dto';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
 import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
 import { assertStartsBeforeEnds } from './occurrence-interval';
+import {
+  acquireOccurrenceSlotLock,
+  isScheduledOccurrenceUniqueViolation,
+} from './schedule-occurrence-concurrency';
+import {
+  hasOperationalHistory,
+  SCHEDULE_SLOT_CANCELLED_WITH_HISTORY_CODE,
+} from './schedule-occurrence-history';
 
 function scheduleInclude(studioId: string) {
   return {
@@ -231,15 +239,133 @@ export class ScheduleService {
       await this.assertActiveStudioMember(studioId, dto.instructorId);
     }
 
-    await this.assertNoDuplicateSlot(studioId, template.id, startsAt);
+    const instructorId = dto.instructorId ?? null;
 
-    const slotConflicts = await this.conflicts.findConflictsForSlots(studioId, [
-      {
+    return this.prisma.$transaction(async (tx) => {
+      // Serialize creates/reactivations for this unique slot (same key as generator insert).
+      await acquireOccurrenceSlotLock(tx, studioId, template.id, startsAt);
+
+      const existing = await tx.scheduledClass.findFirst({
+        where: {
+          studioId,
+          classTemplateId: template.id,
+          startsAt,
+        },
+        select: {
+          id: true,
+          status: true,
+          scheduleTemplateId: true,
+          exceptionKind: true,
+          _count: {
+            select: {
+              bookings: { where: { status: BookingStatus.CONFIRMED } },
+              attendances: true,
+              waitlist: { where: { status: WaitlistStatus.WAITING } },
+            },
+          },
+        },
+      });
+
+      if (existing?.status === ClassStatus.SCHEDULED) {
+        throw new ConflictException(
+          'A class with this type and start time already exists.',
+        );
+      }
+
+      if (existing?.status === ClassStatus.CANCELLED) {
+        const history = {
+          bookingCount: existing._count.bookings,
+          attendanceCount: existing._count.attendances,
+          waitlistCount: existing._count.waitlist,
+        };
+        if (hasOperationalHistory(history)) {
+          throw new ConflictException({
+            statusCode: 409,
+            code: SCHEDULE_SLOT_CANCELLED_WITH_HISTORY_CODE,
+            message:
+              'A cancelled class with bookings, attendance, or waitlist history already occupies this slot. Resolve it manually.',
+            scheduledClassId: existing.id,
+            bookingCount: history.bookingCount,
+            attendanceCount: history.attendanceCount,
+            waitlistCount: history.waitlistCount,
+          });
+        }
+
+        await this.assertNoBlockingSlotConflicts(studioId, {
+          classTemplateId: template.id,
+          instructorId,
+          startsAt,
+          endsAt,
+          capacity,
+          excludeScheduledClassId: existing.id,
+        });
+
+        // Manual create is a one-off: reactivate the tombstone in place, clear series linkage
+        // so we do not silently re-attach staff's one-off to a prior schedule template.
+        return tx.scheduledClass.update({
+          where: { id: existing.id },
+          data: {
+            status: ClassStatus.SCHEDULED,
+            cancelReason: null,
+            endsAt,
+            capacity,
+            instructorId,
+            scheduleTemplateId: null,
+            exceptionKind: null,
+          },
+        });
+      }
+
+      await this.assertNoBlockingSlotConflicts(studioId, {
         classTemplateId: template.id,
-        instructorId: dto.instructorId ?? null,
+        instructorId,
         startsAt,
         endsAt,
         capacity,
+      });
+
+      try {
+        return await tx.scheduledClass.create({
+          data: {
+            studioId,
+            classTemplateId: template.id,
+            startsAt,
+            endsAt,
+            capacity,
+            instructorId,
+            status: ClassStatus.SCHEDULED,
+          },
+        });
+      } catch (error) {
+        if (isScheduledOccurrenceUniqueViolation(error)) {
+          throw new ConflictException(
+            'A class with this type and start time already exists.',
+          );
+        }
+        throw error;
+      }
+    });
+  }
+
+  private async assertNoBlockingSlotConflicts(
+    studioId: string,
+    slot: {
+      classTemplateId: string;
+      instructorId: string | null;
+      startsAt: Date;
+      endsAt: Date;
+      capacity: number;
+      excludeScheduledClassId?: string;
+    },
+  ): Promise<void> {
+    const slotConflicts = await this.conflicts.findConflictsForSlots(studioId, [
+      {
+        classTemplateId: slot.classTemplateId,
+        instructorId: slot.instructorId,
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+        capacity: slot.capacity,
+        excludeScheduledClassId: slot.excludeScheduledClassId,
       },
     ]);
     const { blocking } = this.conflicts.partitionConflicts(slotConflicts);
@@ -249,18 +375,6 @@ export class ScheduleService {
         conflicts: blocking,
       });
     }
-
-    return this.prisma.scheduledClass.create({
-      data: {
-        studioId,
-        classTemplateId: template.id,
-        startsAt,
-        endsAt,
-        capacity,
-        instructorId: dto.instructorId ?? null,
-        status: ClassStatus.SCHEDULED,
-      },
-    });
   }
 
   async updateScheduledClass(
