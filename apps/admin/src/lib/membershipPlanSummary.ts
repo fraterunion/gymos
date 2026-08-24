@@ -123,6 +123,25 @@ export function integrityIssueLabel(status: string): string {
   }
 }
 
+/** Whether Admin should offer catalog Stripe reconciliation for this integrity status. */
+export function canReconcileStripeCatalog(
+  integrityStatus: string | undefined,
+  plan: { stripeProductId?: string | null; stripePriceId?: string | null },
+): boolean {
+  if (!integrityStatus || integrityStatus === "healthy" || integrityStatus === "fetch_error") {
+    return false;
+  }
+  const stripeBacked = Boolean(plan.stripeProductId || plan.stripePriceId);
+  if (!stripeBacked) return false;
+  return (
+    integrityStatus === "price_mismatch" ||
+    integrityStatus === "currency_mismatch" ||
+    integrityStatus === "interval_mismatch" ||
+    integrityStatus === "inactive_stripe_price" ||
+    integrityStatus === "no_stripe_price"
+  );
+}
+
 /** Deterministic configuration warnings, derived only from data already on the plan —
  *  never speculative, never auto-corrected. */
 export function planWarnings(plan: PlanForSummary): string[] {

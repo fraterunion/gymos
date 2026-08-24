@@ -23,6 +23,7 @@ import {
   planFinancialIdentityChanged,
   planSalePriceIdempotencyKey,
   planStripeRecurring,
+  stripePriceMatchesPlan,
   type PlanFinancialIdentity,
 } from './membership-plan-stripe-price';
 
@@ -31,6 +32,24 @@ export type MembershipPlanWithStats = MembershipPlan & {
   mrrCents: number;
   classAccess: PlanClassAccessDto;
 };
+
+export type ReconcileStripeSalePriceResult =
+  | {
+      status: 'already_synced';
+      stripePriceId: string;
+      plan: MembershipPlan & { classAccess: PlanClassAccessDto };
+    }
+  | {
+      status: 'reconciled';
+      previousStripePriceId: string | null;
+      newStripePriceId: string;
+      plan: MembershipPlan & { classAccess: PlanClassAccessDto };
+    }
+  | {
+      status: 'not_applicable';
+      reason: string;
+      plan: MembershipPlan & { classAccess: PlanClassAccessDto };
+    };
 
 const classAccessInclude = {
   classTemplateAccess: {
@@ -259,6 +278,7 @@ export class MembershipPlansService {
       rotated = await this.rotateStripeSalePrice({
         plan,
         next: afterIdentity,
+        source: 'membership_plan_edit',
       });
     }
 
@@ -389,18 +409,142 @@ export class MembershipPlansService {
   }
 
   /**
+   * Force catalog Price to match the plan's current GymOS financial identity.
+   * Does not change GymOS price fields or existing Stripe subscriptions.
+   */
+  async reconcileStripeSalePrice(
+    studioId: string,
+    planId: string,
+    actorUserId: string,
+  ): Promise<ReconcileStripeSalePriceResult> {
+    const plan = await this.prisma.membershipPlan.findFirst({
+      where: { id: planId, studioId, deletedAt: null },
+      include: classAccessInclude,
+    });
+    if (!plan) {
+      throw new NotFoundException('Membership plan not found');
+    }
+
+    if (!isStripeBackedPlan(plan)) {
+      return {
+        status: 'not_applicable',
+        reason: 'Este plan no está vinculado a Stripe (solo efectivo/manual).',
+        plan: mapPlanWithClassAccess(plan),
+      };
+    }
+
+    const identity: PlanFinancialIdentity = {
+      priceCents: plan.priceCents,
+      currency: plan.currency,
+      billingInterval: plan.billingInterval,
+      entitlementDays: plan.entitlementDays,
+    };
+
+    if (plan.stripePriceId) {
+      let linkedPrice;
+      try {
+        linkedPrice = await this.stripe.retrievePrice(plan.stripePriceId);
+      } catch (error) {
+        this.logger.error(
+          `Stripe price retrieve failed during catalog reconcile planId=${planId}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        throw new BadRequestException(
+          'No pudimos verificar el precio en Stripe. No se realizaron cambios. Intenta nuevamente.',
+        );
+      }
+      const match = stripePriceMatchesPlan(linkedPrice, identity);
+      if (match.ok) {
+        return {
+          status: 'already_synced',
+          stripePriceId: plan.stripePriceId,
+          plan: mapPlanWithClassAccess(plan),
+        };
+      }
+    }
+
+    const rotated = await this.rotateStripeSalePrice({
+      plan,
+      next: identity,
+      source: 'catalog_reconciliation',
+    });
+
+    let updated: PlanWithAccess;
+    try {
+      updated = await this.prisma.membershipPlan.update({
+        where: { id: planId },
+        data: {
+          stripeProductId: rotated.stripeProductId,
+          stripePriceId: rotated.newStripePriceId,
+        },
+        include: classAccessInclude,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Membership plan DB update failed after Stripe catalog reconcile planId=${planId}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw error;
+    }
+
+    if (rotated.previousStripePriceId) {
+      try {
+        await this.stripe.deactivatePrice(rotated.previousStripePriceId);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to deactivate previous Stripe Price ${rotated.previousStripePriceId} for plan ${planId}: ${
+            error instanceof Error ? error.message : 'unknown'
+          }`,
+        );
+      }
+    }
+
+    const mapped = mapPlanWithClassAccess(updated);
+    const recurring = planStripeRecurring(identity);
+    await this.audit.log({
+      studioId,
+      actorUserId,
+      action: 'MEMBERSHIP_PLAN_STRIPE_PRICE_RECONCILED',
+      entityType: 'membership_plan',
+      entityId: planId,
+      metadata: toAuditMetadata({
+        source: 'catalog_reconciliation',
+        planName: mapped.name,
+        previousStripePriceId: rotated.previousStripePriceId,
+        newStripePriceId: rotated.newStripePriceId,
+        intendedPriceCents: identity.priceCents,
+        currency: identity.currency,
+        billingInterval: identity.billingInterval,
+        entitlementDays: identity.entitlementDays,
+        recurringInterval: recurring.interval,
+        recurringIntervalCount: recurring.intervalCount ?? 1,
+        result: 'reconciled',
+      }),
+    });
+
+    return {
+      status: 'reconciled',
+      previousStripePriceId: rotated.previousStripePriceId,
+      newStripePriceId: rotated.newStripePriceId,
+      plan: mapped,
+    };
+  }
+
+  /**
    * Create a new Stripe Price for the plan's current sale identity on the existing Product.
-   * Must succeed before any GymOS financial-field write. Idempotent via Stripe Idempotency-Key.
+   * Must succeed before any GymOS stripePriceId write. Idempotent via Stripe Idempotency-Key.
+   * Authoritative rotation primitive shared by financial edit and catalog reconciliation.
    */
   private async rotateStripeSalePrice(params: {
     plan: MembershipPlan;
     next: PlanFinancialIdentity;
+    source: 'membership_plan_edit' | 'catalog_reconciliation';
   }): Promise<{
     previousStripePriceId: string | null;
     newStripePriceId: string;
     stripeProductId: string;
   }> {
-    const { plan, next } = params;
+    const { plan, next, source } = params;
     let productId = plan.stripeProductId;
 
     try {
@@ -432,7 +576,7 @@ export class MembershipPlansService {
             gymosStudioId: plan.studioId,
             previousStripePriceId: plan.stripePriceId ?? '',
             intendedPriceCents: String(next.priceCents),
-            source: 'membership_plan_edit',
+            source,
           },
         },
         { idempotencyKey },

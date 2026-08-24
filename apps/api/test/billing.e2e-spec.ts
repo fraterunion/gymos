@@ -533,3 +533,209 @@ describe('Membership plan Stripe price sync (e2e)', () => {
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 });
+
+describe('Membership plan Stripe catalog reconcile (e2e)', () => {
+  let app: INestApplication;
+  let prisma: PrismaService;
+  let stripe: StripeService;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    prisma = app.get(PrismaService);
+    stripe = app.get(StripeService);
+  });
+
+  beforeEach(async () => {
+    await truncateAll(prisma);
+    jest.clearAllMocks();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('OWNER reconciles mismatch; STAFF/MEMBER forbidden; cross-studio not found', async () => {
+    const studio = await createStudio(prisma);
+    const other = await createStudio(prisma, { slug: 'other-studio-e2e' });
+    const plan = await prisma.membershipPlan.create({
+      data: {
+        studioId: studio.id,
+        name: 'Basic Access',
+        priceCents: 100000,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+        active: true,
+        stripeProductId: 'prod_e2e_reconcile',
+        stripePriceId: 'price_stale_1300',
+      },
+    });
+
+    (stripe.retrievePrice as jest.Mock).mockResolvedValue({
+      id: 'price_stale_1300',
+      object: 'price',
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_e2e_reconcile',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+    (stripe.createRecurringPrice as jest.Mock).mockResolvedValue({
+      id: 'price_new_1000',
+      object: 'price',
+      unit_amount: 100000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_e2e_reconcile',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const owner = await createUserWithPassword(prisma, {
+      email: 'owner-reconcile@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, owner.id, studio.id, Role.OWNER);
+    const ownerToken = await loginAccessToken(app, owner.email, owner.password);
+
+    const staff = await createUserWithPassword(prisma, {
+      email: 'staff-reconcile@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, staff.id, studio.id, Role.STAFF);
+    const staffToken = await loginAccessToken(app, staff.email, staff.password);
+
+    const member = await createUserWithPassword(prisma, {
+      email: 'member-reconcile@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    const memberToken = await loginAccessToken(app, member.email, member.password);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}/reconcile-stripe-price`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}/reconcile-stripe-price`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${other.id}/membership-plans/${plan.id}/reconcile-stripe-price`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(403);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}/reconcile-stripe-price`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        status: 'reconciled',
+        previousStripePriceId: 'price_stale_1300',
+        newStripePriceId: 'price_new_1000',
+      }),
+    );
+    expect(stripe.deactivatePrice).toHaveBeenCalledWith('price_stale_1300');
+
+    const persisted = await prisma.membershipPlan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(persisted.stripePriceId).toBe('price_new_1000');
+    expect(persisted.priceCents).toBe(100000);
+
+    const audits = await prisma.auditLog.findMany({
+      where: { entityId: plan.id, action: 'MEMBERSHIP_PLAN_STRIPE_PRICE_RECONCILED' },
+    });
+    expect(audits).toHaveLength(1);
+    expect(audits[0].metadata).toEqual(
+      expect.objectContaining({ source: 'catalog_reconciliation' }),
+    );
+
+    // After reconcile, integrity healthy and checkout can resolve the new Price.
+    (stripe.retrievePrice as jest.Mock).mockResolvedValue({
+      id: 'price_new_1000',
+      object: 'price',
+      unit_amount: 100000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_e2e_reconcile',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const integrity = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/membership-plans/billing-integrity`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const planIntegrity = (integrity.body as Array<{ planId: string; status: string }>).find(
+      (r) => r.planId === plan.id,
+    );
+    expect(planIntegrity?.status).toBe('healthy');
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}/checkout`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalled();
+  });
+
+  it('returns already_synced when catalog Price already matches', async () => {
+    const studio = await createStudio(prisma);
+    const plan = await prisma.membershipPlan.create({
+      data: {
+        studioId: studio.id,
+        name: 'Synced Plan',
+        priceCents: 100000,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+        active: true,
+        stripeProductId: 'prod_e2e_synced',
+        stripePriceId: 'price_match_1000',
+      },
+    });
+    (stripe.retrievePrice as jest.Mock).mockResolvedValue({
+      id: 'price_match_1000',
+      object: 'price',
+      unit_amount: 100000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_e2e_synced',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    const owner = await createUserWithPassword(prisma, {
+      email: 'owner-synced@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, owner.id, studio.id, Role.OWNER);
+    const token = await loginAccessToken(app, owner.email, owner.password);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}/reconcile-stripe-price`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(res.body).toEqual(
+      expect.objectContaining({ status: 'already_synced', stripePriceId: 'price_match_1000' }),
+    );
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+  });
+
+  it('returns not_applicable for cash-only plans', async () => {
+    const studio = await createStudio(prisma);
+    const plan = await createMembershipPlanForStudio(prisma, studio.id);
+    const owner = await createUserWithPassword(prisma, {
+      email: 'owner-cash@e2e.local',
+      password: 'password12',
+    });
+    await createMembership(prisma, owner.id, studio.id, Role.OWNER);
+    const token = await loginAccessToken(app, owner.email, owner.password);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}/reconcile-stripe-price`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect((res.body as { status: string }).status).toBe('not_applicable');
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+  });
+});

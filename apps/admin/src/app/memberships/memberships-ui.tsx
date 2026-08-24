@@ -17,6 +17,7 @@ import type { DayPassClassAccessTemplateDto } from "@/lib/api/dayPassClassAccess
 import {
   dayPassHealthLabel,
   integrityIssueLabel,
+  canReconcileStripeCatalog,
   operationalOverview,
   planCardLines,
   planCycleLabel,
@@ -209,6 +210,8 @@ export function PlanCard({
   onViewMembers,
   onManageAccess,
   onToggleActive,
+  onReconcileStripe,
+  reconciling,
 }: {
   plan: MembershipPlanDto;
   integrity?: PlanIntegrityResult;
@@ -217,12 +220,18 @@ export function PlanCard({
   onViewMembers: (p: MembershipPlanDto) => void;
   onManageAccess: (p: MembershipPlanDto) => void;
   onToggleActive: (p: MembershipPlanDto) => void;
+  onReconcileStripe?: (p: MembershipPlanDto) => void;
+  reconciling?: boolean;
 }) {
   const [showIssues, setShowIssues] = useState(false);
   const archived = !!plan.deletedAt || !plan.active;
   const cycleLabel = planCycleLabel(plan);
   const lines = planCardLines(plan);
   const health = planHealth(plan, integrity?.status);
+  const showReconcile =
+    !archived &&
+    !!onReconcileStripe &&
+    canReconcileStripeCatalog(integrity?.status, plan);
 
   return (
     <div
@@ -282,6 +291,16 @@ export function PlanCard({
                 <li key={issue}>• {issue}</li>
               ))}
             </ul>
+          ) : null}
+          {showReconcile ? (
+            <button
+              type="button"
+              disabled={reconciling}
+              onClick={() => onReconcileStripe?.(plan)}
+              className="mt-2 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-60"
+            >
+              {reconciling ? "Corrigiendo…" : "Corregir sincronización"}
+            </button>
           ) : null}
         </div>
       ) : null}

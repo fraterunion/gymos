@@ -120,6 +120,22 @@ export class MembershipPlansController {
     return this.membershipPlansService.updatePlan(studioId, planId, dto, req.user.sub);
   }
 
+  @Post(':planId/reconcile-stripe-price')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  reconcileStripePrice(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.membershipPlansService.reconcileStripeSalePrice(
+      studioId,
+      planId,
+      req.user.sub,
+    );
+  }
+
   @Delete(':planId')
   @UseGuards(RolesGuard)
   @Roles(Role.OWNER, Role.ADMIN)

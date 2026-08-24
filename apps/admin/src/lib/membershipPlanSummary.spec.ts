@@ -8,6 +8,7 @@ import {
   planEditorFixedDurationHelperText,
   dayPassHealthLabel,
   integrityIssueLabel,
+  canReconcileStripeCatalog,
   planAccessSummary,
   planCardLines,
   planCycleLabel,
@@ -131,6 +132,32 @@ test("plan health consolidates Stripe issues into one staff-friendly label", () 
   const health = planHealth(basePlan({ classAccess: { allClasses: false, templates: [template()] } }), "interval_mismatch");
   assert.equal(health.primaryIssue, "Ciclo de GymOS y Stripe desalineado");
   assert.equal(health.label, "Requiere atención");
+});
+
+test("catalog reconcile CTA only appears for Stripe-backed mismatch statuses", () => {
+  const stripePlan = { stripeProductId: "prod_x", stripePriceId: "price_x" };
+  const cashPlan = { stripeProductId: null, stripePriceId: null };
+  assert.equal(canReconcileStripeCatalog("price_mismatch", stripePlan), true);
+  assert.equal(canReconcileStripeCatalog("interval_mismatch", stripePlan), true);
+  assert.equal(canReconcileStripeCatalog("healthy", stripePlan), false);
+  assert.equal(canReconcileStripeCatalog("fetch_error", stripePlan), false);
+  assert.equal(canReconcileStripeCatalog("price_mismatch", cashPlan), false);
+  assert.equal(canReconcileStripeCatalog("no_stripe_price", cashPlan), false);
+  assert.equal(canReconcileStripeCatalog("no_stripe_price", { stripeProductId: "prod_x", stripePriceId: null }), true);
+});
+
+test("memberships UI exposes Corregir sincronización for reconcile CTA", () => {
+  const source = readFileSync(new URL("../app/memberships/memberships-ui.tsx", import.meta.url), "utf8");
+  assert.match(source, /Corregir sincronización/);
+  assert.match(source, /canReconcileStripeCatalog/);
+  assert.match(source, /onReconcileStripe/);
+});
+
+test("memberships page confirms catalog reconcile without migrating members", () => {
+  const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /reconcileMembershipPlanStripePrice/);
+  assert.match(source, /Los miembros actuales conservarán su precio/);
+  assert.match(source, /Precio sincronizado correctamente/);
 });
 
 test("Booty Lab with healthy Stripe integrity is Saludable", () => {

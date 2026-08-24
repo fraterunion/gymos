@@ -12,6 +12,7 @@ import {
   fetchPlanBillingIntegrity,
   fetchPlanConfigurationHistory,
   fetchSubscriptions,
+  reconcileMembershipPlanStripePrice,
   setCancelAtPeriodEnd,
   updateMembershipPlan,
   updateSubscriptionStatus,
@@ -757,6 +758,8 @@ export default function MembershipsPage() {
   const [dayPassError, setDayPassError] = useState<string | null>(null);
   const [dayPassPendingId, setDayPassPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [reconcilingPlanId, setReconcilingPlanId] = useState<string | null>(null);
 
   const [showInactive, setShowInactive] = useState(false);
   const [statusFilter, setStatusFilter] = useState<SubscriptionStatus | "">("");
@@ -913,6 +916,36 @@ export default function MembershipsPage() {
     }
   }
 
+  async function handleReconcileStripe(plan: MembershipPlanDto) {
+    if (!selectedStudioId) return;
+    const ok = confirm(
+      `¿Corregir la sincronización de «${plan.name}»?\n\nEsto actualizará el precio usado para nuevas ventas.\nLos miembros actuales conservarán su precio.`,
+    );
+    if (!ok) return;
+    setReconcilingPlanId(plan.id);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await reconcileMembershipPlanStripePrice(selectedStudioId, plan.id);
+      await loadPlans();
+      if (result.status === "already_synced") {
+        setSuccessMessage("El precio ya estaba sincronizado con Stripe.");
+      } else if (result.status === "reconciled") {
+        setSuccessMessage("Precio sincronizado correctamente");
+      } else {
+        setError(result.reason);
+      }
+    } catch (e) {
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : "No pudimos actualizar el precio. No se realizaron cambios. Intenta nuevamente.",
+      );
+    } finally {
+      setReconcilingPlanId(null);
+    }
+  }
+
   async function handleDayPassToggle(t: DayPassClassAccessTemplateDto) {
     if (!selectedStudioId) return;
     setDayPassPendingId(t.id);
@@ -991,6 +1024,19 @@ export default function MembershipsPage() {
         </div>
       ) : null}
 
+      {successMessage ? (
+        <div className="mb-6 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {successMessage}
+          <button
+            type="button"
+            onClick={() => setSuccessMessage(null)}
+            className="ml-3 underline"
+          >
+            Cerrar
+          </button>
+        </div>
+      ) : null}
+
       <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
       {activeTab === "planes" && overview ? (
@@ -1056,6 +1102,8 @@ export default function MembershipsPage() {
                     setShowPlanModal(true);
                   }}
                   onToggleActive={handleToggleActive}
+                  onReconcileStripe={handleReconcileStripe}
+                  reconciling={reconcilingPlanId === plan.id}
                 />
               ))}
             </div>

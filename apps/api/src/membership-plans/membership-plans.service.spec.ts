@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BillingInterval } from '@prisma/client';
 import { MembershipPlansService } from './membership-plans.service';
 
@@ -620,5 +620,221 @@ describe('MembershipPlansService Stripe price rotation', () => {
         }),
       }),
     );
+  });
+});
+
+describe('MembershipPlansService.reconcileStripeSalePrice', () => {
+  const prisma = {
+    membershipPlan: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+  };
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const stripe = {
+    createRecurringPrice: jest.fn(),
+    createProductForPlan: jest.fn(),
+    retrievePrice: jest.fn(),
+    deactivatePrice: jest.fn().mockResolvedValue({}),
+    updateSubscription: jest.fn(),
+    cancelSubscription: jest.fn(),
+    scheduleSubscriptionPriceChangeAtPeriodEnd: jest.fn(),
+  };
+  const service = new MembershipPlansService(prisma as never, audit as never, stripe as never);
+
+  const basePlan = {
+    id: 'plan-basic',
+    studioId: 'studio-1',
+    name: 'Basic Access',
+    priceCents: 100000,
+    currency: 'mxn',
+    billingInterval: BillingInterval.MONTHLY,
+    entitlementDays: null,
+    stripeProductId: 'prod_basic',
+    stripePriceId: 'price_old_1300',
+    allClassesAccess: true,
+    allowedCategories: [],
+    classTemplateAccess: [],
+    description: null,
+    classCredits: null,
+    active: true,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    stripe.deactivatePrice.mockResolvedValue({});
+  });
+
+  it('returns already_synced without Stripe create or DB mutation when Price matches', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.retrievePrice.mockResolvedValue({
+      id: 'price_old_1300',
+      unit_amount: 100000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+      product: 'prod_basic',
+    });
+
+    const result = await service.reconcileStripeSalePrice('studio-1', 'plan-basic', 'admin-1');
+
+    expect(result.status).toBe('already_synced');
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+    expect(prisma.membershipPlan.update).not.toHaveBeenCalled();
+    expect(stripe.deactivatePrice).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it('reconciles mismatch 1300 linked / 1000 desired and deactivates old Price', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.retrievePrice.mockResolvedValue({
+      id: 'price_old_1300',
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+      product: 'prod_basic',
+    });
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    prisma.membershipPlan.update.mockResolvedValue({
+      ...basePlan,
+      stripePriceId: 'price_new_1000',
+      classTemplateAccess: [],
+    });
+
+    const result = await service.reconcileStripeSalePrice('studio-1', 'plan-basic', 'admin-1');
+
+    expect(result.status).toBe('reconciled');
+    if (result.status === 'reconciled') {
+      expect(result.newStripePriceId).toBe('price_new_1000');
+      expect(result.previousStripePriceId).toBe('price_old_1300');
+    }
+    expect(stripe.createRecurringPrice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        unitAmount: 100000,
+        currency: 'mxn',
+        interval: 'month',
+        metadata: expect.objectContaining({ source: 'catalog_reconciliation' }),
+      }),
+      expect.objectContaining({
+        idempotencyKey: 'plan-price:plan-basic:100000:mxn:month:1',
+      }),
+    );
+    expect(prisma.membershipPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ stripePriceId: 'price_new_1000' }),
+      }),
+    );
+    expect(stripe.deactivatePrice).toHaveBeenCalledWith('price_old_1300');
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'MEMBERSHIP_PLAN_STRIPE_PRICE_RECONCILED',
+        metadata: expect.objectContaining({
+          source: 'catalog_reconciliation',
+          previousStripePriceId: 'price_old_1300',
+          newStripePriceId: 'price_new_1000',
+          intendedPriceCents: 100000,
+          result: 'reconciled',
+        }),
+      }),
+    );
+  });
+
+  it('keeps plan pointer unchanged when Stripe create fails', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.retrievePrice.mockResolvedValue({
+      id: 'price_old_1300',
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+      product: 'prod_basic',
+    });
+    stripe.createRecurringPrice.mockRejectedValue(new Error('stripe down'));
+
+    await expect(
+      service.reconcileStripeSalePrice('studio-1', 'plan-basic', 'admin-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.membershipPlan.update).not.toHaveBeenCalled();
+  });
+
+  it('retries with same idempotency key after DB failure', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.retrievePrice.mockResolvedValue({
+      id: 'price_old_1300',
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+      product: 'prod_basic',
+    });
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    prisma.membershipPlan.update
+      .mockRejectedValueOnce(new Error('db down'))
+      .mockResolvedValueOnce({
+        ...basePlan,
+        stripePriceId: 'price_new_1000',
+        classTemplateAccess: [],
+      });
+
+    await expect(
+      service.reconcileStripeSalePrice('studio-1', 'plan-basic', 'admin-1'),
+    ).rejects.toThrow('db down');
+
+    await service.reconcileStripeSalePrice('studio-1', 'plan-basic', 'admin-1');
+
+    expect(stripe.createRecurringPrice).toHaveBeenCalledTimes(2);
+    const keys = stripe.createRecurringPrice.mock.calls.map((c) => c[1]?.idempotencyKey);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toBe('plan-price:plan-basic:100000:mxn:month:1');
+  });
+
+  it('returns not_applicable for cash-only plans', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      ...basePlan,
+      stripeProductId: null,
+      stripePriceId: null,
+      classTemplateAccess: [],
+    });
+
+    const result = await service.reconcileStripeSalePrice('studio-1', 'plan-basic', 'admin-1');
+
+    expect(result.status).toBe('not_applicable');
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+    expect(prisma.membershipPlan.update).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundException for missing/cross-studio plan', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.reconcileStripeSalePrice('studio-1', 'plan-other', 'admin-1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('keeps new Price when old Price deactivation fails', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue(basePlan);
+    stripe.retrievePrice.mockResolvedValue({
+      id: 'price_old_1300',
+      unit_amount: 130000,
+      currency: 'mxn',
+      active: true,
+      recurring: { interval: 'month', interval_count: 1 },
+      product: 'prod_basic',
+    });
+    stripe.createRecurringPrice.mockResolvedValue({ id: 'price_new_1000' });
+    stripe.deactivatePrice.mockRejectedValue(new Error('archive failed'));
+    prisma.membershipPlan.update.mockResolvedValue({
+      ...basePlan,
+      stripePriceId: 'price_new_1000',
+      classTemplateAccess: [],
+    });
+
+    const result = await service.reconcileStripeSalePrice('studio-1', 'plan-basic', 'admin-1');
+
+    expect(result.status).toBe('reconciled');
+    expect(prisma.membershipPlan.update).toHaveBeenCalled();
   });
 });

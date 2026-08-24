@@ -190,6 +190,35 @@ export function archiveMembershipPlan(
   });
 }
 
+export type ReconcileStripePriceResult =
+  | {
+      status: "already_synced";
+      stripePriceId: string;
+      plan: MembershipPlanDto;
+    }
+  | {
+      status: "reconciled";
+      previousStripePriceId: string | null;
+      newStripePriceId: string;
+      plan: MembershipPlanDto;
+    }
+  | {
+      status: "not_applicable";
+      reason: string;
+      plan: MembershipPlanDto;
+    };
+
+/** Force linked Stripe catalog Price to match current GymOS plan financial identity. */
+export function reconcileMembershipPlanStripePrice(
+  studioId: string,
+  planId: string,
+): Promise<ReconcileStripePriceResult> {
+  return apiRequest<ReconcileStripePriceResult>(
+    `/studios/${studioId}/membership-plans/${planId}/reconcile-stripe-price`,
+    { method: "POST" },
+  );
+}
+
 export type PlanConfigurationHistoryEntry = {
   id: string;
   action: string;
