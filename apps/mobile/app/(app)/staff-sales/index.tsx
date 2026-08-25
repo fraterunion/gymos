@@ -48,6 +48,10 @@ import {
   type MemberWaiverStatusDto,
 } from '@/lib/api/waiverApi';
 import { resolveAresPlanBenefits, resolveAresPricePerClassLabel } from '@/lib/aresMembershipPlans';
+import {
+  formatCashSalePeriodLabel,
+  immediateCashSalePeriod,
+} from '@/lib/cashSalePeriod';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import {
   canAccessSales,
@@ -96,15 +100,6 @@ function billingIntervalLabel(interval: BillingInterval): string {
     case 'WEEKLY':
       return 'semana';
   }
-}
-
-function defaultPeriodEnd(startIso: string, interval: BillingInterval): string {
-  const start = new Date(startIso);
-  const end = new Date(start);
-  if (interval === 'MONTHLY') end.setMonth(end.getMonth() + 1);
-  else if (interval === 'YEARLY') end.setFullYear(end.getFullYear() + 1);
-  else end.setDate(end.getDate() + 7);
-  return end.toISOString().slice(0, 10);
 }
 
 const STEP_LABELS = ['Cliente', 'Carta responsiva', 'Plan', 'Pago', 'Confirmación'] as const;
@@ -472,6 +467,7 @@ export default function StaffSalesScreen() {
   const { user } = useAuth();
   const { matched } = useMemberStudio();
   const studioId = matched?.studio.id ?? '';
+  const studioTimezone = matched?.studio.timezone ?? 'UTC';
   const role = matched?.role ?? null;
   const isOwner = role === 'OWNER';
 
@@ -511,8 +507,6 @@ export default function StaffSalesScreen() {
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [cashNotes, setCashNotes] = useState('');
   const [priceOverrideNote, setPriceOverrideNote] = useState('');
-  const [periodStart] = useState(() => new Date().toISOString().slice(0, 10));
-  const [periodEnd, setPeriodEnd] = useState('');
   const [activeUntil, setActiveUntil] = useState<string | null>(null);
   const [paymentOutcome, setPaymentOutcome] = useState<PaymentOutcome>(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
@@ -570,10 +564,13 @@ export default function StaffSalesScreen() {
     }
   }, [canCheckout, canCash, paymentMethod]);
 
-  useEffect(() => {
-    if (!selectedPlan) return;
-    setPeriodEnd(defaultPeriodEnd(periodStart, selectedPlan.billingInterval));
-  }, [selectedPlan, periodStart]);
+  const cashPeriodPreview = useMemo(() => {
+    if (!selectedPlan) return null;
+    const { periodStart, periodEnd } = immediateCashSalePeriod({
+      billingInterval: selectedPlan.billingInterval,
+    });
+    return formatCashSalePeriodLabel(periodStart, periodEnd, studioTimezone);
+  }, [selectedPlan, studioTimezone]);
 
   const loadWaiver = useCallback(async (userId: string) => {
     if (!studioId) return;
@@ -768,11 +765,11 @@ export default function StaffSalesScreen() {
     setBusy(true);
     setError(null);
     try {
+      // Omit periodStart/periodEnd so the API uses transaction time (now) and can
+      // queue fixed-duration same-plan early renewals after the current entitlement end.
       const res = await createOfflineSubscription(studioId, selectedMember.user.id, {
         planId: selectedPlan.id,
         amountCents: selectedPlan.priceCents,
-        periodStart: new Date(`${periodStart}T12:00:00`).toISOString(),
-        periodEnd: new Date(`${periodEnd}T23:59:59`).toISOString(),
         paymentMethod: 'CASH',
         notes: cashNotes.trim() || undefined,
         priceOverrideNote: priceOverrideNote.trim() || undefined,
@@ -1217,7 +1214,7 @@ export default function StaffSalesScreen() {
                     {formatMoneyFromCents(selectedPlan.priceCents, selectedPlan.currency)}
                   </Text>
                   <Text style={{ fontSize: 13, color: C.textMute }}>
-                    Periodo: {periodStart} → {periodEnd}
+                    Periodo: {cashPeriodPreview?.label ?? '—'}
                   </Text>
                   {isOwner ? (
                     <Field

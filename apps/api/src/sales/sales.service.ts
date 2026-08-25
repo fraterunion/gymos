@@ -245,6 +245,11 @@ export class SalesService {
     // Fixed-duration CASH (entitlementDays set): renew in place + new entitlement cycle.
     // Interval CASH (entitlementDays null): successor row — must supersede before create
     // to satisfy subscriptions_one_active_per_user_per_studio_idx.
+    //
+    // Early same-plan interval renewal therefore starts at `now` (prepaid remainder is
+    // not preserved): a future-dated ACTIVE successor would violate the one-ACTIVE
+    // partial unique index. Fixed-duration early renewal preserves prepaid time only
+    // when clients omit periodStart (queues after current entitlement end).
     const renewableCashSubscription =
       plan.entitlementDays != null
         ? await this.prisma.subscription.findFirst({

@@ -30,6 +30,13 @@ import {
   type MemberWaiverStatus,
 } from "@/lib/api/waiver";
 import { canRecordCashSales, normalizeStudioRole } from "@/lib/deskRoles";
+import {
+  formatCashSalePeriodLabel,
+  immediateCashSalePeriod,
+  periodEndDateKeyFromStart,
+  resolveCashSalePeriodPayload,
+} from "@/lib/cashSalePeriod";
+import { todayKeyInZone } from "@/lib/datetime";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 type MemberMode = "create" | "search";
@@ -78,18 +85,10 @@ function qrImageUrl(url: string): string {
   return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`;
 }
 
-function defaultPeriodEnd(startIso: string, interval: MembershipPlanDto["billingInterval"]): string {
-  const start = new Date(startIso);
-  const end = new Date(start);
-  if (interval === "MONTHLY") end.setMonth(end.getMonth() + 1);
-  else if (interval === "YEARLY") end.setFullYear(end.getFullYear() + 1);
-  else end.setDate(end.getDate() + 7);
-  return end.toISOString().slice(0, 10);
-}
-
 export default function WalkInSalesPage() {
   const { user: authUser } = useAuth();
-  const { selectedStudioId, studioRole, loading: studioLoading } = useDeskStudio();
+  const { selectedStudioId, selected, studioRole, loading: studioLoading } = useDeskStudio();
+  const studioTimezone = selected?.studio.timezone ?? "UTC";
 
   const [step, setStep] = useState<Step>(1);
   const [memberMode, setMemberMode] = useState<MemberMode>("search");
@@ -120,7 +119,7 @@ export default function WalkInSalesPage() {
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [cashNotes, setCashNotes] = useState("");
   const [priceOverrideNote, setPriceOverrideNote] = useState("");
-  const [periodStart, setPeriodStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [activeUntil, setActiveUntil] = useState<string | null>(null);
 
@@ -157,9 +156,32 @@ export default function WalkInSalesPage() {
   }, [selectedStudioId]);
 
   useEffect(() => {
-    if (!selectedPlan) return;
-    setPeriodEnd(defaultPeriodEnd(periodStart, selectedPlan.billingInterval));
-  }, [selectedPlan, periodStart]);
+    setPeriodStart(todayKeyInZone(studioTimezone));
+  }, [studioTimezone]);
+
+  useEffect(() => {
+    if (!selectedPlan || !periodStart) return;
+    setPeriodEnd(
+      periodEndDateKeyFromStart(
+        periodStart,
+        selectedPlan.billingInterval,
+        selectedPlan.entitlementDays,
+        studioTimezone,
+      ),
+    );
+  }, [selectedPlan, periodStart, studioTimezone]);
+
+  const cashPeriodPreviewLabel = useMemo(() => {
+    if (!selectedPlan) return null;
+    if (!periodStart || periodStart === todayKeyInZone(studioTimezone)) {
+      const { periodStart: start, periodEnd: end } = immediateCashSalePeriod({
+        billingInterval: selectedPlan.billingInterval,
+        entitlementDays: selectedPlan.entitlementDays,
+      });
+      return formatCashSalePeriodLabel(start, end, studioTimezone).label;
+    }
+    return `${periodStart} → ${periodEnd}`;
+  }, [selectedPlan, periodStart, periodEnd, studioTimezone]);
 
   const loadWaiver = useCallback(async (studioId: string, userId: string) => {
     setWaiverLoading(true);
@@ -290,11 +312,20 @@ export default function WalkInSalesPage() {
     setError(null);
     try {
       const amountCents = selectedPlan.priceCents;
+      const periodPayload = resolveCashSalePeriodPayload({
+        periodStartDateKey: periodStart,
+        periodEndDateKey: periodEnd,
+        timeZone: studioTimezone,
+      });
       const res = await createOfflineSubscription(selectedStudioId, selectedMember.user.id, {
         planId: selectedPlan.id,
         amountCents,
-        periodStart: new Date(`${periodStart}T12:00:00`).toISOString(),
-        periodEnd: new Date(`${periodEnd}T23:59:59`).toISOString(),
+        ...(periodPayload.omitPeriod
+          ? {}
+          : {
+              periodStart: periodPayload.periodStartIso,
+              periodEnd: periodPayload.periodEndIso,
+            }),
         paymentMethod: "CASH",
         notes: cashNotes.trim() || undefined,
         priceOverrideNote: priceOverrideNote.trim() || undefined,
@@ -317,6 +348,8 @@ export default function WalkInSalesPage() {
     setActiveUntil(null);
     setPaymentMethod("stripe");
     setError(null);
+    setPeriodStart(todayKeyInZone(studioTimezone));
+    setPeriodEnd("");
   }
 
   const waiverOk =
@@ -590,6 +623,14 @@ export default function WalkInSalesPage() {
                   className={adminInput}
                 />
               </label>
+              {cashPeriodPreviewLabel ? (
+                <p className="text-xs text-zinc-500 sm:col-span-2">
+                  Periodo efectivo: {cashPeriodPreviewLabel}
+                  {periodStart === todayKeyInZone(studioTimezone)
+                    ? " (inicia al registrar el pago)"
+                    : ""}
+                </p>
+              ) : null}
               <label className="text-sm sm:col-span-2">
                 <span className="mb-1 block text-zinc-600">Monto</span>
                 <input

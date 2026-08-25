@@ -11,7 +11,7 @@
     "build": "expo export -p web --output-dir dist",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test lib/walletPassState.spec.ts lib/whitelabelEnv.spec.cjs lib/aresReleaseEnv.spec.cjs lib/staffWalkInEscalation.spec.ts",
+    "test": "node --experimental-strip-types --test lib/walletPassState.spec.ts lib/whitelabelEnv.spec.cjs lib/aresReleaseEnv.spec.cjs lib/staffWalkInEscalation.spec.ts lib/cashSalePeriod.spec.ts",
     "test:env": "node --test lib/whitelabelEnv.spec.cjs lib/aresReleaseEnv.spec.cjs",
     "clean": "rm -rf dist .expo .turbo",
     "config:print": "node scripts/print-app-config.cjs",

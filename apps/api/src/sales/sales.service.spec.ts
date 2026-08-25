@@ -229,6 +229,47 @@ describe('SalesService', () => {
     expect(result.subscription.id).toBe('sub-1');
   });
 
+  it('omitted periodStart defaults to now (immediate entitlement; no UTC-noon client bug)', async () => {
+    mockActor(Role.ADMIN);
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-25T01:41:00.000Z'));
+    try {
+      prisma.membershipPlan.findFirst.mockResolvedValue({
+        id: 'plan-1',
+        studioId: 'studio-1',
+        priceCents: 100000,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+        name: 'Basic Access',
+        entitlementDays: null,
+        classCredits: 12,
+      });
+      prisma.subscription.findMany.mockResolvedValue([]);
+      prisma.subscription.create.mockResolvedValue({
+        id: 'sub-now',
+        status: SubscriptionStatus.ACTIVE,
+        source: SubscriptionSource.CASH,
+        currentPeriodStart: new Date('2026-08-25T01:41:00.000Z'),
+        currentPeriodEnd: new Date('2026-09-25T01:41:00.000Z'),
+        membershipPlan: { id: 'plan-1', name: 'Basic Access' },
+      });
+      prisma.payment.create.mockResolvedValue({ id: 'pay-now' });
+
+      await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1',
+        amountCents: 100000,
+        paymentMethod: 'CASH',
+      });
+
+      const createData = prisma.subscription.create.mock.calls[0][0].data;
+      expect(createData.currentPeriodStart.toISOString()).toBe('2026-08-25T01:41:00.000Z');
+      expect(createData.currentPeriodStart.getTime()).toBeLessThanOrEqual(Date.now());
+      expect(createData.currentPeriodEnd.toISOString()).toBe('2026-09-25T01:41:00.000Z');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('renews ACTIVE interval CASH same-plan by superseding before create (no P2002)', async () => {
     mockActor(Role.ADMIN);
     prisma.membershipPlan.findFirst.mockResolvedValue({
