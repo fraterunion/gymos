@@ -63,6 +63,21 @@ describe('canonical membership entitlement', () => {
     });
   });
 
+  it('treats durable SCHEDULED status as never entitled', () => {
+    const scheduled = {
+      ...subscription,
+      status: SubscriptionStatus.SCHEDULED,
+      currentPeriodStart: new Date('2026-08-30T12:00:00.000Z'),
+      currentPeriodEnd: new Date('2026-09-30T12:00:00.000Z'),
+    };
+    expect(isSubscriptionCurrentlyEntitled(scheduled, end)).toBe(false);
+    expect(deriveMembershipLifecycle(scheduled, end)).toMatchObject({
+      accessState: 'NOT_STARTED',
+      lifecycleStatus: 'SCHEDULED',
+      isEntitled: false,
+    });
+  });
+
   it('keeps payment problems and pauses distinct from expiration', () => {
     expect(
       deriveMembershipLifecycle({ ...subscription, status: SubscriptionStatus.PAST_DUE }, end),

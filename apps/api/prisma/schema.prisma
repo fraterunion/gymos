@@ -30,6 +30,9 @@ enum SubscriptionStatus {
   CANCELED
   TRIALING
   PAUSED
+  /// Future offline (CASH) successor waiting for a Stripe period-end handoff.
+  /// Not covered by subscriptions_one_active_per_user_per_studio_idx.
+  SCHEDULED
 }
 
 /// Why a subscription record ended. Distinct from SubscriptionStatus (provider state).

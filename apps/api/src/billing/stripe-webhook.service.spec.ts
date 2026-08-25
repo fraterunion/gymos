@@ -158,11 +158,16 @@ function makeMocks() {
     }),
   };
 
+  const stripeToCash = {
+    activateScheduledCashIfDue: jest.fn().mockResolvedValue(null),
+  };
+
   const service = new StripeWebhookService(
     prisma,
     stripe as unknown as StripeService,
     enrollment,
     subscriptionLifecycle as never,
+    stripeToCash as never,
   );
 
   jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -286,7 +291,7 @@ describe('StripeWebhookService — fixed entitlement cycle grants', () => {
     prisma.$transaction.mockImplementation(
       async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     );
-    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never);
+    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never);
     const grant = (service as unknown as {
       grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
     }).grantFixedDurationCycleForPaidInvoice.bind(service);
@@ -331,7 +336,7 @@ describe('StripeWebhookService — fixed entitlement cycle grants', () => {
       transactionTail = run.catch(() => undefined);
       return run;
     });
-    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never);
+    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never);
     const grant = (service as unknown as {
       grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
     }).grantFixedDurationCycleForPaidInvoice.bind(service);
@@ -642,11 +647,16 @@ function makeSubscriptionWebhookMocks() {
     auditDuplicateRenewableSubscriptions: jest.fn(),
   };
 
+  const stripeToCash = {
+    activateScheduledCashIfDue: jest.fn().mockResolvedValue(null),
+  };
+
   const service = new StripeWebhookService(
     prisma,
     {} as StripeService,
     {} as EnrollmentService,
     subscriptionLifecycle as never,
+    stripeToCash as never,
   );
 
   jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
@@ -815,7 +825,7 @@ describe('StripeWebhookService — handleIncomingWebhook error observability', (
       }),
     } as unknown as StripeService;
 
-    const service = new StripeWebhookService(prisma, stripe, {} as EnrollmentService, {} as never);
+    const service = new StripeWebhookService(prisma, stripe, {} as EnrollmentService, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never);
     return { service, prisma, stripe, updateManyMock };
   }
 
@@ -1155,9 +1165,14 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       'customer.subscription.deleted',
     );
 
-    // Neither findUnique nor findFirst should be called — the status is not renewable
+    // Conflict gate uses findUnique only for renewable statuses — CANCELED skips it.
+    // findFirst still runs to locate a SCHEDULED CASH successor for period-end activation.
     expect(txSubscription.findUnique).not.toHaveBeenCalled();
-    expect(txSubscription.findFirst).not.toHaveBeenCalled();
+    expect(txSubscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: SubscriptionStatus.SCHEDULED }),
+      }),
+    );
     // Normal upsert runs
     expect(upsertCalls).toHaveLength(1);
     expect(upsertCalls[0]).toMatchObject({ status: 'CANCELED' });

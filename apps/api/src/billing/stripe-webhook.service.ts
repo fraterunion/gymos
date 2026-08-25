@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
+import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
 import { buildPaidFixedEntitlementCycle } from './fixed-entitlement-cycle';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { subscriptionLockKey } from './subscription-lifecycle.utils';
@@ -73,6 +74,7 @@ export class StripeWebhookService {
     private readonly stripe: StripeService,
     private readonly enrollment: EnrollmentService,
     private readonly subscriptionLifecycle: SubscriptionLifecycleService,
+    private readonly stripeToCash: StripeToCashTransitionService,
   ) {}
 
   async handleIncomingWebhook(rawBody: Buffer, signature: string): Promise<void> {
@@ -340,14 +342,35 @@ export class StripeWebhookService {
         });
       }
 
-      if (
-        status === SubscriptionStatus.CANCELED &&
-        row.endReason == null
-      ) {
-        row = await tx.subscription.update({
-          where: { id: row.id },
-          data: { endReason: SubscriptionEndReason.MEMBER_CANCELLED },
+      if (status === SubscriptionStatus.CANCELED) {
+        const pendingCash = await tx.subscription.findFirst({
+          where: {
+            studioId,
+            userId,
+            status: SubscriptionStatus.SCHEDULED,
+            source: SubscriptionSource.CASH,
+          },
+          select: { id: true },
         });
+        if (row.endReason == null) {
+          row = await tx.subscription.update({
+            where: { id: row.id },
+            data: {
+              endReason: pendingCash
+                ? SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD
+                : SubscriptionEndReason.MEMBER_CANCELLED,
+              ...(pendingCash
+                ? { supersededBySubscriptionId: pendingCash.id }
+                : {}),
+            },
+          });
+        } else if (pendingCash && row.supersededBySubscriptionId == null) {
+          row = await tx.subscription.update({
+            where: { id: row.id },
+            data: { supersededBySubscriptionId: pendingCash.id },
+          });
+        }
+        await this.stripeToCash.activateScheduledCashIfDue(tx, { studioId, userId });
       }
 
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {

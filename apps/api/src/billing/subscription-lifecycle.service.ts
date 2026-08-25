@@ -399,6 +399,11 @@ export class SubscriptionLifecycleService {
     );
   }
 
+  /**
+   * Gate for ordinary offline cash assignment.
+   * Period-end Stripe→Cash MUST use StripeToCashTransitionService.scheduleCashAtStripePeriodEnd
+   * (cancel_at_period_end is rejected here — the old path created ACTIVE cash immediately).
+   */
   async assertNoRenewableSubscriptionConflict(params: {
     studioId: string;
     userId: string;
@@ -408,13 +413,41 @@ export class SubscriptionLifecycleService {
     if (!stripeSub?.stripeSubscriptionId) return;
 
     if (!params.allowStripeResolution) {
-      throw new ConflictException(
-        'Member has an active Stripe subscription. Cancel or change it in Stripe before assigning a separate offline membership.',
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'STRIPE_RENEWABLE_CONFLICT',
+        message:
+          'Este miembro tiene una suscripción activa en Stripe.',
+        stripeConflict: {
+          localSubscriptionId: stripeSub.id,
+          stripeSubscriptionId: stripeSub.stripeSubscriptionId,
+          planId: stripeSub.membershipPlanId,
+          planName: stripeSub.membershipPlan.name,
+          status: stripeSub.status,
+          currentPeriodStart: stripeSub.currentPeriodStart?.toISOString() ?? null,
+          currentPeriodEnd: stripeSub.currentPeriodEnd?.toISOString() ?? null,
+          cancelAtPeriodEnd: stripeSub.cancelAtPeriodEnd,
+          pendingCashTransitionId: null,
+          allowedResolutions: [] as const,
+        },
+      });
+    }
+
+    if (params.allowStripeResolution === 'cancel_at_period_end') {
+      throw new BadRequestException(
+        'cancel_at_period_end must be handled via scheduleCashAtStripePeriodEnd (no immediate ACTIVE cash).',
       );
     }
 
     if (params.allowStripeResolution === 'cancel_immediately') {
-      await this.stripe.cancelSubscription(stripeSub.stripeSubscriptionId);
+      try {
+        await this.stripe.cancelSubscription(stripeSub.stripeSubscriptionId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!/already been canceled|No such subscription/i.test(message)) {
+          throw err;
+        }
+      }
       await this.prisma.subscription.update({
         where: { id: stripeSub.id },
         data: {
@@ -423,16 +456,7 @@ export class SubscriptionLifecycleService {
           endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
         },
       });
-      return;
     }
-
-    await this.stripe.updateSubscription(stripeSub.stripeSubscriptionId, {
-      cancel_at_period_end: true,
-    });
-    await this.prisma.subscription.update({
-      where: { id: stripeSub.id },
-      data: { cancelAtPeriodEnd: true },
-    });
   }
 
   /**

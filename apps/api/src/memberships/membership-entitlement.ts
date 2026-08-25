@@ -48,6 +48,18 @@ export function deriveMembershipLifecycle(
 ): MembershipLifecycleSnapshot {
   const effectiveStart = subscription.currentPeriodStart;
   const effectiveEnd = subscription.entitlementEndsAt ?? subscription.currentPeriodEnd;
+
+  // Durable future CASH successor (Stripe→Cash period-end). Never entitled until activated.
+  if (subscription.status === SubscriptionStatus.SCHEDULED) {
+    return {
+      accessState: 'NOT_STARTED',
+      lifecycleStatus: 'SCHEDULED',
+      isEntitled: false,
+      effectiveStart,
+      effectiveEnd,
+    };
+  }
+
   const allowedStatus = hasAllowedAccessStatus(subscription);
 
   if (allowedStatus && effectiveStart !== null && now < effectiveStart) {

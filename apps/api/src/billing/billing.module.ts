@@ -4,6 +4,7 @@ import { StripeModule } from '../stripe/stripe.module';
 import { EnrollmentModule } from '../enrollment/enrollment.module';
 import { WaiverModule } from '../waiver/waiver.module';
 import { BillingService } from './billing.service';
+import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
@@ -17,8 +18,15 @@ import { StudioBillingController } from './studio-billing.controller';
     BillingService,
     SubscriptionLifecycleService,
     SubscriptionReconciliationService,
+    StripeToCashTransitionService,
     StripeWebhookService,
   ],
-  exports: [BillingService, SubscriptionLifecycleService, SubscriptionReconciliationService, StripeModule],
+  exports: [
+    BillingService,
+    SubscriptionLifecycleService,
+    SubscriptionReconciliationService,
+    StripeToCashTransitionService,
+    StripeModule,
+  ],
 })
 export class BillingModule {}

@@ -104,6 +104,7 @@ export async function createOfflineSubscription(
     paymentMethod: 'CASH';
     notes?: string;
     priceOverrideNote?: string;
+    stripeResolution?: 'cancel_immediately' | 'cancel_at_period_end';
   },
 ): Promise<OfflineSubscriptionResult> {
   return apiRequest<OfflineSubscriptionResult>(

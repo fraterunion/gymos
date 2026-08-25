@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -62,6 +63,12 @@ import {
 import { copyTextToClipboard } from '@/lib/copyToClipboard';
 import { memberProfileHref } from '@/lib/memberProfileRoutes';
 import { canAttestMemberWaiver } from '@/lib/waiverPermissions';
+import {
+  formatPaidThroughDate,
+  parseStripeRenewableConflict,
+  type StripeRenewableConflict,
+  type StripeResolution,
+} from '@/lib/stripeCashConflict';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import { getColors, Radius, Space, type ThemeColors } from '@/constants/Theme';
 
@@ -514,12 +521,14 @@ export default function StaffSalesScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+  const [stripeConflict, setStripeConflict] = useState<StripeRenewableConflict | null>(null);
 
   const allowed = canAccessSales(role);
   const canCreate = canCreateWalkInMember(role, salesSettings);
   const canCheckout = canIssueStaffCheckout(role, salesSettings);
   const canCash = canRecordCashSales(role, salesSettings);
   const canAttestWaiver = canAttestMemberWaiver(role);
+  const canResolveStripeToCash = role === 'OWNER' || role === 'ADMIN';
 
   const selectedPlan = useMemo(
     () => plans.find((p) => p.id === selectedPlanId) ?? null,
@@ -760,7 +769,7 @@ export default function StaffSalesScreen() {
     }
   }
 
-  async function handleRecordCash() {
+  async function handleRecordCash(stripeResolution?: StripeResolution) {
     if (!studioId || !selectedMember || !selectedPlan) return;
     setBusy(true);
     setError(null);
@@ -773,12 +782,25 @@ export default function StaffSalesScreen() {
         paymentMethod: 'CASH',
         notes: cashNotes.trim() || undefined,
         priceOverrideNote: priceOverrideNote.trim() || undefined,
+        stripeResolution,
       });
+      setStripeConflict(null);
       setCheckoutUrl(null);
       setActiveUntil(res.subscription.currentPeriodEnd);
       setPaymentOutcome('succeeded');
       setStep(5);
+      if (res.subscription.status === 'SCHEDULED') {
+        setMembershipCheckHint(
+          'Pago en efectivo registrado. Stripe sigue activo hasta el fin del periodo pagado; el efectivo comienza entonces.',
+        );
+      }
     } catch (e) {
+      const conflict = parseStripeRenewableConflict(e);
+      if (conflict && !stripeResolution) {
+        setStripeConflict(conflict);
+        setError(null);
+        return;
+      }
       setError(userFacingApiMessage(e, 'No se pudo registrar el pago en efectivo'));
     } finally {
       setBusy(false);
@@ -837,6 +859,7 @@ export default function StaffSalesScreen() {
     setHasSearched(false);
     setCreateForm({ firstName: '', lastName: '', email: '', phone: '' });
     setError(null);
+    setStripeConflict(null);
   }
 
   async function shareCheckoutUrl() {
@@ -1423,6 +1446,97 @@ export default function StaffSalesScreen() {
           ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={stripeConflict != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStripeConflict(null)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.72)',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: CARD_BG,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              borderWidth: 1,
+              borderColor: C.separator,
+              paddingHorizontal: 24,
+              paddingTop: 28,
+              paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+              gap: 16,
+            }}
+          >
+            <Text style={{ fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 }}>
+              Este miembro tiene una suscripción activa
+            </Text>
+            <Text style={{ fontSize: 15, lineHeight: 22, color: C.textSub }}>
+              Su membresía {stripeConflict?.planName ?? 'actual'} está pagada hasta el{' '}
+              {formatPaidThroughDate(stripeConflict?.currentPeriodEnd ?? null, studioTimezone)}.
+            </Text>
+
+            {canResolveStripeToCash &&
+            stripeConflict?.allowedResolutions.includes('cancel_at_period_end') ? (
+              <View style={{ gap: 8 }}>
+                <BrandButton
+                  label="Pasar a efectivo al finalizar el periodo"
+                  accentColor={primaryColor}
+                  disabled={busy}
+                  onPress={() => void handleRecordCash('cancel_at_period_end')}
+                />
+                <Text style={{ fontSize: 13, lineHeight: 18, color: C.textMute }}>
+                  Se registrará el pago en efectivo ahora. La membresía en Stripe seguirá activa
+                  hasta el{' '}
+                  {formatPaidThroughDate(
+                    stripeConflict?.currentPeriodEnd ?? null,
+                    studioTimezone,
+                  )}{' '}
+                  y no volverá a renovarse. La membresía en efectivo comenzará automáticamente al
+                  terminar ese periodo.
+                </Text>
+              </View>
+            ) : null}
+
+            {canResolveStripeToCash &&
+            stripeConflict?.allowedResolutions.includes('cancel_immediately') ? (
+              <View style={{ gap: 8 }}>
+                <BrandButton
+                  label="Cambiar a efectivo ahora"
+                  accentColor={primaryColor}
+                  variant="ghost"
+                  disabled={busy}
+                  onPress={() => void handleRecordCash('cancel_immediately')}
+                />
+                <Text style={{ fontSize: 13, lineHeight: 18, color: '#FCA5A5' }}>
+                  Se cancelará Stripe inmediatamente. Los días restantes del periodo actual pueden
+                  perderse.
+                </Text>
+              </View>
+            ) : null}
+
+            {!canResolveStripeToCash ? (
+              <Text style={{ fontSize: 14, lineHeight: 20, color: C.textMute }}>
+                Solo un administrador puede cambiar Stripe a efectivo. Mantén Stripe o pide ayuda a
+                un owner/admin.
+              </Text>
+            ) : null}
+
+            <BrandButton
+              label="Mantener Stripe"
+              accentColor={primaryColor}
+              variant="ghost"
+              disabled={busy}
+              onPress={() => setStripeConflict(null)}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

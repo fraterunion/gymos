@@ -11,7 +11,7 @@ import {
 } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
 import { BillingService } from '../billing/billing.service';
-import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
+import { StripeToCashTransitionService } from '../billing/stripe-to-cash-transition.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { AuditService } from './audit.service';
@@ -34,8 +34,14 @@ describe('SalesService', () => {
   let waiverService: { assertMemberWaiverAccepted: jest.Mock };
   let auditService: { log: jest.Mock };
   let salesSettingsService: { getSettings: jest.Mock };
-  let subscriptionLifecycle: {
-    assertNoRenewableSubscriptionConflict: jest.Mock;
+  let stripeToCash: {
+    findPrimaryStripeSubscription: jest.Mock;
+    findPendingScheduledCash: jest.Mock;
+    buildConflictException: jest.Mock;
+    assertCanResolveStripe: jest.Mock;
+    scheduleCashAtStripePeriodEnd: jest.Mock;
+    cancelStripeImmediately: jest.Mock;
+    reconcileScheduledCashForMember: jest.Mock;
   };
 
   const defaultSettings = {
@@ -67,8 +73,20 @@ describe('SalesService', () => {
         .fn()
         .mockResolvedValue({ action: 'checkout', url: 'https://checkout.stripe.test/session' }),
     };
-    subscriptionLifecycle = {
-      assertNoRenewableSubscriptionConflict: jest.fn().mockResolvedValue(undefined),
+    stripeToCash = {
+      findPrimaryStripeSubscription: jest.fn().mockResolvedValue(null),
+      findPendingScheduledCash: jest.fn().mockResolvedValue(null),
+      buildConflictException: jest.fn(
+        () =>
+          new ConflictException({
+            code: 'STRIPE_RENEWABLE_CONFLICT',
+            message: 'Este miembro tiene una suscripción activa en Stripe.',
+          }),
+      ),
+      assertCanResolveStripe: jest.fn(),
+      scheduleCashAtStripePeriodEnd: jest.fn(),
+      cancelStripeImmediately: jest.fn().mockResolvedValue(null),
+      reconcileScheduledCashForMember: jest.fn().mockResolvedValue(false),
     };
     waiverService = { assertMemberWaiverAccepted: jest.fn().mockResolvedValue(undefined) };
     auditService = { log: jest.fn().mockResolvedValue({ id: 'audit-1' }) };
@@ -80,7 +98,7 @@ describe('SalesService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AuthService, useValue: authService },
         { provide: BillingService, useValue: billingService },
-        { provide: SubscriptionLifecycleService, useValue: subscriptionLifecycle },
+        { provide: StripeToCashTransitionService, useValue: stripeToCash },
         { provide: WaiverService, useValue: waiverService },
         { provide: AuditService, useValue: auditService },
         { provide: SalesSettingsService, useValue: salesSettingsService },
@@ -426,10 +444,30 @@ describe('SalesService', () => {
 
   it('preserves Stripe conflict gate (ACTIVE Stripe → Cash without stripeResolution)', async () => {
     mockActor(Role.ADMIN);
-    subscriptionLifecycle.assertNoRenewableSubscriptionConflict.mockRejectedValue(
-      new ConflictException(
-        'Member has an active Stripe subscription. Cancel or change it in Stripe before assigning a separate offline membership.',
-      ),
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      priceCents: 60000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Pro',
+      entitlementDays: null,
+    });
+    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+      id: 'stripe-local',
+      stripeSubscriptionId: 'sub_x',
+      membershipPlanId: 'plan-1',
+      membershipPlan: { name: 'Pro' },
+      status: SubscriptionStatus.ACTIVE,
+      cancelAtPeriodEnd: false,
+      currentPeriodStart: new Date('2026-07-30T00:00:00.000Z'),
+      currentPeriodEnd: new Date('2026-08-30T00:00:00.000Z'),
+    });
+    stripeToCash.buildConflictException.mockReturnValue(
+      new ConflictException({
+        code: 'STRIPE_RENEWABLE_CONFLICT',
+        message: 'Este miembro tiene una suscripción activa en Stripe.',
+      }),
     );
 
     await expect(
@@ -438,18 +476,37 @@ describe('SalesService', () => {
         amountCents: 60000,
         paymentMethod: 'CASH',
       }),
-    ).rejects.toThrow(/active Stripe subscription/i);
+    ).rejects.toThrow(/suscripción activa en Stripe/i);
 
-    expect(prisma.membershipPlan.findFirst).not.toHaveBeenCalled();
     expect(prisma.subscription.create).not.toHaveBeenCalled();
   });
 
   it('preserves Stripe conflict gate for PAST_DUE Stripe without stripeResolution', async () => {
     mockActor(Role.ADMIN);
-    subscriptionLifecycle.assertNoRenewableSubscriptionConflict.mockRejectedValue(
-      new ConflictException(
-        'Member has an active Stripe subscription. Cancel or change it in Stripe before assigning a separate offline membership.',
-      ),
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      priceCents: 60000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Pro',
+      entitlementDays: null,
+    });
+    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+      id: 'stripe-local',
+      stripeSubscriptionId: 'sub_x',
+      membershipPlanId: 'plan-1',
+      membershipPlan: { name: 'Pro' },
+      status: SubscriptionStatus.PAST_DUE,
+      cancelAtPeriodEnd: false,
+      currentPeriodStart: new Date('2026-07-30T00:00:00.000Z'),
+      currentPeriodEnd: new Date('2026-08-30T00:00:00.000Z'),
+    });
+    stripeToCash.buildConflictException.mockReturnValue(
+      new ConflictException({
+        code: 'STRIPE_RENEWABLE_CONFLICT',
+        message: 'Este miembro tiene una suscripción activa en Stripe.',
+      }),
     );
 
     await expect(
@@ -459,6 +516,105 @@ describe('SalesService', () => {
         paymentMethod: 'CASH',
       }),
     ).rejects.toThrow(ConflictException);
+  });
+
+  it('schedules period-end Stripe→Cash without creating ACTIVE cash today', async () => {
+    mockActor(Role.ADMIN);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      priceCents: 60000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Pro',
+      entitlementDays: null,
+    });
+    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+      id: 'stripe-local',
+      stripeSubscriptionId: 'sub_x',
+      membershipPlanId: 'plan-1',
+      membershipPlan: { name: 'Pro' },
+      status: SubscriptionStatus.ACTIVE,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: new Date('2026-08-30T04:50:48.000Z'),
+    });
+    stripeToCash.scheduleCashAtStripePeriodEnd.mockResolvedValue({
+      subscription: {
+        id: 'cash-sched',
+        status: SubscriptionStatus.SCHEDULED,
+        source: SubscriptionSource.CASH,
+        currentPeriodStart: new Date('2026-08-30T04:50:48.000Z'),
+        currentPeriodEnd: new Date('2026-09-30T04:50:48.000Z'),
+        membershipPlan: { id: 'plan-1', name: 'Pro', billingInterval: 'MONTHLY', priceCents: 60000, currency: 'mxn' },
+      },
+      payment: {
+        id: 'pay-1',
+        amountCents: 60000,
+        status: PaymentStatus.SUCCEEDED,
+        paymentMethod: PaymentMethod.CASH,
+      },
+      stripe: {
+        localSubscriptionId: 'stripe-local',
+        stripeSubscriptionId: 'sub_x',
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: new Date('2026-08-30T04:50:48.000Z'),
+      },
+    });
+
+    const result = await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-1',
+      amountCents: 60000,
+      paymentMethod: 'CASH',
+      stripeResolution: 'cancel_at_period_end',
+    });
+
+    expect(stripeToCash.assertCanResolveStripe).toHaveBeenCalledWith(Role.ADMIN);
+    expect(stripeToCash.scheduleCashAtStripePeriodEnd).toHaveBeenCalled();
+    expect(prisma.subscription.create).not.toHaveBeenCalled();
+    expect(result.subscription.status).toBe(SubscriptionStatus.SCHEDULED);
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'STRIPE_TO_CASH_PERIOD_END_SCHEDULED' }),
+    );
+  });
+
+  it('forbids FRONT_DESK from Stripe resolution mutations', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      priceCents: 60000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Pro',
+      entitlementDays: null,
+    });
+    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+      id: 'stripe-local',
+      stripeSubscriptionId: 'sub_x',
+      membershipPlanId: 'plan-1',
+      membershipPlan: { name: 'Pro' },
+      status: SubscriptionStatus.ACTIVE,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: new Date('2026-08-30T04:50:48.000Z'),
+    });
+    stripeToCash.assertCanResolveStripe.mockImplementation(() => {
+      throw new ForbiddenException(
+        'Only OWNER or ADMIN can change a Stripe subscription to cash.',
+      );
+    });
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1',
+        amountCents: 60000,
+        paymentMethod: 'CASH',
+        stripeResolution: 'cancel_at_period_end',
+      }),
+    ).rejects.toThrow(ForbiddenException);
   });
 
   it('renews canceled/non-renewable interval cash with a new isolated period', async () => {

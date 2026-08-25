@@ -74,6 +74,7 @@ const RENEWABLE_SUCCESSOR_STATUSES: SubscriptionStatus[] = [
   SubscriptionStatus.TRIALING,
   SubscriptionStatus.PAST_DUE,
   SubscriptionStatus.PAUSED,
+  SubscriptionStatus.SCHEDULED,
 ];
 
 export function isSupersededEndReason(

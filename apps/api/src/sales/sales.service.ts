@@ -16,7 +16,7 @@ import {
 } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
 import { BillingService, type MembershipCheckoutResponse } from '../billing/billing.service';
-import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
+import { StripeToCashTransitionService } from '../billing/stripe-to-cash-transition.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
@@ -49,7 +49,7 @@ export class SalesService {
     private readonly prisma: PrismaService,
     private readonly authService: AuthService,
     private readonly billingService: BillingService,
-    private readonly subscriptionLifecycle: SubscriptionLifecycleService,
+    private readonly stripeToCash: StripeToCashTransitionService,
     private readonly waiverService: WaiverService,
     private readonly auditService: AuditService,
     private readonly salesSettingsService: SalesSettingsService,
@@ -211,12 +211,6 @@ export class SalesService {
     await this.assertTargetMember(studioId, targetUserId);
     await this.waiverService.assertMemberWaiverAccepted(studioId, targetUserId);
 
-    await this.subscriptionLifecycle.assertNoRenewableSubscriptionConflict({
-      studioId,
-      userId: targetUserId,
-      allowStripeResolution: dto.stripeResolution,
-    });
-
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: dto.planId, studioId, deletedAt: null, active: true },
     });
@@ -239,6 +233,72 @@ export class SalesService {
           'priceOverrideNote is required when amount differs from plan price',
         );
       }
+    }
+
+    const combinedNotes =
+      [dto.notes?.trim(), dto.priceOverrideNote?.trim()].filter(Boolean).join(' | ') ||
+      null;
+
+    // Missed-webhook safety: activate any due scheduled cash before new assignment.
+    await this.stripeToCash.reconcileScheduledCashForMember(studioId, targetUserId);
+
+    const stripeSub = await this.stripeToCash.findPrimaryStripeSubscription(studioId, targetUserId);
+
+    if (stripeSub?.stripeSubscriptionId) {
+      if (!dto.stripeResolution) {
+        const pending = await this.stripeToCash.findPendingScheduledCash(studioId, targetUserId);
+        throw this.stripeToCash.buildConflictException(
+          stripeSub,
+          actor.role,
+          pending?.id ?? null,
+        );
+      }
+      this.stripeToCash.assertCanResolveStripe(actor.role);
+
+      if (dto.stripeResolution === 'cancel_at_period_end') {
+        const scheduled = await this.stripeToCash.scheduleCashAtStripePeriodEnd({
+          studioId,
+          actorUserId,
+          targetUserId,
+          plan,
+          amountCents: dto.amountCents,
+          notes: combinedNotes,
+          defaultPeriodEnd: (start, interval) => this.defaultPeriodEnd(start, interval),
+        });
+
+        await this.auditService.log({
+          studioId,
+          actorUserId,
+          action: 'STRIPE_TO_CASH_PERIOD_END_SCHEDULED',
+          targetUserId,
+          entityType: 'Subscription',
+          entityId: scheduled.subscription.id,
+          metadata: {
+            resolution: 'period_end',
+            oldSubscriptionId: scheduled.stripe.localSubscriptionId,
+            newSubscriptionId: scheduled.subscription.id,
+            oldSource: 'STRIPE',
+            newSource: 'CASH',
+            planId: plan.id,
+            planName: plan.name,
+            stripeSubscriptionId: scheduled.stripe.stripeSubscriptionId,
+            effectiveAt: scheduled.subscription.currentPeriodStart?.toISOString() ?? null,
+            amountCents: dto.amountCents,
+            paymentId: scheduled.payment.id,
+          },
+        });
+
+        return {
+          subscription: scheduled.subscription,
+          payment: scheduled.payment,
+        };
+      }
+
+      // cancel_immediately — Stripe cancel first, then ACTIVE cash below.
+      await this.stripeToCash.cancelStripeImmediately({
+        studioId,
+        userId: targetUserId,
+      });
     }
 
     const now = new Date();
@@ -296,10 +356,6 @@ export class SalesService {
     if (periodEnd <= periodStart) {
       throw new BadRequestException('periodEnd must be after periodStart');
     }
-
-    const combinedNotes =
-      [dto.notes?.trim(), dto.priceOverrideNote?.trim()].filter(Boolean).join(' | ') ||
-      null;
 
     const planInclude = {
       membershipPlan: {
@@ -451,10 +507,15 @@ export class SalesService {
       throw e;
     }
 
+    const auditAction =
+      dto.stripeResolution === 'cancel_immediately'
+        ? 'STRIPE_TO_CASH_IMMEDIATE'
+        : 'CASH_SUBSCRIPTION_CREATED';
+
     await this.auditService.log({
       studioId,
       actorUserId,
-      action: 'CASH_SUBSCRIPTION_CREATED',
+      action: auditAction,
       targetUserId,
       entityType: 'Subscription',
       entityId: result.subscription.id,
@@ -462,6 +523,13 @@ export class SalesService {
         planId: plan.id,
         amountCents: dto.amountCents,
         paymentId: result.payment.id,
+        ...(dto.stripeResolution === 'cancel_immediately'
+          ? {
+              resolution: 'immediate',
+              oldSource: 'STRIPE',
+              newSource: 'CASH',
+            }
+          : {}),
       },
     });
 

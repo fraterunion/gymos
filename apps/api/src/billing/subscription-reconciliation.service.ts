@@ -1,8 +1,9 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import { SubscriptionStatus, type MembershipPlan, type Subscription } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
+import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
@@ -137,6 +138,7 @@ export class SubscriptionReconciliationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
+    @Optional() private readonly stripeToCash?: StripeToCashTransitionService,
   ) {}
 
   /**
@@ -152,6 +154,11 @@ export class SubscriptionReconciliationService {
     userId: string;
     applyRepairs?: boolean;
   }): Promise<ReconciliationResult> {
+    // Missed-webhook fallback: promote due SCHEDULED CASH successors.
+    if (this.stripeToCash) {
+      await this.stripeToCash.reconcileScheduledCashForMember(params.studioId, params.userId);
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: params.userId },
       select: { stripeCustomerId: true },
