@@ -23,7 +23,7 @@ describe('Calendar 2.3.2 duplicate-week scale (e2e)', () => {
   let ops: ScheduleOperationsService;
 
   const TZ = 'America/Mexico_City';
-  const SOURCE_WEEK = '2026-08-17';
+  const SOURCE_WEEK = '2030-08-17';
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -254,12 +254,12 @@ describe('Calendar 2.3.2 duplicate-week scale (e2e)', () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
     await createScheduledClass(prisma, studio.id, tpl.id, {
-      startsAt: studioLocalTimeToUtc('2026-08-18', '07:00', TZ),
-      endsAt: studioLocalTimeToUtc('2026-08-18', '08:00', TZ),
+      startsAt: studioLocalTimeToUtc('2030-08-18', '07:00', TZ),
+      endsAt: studioLocalTimeToUtc('2030-08-18', '08:00', TZ),
     });
     const extra = await createScheduledClass(prisma, studio.id, tpl.id, {
-      startsAt: studioLocalTimeToUtc('2026-08-25', '18:00', TZ),
-      endsAt: studioLocalTimeToUtc('2026-08-25', '19:00', TZ),
+      startsAt: studioLocalTimeToUtc('2030-08-25', '18:00', TZ),
+      endsAt: studioLocalTimeToUtc('2030-08-25', '19:00', TZ),
     });
     const member = await createUserWithPassword(prisma);
     await createMembership(prisma, member.id, studio.id, Role.STAFF);
@@ -279,7 +279,7 @@ describe('Calendar 2.3.2 duplicate-week scale (e2e)', () => {
         studio.id,
         {
           sourceWeekStart: SOURCE_WEEK,
-          targetWeekStarts: ['2026-08-24'],
+          targetWeekStarts: ['2030-08-24'],
           confirmWarnings: true,
           confirmRemovals: true,
         },

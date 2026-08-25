@@ -29,8 +29,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   let generatorService: ScheduleGeneratorService;
 
   const TZ = 'America/Mexico_City';
-  const SOURCE_WEEK = '2026-08-17';
-  const TARGET_WEEK = '2026-08-24';
+  const SOURCE_WEEK = '2030-08-17';
+  const TARGET_WEEK = '2030-08-24';
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -75,7 +75,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('copies empty target week exactly from source', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18');
     const admin = await seedAdmin(studio.id);
 
     const result = await ops.executeDuplicateWeek(
@@ -90,7 +90,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
 
     expect(result.createdCount).toBe(1);
     const copy = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-08-25', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc('2030-08-25', '07:00', TZ) },
     });
     expect(copy?.scheduleTemplateId).toBeNull();
   });
@@ -98,8 +98,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('reuses identical target week without creating duplicates', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18');
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25');
     const admin = await seedAdmin(studio.id);
 
     const result = await ops.executeDuplicateWeek(
@@ -115,7 +115,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     expect(result.reusedCount).toBe(1);
     expect(result.createdCount).toBe(0);
     const atSlot = await prisma.scheduledClass.findMany({
-      where: { startsAt: studioLocalTimeToUtc('2026-08-25', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc('2030-08-25', '07:00', TZ) },
     });
     expect(atSlot).toHaveLength(1);
   });
@@ -123,9 +123,9 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('creates missing classes in partially populated target week', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-19', '07:00');
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-19', '07:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00');
     const admin = await seedAdmin(studio.id);
 
     const result = await ops.executeDuplicateWeek(
@@ -145,8 +145,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('removes empty extra target class not in source week', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '08:00');
     const admin = await seedAdmin(studio.id);
 
     const result = await ops.executeDuplicateWeek(
@@ -178,8 +178,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
       data: {
         studioId: studio.id,
         classTemplateId: tpl.id,
-        startsAt: studioLocalTimeToUtc('2026-08-25', '08:00', TZ),
-        endsAt: studioLocalTimeToUtc('2026-08-25', '09:00', TZ),
+        startsAt: studioLocalTimeToUtc('2030-08-25', '08:00', TZ),
+        endsAt: studioLocalTimeToUtc('2030-08-25', '09:00', TZ),
         capacity: 12,
         status: ClassStatus.SCHEDULED,
       },
@@ -202,8 +202,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
         active: true,
       },
     });
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '08:00');
     await prisma.scheduledClass.update({
       where: { id: extra.id },
       data: { scheduleTemplateId: series.id },
@@ -233,8 +233,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('records audit removal metadata after hard-deleting a standalone extra', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '08:00');
     const admin = await seedAdmin(studio.id);
 
     await ops.executeDuplicateWeek(
@@ -269,8 +269,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     const instB = await createUserWithPassword(prisma);
     await createMembership(prisma, instA.id, studio.id, Role.INSTRUCTOR);
     await createMembership(prisma, instB.id, studio.id, Role.INSTRUCTOR);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00', { instructorId: instB.id });
-    const target = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00', {
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00', { instructorId: instB.id });
+    const target = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00', {
       instructorId: instA.id,
     });
     const admin = await seedAdmin(studio.id);
@@ -293,8 +293,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('blocks capacity below bookings on update', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00', { capacity: 1 });
-    const target = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00', {
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00', { capacity: 1 });
+    const target = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00', {
       capacity: 10,
     });
     const memberA = await createUserWithPassword(prisma);
@@ -321,8 +321,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('blocks extra target class with bookings from reconciliation', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '08:00');
     const member = await createUserWithPassword(prisma);
     await createMembership(prisma, member.id, studio.id, Role.STAFF);
     await createConfirmedBooking(prisma, studio.id, extra.id, member.id);
@@ -360,8 +360,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     const instB = await createUserWithPassword(prisma);
     await createMembership(prisma, instA.id, studio.id, Role.INSTRUCTOR);
     await createMembership(prisma, instB.id, studio.id, Role.INSTRUCTOR);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00', { instructorId: instB.id });
-    const target = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00', {
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00', { instructorId: instB.id });
+    const target = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00', {
       instructorId: instA.id,
     });
     await prisma.scheduledClass.update({
@@ -388,8 +388,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('does not touch source week or unselected future weeks', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18');
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-09-01', '07:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-09-01', '07:00');
     const admin = await seedAdmin(studio.id);
 
     await ops.executeDuplicateWeek(
@@ -403,7 +403,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     );
 
     const untouched = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-09-01', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc('2030-09-01', '07:00', TZ) },
     });
     expect(untouched?.status).toBe(ClassStatus.SCHEDULED);
     const sourceWeekCount = await prisma.scheduledClass.count({
@@ -411,7 +411,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
         studioId: studio.id,
         startsAt: {
           gte: studioLocalDateKeyToUtcAnchor(SOURCE_WEEK, TZ),
-          lt: studioLocalDateKeyToUtcAnchor('2026-08-24', TZ),
+          lt: studioLocalDateKeyToUtcAnchor('2030-08-24', TZ),
         },
       },
     });
@@ -421,7 +421,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
   it('retry same duplicate-week request is idempotent', async () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const tpl = await createClassTemplate(prisma, studio.id);
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18');
     const admin = await seedAdmin(studio.id);
     const key = 'dup-week-reconcile-key';
 
@@ -464,8 +464,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
         active: true,
       },
     });
-    await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+    await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+    const extra = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '08:00');
     await prisma.scheduledClass.update({
       where: { id: extra.id },
       data: { scheduleTemplateId: series.id },
@@ -490,19 +490,19 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     const before = await prisma.scheduledClass.count({
       where: {
         studioId: studio.id,
-        startsAt: studioLocalTimeToUtc('2026-08-25', '08:00', TZ),
+        startsAt: studioLocalTimeToUtc('2030-08-25', '08:00', TZ),
       },
     });
     await generatorService.generateRange(
       studio.id,
       studioLocalDateKeyToUtcAnchor(TARGET_WEEK, TZ),
-      studioLocalDateKeyToUtcAnchor('2026-08-31', TZ),
+      studioLocalDateKeyToUtcAnchor('2030-08-31', TZ),
       { isDryRun: false, triggeredBy: 'MANUAL' },
     );
     const after = await prisma.scheduledClass.count({
       where: {
         studioId: studio.id,
-        startsAt: studioLocalTimeToUtc('2026-08-25', '08:00', TZ),
+        startsAt: studioLocalTimeToUtc('2030-08-25', '08:00', TZ),
       },
     });
     expect(before).toBe(after);
@@ -512,8 +512,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('blocks extra target class with attendance from reconciliation', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id, { name: 'Full Body' });
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-      const extra = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '08:00');
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+      const extra = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '08:00');
       const member = await createUserWithPassword(prisma);
       await createMembership(prisma, member.id, studio.id, Role.STAFF);
       await prisma.attendance.create({
@@ -560,8 +560,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
       const studioB = await createStudio(prisma, { timezone: TZ });
       const tplA = await createClassTemplate(prisma, studioA.id);
       const tplB = await createClassTemplate(prisma, studioB.id);
-      await seedSourceWeekClass(studioA.id, tplA.id, '2026-08-18', '07:00');
-      const studioBBefore = await seedSourceWeekClass(studioB.id, tplB.id, '2026-08-25', '07:00');
+      await seedSourceWeekClass(studioA.id, tplA.id, '2030-08-18', '07:00');
+      const studioBBefore = await seedSourceWeekClass(studioB.id, tplB.id, '2030-08-25', '07:00');
       const admin = await seedAdmin(studioA.id);
 
       await ops.executeDuplicateWeek(
@@ -584,8 +584,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('reactivates an empty cancelled canonical slot when later desired', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id);
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-      const cancelled = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00', {
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+      const cancelled = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00', {
         status: ClassStatus.CANCELLED,
       });
       const admin = await seedAdmin(studio.id);
@@ -605,7 +605,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
       const row = await prisma.scheduledClass.findUnique({ where: { id: cancelled.id } });
       expect(row?.status).toBe(ClassStatus.SCHEDULED);
       const count = await prisma.scheduledClass.count({
-        where: { startsAt: studioLocalTimeToUtc('2026-08-25', '07:00', TZ) },
+        where: { startsAt: studioLocalTimeToUtc('2030-08-25', '07:00', TZ) },
       });
       expect(count).toBe(1);
     });
@@ -613,8 +613,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('blocks reactivation when cancelled slot has booking history', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id);
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-      const cancelled = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00', {
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+      const cancelled = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00', {
         status: ClassStatus.CANCELLED,
       });
       const member = await createUserWithPassword(prisma);
@@ -638,25 +638,25 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('preserves Mexico City local time when copying across weeks', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id, { name: 'Sunday Flow' });
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-23', '07:00');
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-23', '07:00');
       const admin = await seedAdmin(studio.id);
 
       await ops.executeDuplicateWeek(
         studio.id,
         {
-          sourceWeekStart: '2026-08-17',
-          targetWeekStarts: ['2026-08-24'],
+          sourceWeekStart: '2030-08-17',
+          targetWeekStarts: ['2030-08-24'],
           confirmWarnings: true,
         },
         admin.id,
       );
 
       const copy = await prisma.scheduledClass.findFirst({
-        where: { startsAt: studioLocalTimeToUtc('2026-08-30', '07:00', TZ) },
+        where: { startsAt: studioLocalTimeToUtc('2030-08-30', '07:00', TZ) },
       });
       expect(copy).toBeTruthy();
       expect(copy?.startsAt.toISOString()).toBe(
-        studioLocalTimeToUtc('2026-08-30', '07:00', TZ).toISOString(),
+        studioLocalTimeToUtc('2030-08-30', '07:00', TZ).toISOString(),
       );
     });
 
@@ -692,8 +692,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('allows safe capacity increase on desired occurrence with bookings', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id);
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00', { capacity: 20 });
-      const target = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00', {
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00', { capacity: 20 });
+      const target = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00', {
         capacity: 10,
       });
       const member = await createUserWithPassword(prisma);
@@ -721,7 +721,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('does not copy source bookings attendance or waitlist to target week', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id);
-      const source = await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
+      const source = await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
       const member = await createUserWithPassword(prisma);
       await createMembership(prisma, member.id, studio.id, Role.STAFF);
       await createConfirmedBooking(prisma, studio.id, source.id, member.id);
@@ -756,7 +756,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
       );
 
       const copy = await prisma.scheduledClass.findFirst({
-        where: { startsAt: studioLocalTimeToUtc('2026-08-25', '07:00', TZ) },
+        where: { startsAt: studioLocalTimeToUtc('2030-08-25', '07:00', TZ) },
         include: {
           _count: { select: { bookings: true, attendances: true, waitlist: true } },
         },
@@ -769,7 +769,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('serializes concurrent duplicate-week operations on the same target week', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id);
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
       const admin = await seedAdmin(studio.id);
 
       const [a, b] = await Promise.all([
@@ -795,7 +795,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
 
       expect(a.createdCount + b.createdCount).toBeLessThanOrEqual(1);
       const rows = await prisma.scheduledClass.findMany({
-        where: { startsAt: studioLocalTimeToUtc('2026-08-25', '07:00', TZ) },
+        where: { startsAt: studioLocalTimeToUtc('2030-08-25', '07:00', TZ) },
       });
       expect(rows).toHaveLength(1);
     });
@@ -803,8 +803,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
     it('completes overlapping multi-week operations without deadlock', async () => {
       const studio = await createStudio(prisma, { timezone: TZ });
       const tpl = await createClassTemplate(prisma, studio.id);
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-18', '07:00');
-      await seedSourceWeekClass(studio.id, tpl.id, '2026-08-25', '07:00');
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-18', '07:00');
+      await seedSourceWeekClass(studio.id, tpl.id, '2030-08-25', '07:00');
       const admin = await seedAdmin(studio.id);
 
       const [a, b] = await Promise.all([
@@ -812,7 +812,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
           studio.id,
           {
             sourceWeekStart: SOURCE_WEEK,
-            targetWeekStarts: ['2026-08-24', '2026-08-31'],
+            targetWeekStarts: ['2030-08-24', '2030-08-31'],
             confirmWarnings: true,
           },
           admin.id,
@@ -820,8 +820,8 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
         ops.executeDuplicateWeek(
           studio.id,
           {
-            sourceWeekStart: '2026-08-24',
-            targetWeekStarts: ['2026-08-31', '2026-08-24'],
+            sourceWeekStart: '2030-08-24',
+            targetWeekStarts: ['2030-08-31', '2030-08-24'],
             confirmWarnings: true,
           },
           admin.id,
@@ -830,7 +830,7 @@ describe('Calendar 2.3.1 duplicate-week reconciliation (e2e)', () => {
 
       expect(a.createdCount + b.createdCount).toBeGreaterThanOrEqual(0);
       const weekOne = await prisma.scheduledClass.count({
-        where: { startsAt: studioLocalTimeToUtc('2026-09-01', '07:00', TZ) },
+        where: { startsAt: studioLocalTimeToUtc('2030-09-01', '07:00', TZ) },
       });
       expect(weekOne).toBeGreaterThanOrEqual(1);
     });

@@ -195,19 +195,24 @@ describe('Membership usage (e2e)', () => {
         .expect(201);
     }
 
-    const futureStart = new Date();
-    futureStart.setUTCDate(25);
-    futureStart.setUTCHours(14, 0, 0, 0);
+    // Must stay strictly after Date.now(): bookings.service checks classAlreadyStarted
+    // (409) before credit exhaustion (403). Fixed UTC day-of-month + 14:00 fails once
+    // that wall-clock time has passed on the 25th (CI flake on release day).
+    const futureStart = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    futureStart.setUTCSeconds(0, 0);
     const futureEnd = new Date(futureStart.getTime() + 60 * 60 * 1000);
     const futureClass = await createScheduledClass(prisma, studio.id, tpl.id, {
       startsAt: futureStart,
       endsAt: futureEnd,
     });
 
-    await request(app.getHttpServer())
+    const bookingRes = await request(app.getHttpServer())
       .post(`/api/v1/studios/${studio.id}/classes/${futureClass.id}/bookings`)
-      .set('Authorization', `Bearer ${memberToken}`)
-      .expect(403);
+      .set('Authorization', `Bearer ${memberToken}`);
+    expect(bookingRes.status).toBe(403);
+    expect(String((bookingRes.body as { message?: unknown }).message ?? '')).toMatch(
+      /cr[eé]dito/i,
+    );
   });
 
   it('cancelled booking does not consume credit', async () => {
