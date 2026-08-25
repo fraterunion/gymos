@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   PaymentMethod,
   PaymentStatus,
+  Prisma,
   Role,
   SubscriptionEndReason,
   SubscriptionSource,
@@ -179,7 +180,7 @@ describe('SalesService', () => {
 
   it('records cash subscription as admin with waiver', async () => {
     mockActor(Role.ADMIN);
-    prisma.subscription.count.mockResolvedValue(0);
+    prisma.subscription.findMany.mockResolvedValue([]);
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-1',
       studioId: 'studio-1',
@@ -187,6 +188,7 @@ describe('SalesService', () => {
       currency: 'mxn',
       billingInterval: 'MONTHLY',
       name: 'Monthly',
+      entitlementDays: null,
     });
     prisma.subscription.create.mockResolvedValue({
       id: 'sub-1',
@@ -227,9 +229,200 @@ describe('SalesService', () => {
     expect(result.subscription.id).toBe('sub-1');
   });
 
-  it('renews an expired cash membership with a new isolated entitlement period', async () => {
+  it('renews ACTIVE interval CASH same-plan by superseding before create (no P2002)', async () => {
     mockActor(Role.ADMIN);
-    prisma.subscription.count.mockResolvedValue(1);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-basic',
+      studioId: 'studio-1',
+      priceCents: 100000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Basic Access',
+      entitlementDays: null,
+      classCredits: 12,
+    });
+    prisma.subscription.findMany.mockResolvedValue([
+      { id: 'sub-alvaro-old', membershipPlanId: 'plan-basic' },
+    ]);
+    prisma.subscription.update.mockResolvedValue({});
+    prisma.subscription.updateMany.mockResolvedValue({ count: 1 });
+    const renewedStart = new Date('2026-08-24T18:00:00.000Z');
+    const renewedEnd = new Date('2026-09-24T05:59:59.000Z');
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-alvaro-new',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodStart: renewedStart,
+      currentPeriodEnd: renewedEnd,
+      membershipPlan: { id: 'plan-basic', name: 'Basic Access', priceCents: 100000, currency: 'mxn', billingInterval: 'MONTHLY' },
+    });
+    prisma.payment.create.mockResolvedValue({
+      id: 'pay-renew',
+      amountCents: 100000,
+      status: PaymentStatus.SUCCEEDED,
+      paymentMethod: PaymentMethod.CASH,
+    });
+
+    const result = await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-basic',
+      amountCents: 100000,
+      paymentMethod: 'CASH',
+      periodStart: renewedStart.toISOString(),
+      periodEnd: renewedEnd.toISOString(),
+    });
+
+    const updateOrder = prisma.subscription.update.mock.invocationCallOrder[0];
+    const createOrder = prisma.subscription.create.mock.invocationCallOrder[0];
+    expect(updateOrder).toBeLessThan(createOrder);
+
+    expect(prisma.subscription.update).toHaveBeenCalledWith({
+      where: { id: 'sub-alvaro-old' },
+      data: {
+        status: SubscriptionStatus.CANCELED,
+        endReason: SubscriptionEndReason.SUPERSEDED_RENEWAL,
+      },
+    });
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          currentPeriodStart: renewedStart,
+          currentPeriodEnd: renewedEnd,
+          status: SubscriptionStatus.ACTIVE,
+          membershipPlanId: 'plan-basic',
+        }),
+      }),
+    );
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['sub-alvaro-old'] } },
+      data: { supersededBySubscriptionId: 'sub-alvaro-new' },
+    });
+    expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASH_SUBSCRIPTION_CREATED',
+        entityId: 'sub-alvaro-new',
+      }),
+    );
+    expect(result.subscription.id).toBe('sub-alvaro-new');
+  });
+
+  it('cash plan change supersedes prior ACTIVE CASH with SUPERSEDED_PLAN_CHANGE before create', async () => {
+    mockActor(Role.ADMIN);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-pro',
+      studioId: 'studio-1',
+      priceCents: 60000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Pro',
+      entitlementDays: null,
+    });
+    prisma.subscription.findMany.mockResolvedValue([
+      { id: 'sub-basic', membershipPlanId: 'plan-basic' },
+    ]);
+    prisma.subscription.update.mockResolvedValue({});
+    prisma.subscription.updateMany.mockResolvedValue({ count: 1 });
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-pro',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      membershipPlan: { id: 'plan-pro', name: 'Pro' },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-pro' });
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-pro',
+      amountCents: 60000,
+      paymentMethod: 'CASH',
+    });
+
+    expect(prisma.subscription.update).toHaveBeenCalledWith({
+      where: { id: 'sub-basic' },
+      data: {
+        status: SubscriptionStatus.CANCELED,
+        endReason: SubscriptionEndReason.SUPERSEDED_PLAN_CHANGE,
+      },
+    });
+    expect(prisma.subscription.create).toHaveBeenCalled();
+  });
+
+  it('maps P2002 active-membership races to ConflictException (not 500)', async () => {
+    mockActor(Role.ADMIN);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      priceCents: 100000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Basic',
+      entitlementDays: null,
+    });
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.subscription.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '6.19.3',
+        meta: { target: ['studio_id', 'user_id'] },
+      }),
+    );
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1',
+        amountCents: 100000,
+        paymentMethod: 'CASH',
+      }),
+    ).rejects.toThrow(ConflictException);
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1',
+        amountCents: 100000,
+        paymentMethod: 'CASH',
+      }),
+    ).rejects.toThrow(/membresía activa/i);
+  });
+
+  it('preserves Stripe conflict gate (ACTIVE Stripe → Cash without stripeResolution)', async () => {
+    mockActor(Role.ADMIN);
+    subscriptionLifecycle.assertNoRenewableSubscriptionConflict.mockRejectedValue(
+      new ConflictException(
+        'Member has an active Stripe subscription. Cancel or change it in Stripe before assigning a separate offline membership.',
+      ),
+    );
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1',
+        amountCents: 60000,
+        paymentMethod: 'CASH',
+      }),
+    ).rejects.toThrow(/active Stripe subscription/i);
+
+    expect(prisma.membershipPlan.findFirst).not.toHaveBeenCalled();
+    expect(prisma.subscription.create).not.toHaveBeenCalled();
+  });
+
+  it('preserves Stripe conflict gate for PAST_DUE Stripe without stripeResolution', async () => {
+    mockActor(Role.ADMIN);
+    subscriptionLifecycle.assertNoRenewableSubscriptionConflict.mockRejectedValue(
+      new ConflictException(
+        'Member has an active Stripe subscription. Cancel or change it in Stripe before assigning a separate offline membership.',
+      ),
+    );
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1',
+        amountCents: 60000,
+        paymentMethod: 'CASH',
+      }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('renews canceled/non-renewable interval cash with a new isolated period', async () => {
+    mockActor(Role.ADMIN);
+    prisma.subscription.findMany.mockResolvedValue([]);
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-1',
       studioId: 'studio-1',
@@ -246,8 +439,6 @@ describe('SalesService', () => {
       currentPeriodEnd: new Date('2026-09-19T18:00:00.000Z'),
       membershipPlan: { id: 'plan-1', name: 'Monthly' },
     });
-    prisma.subscription.findMany.mockResolvedValue([{ id: 'sub-old', membershipPlanId: 'plan-1' }]);
-    prisma.subscription.update.mockResolvedValue({});
     prisma.payment.create.mockResolvedValue({ id: 'pay-renewed' });
     const renewedStart = new Date('2026-08-19T18:00:00.000Z');
 
@@ -258,14 +449,7 @@ describe('SalesService', () => {
       periodStart: renewedStart.toISOString(),
     });
 
-    expect(prisma.subscription.update).toHaveBeenCalledWith({
-      where: { id: 'sub-old' },
-      data: {
-        status: SubscriptionStatus.CANCELED,
-        endReason: SubscriptionEndReason.SUPERSEDED_RENEWAL,
-        supersededBySubscriptionId: 'sub-renewed',
-      },
-    });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(prisma.subscription.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -312,7 +496,7 @@ describe('SalesService', () => {
 
     beforeEach(() => {
       mockActor(Role.ADMIN);
-      prisma.subscription.count.mockResolvedValue(0);
+      prisma.subscription.findMany.mockResolvedValue([]);
       prisma.membershipPlan.findFirst.mockResolvedValue({
         id: 'plan-booty',
         studioId: 'studio-1',
@@ -398,7 +582,6 @@ describe('SalesService', () => {
 
     it('queues a cash renewal after the current 45-day cycle without overlap', async () => {
       const currentEnd = new Date('2026-10-02T18:00:00.000Z');
-      prisma.subscription.count.mockResolvedValue(1);
       prisma.subscription.findFirst.mockResolvedValue({
         id: 'sub-current-booty',
         currentPeriodStart: periodStart,

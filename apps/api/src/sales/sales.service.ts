@@ -8,6 +8,7 @@ import {
 import {
   PaymentMethod,
   PaymentStatus,
+  Prisma,
   Role,
   SubscriptionEndReason,
   SubscriptionSource,
@@ -28,6 +29,10 @@ import {
   canRecordCashPayment,
 } from './sales-permissions';
 import { SalesSettingsService } from './sales-settings.service';
+
+/** Partial unique index subscriptions_one_active_per_user_per_studio_idx. */
+const ACTIVE_MEMBERSHIP_CONFLICT_MESSAGE =
+  'Ya existe una membresía activa para este miembro. Revisa su membresía e inténtalo de nuevo.';
 
 const memberUserSelect = {
   id: true,
@@ -212,14 +217,6 @@ export class SalesService {
       allowStripeResolution: dto.stripeResolution,
     });
 
-    const existingRenewable = await this.prisma.subscription.count({
-      where: {
-        studioId,
-        userId: targetUserId,
-        status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
-      },
-    });
-
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: dto.planId, studioId, deletedAt: null, active: true },
     });
@@ -245,29 +242,34 @@ export class SalesService {
     }
 
     const now = new Date();
-    const renewableCashSubscription = plan.entitlementDays != null
-      ? await this.prisma.subscription.findFirst({
-        where: {
-          studioId,
-          userId: targetUserId,
-          membershipPlanId: plan.id,
-          source: SubscriptionSource.CASH,
-          status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
-        },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          currentPeriodStart: true,
-          currentPeriodEnd: true,
-          entitlementEndsAt: true,
-        },
-      })
-      : null;
+    // Fixed-duration CASH (entitlementDays set): renew in place + new entitlement cycle.
+    // Interval CASH (entitlementDays null): successor row — must supersede before create
+    // to satisfy subscriptions_one_active_per_user_per_studio_idx.
+    const renewableCashSubscription =
+      plan.entitlementDays != null
+        ? await this.prisma.subscription.findFirst({
+            where: {
+              studioId,
+              userId: targetUserId,
+              membershipPlanId: plan.id,
+              source: SubscriptionSource.CASH,
+              status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: {
+              id: true,
+              currentPeriodStart: true,
+              currentPeriodEnd: true,
+              entitlementEndsAt: true,
+            },
+          })
+        : null;
 
     let periodStart = dto.periodStart ? new Date(dto.periodStart) : now;
     if (renewableCashSubscription && !dto.periodStart) {
-      const currentEnd = renewableCashSubscription.entitlementEndsAt
-        ?? renewableCashSubscription.currentPeriodEnd;
+      const currentEnd =
+        renewableCashSubscription.entitlementEndsAt ??
+        renewableCashSubscription.currentPeriodEnd;
       if (currentEnd && currentEnd > periodStart) periodStart = currentEnd;
     }
     const periodEnd = dto.periodEnd
@@ -290,136 +292,159 @@ export class SalesService {
       throw new BadRequestException('periodEnd must be after periodStart');
     }
 
-    const combinedNotes = [dto.notes?.trim(), dto.priceOverrideNote?.trim()]
-      .filter(Boolean)
-      .join(' | ') || null;
+    const combinedNotes =
+      [dto.notes?.trim(), dto.priceOverrideNote?.trim()].filter(Boolean).join(' | ') ||
+      null;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const subscription = renewableCashSubscription
-        ? await tx.subscription.update({
-          where: { id: renewableCashSubscription.id },
-          data: {
-            status: SubscriptionStatus.ACTIVE,
-            currentPeriodStart:
-              periodStart <= now
-                ? periodStart
-                : renewableCashSubscription.currentPeriodStart,
-            currentPeriodEnd: entitlementEndsAt!,
-            entitlementEndsAt: entitlementEndsAt!,
-          },
-          include: {
-            membershipPlan: {
-              select: {
-                id: true,
-                name: true,
-                billingInterval: true,
-                priceCents: true,
-                currency: true,
-              },
-            },
-          },
-        })
-        : await tx.subscription.create({
-        data: {
-          studioId,
-          userId: targetUserId,
-          membershipPlanId: plan.id,
-          status: SubscriptionStatus.ACTIVE,
-          source: SubscriptionSource.CASH,
-          stripeSubscriptionId: null,
-          currentPeriodStart: periodStart,
-          currentPeriodEnd: periodEnd,
-          cancelAtPeriodEnd: true,
-          createdByUserId: actorUserId,
-          notes: combinedNotes,
-          ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
+    const planInclude = {
+      membershipPlan: {
+        select: {
+          id: true,
+          name: true,
+          billingInterval: true,
+          priceCents: true,
+          currency: true,
         },
-        include: {
-          membershipPlan: {
-            select: {
-              id: true,
-              name: true,
-              billingInterval: true,
-              priceCents: true,
-              currency: true,
-            },
-          },
-        },
-        });
+      },
+    } as const;
 
-      if (existingRenewable > 0 && !renewableCashSubscription) {
-        const superseded = await tx.subscription.findMany({
-          where: {
-            studioId,
-            userId: targetUserId,
-            status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
-            id: { not: subscription.id },
-          },
-          select: { id: true, membershipPlanId: true },
-        });
-        for (const row of superseded) {
-          const endReason =
-            row.membershipPlanId === plan.id
-              ? SubscriptionEndReason.SUPERSEDED_RENEWAL
-              : SubscriptionEndReason.SUPERSEDED_PLAN_CHANGE;
-          await tx.subscription.update({
-            where: { id: row.id },
+    let result: {
+      subscription: {
+        id: string;
+        status: SubscriptionStatus;
+        source: SubscriptionSource;
+        currentPeriodStart: Date | null;
+        currentPeriodEnd: Date | null;
+        membershipPlan: {
+          id: string;
+          name: string;
+          billingInterval: string;
+          priceCents: number;
+          currency: string;
+        };
+      };
+      payment: { id: string; amountCents: number; status: PaymentStatus; paymentMethod: PaymentMethod };
+    };
+
+    try {
+      result = await this.prisma.$transaction(async (tx) => {
+        let subscription;
+
+        if (renewableCashSubscription) {
+          subscription = await tx.subscription.update({
+            where: { id: renewableCashSubscription.id },
             data: {
-              status: SubscriptionStatus.CANCELED,
-              endReason,
-              supersededBySubscriptionId: subscription.id,
+              status: SubscriptionStatus.ACTIVE,
+              currentPeriodStart:
+                periodStart <= now
+                  ? periodStart
+                  : renewableCashSubscription.currentPeriodStart,
+              currentPeriodEnd: entitlementEndsAt!,
+              entitlementEndsAt: entitlementEndsAt!,
+            },
+            include: planInclude,
+          });
+        } else {
+          // Supersede first so at most one ACTIVE row exists under the partial unique index.
+          const toSupersede = await tx.subscription.findMany({
+            where: {
+              studioId,
+              userId: targetUserId,
+              status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+            },
+            select: { id: true, membershipPlanId: true },
+          });
+
+          for (const row of toSupersede) {
+            await tx.subscription.update({
+              where: { id: row.id },
+              data: {
+                status: SubscriptionStatus.CANCELED,
+                endReason:
+                  row.membershipPlanId === plan.id
+                    ? SubscriptionEndReason.SUPERSEDED_RENEWAL
+                    : SubscriptionEndReason.SUPERSEDED_PLAN_CHANGE,
+              },
+            });
+          }
+
+          subscription = await tx.subscription.create({
+            data: {
+              studioId,
+              userId: targetUserId,
+              membershipPlanId: plan.id,
+              status: SubscriptionStatus.ACTIVE,
+              source: SubscriptionSource.CASH,
+              stripeSubscriptionId: null,
+              currentPeriodStart: periodStart,
+              currentPeriodEnd: periodEnd,
+              cancelAtPeriodEnd: true,
+              createdByUserId: actorUserId,
+              notes: combinedNotes,
+              ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
+            },
+            include: planInclude,
+          });
+
+          if (toSupersede.length > 0) {
+            await tx.subscription.updateMany({
+              where: { id: { in: toSupersede.map((r) => r.id) } },
+              data: { supersededBySubscriptionId: subscription.id },
+            });
+          }
+
+          // Link Stripe rows canceled for offline assignment (payment-method change).
+          await tx.subscription.updateMany({
+            where: {
+              studioId,
+              userId: targetUserId,
+              endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+              supersededBySubscriptionId: null,
+              id: { not: subscription.id },
+            },
+            data: { supersededBySubscriptionId: subscription.id },
+          });
+        }
+
+        if (plan.entitlementDays != null) {
+          await tx.membershipEntitlementCycle.create({
+            data: {
+              studioId,
+              userId: targetUserId,
+              subscriptionId: subscription.id,
+              membershipPlanId: plan.id,
+              startsAt: periodStart,
+              endsAt: entitlementEndsAt!,
+              creditLimit: plan.classCredits,
+              source: SubscriptionSource.CASH,
             },
           });
         }
-      }
 
-      if (!renewableCashSubscription) {
-        // Link Stripe rows canceled for offline assignment (payment-method change).
-        await tx.subscription.updateMany({
-          where: {
-            studioId,
-            userId: targetUserId,
-            endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
-            supersededBySubscriptionId: null,
-            id: { not: subscription.id },
-          },
-          data: { supersededBySubscriptionId: subscription.id },
-        });
-      }
-
-      if (plan.entitlementDays != null) {
-        await tx.membershipEntitlementCycle.create({
+        const payment = await tx.payment.create({
           data: {
             studioId,
             userId: targetUserId,
             subscriptionId: subscription.id,
             membershipPlanId: plan.id,
-            startsAt: periodStart,
-            endsAt: entitlementEndsAt!,
-            creditLimit: plan.classCredits,
-            source: SubscriptionSource.CASH,
+            amountCents: dto.amountCents,
+            currency: plan.currency,
+            status: PaymentStatus.SUCCEEDED,
+            paymentMethod: PaymentMethod.CASH,
+            recordedByUserId: actorUserId,
+            notes: dto.notes?.trim() || null,
+            paidAt: new Date(),
           },
         });
-      }
 
-      const payment = await tx.payment.create({
-        data: {
-          studioId,
-          userId: targetUserId,
-          subscriptionId: subscription.id,
-          membershipPlanId: plan.id,
-          amountCents: dto.amountCents,
-          currency: plan.currency,
-          status: PaymentStatus.SUCCEEDED,
-          paymentMethod: PaymentMethod.CASH,
-          recordedByUserId: actorUserId,
-          notes: dto.notes?.trim() || null,
-          paidAt: new Date(),
-        },
+        return { subscription, payment };
       });
-
-      return { subscription, payment };
-    });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException(ACTIVE_MEMBERSHIP_CONFLICT_MESSAGE);
+      }
+      throw e;
+    }
 
     await this.auditService.log({
       studioId,
