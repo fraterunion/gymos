@@ -7,7 +7,23 @@ describe('StripeToCashTransitionService', () => {
     cancelSubscription: jest.fn(),
     updateSubscription: jest.fn(),
   };
-  const prisma = {
+
+  type PrismaMock = {
+    subscription: {
+      findFirst: jest.Mock;
+      findFirstOrThrow: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+      create: jest.Mock;
+    };
+    payment: { findFirst: jest.Mock; create: jest.Mock };
+    membershipPlan: { findFirstOrThrow: jest.Mock };
+    membershipEntitlementCycle: { create: jest.Mock };
+    $transaction: jest.Mock;
+  };
+
+  const prisma: PrismaMock = {
     subscription: {
       findFirst: jest.fn(),
       findFirstOrThrow: jest.fn(),
@@ -19,13 +35,19 @@ describe('StripeToCashTransitionService', () => {
     payment: { findFirst: jest.fn(), create: jest.fn() },
     membershipPlan: { findFirstOrThrow: jest.fn() },
     membershipEntitlementCycle: { create: jest.fn() },
-    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+    $transaction: jest.fn(),
   };
+  prisma.$transaction.mockImplementation(
+    async (fn: (tx: PrismaMock) => Promise<unknown>) => fn(prisma),
+  );
 
   let service: StripeToCashTransitionService;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.$transaction.mockImplementation(
+      async (fn: (tx: PrismaMock) => Promise<unknown>) => fn(prisma),
+    );
     service = new StripeToCashTransitionService(prisma as never, stripe as never);
   });
 
