@@ -85,6 +85,28 @@ export function createE2eStripeServiceMock(config: {
       recurring: { interval: 'month', interval_count: 1 },
     } as Stripe.Price),
 
+    createOneTimePrice: jest.fn().mockResolvedValue({
+      id: 'price_e2e_onetime',
+      object: 'price',
+      unit_amount: 20000,
+      currency: 'mxn',
+      active: true,
+      product: 'prod_e2e_test',
+      recurring: null,
+    } as Stripe.Price),
+
+    createPaymentIntent: jest.fn().mockResolvedValue({
+      id: 'pi_e2e_test',
+      object: 'payment_intent',
+      client_secret: 'pi_e2e_test_secret',
+    } as Stripe.PaymentIntent),
+
+    createEphemeralKey: jest.fn().mockResolvedValue({
+      id: 'ek_e2e_test',
+      object: 'ephemeral_key',
+      secret: 'ek_e2e_test_secret',
+    } as Stripe.EphemeralKey),
+
     deactivatePrice: jest.fn().mockResolvedValue({
       id: 'price_e2e_archived',
       object: 'price',

@@ -14,8 +14,11 @@ import type {
 } from "@/lib/api/memberships";
 import type { ClassTemplateDto } from "@/lib/api/classTemplates";
 import type { DayPassClassAccessTemplateDto } from "@/lib/api/dayPassClassAccess";
+import type { DayPassSettingsDto } from "@/lib/api/dayPassSettings";
 import {
+  canReconcileDayPassStripe,
   dayPassHealthLabel,
+  dayPassIntegrityIssueLabel,
   integrityIssueLabel,
   canReconcileStripeCatalog,
   operationalOverview,
@@ -693,40 +696,67 @@ export function OpenGymPanel({
 
 export function DayPassTab({
   studioId,
+  settings,
   templates,
   onToggle,
+  onEdit,
+  onReconcileStripe,
   pendingId,
   loading,
+  settingsLoading,
   error,
+  reconciling,
 }: {
   studioId: string;
+  settings: DayPassSettingsDto | null;
   templates: DayPassClassAccessTemplateDto[];
   onToggle: (t: DayPassClassAccessTemplateDto) => void;
+  onEdit: () => void;
+  onReconcileStripe?: () => void;
   pendingId: string | null;
   loading: boolean;
+  settingsLoading: boolean;
   error: string | null;
+  reconciling?: boolean;
 }) {
   void studioId;
   const allowed = templates.filter((t) => t.allowed);
   const denied = templates.filter((t) => !t.allowed);
-  const health = dayPassHealthLabel(allowed.length, templates.length);
+  const accessHealth = dayPassHealthLabel(allowed.length, templates.length);
+  const integrityStatus = settings?.integrity.status;
+  const stripeHealthy = integrityStatus === "healthy";
+  const showReconcile =
+    canReconcileDayPassStripe(integrityStatus) && !!onReconcileStripe;
+  const stripeLabel = !settings?.configured
+    ? "Sin configurar"
+    : stripeHealthy
+      ? "Sincronizado"
+      : dayPassIntegrityIssueLabel(integrityStatus ?? "fetch_error");
+  const statusBadge =
+    settings == null
+      ? { label: "Cargando…", tone: "warning" as const }
+      : !settings.active
+        ? { label: "Inactivo", tone: "warning" as const }
+        : stripeHealthy && accessHealth.tone === "healthy"
+          ? { label: "Activo", tone: "healthy" as const }
+          : { label: "Requiere atención", tone: "warning" as const };
 
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Day Pass</p>
-          <h2 className="mt-1 text-lg font-semibold text-zinc-900">Acceso de Day Pass</h2>
-          <p className="mt-1 text-sm text-zinc-500">
-            {allowed.length} {allowed.length === 1 ? "clase permitida" : "clases permitidas"}
-          </p>
+          <h2 className="mt-1 text-lg font-semibold text-zinc-900">
+            {settings?.displayName ?? "Day Pass"}
+          </h2>
+          <p className="mt-1 text-sm text-zinc-500">Producto de acceso por un día calendario</p>
         </div>
         <span
           className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase ${
-            health.tone === "healthy" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+            statusBadge.tone === "healthy" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
           }`}
         >
-          {health.label}
+          {statusBadge.label}
         </span>
       </div>
 
@@ -734,8 +764,86 @@ export function DayPassTab({
         <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
       ) : null}
 
+      {settingsLoading ? (
+        <p className="mb-6 text-sm text-zinc-500">Cargando configuración comercial…</p>
+      ) : settings ? (
+        <div className="mb-6 rounded-xl border border-zinc-200 bg-white p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Configuración comercial</p>
+              <p className="mt-2 text-2xl font-semibold text-zinc-900">
+                {formatCents(settings.priceCents, settings.currency)}
+              </p>
+              <dl className="mt-4 grid gap-2 text-sm text-zinc-600 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-zinc-400">Nombre</dt>
+                  <dd className="font-medium text-zinc-900">{settings.displayName}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-zinc-400">Moneda</dt>
+                  <dd className="font-medium uppercase text-zinc-900">{settings.currency}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-zinc-400">Estado</dt>
+                  <dd className="font-medium text-zinc-900">{settings.active ? "Activo" : "Inactivo"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-zinc-400">Vigencia</dt>
+                  <dd className="font-medium text-zinc-900">{settings.validityDescription}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs uppercase tracking-wide text-zinc-400">Stripe</dt>
+                  <dd
+                    className={`font-semibold ${stripeHealthy ? "text-emerald-700" : "text-amber-700"}`}
+                  >
+                    {stripeLabel}
+                  </dd>
+                  {!stripeHealthy && settings.integrity.stripeUnitAmount != null ? (
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Stripe: {formatCents(settings.integrity.stripeUnitAmount, settings.integrity.stripeCurrency ?? settings.currency)}
+                      {settings.stripePriceId ? ` · ${settings.stripePriceId}` : null}
+                    </p>
+                  ) : null}
+                </div>
+              </dl>
+            </div>
+            <button
+              type="button"
+              onClick={onEdit}
+              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white"
+            >
+              Editar Day Pass
+            </button>
+          </div>
+
+          {!stripeHealthy && integrityStatus !== "fetch_error" ? (
+            <div className="mt-4 rounded-lg bg-amber-50 px-3 py-3 text-xs text-amber-900">
+              <p className="font-semibold">Atención: desincronización con Stripe</p>
+              <p className="mt-1">{dayPassIntegrityIssueLabel(integrityStatus ?? "")}</p>
+              {showReconcile ? (
+                <button
+                  type="button"
+                  disabled={reconciling}
+                  onClick={() => onReconcileStripe?.()}
+                  className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-50"
+                >
+                  {reconciling ? "Corrigiendo…" : "Corregir sincronización"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="mb-4">
+        <h3 className="text-base font-semibold text-zinc-900">Acceso de Day Pass</h3>
+        <p className="mt-1 text-sm text-zinc-500">
+          {allowed.length} {allowed.length === 1 ? "clase permitida" : "clases permitidas"}
+        </p>
+      </div>
+
       {loading ? (
-        <p className="text-sm text-zinc-500">Cargando…</p>
+        <p className="text-sm text-zinc-500">Cargando clases…</p>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <div className="rounded-xl border border-zinc-200 bg-white p-4">
@@ -779,4 +887,105 @@ export function DayPassTab({
   );
 }
 
-export { integrityIssueLabel };
+export function DayPassEditModal({
+  settings,
+  onClose,
+  onSaved,
+  studioId,
+}: {
+  settings: DayPassSettingsDto;
+  onClose: () => void;
+  onSaved: () => void;
+  studioId: string;
+}) {
+  const [displayName, setDisplayName] = useState(settings.displayName);
+  const [pricePesos, setPricePesos] = useState(String(settings.priceCents / 100));
+  const [active, setActive] = useState(settings.active);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    const parsed = Number.parseFloat(pricePesos.replace(",", "."));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setError("Ingresa un precio válido.");
+      return;
+    }
+    const priceCents = Math.round(parsed * 100);
+    setSaving(true);
+    setError(null);
+    try {
+      const { updateDayPassSettings } = await import("@/lib/api/dayPassSettings");
+      await updateDayPassSettings(studioId, {
+        displayName: displayName.trim(),
+        priceCents,
+        active,
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar el Day Pass.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-semibold text-zinc-900">Editar Day Pass</h2>
+        <div className="mt-4 space-y-4">
+          <label className="block text-sm text-zinc-700">
+            Nombre
+            <input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2"
+            />
+          </label>
+          <label className="block text-sm text-zinc-700">
+            Precio ({settings.currency.toUpperCase()})
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={pricePesos}
+              onChange={(e) => setPricePesos(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2"
+            />
+            <span className="mt-1 block text-xs text-zinc-500">
+              Al cambiar el precio, GymOS actualizará automáticamente el precio para nuevas ventas en
+              Stripe. Las compras anteriores no cambian.
+            </span>
+          </label>
+          <p className="text-xs text-zinc-500">
+            Moneda: {settings.currency.toUpperCase()} (fija para este estudio)
+          </p>
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+            Activo para nuevas ventas
+          </label>
+          <p className="text-xs text-zinc-500">{settings.validityDescription}</p>
+        </div>
+        {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void save()}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {saving ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export { integrityIssueLabel, dayPassIntegrityIssueLabel };

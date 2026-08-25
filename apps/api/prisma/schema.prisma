@@ -270,6 +270,7 @@ model Studio {
   scheduleGenerationRuns     ScheduleGenerationRun[]
   scheduleAutomationSettings ScheduleAutomationSettings?
   enrollmentSettings         StudioEnrollmentSettings?
+  dayPassSettings            StudioDayPassSettings?
   memberEnrollments          MemberEnrollment[]
   waiverDocuments            StudioWaiverDocument[]
   waiverAcceptances          WaiverAcceptance[]
@@ -1083,6 +1084,25 @@ model StudioEnrollmentSettings {
   enrollments MemberEnrollment[]
 
   @@map("studio_enrollment_settings")
+}
+
+/// Commercial Day Pass catalog configuration per studio (one row per studio).
+/// Purchase rows (DayPass) snapshot priceCents/currency at sale time.
+model StudioDayPassSettings {
+  id              String   @id @default(cuid())
+  studioId        String   @unique @map("studio_id")
+  displayName     String   @default("Day Pass") @map("display_name")
+  priceCents      Int      @map("price_cents")
+  currency        String   @default("mxn")
+  active          Boolean  @default(true)
+  stripeProductId String?  @map("stripe_product_id")
+  stripePriceId   String?  @map("stripe_price_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+
+  @@map("studio_day_pass_settings")
 }
 
 /// One enrollment record per user per studio — written only on webhook finalization.

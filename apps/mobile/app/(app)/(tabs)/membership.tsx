@@ -33,7 +33,6 @@ import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import {
   createBillingPortalSession,
   createMembershipCheckoutSession,
-  fetchPlanChangePreview,
   type MembershipPurchaseResponse,
   fetchCheckoutPreview,
   fetchMembershipPlans,
@@ -45,7 +44,10 @@ import {
 } from '@/lib/api/membershipApi';
 import {
   createDayPassPaymentSheet,
+  fetchDayPassCatalog,
   fetchMyDayPasses,
+  fetchPublicDayPassCatalog,
+  type DayPassCatalogDto,
   type DayPassDto,
   type DayPassStatus,
 } from '@/lib/api/dayPassesApi';
@@ -1188,6 +1190,8 @@ export default function MembershipScreen() {
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [profile, setProfile] = useState<MyMemberProfileDto | null>(null);
   const [dayPasses, setDayPasses] = useState<DayPassDto[]>([]);
+  const [dayPassCatalog, setDayPassCatalog] = useState<DayPassCatalogDto | null>(null);
+  const [dayPassCatalogError, setDayPassCatalogError] = useState<string | null>(null);
   const [checkoutPreview, setCheckoutPreview] = useState<CheckoutPreviewDto | null>(null);
   const [breakdownPlan, setBreakdownPlan] = useState<MembershipPlanDto | null>(null);
   const [confirmingCheckout, setConfirmingCheckout] = useState(false);
@@ -1215,6 +1219,27 @@ export default function MembershipScreen() {
       if (successTimer.current) clearTimeout(successTimer.current);
     };
   }, []);
+
+  const loadDayPassCatalog = useCallback(async () => {
+    const slug = getStudioSlug();
+    try {
+      const catalog = studioId
+        ? await fetchDayPassCatalog(studioId)
+        : slug
+          ? await fetchPublicDayPassCatalog(slug)
+          : null;
+      if (!catalog) {
+        setDayPassCatalog(null);
+        setDayPassCatalogError('El precio del pase diario no está disponible por el momento.');
+        return;
+      }
+      setDayPassCatalog(catalog);
+      setDayPassCatalogError(null);
+    } catch {
+      setDayPassCatalog(null);
+      setDayPassCatalogError('El precio del pase diario no está disponible por el momento.');
+    }
+  }, [studioId]);
 
   const loadDayPasses = useCallback(async () => {
     if (!studioId) return;
@@ -1247,13 +1272,14 @@ export default function MembershipScreen() {
       setProfile(null);
       setDayPasses([]);
       setDayPassLoadError(null);
+      await loadDayPassCatalog();
     } catch (e) {
       setError(userFacingApiMessage(e, 'No se pudieron cargar los planes de membresía. Desliza para actualizar.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [loadDayPassCatalog]);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh') => {
@@ -1263,6 +1289,7 @@ export default function MembershipScreen() {
       else setRefreshing(true);
 
       void loadDayPasses();
+      void loadDayPassCatalog();
 
       try {
         const [p, prof] = await Promise.all([
@@ -1290,7 +1317,7 @@ export default function MembershipScreen() {
         setRefreshing(false);
       }
     },
-    [studioId, loadDayPasses],
+    [studioId, loadDayPasses, loadDayPassCatalog],
   );
 
   useFocusEffect(
@@ -1698,28 +1725,42 @@ export default function MembershipScreen() {
 
                 {/* Price hero */}
                 <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 18 }}>
-                  <Text
-                    style={{
-                      fontSize: 48,
-                      fontWeight: '800',
-                      letterSpacing: -2,
-                      color: C.text,
-                      lineHeight: 52,
-                    }}
-                  >
-                    {formatMoneyFromCents(20000, 'mxn')}
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      color: C.textMute,
-                      marginBottom: 8,
-                      marginLeft: 5,
-                      letterSpacing: -0.2,
-                    }}
-                  >
-                    / día
-                  </Text>
+                  {dayPassCatalog ? (
+                    <>
+                      <Text
+                        style={{
+                          fontSize: 48,
+                          fontWeight: '800',
+                          letterSpacing: -2,
+                          color: C.text,
+                          lineHeight: 52,
+                        }}
+                      >
+                        {formatMoneyFromCents(dayPassCatalog.priceCents, dayPassCatalog.currency)}
+                      </Text>
+                      <Text
+                        style={{
+                          fontSize: 16,
+                          color: C.textMute,
+                          marginBottom: 8,
+                          marginLeft: 5,
+                          letterSpacing: -0.2,
+                        }}
+                      >
+                        / día
+                      </Text>
+                    </>
+                  ) : (
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        color: C.textMute,
+                        lineHeight: 22,
+                      }}
+                    >
+                      {dayPassCatalogError ?? 'Precio no disponible'}
+                    </Text>
+                  )}
                 </View>
 
                 {/* Benefits */}
@@ -1775,7 +1816,12 @@ export default function MembershipScreen() {
                   variant="white"
                   accentColor={primaryColor}
                   loading={!isGuest && dayPassBusy}
-                  disabled={!isGuest && dayPassBusy}
+                  disabled={
+                    dayPassBusy ||
+                    !!dayPassCatalogError ||
+                    (!isGuest && !dayPassCatalog?.active) ||
+                    (isGuest && (!dayPassCatalog || !dayPassCatalog.active))
+                  }
                   onPress={() => void (isGuest ? openAuthModal('day-pass') : buyDayPass())}
                 />
                 {isGuest ? (

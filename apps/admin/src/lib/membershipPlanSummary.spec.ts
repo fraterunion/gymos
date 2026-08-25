@@ -7,6 +7,8 @@ import {
   formatHistoryEntry,
   planEditorFixedDurationHelperText,
   dayPassHealthLabel,
+  dayPassIntegrityIssueLabel,
+  canReconcileDayPassStripe,
   integrityIssueLabel,
   canReconcileStripeCatalog,
   planAccessSummary,
@@ -207,6 +209,12 @@ test("active Stripe gets cancel-at-period-end, not immediate cancel", () => {
 test("day pass health: configured vs empty", () => {
   assert.equal(dayPassHealthLabel(7, 9).label, "Saludable");
   assert.equal(dayPassHealthLabel(0, 9).primaryIssue, "Sin acceso configurado");
+});
+
+test("day pass integrity labels are staff-friendly", () => {
+  assert.match(dayPassIntegrityIssueLabel("price_mismatch"), /GymOS y Stripe/);
+  assert.equal(canReconcileDayPassStripe("missing_price"), true);
+  assert.equal(canReconcileDayPassStripe("healthy"), false);
 });
 
 test("warning: allClassesAccess=true always flagged", () => {

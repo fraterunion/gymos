@@ -426,6 +426,39 @@ export function dayPassHealthLabel(allowedCount: number, totalCount: number): Pl
   };
 }
 
+/** Staff-friendly Day Pass Stripe integrity label. */
+export function dayPassIntegrityIssueLabel(status: string): string {
+  switch (status) {
+    case "missing_price":
+      return "Sin Price de Stripe configurado";
+    case "price_mismatch":
+      return "GymOS y Stripe tienen precios distintos";
+    case "currency_mismatch":
+      return "Moneda distinta entre GymOS y Stripe";
+    case "invalid_price":
+      return "Price de Stripe no es de pago único";
+    case "inactive_stripe_price":
+      return "Price de Stripe inactivo";
+    case "fetch_error":
+      return "No se pudo verificar Stripe";
+    default:
+      return "Configuración de GymOS y Stripe desalineada";
+  }
+}
+
+export function canReconcileDayPassStripe(integrityStatus: string | undefined): boolean {
+  if (!integrityStatus || integrityStatus === "healthy" || integrityStatus === "fetch_error") {
+    return false;
+  }
+  return (
+    integrityStatus === "missing_price" ||
+    integrityStatus === "price_mismatch" ||
+    integrityStatus === "currency_mismatch" ||
+    integrityStatus === "invalid_price" ||
+    integrityStatus === "inactive_stripe_price"
+  );
+}
+
 export function billingIntervalLabel(interval: BillingInterval): string {
   switch (interval) {
     case "MONTHLY":

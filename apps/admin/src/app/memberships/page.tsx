@@ -36,9 +36,15 @@ import {
   revokeDayPassClassAccess,
   type DayPassClassAccessTemplateDto,
 } from "@/lib/api/dayPassClassAccess";
+import {
+  fetchDayPassSettings,
+  reconcileDayPassStripePrice,
+  type DayPassSettingsDto,
+} from "@/lib/api/dayPassSettings";
 import { planHealth, billingIntervalLabel, planEditorFixedDurationHelperText, SUBSCRIPTION_SORT_LABELS, type SubscriptionSort } from "@/lib/membershipPlanSummary";
 import {
   ClassAccessMatrix,
+  DayPassEditModal,
   DayPassTab,
   formatCents,
   integrityIssueLabel,
@@ -747,6 +753,7 @@ export default function MembershipsPage() {
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [classTemplates, setClassTemplates] = useState<ClassTemplateDto[]>([]);
   const [dayPassTemplates, setDayPassTemplates] = useState<DayPassClassAccessTemplateDto[]>([]);
+  const [dayPassSettings, setDayPassSettings] = useState<DayPassSettingsDto | null>(null);
   const [planIntegrity, setPlanIntegrity] = useState<Map<string, PlanIntegrityResult>>(new Map());
   const [subs, setSubs] = useState<SubscriptionListItem[]>([]);
   const [subsTotal, setSubsTotal] = useState(0);
@@ -755,8 +762,11 @@ export default function MembershipsPage() {
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [loadingSubs, setLoadingSubs] = useState(true);
   const [dayPassLoading, setDayPassLoading] = useState(true);
+  const [dayPassSettingsLoading, setDayPassSettingsLoading] = useState(true);
   const [dayPassError, setDayPassError] = useState<string | null>(null);
   const [dayPassPendingId, setDayPassPendingId] = useState<string | null>(null);
+  const [showDayPassModal, setShowDayPassModal] = useState(false);
+  const [reconcilingDayPass, setReconcilingDayPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [reconcilingPlanId, setReconcilingPlanId] = useState<string | null>(null);
@@ -779,21 +789,39 @@ export default function MembershipsPage() {
     return () => clearTimeout(timer);
   }, [subSearch]);
 
+  const loadDayPassData = useCallback(async () => {
+    if (!selectedStudioId) return;
+    setDayPassLoading(true);
+    setDayPassSettingsLoading(true);
+    setDayPassError(null);
+    try {
+      const [accessData, settingsData] = await Promise.all([
+        fetchDayPassClassAccess(selectedStudioId),
+        fetchDayPassSettings(selectedStudioId),
+      ]);
+      setDayPassTemplates(accessData);
+      setDayPassSettings(settingsData);
+    } catch (e) {
+      setDayPassError(e instanceof ApiError ? e.message : "No se pudo cargar Day Pass.");
+    } finally {
+      setDayPassLoading(false);
+      setDayPassSettingsLoading(false);
+    }
+  }, [selectedStudioId]);
+
   const loadPlans = useCallback(async () => {
     if (!selectedStudioId) return;
     setLoadingPlans(true);
     try {
-      const [data, integrityResult, templateData, dayPassData] = await Promise.all([
+      const [data, integrityResult, templateData] = await Promise.all([
         fetchMembershipPlans(selectedStudioId, true),
         fetchPlanBillingIntegrity(selectedStudioId)
           .then((r) => ({ ok: true as const, data: r }))
           .catch(() => ({ ok: false as const, data: [] as PlanIntegrityResult[] })),
         fetchClassTemplates(selectedStudioId),
-        fetchDayPassClassAccess(selectedStudioId),
       ]);
       setPlans(data);
       setClassTemplates(templateData);
-      setDayPassTemplates(dayPassData);
       if (integrityResult.ok) {
         setPlanIntegrity(new Map(integrityResult.data.map((r) => [r.planId, r])));
       } else {
@@ -803,7 +831,6 @@ export default function MembershipsPage() {
       setError(e instanceof ApiError ? e.message : "No se pudieron cargar los planes.");
     } finally {
       setLoadingPlans(false);
-      setDayPassLoading(false);
     }
   }, [selectedStudioId]);
 
@@ -845,9 +872,10 @@ export default function MembershipsPage() {
     const t = setTimeout(() => {
       void loadPlans();
       void loadOverview();
+      void loadDayPassData();
     }, 0);
     return () => clearTimeout(t);
-  }, [loadPlans, loadOverview]);
+  }, [loadPlans, loadOverview, loadDayPassData]);
 
   useEffect(() => {
     const t = setTimeout(() => void loadSubs(1), 0);
@@ -943,6 +971,34 @@ export default function MembershipsPage() {
       );
     } finally {
       setReconcilingPlanId(null);
+    }
+  }
+
+  async function handleReconcileDayPassStripe() {
+    if (!selectedStudioId) return;
+    const ok = confirm(
+      "¿Corregir la sincronización del Day Pass?\n\nEsto actualizará el precio usado para nuevas ventas.\nLas compras anteriores no cambian.",
+    );
+    if (!ok) return;
+    setReconcilingDayPass(true);
+    setDayPassError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await reconcileDayPassStripePrice(selectedStudioId);
+      await loadDayPassData();
+      if (result.status === "already_synced") {
+        setSuccessMessage("El Day Pass ya estaba sincronizado con Stripe.");
+      } else {
+        setSuccessMessage("Day Pass sincronizado correctamente con Stripe.");
+      }
+    } catch (e) {
+      setDayPassError(
+        e instanceof ApiError
+          ? e.message
+          : "No pudimos actualizar el precio. No se realizaron cambios. Intenta nuevamente.",
+      );
+    } finally {
+      setReconcilingDayPass(false);
     }
   }
 
@@ -1326,11 +1382,29 @@ export default function MembershipsPage() {
       {activeTab === "day-pass" ? (
         <DayPassTab
           studioId={selectedStudioId}
+          settings={dayPassSettings}
           templates={dayPassTemplates}
           onToggle={(t) => void handleDayPassToggle(t)}
+          onEdit={() => setShowDayPassModal(true)}
+          onReconcileStripe={() => void handleReconcileDayPassStripe()}
           pendingId={dayPassPendingId}
           loading={dayPassLoading}
+          settingsLoading={dayPassSettingsLoading}
           error={dayPassError}
+          reconciling={reconcilingDayPass}
+        />
+      ) : null}
+
+      {showDayPassModal && selectedStudioId && dayPassSettings ? (
+        <DayPassEditModal
+          settings={dayPassSettings}
+          studioId={selectedStudioId}
+          onClose={() => setShowDayPassModal(false)}
+          onSaved={() => {
+            setShowDayPassModal(false);
+            void loadDayPassData();
+            setSuccessMessage("Day Pass actualizado.");
+          }}
         />
       ) : null}
 

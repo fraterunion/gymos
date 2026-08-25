@@ -10,6 +10,7 @@ import { getStudioLocalDateKey, studioLocalDateKeyToUtcAnchor } from '../common/
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { WaiverService } from '../waiver/waiver.service';
+import { DayPassSettingsService } from './day-pass-settings.service';
 import type { DayPassResponseDto } from './dto/day-pass-response.dto';
 
 // Must match the Stripe SDK version used by the mobile React Native client.
@@ -31,6 +32,7 @@ export class DayPassesService {
     private readonly stripe: StripeService,
     private readonly config: ConfigService,
     private readonly waiverService: WaiverService,
+    private readonly dayPassSettings: DayPassSettingsService,
   ) {}
 
   async listMyDayPasses(studioId: string, userId: string): Promise<DayPassResponseDto[]> {
@@ -60,8 +62,8 @@ export class DayPassesService {
     const { studioId, userId, validForDate } = params;
     await this.waiverService.assertMemberWaiverAccepted(studioId, userId);
 
-    const priceCents = parseInt(this.config.get<string>('DAY_PASS_PRICE_CENTS', '20000'), 10);
-    const currency = this.config.get<string>('DAY_PASS_CURRENCY', 'mxn').toLowerCase();
+    const sale = await this.dayPassSettings.resolveCheckoutSalePrice(studioId, userId);
+    const { priceCents, currency, stripePriceId } = sale;
 
     const studio = await this.prisma.studio.findFirst({
       where: { id: studioId, deletedAt: null },
@@ -151,6 +153,7 @@ export class DayPassesService {
           studioId,
           userId,
           validForDate,
+          stripePriceId,
         },
       });
 

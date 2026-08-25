@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { DayPassSettingsService } from '../day-passes/day-pass-settings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import type { ScheduleQueryDto } from '../schedule/dto/schedule-query.dto';
@@ -33,6 +34,7 @@ export class PublicDiscoveryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scheduleService: ScheduleService,
+    private readonly dayPassSettings: DayPassSettingsService,
   ) {}
 
   async getStudioBySlug(slug: string): Promise<PublicStudioInfoDto> {
@@ -58,5 +60,10 @@ export class PublicDiscoveryService {
       select: publicPlanSelect,
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  async getPublicDayPassCatalog(slug: string) {
+    const { id: studioId } = await this.getStudioBySlug(slug);
+    return this.dayPassSettings.getCatalog(studioId);
   }
 }

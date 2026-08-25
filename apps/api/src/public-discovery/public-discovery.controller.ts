@@ -24,4 +24,9 @@ export class PublicDiscoveryController {
   getMembershipPlans(@Param('slug') slug: string) {
     return this.publicDiscoveryService.getPublicMembershipPlans(slug);
   }
+
+  @Get(':slug/day-pass')
+  getDayPassCatalog(@Param('slug') slug: string) {
+    return this.publicDiscoveryService.getPublicDayPassCatalog(slug);
+  }
 }

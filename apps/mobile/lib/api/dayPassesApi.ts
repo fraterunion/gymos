@@ -20,6 +20,22 @@ export type DayPassPaymentSheetDto = {
   publishableKey: string;
 };
 
+export type DayPassCatalogDto = {
+  displayName: string;
+  priceCents: number;
+  currency: string;
+  active: boolean;
+  validityDescription: string;
+};
+
+export async function fetchDayPassCatalog(studioId: string): Promise<DayPassCatalogDto> {
+  return apiRequest<DayPassCatalogDto>(`/studios/${studioId}/day-pass/catalog`, { method: 'GET' });
+}
+
+export async function fetchPublicDayPassCatalog(slug: string): Promise<DayPassCatalogDto> {
+  return apiRequest<DayPassCatalogDto>(`/public/studios/${slug}/day-pass`, { method: 'GET' });
+}
+
 export async function fetchMyDayPasses(studioId: string): Promise<DayPassDto[]> {
   return apiRequest<DayPassDto[]>(`/studios/${studioId}/day-passes/me`, { method: 'GET' });
 }

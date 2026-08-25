@@ -7,13 +7,15 @@ import { StripeModule } from '../stripe/stripe.module';
 import { WaiverModule } from '../waiver/waiver.module';
 import { DayPassClassAccessController } from './day-pass-class-access.controller';
 import { DayPassClassAccessService } from './day-pass-class-access.service';
+import { DayPassSettingsController } from './day-pass-settings.controller';
+import { DayPassSettingsService } from './day-pass-settings.service';
 import { DayPassesController } from './day-passes.controller';
 import { DayPassesService } from './day-passes.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, StripeModule, ConfigModule, WaiverModule, SalesModule],
-  controllers: [DayPassesController, DayPassClassAccessController],
-  providers: [DayPassesService, DayPassClassAccessService],
-  exports: [DayPassesService, DayPassClassAccessService],
+  controllers: [DayPassesController, DayPassClassAccessController, DayPassSettingsController],
+  providers: [DayPassesService, DayPassClassAccessService, DayPassSettingsService],
+  exports: [DayPassesService, DayPassClassAccessService, DayPassSettingsService],
 })
 export class DayPassesModule {}

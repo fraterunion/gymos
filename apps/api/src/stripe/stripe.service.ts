@@ -73,14 +73,20 @@ export class StripeService {
     return this.getClient().prices.retrieve(priceId);
   }
 
-  async createProductForPlan(params: {
-    name: string;
-    metadata: Record<string, string>;
-  }): Promise<Stripe.Product> {
-    return this.getClient().products.create({
-      name: params.name,
-      metadata: params.metadata,
-    });
+  async createProductForPlan(
+    params: {
+      name: string;
+      metadata: Record<string, string>;
+    },
+    options?: Stripe.RequestOptions,
+  ): Promise<Stripe.Product> {
+    return this.getClient().products.create(
+      {
+        name: params.name,
+        metadata: params.metadata,
+      },
+      options,
+    );
   }
 
   async createRecurringPrice(
@@ -114,16 +120,24 @@ export class StripeService {
     return this.getClient().prices.update(priceId, { active: false });
   }
 
-  async createOneTimePrice(params: {
-    productId: string;
-    unitAmount: number;
-    currency: string;
-  }): Promise<Stripe.Price> {
-    return this.getClient().prices.create({
-      product: params.productId,
-      unit_amount: params.unitAmount,
-      currency: params.currency.toLowerCase(),
-    });
+  async createOneTimePrice(
+    params: {
+      productId: string;
+      unitAmount: number;
+      currency: string;
+      metadata?: Record<string, string>;
+    },
+    options?: Stripe.RequestOptions,
+  ): Promise<Stripe.Price> {
+    return this.getClient().prices.create(
+      {
+        product: params.productId,
+        unit_amount: params.unitAmount,
+        currency: params.currency.toLowerCase(),
+        ...(params.metadata ? { metadata: params.metadata } : {}),
+      },
+      options,
+    );
   }
 
   async updateSubscription(
