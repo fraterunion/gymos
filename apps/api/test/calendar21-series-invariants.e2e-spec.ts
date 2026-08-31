@@ -19,6 +19,8 @@ import {
   createUserWithPassword,
 } from './helpers/factories';
 import {
+  addDaysToDateKey,
+  getDayOfWeekFromDateKey,
   getStudioLocalDateKey,
   studioLocalDateKeyToUtcAnchor,
   studioLocalTimeToUtc,
@@ -32,6 +34,38 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
   let scheduleService: ScheduleService;
 
   const TZ = 'America/Mexico_City';
+  const WEDNESDAY = 3;
+
+  /** Next weekday on/after dateKey (JS getDay: 0=Sun … 6=Sat). */
+  function nextWeekdayOnOrAfter(dateKey: string, weekday: number): string {
+    let key = dateKey;
+    while (getDayOfWeekFromDateKey(key) !== weekday) {
+      key = addDaysToDateKey(key, 1);
+    }
+    return key;
+  }
+
+  /**
+   * Time-stable Wednesday series (same idea as calendar24 fixtures):
+   * 1) SERIES_START must be strictly after studio "today" — materializeTemplates
+   *    clamps candidate start to nowKey, while generateRange still honors template
+   *    startsAt and would backfill a past first occurrence.
+   * 2) SERIES_END must fall inside the default 90-day materialization horizon
+   *    (today + minFutureDays). createRecurringSeries caps at that horizon;
+   *    generateRange does not — a series that overhangs the horizon yields
+   *    create→N then regenerate→N+1 even when detached exclusion is correct.
+   */
+  const SERIES_START = nextWeekdayOnOrAfter(
+    addDaysToDateKey(getStudioLocalDateKey(new Date(), TZ), 7),
+    WEDNESDAY,
+  );
+  /** 9 Wednesdays (start + 8 weeks) — fits under 90d even if start is today+13. */
+  const SERIES_END = addDaysToDateKey(SERIES_START, 7 * 8);
+  const SPLIT_DATE = addDaysToDateKey(SERIES_START, 7 * 3);
+  const PREDECESSOR_END = addDaysToDateKey(SERIES_START, 7 * 2);
+  const BOOKING_DATE = addDaysToDateKey(SERIES_START, 7 * 4);
+  const GEN_FROM = addDaysToDateKey(SERIES_START, -30);
+  const GEN_TO = addDaysToDateKey(SERIES_END, 30);
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -54,12 +88,6 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
     await createMembership(prisma, admin.id, studioId, Role.ADMIN);
     return admin;
   }
-
-  const SERIES_START = '2026-08-26';
-  const SERIES_END = '2026-11-18';
-  const SPLIT_DATE = '2026-09-16';
-  const PREDECESSOR_END = '2026-09-09';
-  const BOOKING_DATE = '2026-09-23';
 
   async function createWednesdaySeries(studioId: string, classTemplateId: string) {
     const admin = await seedAdmin(studioId);
@@ -102,15 +130,15 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
       sep17!.id,
       {
         scope: 'SINGLE',
-        localStart: { date: '2026-09-16', time: '08:00' },
-        localEnd: { date: '2026-09-16', time: '09:00' },
+        localStart: { date: SPLIT_DATE, time: '08:00' },
+        localEnd: { date: SPLIT_DATE, time: '09:00' },
       },
       admin.id,
     );
 
     const detached = await prisma.scheduledClass.findUnique({ where: { id: sep17!.id } });
     expect(detached?.exceptionKind).toBe(ScheduleOccurrenceExceptionKind.DETACHED);
-    expect(detached?.startsAt).toEqual(studioLocalTimeToUtc('2026-09-16', '08:00', TZ));
+    expect(detached?.startsAt).toEqual(studioLocalTimeToUtc(SPLIT_DATE, '08:00', TZ));
 
     await seriesService.editOccurrence(
       studio.id,
@@ -120,7 +148,7 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
     );
 
     const afterSeriesEdit = await prisma.scheduledClass.findUnique({ where: { id: sep17!.id } });
-    expect(afterSeriesEdit?.startsAt).toEqual(studioLocalTimeToUtc('2026-09-16', '08:00', TZ));
+    expect(afterSeriesEdit?.startsAt).toEqual(studioLocalTimeToUtc(SPLIT_DATE, '08:00', TZ));
     expect(afterSeriesEdit?.capacity).toBe(25);
     expect(afterSeriesEdit?.exceptionKind).toBe(ScheduleOccurrenceExceptionKind.DETACHED);
   });
@@ -143,8 +171,8 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
       sep17!.id,
       {
         scope: 'SINGLE',
-        localStart: { date: '2026-09-16', time: '08:00' },
-        localEnd: { date: '2026-09-16', time: '09:00' },
+        localStart: { date: SPLIT_DATE, time: '08:00' },
+        localEnd: { date: SPLIT_DATE, time: '09:00' },
       },
       admin.id,
     );
@@ -155,8 +183,8 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
 
     await generatorService.generateRange(
       studio.id,
-      studioLocalDateKeyToUtcAnchor('2026-08-01', TZ),
-      studioLocalDateKeyToUtcAnchor('2026-12-01', TZ),
+      studioLocalDateKeyToUtcAnchor(GEN_FROM, TZ),
+      studioLocalDateKeyToUtcAnchor(GEN_TO, TZ),
       { isDryRun: false, triggeredBy: 'MANUAL' },
     );
 
@@ -165,18 +193,18 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
         studioId: studio.id,
         scheduleTemplateId: template!.id,
         startsAt: {
-          gte: studioLocalDateKeyToUtcAnchor('2026-09-16', TZ),
-          lt: studioLocalDateKeyToUtcAnchor('2026-09-17', TZ),
+          gte: studioLocalDateKeyToUtcAnchor(SPLIT_DATE, TZ),
+          lt: studioLocalDateKeyToUtcAnchor(addDaysToDateKey(SPLIT_DATE, 1), TZ),
         },
       },
     });
     expect(sep17Rows).toHaveLength(1);
-    expect(sep17Rows[0]!.startsAt).toEqual(studioLocalTimeToUtc('2026-09-16', '08:00', TZ));
+    expect(sep17Rows[0]!.startsAt).toEqual(studioLocalTimeToUtc(SPLIT_DATE, '08:00', TZ));
 
     const sep24 = await prisma.scheduledClass.findFirst({
       where: { startsAt: studioLocalTimeToUtc(BOOKING_DATE, '07:00', TZ) },
     });
-    expect(sep24?.startsAt).toEqual(studioLocalTimeToUtc('2026-09-23', '07:00', TZ));
+    expect(sep24?.startsAt).toEqual(studioLocalTimeToUtc(BOOKING_DATE, '07:00', TZ));
 
     const afterCount = await prisma.scheduledClass.count({
       where: { studioId: studio.id, scheduleTemplateId: template!.id },
@@ -191,7 +219,7 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
 
     const template = await prisma.scheduleTemplate.findFirst({ where: { studioId: studio.id } });
     const sep17 = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
     });
     const admin = await seedAdmin(studio.id);
     await seriesService.cancelOccurrence(
@@ -205,8 +233,8 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
 
     await generatorService.generateRange(
       studio.id,
-      studioLocalDateKeyToUtcAnchor('2026-09-01', TZ),
-      studioLocalDateKeyToUtcAnchor('2026-10-01', TZ),
+      studioLocalDateKeyToUtcAnchor(GEN_FROM, TZ),
+      studioLocalDateKeyToUtcAnchor(addDaysToDateKey(SPLIT_DATE, 30), TZ),
       { isDryRun: false, triggeredBy: 'MANUAL' },
     );
 
@@ -227,7 +255,7 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
 
     const templateA = await prisma.scheduleTemplate.findFirst({ where: { studioId: studio.id } });
     const sep17 = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
     });
     const admin = await seedAdmin(studio.id);
 
@@ -236,8 +264,8 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
       sep17!.id,
       {
         scope: 'FOLLOWING',
-        localStart: { date: '2026-09-16', time: '08:00' },
-        localEnd: { date: '2026-09-16', time: '09:00' },
+        localStart: { date: SPLIT_DATE, time: '08:00' },
+        localEnd: { date: SPLIT_DATE, time: '09:00' },
       },
       admin.id,
     );
@@ -254,12 +282,12 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
     const futureRows = await prisma.scheduledClass.findMany({
       where: {
         studioId: studio.id,
-        startsAt: { gte: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+        startsAt: { gte: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
         status: ClassStatus.SCHEDULED,
       },
     });
     expect(futureRows.every((r) => r.scheduleTemplateId === templateB!.id)).toBe(true);
-    expect(futureRows.every((r) => r.startsAt >= studioLocalTimeToUtc('2026-09-16', '08:00', TZ))).toBe(
+    expect(futureRows.every((r) => r.startsAt >= studioLocalTimeToUtc(SPLIT_DATE, '08:00', TZ))).toBe(
       true,
     );
   });
@@ -271,20 +299,20 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
 
     const templateA = await prisma.scheduleTemplate.findFirst({ where: { studioId: studio.id } });
     const sep17 = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
     });
     const admin = await seedAdmin(studio.id);
     const split = await seriesService.editOccurrence(
       studio.id,
       sep17!.id,
-      { scope: 'FOLLOWING', localStart: { date: '2026-09-16', time: '08:00' } },
+      { scope: 'FOLLOWING', localStart: { date: SPLIT_DATE, time: '08:00' } },
       admin.id,
     );
 
     await generatorService.generateRange(
       studio.id,
-      studioLocalDateKeyToUtcAnchor('2026-08-01', TZ),
-      studioLocalDateKeyToUtcAnchor('2026-12-01', TZ),
+      studioLocalDateKeyToUtcAnchor(GEN_FROM, TZ),
+      studioLocalDateKeyToUtcAnchor(GEN_TO, TZ),
       { isDryRun: false, triggeredBy: 'MANUAL' },
     );
 
@@ -302,7 +330,7 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
     const beyondSplitOnA = await prisma.scheduledClass.findFirst({
       where: {
         scheduleTemplateId: templateA!.id,
-        startsAt: { gte: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+        startsAt: { gte: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
         status: ClassStatus.SCHEDULED,
       },
     });
@@ -321,7 +349,7 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
 
     const template = await prisma.scheduleTemplate.findFirst({ where: { studioId: studio.id } });
     const sep17 = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
     });
     const admin = await seedAdmin(studio.id);
 
@@ -344,15 +372,15 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
 
     await generatorService.generateRange(
       studio.id,
-      studioLocalDateKeyToUtcAnchor('2026-09-01', TZ),
-      studioLocalDateKeyToUtcAnchor('2026-12-01', TZ),
+      studioLocalDateKeyToUtcAnchor(GEN_FROM, TZ),
+      studioLocalDateKeyToUtcAnchor(GEN_TO, TZ),
       { isDryRun: false, triggeredBy: 'MANUAL' },
     );
 
     const futureScheduled = await prisma.scheduledClass.count({
       where: {
         scheduleTemplateId: template!.id,
-        startsAt: { gte: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+        startsAt: { gte: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
         status: ClassStatus.SCHEDULED,
       },
     });
@@ -386,27 +414,27 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
     const studio = await createStudio(prisma, { timezone: TZ });
     const ct1 = await createClassTemplate(prisma, studio.id, { name: 'A' });
     const ct2 = await createClassTemplate(prisma, studio.id, { name: 'B' });
-    const startsAt = studioLocalTimeToUtc('2026-09-16', '07:00', TZ);
-    const endsAt = studioLocalTimeToUtc('2026-09-16', '08:00', TZ);
+    const startsAt = studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ);
+    const endsAt = studioLocalTimeToUtc(SPLIT_DATE, '08:00', TZ);
 
     await scheduleService.createScheduledClass(studio.id, {
       templateId: ct1.id,
-      localStart: { date: '2026-09-16', time: '07:00' },
-      localEnd: { date: '2026-09-16', time: '08:00' },
+      localStart: { date: SPLIT_DATE, time: '07:00' },
+      localEnd: { date: SPLIT_DATE, time: '08:00' },
     });
 
     await expect(
       scheduleService.createScheduledClass(studio.id, {
         templateId: ct1.id,
-        localStart: { date: '2026-09-16', time: '07:00' },
-        localEnd: { date: '2026-09-16', time: '08:00' },
+        localStart: { date: SPLIT_DATE, time: '07:00' },
+        localEnd: { date: SPLIT_DATE, time: '08:00' },
       }),
     ).rejects.toThrow();
 
     const other = await scheduleService.createScheduledClass(studio.id, {
       templateId: ct2.id,
-      localStart: { date: '2026-09-16', time: '07:00' },
-      localEnd: { date: '2026-09-16', time: '08:00' },
+      localStart: { date: SPLIT_DATE, time: '07:00' },
+      localEnd: { date: SPLIT_DATE, time: '08:00' },
     });
     expect(other.startsAt).toEqual(startsAt);
     expect(other.endsAt).toEqual(endsAt);
@@ -455,14 +483,14 @@ describe('Calendar 2.1 series invariants (e2e)', () => {
     const ct = await createClassTemplate(prisma, studio.id);
     await createWednesdaySeries(studio.id, ct.id);
     const sep17 = await prisma.scheduledClass.findFirst({
-      where: { startsAt: studioLocalTimeToUtc('2026-09-16', '07:00', TZ) },
+      where: { startsAt: studioLocalTimeToUtc(SPLIT_DATE, '07:00', TZ) },
     });
     const admin = await seedAdmin(studio.id);
 
     await seriesService.editOccurrence(
       studio.id,
       sep17!.id,
-      { scope: 'FOLLOWING', localStart: { date: '2026-09-16', time: '08:00' } },
+      { scope: 'FOLLOWING', localStart: { date: SPLIT_DATE, time: '08:00' } },
       admin.id,
     );
 
