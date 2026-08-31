@@ -270,6 +270,17 @@ test("configuration history renders human-readable Spanish entries", () => {
   );
 });
 
+test("configuration history tolerates null audit actor without crashing", () => {
+  assert.match(
+    formatHistoryEntry({
+      action: "MEMBERSHIP_PLAN_CREATED",
+      actor: null,
+      metadata: {},
+    }),
+    /Sistema creó el plan/,
+  );
+});
+
 test("subscriptions tab supports search and sort controls", () => {
   const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
   assert.match(source, /Buscar por nombre o correo/);

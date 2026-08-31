@@ -702,11 +702,12 @@ export class MembershipPlansService {
       throw new NotFoundException('Membership plan not found');
     }
 
-    return this.prisma.auditLog.findMany({
+    const rows = await this.prisma.auditLog.findMany({
       where: {
         studioId,
         entityType: 'membership_plan',
         entityId: planId,
+        actorUserId: { not: null },
         action: {
           in: [
             'MEMBERSHIP_PLAN_CREATED',
@@ -727,6 +728,20 @@ export class MembershipPlansService {
         actor: { select: { id: true, firstName: true, lastName: true } },
       },
     });
+
+    return rows.flatMap((row) =>
+      row.actor
+        ? [
+            {
+              id: row.id,
+              action: row.action,
+              createdAt: row.createdAt,
+              actor: row.actor,
+              metadata: row.metadata,
+            },
+          ]
+        : [],
+    );
   }
 
   private diffPlanChanges(

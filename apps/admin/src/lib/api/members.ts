@@ -103,7 +103,10 @@ export type TimelineEventType =
   | "PAYMENT_FAILED"
   | "CRM_UPDATED"
   | "WAIVER_ACCEPTED"
-  | "NOTE_CREATED";
+  | "NOTE_CREATED"
+  | "STRIPE_RENEWAL_DISABLED"
+  | "STRIPE_RENEWAL_REACTIVATED"
+  | "STRIPE_RENEWAL_EXTERNAL_CHANGE";
 
 export type TimelineEvent = {
   type: TimelineEventType;
@@ -111,6 +114,7 @@ export type TimelineEvent = {
   description?: string | null;
   actor?: string | null;
   occurredAt: string;
+  metadata?: Record<string, unknown> | null;
 };
 
 export type AttendanceLogEntry = {

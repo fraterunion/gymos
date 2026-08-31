@@ -5,6 +5,7 @@ import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
+import { StripeRenewalAuditService } from './stripe-renewal-audit.service';
 import { buildPaidFixedEntitlementCycle } from './fixed-entitlement-cycle';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { subscriptionLockKey } from './subscription-lifecycle.utils';
@@ -21,11 +22,22 @@ import {
 } from './stripe-webhook-payloads';
 import { mapStripeSubscriptionStatus } from './stripe-subscription-status';
 import { readInvoiceSubscriptionId } from './stripe-invoice.utils';
+import { readCancellationDetails } from './stripe-renewal-audit.utils';
 
 type VerifiedStripeEvent = {
   id: string;
   type: string;
   data: { object: unknown };
+  request?: { id: string | null; idempotency_key?: string | null } | null;
+  created?: number;
+};
+
+type SubscriptionEventContext = {
+  eventId: string;
+  eventType: string;
+  requestId: string | null;
+  idempotencyKey: string | null;
+  receivedAt: Date;
 };
 
 function eventToJsonPayload(event: VerifiedStripeEvent): Prisma.InputJsonValue {
@@ -75,6 +87,7 @@ export class StripeWebhookService {
     private readonly enrollment: EnrollmentService,
     private readonly subscriptionLifecycle: SubscriptionLifecycleService,
     private readonly stripeToCash: StripeToCashTransitionService,
+    private readonly stripeRenewalAudit: StripeRenewalAuditService,
   ) {}
 
   async handleIncomingWebhook(rawBody: Buffer, signature: string): Promise<void> {
@@ -119,7 +132,15 @@ export class StripeWebhookService {
       case 'customer.subscription.deleted':
         await this.onCustomerSubscription(
           event.data.object as WebhookSubscriptionPayload,
-          event.type,
+          {
+            eventId: event.id,
+            eventType: event.type,
+            requestId: event.request?.id ?? null,
+            idempotencyKey: event.request?.idempotency_key ?? null,
+            receivedAt: event.created
+              ? new Date(event.created * 1000)
+              : new Date(),
+          },
         );
         break;
       case 'invoice.paid':
@@ -174,16 +195,17 @@ export class StripeWebhookService {
 
   private async onCustomerSubscription(
     subscription: WebhookSubscriptionPayload,
-    stripeEventType: string,
+    eventContext: SubscriptionEventContext,
   ): Promise<void> {
     const md = readTriplet(subscription.metadata);
-    await this.upsertSubscriptionFromStripe(subscription, md, stripeEventType);
+    await this.upsertSubscriptionFromStripe(subscription, md, eventContext.eventType, eventContext);
   }
 
   private async upsertSubscriptionFromStripe(
     sub: WebhookSubscriptionPayload,
     sessionOrRootMetadata: { userId?: string; studioId?: string; planId?: string },
     stripeEventType: string,
+    eventContext?: SubscriptionEventContext,
   ): Promise<void> {
     const md = { ...readTriplet(sub.metadata), ...sessionOrRootMetadata };
 
@@ -274,27 +296,38 @@ export class StripeWebhookService {
       // Guard against violating the partial unique index on (studio_id, user_id) WHERE status='ACTIVE'.
       // Only the CREATE branch of upsert can conflict; the UPDATE branch targets the existing row by
       // stripeSubscriptionId and never inserts a second ACTIVE row.
+      const existingRowForThisSub = await tx.subscription.findUnique({
+        where: { stripeSubscriptionId: sub.id },
+        select: {
+          id: true,
+          cancelAtPeriodEnd: true,
+          status: true,
+        },
+      });
+      const previousCancelAtPeriodEnd =
+        existingRowForThisSub == null ? null : existingRowForThisSub.cancelAtPeriodEnd;
+
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
-        const existingRowForThisSub = await tx.subscription.findUnique({
-          where: { stripeSubscriptionId: sub.id },
-        });
         if (!existingRowForThisSub) {
           const conflictingRow = await tx.subscription.findFirst({
             where: { studioId, userId, status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } },
           });
           if (conflictingRow) {
-            return this.handleWebhookActiveConflict(tx, {
-              conflictingRow,
-              incomingSub: sub,
-              incomingStatus: status,
-              incomingMembershipPlanId: membershipPlanId,
-              incomingPendingMembershipPlanId: pendingMembershipPlanId,
-              incomingPeriodData: periodData,
-              entitlementEndsAt,
-              studioId,
-              userId,
-              stripeEventType,
-            });
+            return {
+              row: await this.handleWebhookActiveConflict(tx, {
+                conflictingRow,
+                incomingSub: sub,
+                incomingStatus: status,
+                incomingMembershipPlanId: membershipPlanId,
+                incomingPendingMembershipPlanId: pendingMembershipPlanId,
+                incomingPeriodData: periodData,
+                entitlementEndsAt,
+                studioId,
+                userId,
+                stripeEventType,
+              }),
+              previousCancelAtPeriodEnd,
+            };
           }
         }
       }
@@ -384,23 +417,49 @@ export class StripeWebhookService {
         });
       }
 
-      return row;
+      return { row, previousCancelAtPeriodEnd };
     });
 
-    if (!saved) return;
+    if (!saved?.row) return;
+
+    const { row: savedRow, previousCancelAtPeriodEnd } = saved;
+
+    if (
+      eventContext &&
+      previousCancelAtPeriodEnd !== null &&
+      previousCancelAtPeriodEnd !== sub.cancel_at_period_end
+    ) {
+      const cancellation = readCancellationDetails(sub);
+      await this.stripeRenewalAudit.maybeLogExternalRenewalChange({
+        studioId,
+        memberUserId: userId,
+        subscriptionId: savedRow.id,
+        stripeSubscriptionId: sub.id,
+        previousCancelAtPeriodEnd,
+        newCancelAtPeriodEnd: sub.cancel_at_period_end,
+        currentPeriodEnd: savedRow.currentPeriodEnd,
+        stripeEventId: eventContext.eventId,
+        stripeEventType: eventContext.eventType,
+        stripeRequestId: eventContext.requestId,
+        stripeIdempotencyKey: eventContext.idempotencyKey,
+        cancellationReason: cancellation.reason,
+        cancellationFeedback: cancellation.feedback,
+        receivedAt: eventContext.receivedAt,
+      });
+    }
 
     if (
       readPendingPlanIdFromMetadata(sub.metadata) &&
-      saved.pendingMembershipPlanId &&
-      saved.membershipPlanId !== saved.pendingMembershipPlanId
+      savedRow.pendingMembershipPlanId &&
+      savedRow.membershipPlanId !== savedRow.pendingMembershipPlanId
     ) {
       this.logger.log(
         JSON.stringify({
           event: 'scheduled_plan_change_pending',
           stripeSubscriptionId: sub.id,
-          effectivePlanId: saved.membershipPlanId,
-          pendingPlanId: saved.pendingMembershipPlanId,
-          currentPeriodEnd: saved.currentPeriodEnd?.toISOString() ?? null,
+          effectivePlanId: savedRow.membershipPlanId,
+          pendingPlanId: savedRow.pendingMembershipPlanId,
+          currentPeriodEnd: savedRow.currentPeriodEnd?.toISOString() ?? null,
         }),
       );
     }

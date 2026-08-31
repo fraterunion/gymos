@@ -162,6 +162,7 @@ export class StripeService {
     currentPriceId: string;
     newPriceId: string;
     metadata: Record<string, string>;
+    idempotencyKey?: string;
   }): Promise<Stripe.Subscription> {
     const stripe = this.getClient();
     const sub = await stripe.subscriptions.retrieve(params.stripeSubscriptionId, {
@@ -208,10 +209,14 @@ export class StripeService {
       ],
     });
 
-    return stripe.subscriptions.update(params.stripeSubscriptionId, {
-      cancel_at_period_end: false,
-      metadata: params.metadata,
-    });
+    return stripe.subscriptions.update(
+      params.stripeSubscriptionId,
+      {
+        cancel_at_period_end: false,
+        metadata: params.metadata,
+      },
+      params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : undefined,
+    );
   }
 
   async resolveHostedInvoiceUrl(stripeSubscriptionId: string): Promise<string | null> {

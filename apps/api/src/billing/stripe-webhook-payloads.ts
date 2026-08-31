@@ -16,6 +16,11 @@ export type WebhookSubscriptionPayload = {
   customer: string | { id: string } | null;
   metadata: Record<string, string> | null;
   cancel_at_period_end: boolean;
+  cancellation_details?: {
+    reason?: string | null;
+    feedback?: string | null;
+    comment?: string | null;
+  } | null;
   // Stripe basil API (2025-08-27.basil) moved current_period_start/end from the
   // Subscription root to each SubscriptionItem. These are the canonical billing period.
   items: {

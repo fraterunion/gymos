@@ -383,7 +383,10 @@ export function PlanConfigurationHistoryPanel({
         <div key={entry.id} className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
           <p className="font-medium text-zinc-900">{formatHistoryEntry(entry)}</p>
           <p className="mt-0.5 text-zinc-500">
-            {entry.actor.firstName} {entry.actor.lastName} ·{" "}
+            {entry.actor
+              ? `${entry.actor.firstName} ${entry.actor.lastName}`
+              : "Sistema"}{" "}
+            ·{" "}
             {new Date(entry.createdAt).toLocaleDateString("es-MX", {
               day: "numeric",
               month: "short",

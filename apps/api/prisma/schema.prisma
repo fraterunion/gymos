@@ -1191,7 +1191,9 @@ model StudioSalesSettings {
 model AuditLog {
   id           String   @id @default(cuid())
   studioId     String   @map("studio_id")
-  actorUserId  String   @map("actor_user_id")
+  /// Null for system/external origins (e.g. Stripe Portal/Dashboard mirrored via webhook).
+  /// Never invent an actor when Stripe does not prove one.
+  actorUserId  String?  @map("actor_user_id")
   action       String
   targetUserId String?  @map("target_user_id")
   entityType   String?  @map("entity_type")
@@ -1200,7 +1202,7 @@ model AuditLog {
   createdAt    DateTime @default(now()) @map("created_at")
 
   studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
-  actor  User   @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  actor  User?  @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: Restrict)
 
   @@index([studioId, createdAt])
   @@index([studioId, action])

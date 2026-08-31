@@ -223,7 +223,7 @@ export type PlanConfigurationHistoryEntry = {
   id: string;
   action: string;
   createdAt: string;
-  actor: { id: string; firstName: string; lastName: string };
+  actor: { id: string; firstName: string; lastName: string } | null;
   metadata: {
     planName?: string;
     changes?: Record<string, { from: unknown; to: unknown }>;

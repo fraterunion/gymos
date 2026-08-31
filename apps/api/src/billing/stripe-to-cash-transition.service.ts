@@ -25,6 +25,10 @@ import {
   type StripeResolution,
 } from './stripe-to-cash.constants';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
+import {
+  buildGymosStripeToCashImmediateIdempotencyKey,
+  buildGymosStripeToCashPeriodEndIdempotencyKey,
+} from './stripe-renewal-audit.utils';
 
 type StripeSubWithPlan = Subscription & { membershipPlan: MembershipPlan };
 
@@ -54,6 +58,8 @@ export type ScheduledCashResult = {
     stripeSubscriptionId: string;
     cancelAtPeriodEnd: boolean;
     currentPeriodEnd: Date | null;
+    previousCancelAtPeriodEnd: boolean;
+    stripeIdempotencyKey: string | null;
   };
 };
 
@@ -146,15 +152,20 @@ export class StripeToCashTransitionService {
   async cancelStripeImmediately(params: {
     studioId: string;
     userId: string;
-  }): Promise<StripeSubWithPlan | null> {
+  }): Promise<(StripeSubWithPlan & { stripeIdempotencyKey: string | null }) | null> {
     const stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
     if (!stripeSub?.stripeSubscriptionId) {
       // Recovery: Stripe already canceled locally — allow cash creation to proceed.
       return null;
     }
 
+    const stripeIdempotencyKey = buildGymosStripeToCashImmediateIdempotencyKey(
+      stripeSub.stripeSubscriptionId,
+    );
     try {
-      await this.stripe.cancelSubscription(stripeSub.stripeSubscriptionId);
+      await this.stripe.cancelSubscription(stripeSub.stripeSubscriptionId, {}, {
+        idempotencyKey: stripeIdempotencyKey,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Stripe may already be canceled after a prior partial failure.
@@ -192,7 +203,7 @@ export class StripeToCashTransitionService {
       }),
     );
 
-    return stripeSub;
+    return { ...stripeSub, stripeIdempotencyKey };
   }
 
   /**
@@ -236,7 +247,7 @@ export class StripeToCashTransitionService {
       });
     }
 
-    await this.ensureStripeCancelAtPeriodEnd(stripeSub);
+    const cancelResult = await this.ensureStripeCancelAtPeriodEnd(stripeSub);
 
     const periodStart = stripeSub.currentPeriodEnd;
     const entitlementEndsAt =
@@ -342,6 +353,8 @@ export class StripeToCashTransitionService {
           stripeSubscriptionId: stripeSub.stripeSubscriptionId,
           cancelAtPeriodEnd: true,
           currentPeriodEnd: stripeSub.currentPeriodEnd,
+          previousCancelAtPeriodEnd: cancelResult.previousCancelAtPeriodEnd,
+          stripeIdempotencyKey: cancelResult.stripeIdempotencyKey,
         },
       };
     } catch (e) {
@@ -421,21 +434,36 @@ export class StripeToCashTransitionService {
         stripeSubscriptionId: params.stripeSub.stripeSubscriptionId!,
         cancelAtPeriodEnd: true,
         currentPeriodEnd: params.stripeSub.currentPeriodEnd,
+        previousCancelAtPeriodEnd: params.stripeSub.cancelAtPeriodEnd,
+        stripeIdempotencyKey: null,
       },
     };
   }
 
-  private async ensureStripeCancelAtPeriodEnd(stripeSub: StripeSubWithPlan): Promise<void> {
-    if (!stripeSub.stripeSubscriptionId) return;
+  private async ensureStripeCancelAtPeriodEnd(stripeSub: StripeSubWithPlan): Promise<{
+    previousCancelAtPeriodEnd: boolean;
+    stripeIdempotencyKey: string | null;
+  }> {
+    if (!stripeSub.stripeSubscriptionId) {
+      return { previousCancelAtPeriodEnd: stripeSub.cancelAtPeriodEnd, stripeIdempotencyKey: null };
+    }
+    const previousCancelAtPeriodEnd = stripeSub.cancelAtPeriodEnd;
+    let stripeIdempotencyKey: string | null = null;
     if (!stripeSub.cancelAtPeriodEnd) {
-      await this.stripe.updateSubscription(stripeSub.stripeSubscriptionId, {
-        cancel_at_period_end: true,
-      });
+      stripeIdempotencyKey = buildGymosStripeToCashPeriodEndIdempotencyKey(
+        stripeSub.stripeSubscriptionId,
+      );
+      await this.stripe.updateSubscription(
+        stripeSub.stripeSubscriptionId,
+        { cancel_at_period_end: true },
+        { idempotencyKey: stripeIdempotencyKey },
+      );
     }
     await this.prisma.subscription.update({
       where: { id: stripeSub.id },
       data: { cancelAtPeriodEnd: true },
     });
+    return { previousCancelAtPeriodEnd, stripeIdempotencyKey };
   }
 
   /**

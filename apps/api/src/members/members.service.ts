@@ -26,6 +26,15 @@ import { OPEN_GYM_LABEL } from '../check-ins/open-gym.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
+import { StripeRenewalAuditService } from '../billing/stripe-renewal-audit.service';
+import {
+  buildGymosRenewalIdempotencyKey,
+  readJsonMetadata,
+} from '../billing/stripe-renewal-audit.utils';
+import {
+  STRIPE_RENEWAL_AUDIT_ACTIONS,
+  type StripeRenewalSourceSurface,
+} from '../billing/stripe-renewal-audit.constants';
 import {
   currentlyEntitledSubscriptionWhere,
   deriveMembershipLifecycle,
@@ -71,6 +80,7 @@ export class MembersService {
     private readonly membershipUsage: MembershipUsageService,
     private readonly subscriptionLifecycle: SubscriptionLifecycleService,
     private readonly checkInsService: CheckInsService,
+    private readonly stripeRenewalAudit: StripeRenewalAuditService,
   ) {}
 
   // ── Simple list (legacy — kept for compatibility) ──────────────────────────
@@ -1144,11 +1154,43 @@ export class MembersService {
     userId: string,
     subscriptionId: string,
     cancel: boolean,
+    actorUserId: string,
+    sourceSurface: StripeRenewalSourceSurface = 'OTHER_GYMOS_API',
   ) {
     const sub = await this.prisma.subscription.findFirst({
       where: { id: subscriptionId, studioId, userId },
     });
     if (!sub) throw new NotFoundException('Subscription not found');
+
+    if (sub.cancelAtPeriodEnd === cancel) {
+      return this.prisma.subscription.findFirstOrThrow({
+        where: { id: subscriptionId },
+        include: {
+          membershipPlan: { select: { id: true, name: true } },
+        },
+      });
+    }
+
+    const actorMembership = await this.prisma.studioMembership.findFirst({
+      where: { studioId, userId: actorUserId, deletedAt: null },
+      select: { role: true },
+    });
+
+    const stripeIdempotencyKey = buildGymosRenewalIdempotencyKey();
+
+    // Stripe first when Stripe-managed — audit only after a successful mutation.
+    if (sub.stripeSubscriptionId) {
+      try {
+        await this.stripeService.updateSubscription(
+          sub.stripeSubscriptionId,
+          { cancel_at_period_end: cancel },
+          { idempotencyKey: stripeIdempotencyKey },
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new BadRequestException(`Stripe renewal update failed: ${msg}`);
+      }
+    }
 
     const updated = await this.prisma.subscription.update({
       where: { id: subscriptionId },
@@ -1158,17 +1200,20 @@ export class MembersService {
       },
     });
 
-    // Sync to Stripe if subscription is Stripe-managed
     if (sub.stripeSubscriptionId) {
-      try {
-        await this.stripeService.updateSubscription(sub.stripeSubscriptionId, {
-          cancel_at_period_end: cancel,
-        });
-      } catch (err) {
-        // Log but don't fail — webhook will reconcile the state
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new BadRequestException(`DB updated but Stripe sync failed: ${msg}`);
-      }
+      await this.stripeRenewalAudit.logGymosRenewalChange({
+        studioId,
+        actorUserId,
+        actorRole: actorMembership?.role ?? null,
+        memberUserId: userId,
+        subscriptionId,
+        stripeSubscriptionId: sub.stripeSubscriptionId,
+        previousCancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        newCancelAtPeriodEnd: cancel,
+        currentPeriodEnd: updated.currentPeriodEnd,
+        sourceSurface,
+        stripeIdempotencyKey,
+      });
     }
 
     return updated;
@@ -1210,7 +1255,7 @@ export class MembersService {
   async getMemberTimeline(studioId: string, userId: string) {
     await this.assertMembership(studioId, userId);
 
-    const [membership, bookings, attendances, subscriptions, payments, crmProfile, operationalNotes, entitlementCycles, waiverAcceptances] =
+    const [membership, bookings, attendances, subscriptions, payments, crmProfile, operationalNotes, entitlementCycles, waiverAcceptances, renewalAudits] =
       await Promise.all([
         this.prisma.studioMembership.findFirst({
           where: { studioId, userId, deletedAt: null },
@@ -1257,6 +1302,18 @@ export class MembersService {
         this.prisma.memberOperationalNote.findMany({ where: { studioId, memberUserId: userId }, include: { author: { select: { firstName: true, lastName: true } } }, orderBy: { createdAt: 'desc' }, take: 100 }),
         this.prisma.membershipEntitlementCycle.findMany({ where: { studioId, userId }, include: { membershipPlan: { select: { name: true } } }, orderBy: { startsAt: 'desc' }, take: 100 }),
         this.prisma.waiverAcceptance.findMany({ where: { studioId, userId }, include: { waiverDocument: { select: { version: true } }, attestedBy: { select: { firstName: true, lastName: true } } }, orderBy: { acceptedAt: 'desc' }, take: 20 }),
+        this.prisma.auditLog.findMany({
+          where: {
+            studioId,
+            targetUserId: userId,
+            action: { in: [...STRIPE_RENEWAL_AUDIT_ACTIONS] },
+          },
+          include: {
+            actor: { select: { firstName: true, lastName: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+        }),
       ]);
 
     type TimelineEvent = {
@@ -1265,6 +1322,7 @@ export class MembersService {
       description?: string | null;
       actor?: string | null;
       occurredAt: Date;
+      metadata?: Record<string, unknown> | null;
     };
 
     const events: TimelineEvent[] = [];
@@ -1315,6 +1373,28 @@ export class MembersService {
 
     if (crmProfile && crmProfile.updatedAt.getTime() - crmProfile.createdAt.getTime() > 60_000) {
       events.push({ type: 'CRM_UPDATED', title: 'Coach notes updated', occurredAt: crmProfile.updatedAt });
+    }
+
+    for (const audit of renewalAudits) {
+      const md = readJsonMetadata(audit.metadata);
+      const roleSuffix =
+        typeof md['actorRole'] === 'string' && md['actorRole'] ? ` · ${md['actorRole']}` : '';
+      const actorName = audit.actor
+        ? `${audit.actor.firstName} ${audit.actor.lastName}${roleSuffix}`
+        : null;
+      const described = this.stripeRenewalAudit.describeTimelineEvent(
+        audit.action,
+        md,
+        actorName,
+      );
+      events.push({
+        type: audit.action,
+        title: described.title,
+        description: described.description,
+        actor: described.actor,
+        occurredAt: audit.createdAt,
+        metadata: md,
+      });
     }
 
     return sortMemberTimeline(events).slice(0, 200);

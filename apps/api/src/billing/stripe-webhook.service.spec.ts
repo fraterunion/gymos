@@ -162,12 +162,14 @@ function makeMocks() {
     activateScheduledCashIfDue: jest.fn().mockResolvedValue(null),
   };
 
+  const renewalAudit = { maybeLogExternalRenewalChange: jest.fn().mockResolvedValue('skipped_no_transition') };
   const service = new StripeWebhookService(
     prisma,
     stripe as unknown as StripeService,
     enrollment,
     subscriptionLifecycle as never,
     stripeToCash as never,
+    renewalAudit as never,
   );
 
   jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -291,7 +293,7 @@ describe('StripeWebhookService — fixed entitlement cycle grants', () => {
     prisma.$transaction.mockImplementation(
       async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     );
-    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never);
+    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never, { maybeLogExternalRenewalChange: jest.fn() } as never);
     const grant = (service as unknown as {
       grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
     }).grantFixedDurationCycleForPaidInvoice.bind(service);
@@ -336,7 +338,7 @@ describe('StripeWebhookService — fixed entitlement cycle grants', () => {
       transactionTail = run.catch(() => undefined);
       return run;
     });
-    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never);
+    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never, { maybeLogExternalRenewalChange: jest.fn() } as never);
     const grant = (service as unknown as {
       grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
     }).grantFixedDurationCycleForPaidInvoice.bind(service);
@@ -651,12 +653,14 @@ function makeSubscriptionWebhookMocks() {
     activateScheduledCashIfDue: jest.fn().mockResolvedValue(null),
   };
 
+  const renewalAudit = { maybeLogExternalRenewalChange: jest.fn().mockResolvedValue('skipped_no_transition') };
   const service = new StripeWebhookService(
     prisma,
     {} as StripeService,
     {} as EnrollmentService,
     subscriptionLifecycle as never,
     stripeToCash as never,
+    renewalAudit as never,
   );
 
   jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
@@ -668,6 +672,8 @@ function makeSubscriptionWebhookMocks() {
     upsertCalls,
     createCalls,
     txSubscription,
+    renewalAudit,
+    prisma,
   };
 }
 
@@ -825,7 +831,7 @@ describe('StripeWebhookService — handleIncomingWebhook error observability', (
       }),
     } as unknown as StripeService;
 
-    const service = new StripeWebhookService(prisma, stripe, {} as EnrollmentService, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never);
+    const service = new StripeWebhookService(prisma, stripe, {} as EnrollmentService, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never, { maybeLogExternalRenewalChange: jest.fn() } as never);
     return { service, prisma, stripe, updateManyMock };
   }
 
@@ -1165,9 +1171,14 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       'customer.subscription.deleted',
     );
 
-    // Conflict gate uses findUnique only for renewable statuses — CANCELED skips it.
-    // findFirst still runs to locate a SCHEDULED CASH successor for period-end activation.
-    expect(txSubscription.findUnique).not.toHaveBeenCalled();
+    // findUnique always runs to capture previous cancelAtPeriodEnd for renewal audit.
+    // Conflict gate (findFirst for other renewable rows) is skipped for CANCELED.
+    expect(txSubscription.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { stripeSubscriptionId: 'sub_incoming' },
+        select: expect.objectContaining({ cancelAtPeriodEnd: true }),
+      }),
+    );
     expect(txSubscription.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ status: SubscriptionStatus.SCHEDULED }),
@@ -1327,5 +1338,106 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       status: SubscriptionStatus.ACTIVE,
       stripeSubscriptionId: 'sub_1U0LZeGuUoCXNOREKzoRfHBa',
     });
+  });
+});
+
+describe('StripeWebhookService — renewal CAPE audit', () => {
+  const baseSub = {
+    id: 'sub_stripe_1',
+    status: 'active',
+    customer: 'cus_test',
+    cancel_at_period_end: true,
+    cancellation_details: { reason: 'cancellation_requested', feedback: 'unused' },
+    metadata: { userId: 'user_1', studioId: 'studio_1', planId: 'plan-full' },
+    items: {
+      data: [
+        {
+          price: { id: 'price_full' },
+          current_period_start: 1786641551,
+          current_period_end: 1789319951,
+        },
+      ],
+    },
+  };
+
+  it('Portal-style CAPE false→true calls external renewal audit with null actor inputs', async () => {
+    const { service, subscriptionLifecycle, renewalAudit, txSubscription } =
+      makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue({
+      id: 'sub-local-1',
+      cancelAtPeriodEnd: false,
+      status: 'ACTIVE',
+    });
+
+    await (service as unknown as {
+      upsertSubscriptionFromStripe: (
+        sub: typeof baseSub,
+        md: object,
+        type: string,
+        ctx: object,
+      ) => Promise<void>;
+    }).upsertSubscriptionFromStripe(
+      baseSub,
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.updated',
+      {
+        eventId: 'evt_portal',
+        eventType: 'customer.subscription.updated',
+        requestId: null,
+        idempotencyKey: null,
+        receivedAt: new Date('2026-08-13T17:27:05.000Z'),
+      },
+    );
+
+    expect(renewalAudit.maybeLogExternalRenewalChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previousCancelAtPeriodEnd: false,
+        newCancelAtPeriodEnd: true,
+        stripeEventId: 'evt_portal',
+        stripeRequestId: null,
+        stripeIdempotencyKey: null,
+        cancellationFeedback: 'unused',
+      }),
+    );
+  });
+
+  it('does not call external audit when CAPE unchanged', async () => {
+    const { service, subscriptionLifecycle, renewalAudit, txSubscription } =
+      makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+    });
+    txSubscription.findUnique.mockResolvedValue({
+      id: 'sub-local-1',
+      cancelAtPeriodEnd: true,
+      status: 'ACTIVE',
+    });
+
+    await (service as unknown as {
+      upsertSubscriptionFromStripe: (
+        sub: typeof baseSub,
+        md: object,
+        type: string,
+        ctx: object,
+      ) => Promise<void>;
+    }).upsertSubscriptionFromStripe(
+      { ...baseSub, cancel_at_period_end: true },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.updated',
+      {
+        eventId: 'evt_noop',
+        eventType: 'customer.subscription.updated',
+        requestId: null,
+        idempotencyKey: null,
+        receivedAt: new Date(),
+      },
+    );
+
+    expect(renewalAudit.maybeLogExternalRenewalChange).not.toHaveBeenCalled();
   });
 });

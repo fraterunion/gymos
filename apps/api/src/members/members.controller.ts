@@ -289,8 +289,17 @@ export class MembersController {
     @Param('userId') userId: string,
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: SetCancelAtPeriodEndDto,
+    @CurrentUser('sub') actorUserId: string,
   ) {
-    return this.membersService.setCancelAtPeriodEnd(studioId, userId, subscriptionId, dto.cancel);
+    return this.membersService.setCancelAtPeriodEnd(
+      studioId,
+      userId,
+      subscriptionId,
+      dto.cancel,
+      actorUserId,
+      // Only Admin Memberships list calls this endpoint today.
+      'ADMIN_MEMBERSHIPS',
+    );
   }
 
   @Get(':userId/plan-change-preview')

@@ -30,6 +30,7 @@ import {
   toPlanSummary,
   type PlanSummary,
 } from './subscription-lifecycle.utils';
+import { buildGymosRenewalIdempotencyKey } from './stripe-renewal-audit.utils';
 
 export type MembershipCheckoutResponse =
   | { action: 'checkout'; url: string }
@@ -254,9 +255,11 @@ export class SubscriptionLifecycleService {
       ...(params.initiatedByUserId ? { initiatedByUserId: params.initiatedByUserId } : {}),
     };
 
-    const stripeOptions = params.idempotencyKey
-      ? { idempotencyKey: params.idempotencyKey }
-      : undefined;
+    const stripeOptions = {
+      idempotencyKey: params.idempotencyKey
+        ? `gymos_renewal_${params.idempotencyKey}`
+        : buildGymosRenewalIdempotencyKey(),
+    };
 
     let effective: 'immediate' | 'next_period' = 'immediate';
     let updatedStripeSub = stripeSub;
@@ -285,6 +288,7 @@ export class SubscriptionLifecycleService {
           ...baseMetadata,
           pendingPlanId: targetPlan.id,
         },
+        idempotencyKey: stripeOptions.idempotencyKey,
       });
     }
 

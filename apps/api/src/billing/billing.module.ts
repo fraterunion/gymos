@@ -5,6 +5,7 @@ import { EnrollmentModule } from '../enrollment/enrollment.module';
 import { WaiverModule } from '../waiver/waiver.module';
 import { BillingService } from './billing.service';
 import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
+import { StripeRenewalAuditService } from './stripe-renewal-audit.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
@@ -19,6 +20,7 @@ import { StudioBillingController } from './studio-billing.controller';
     SubscriptionLifecycleService,
     SubscriptionReconciliationService,
     StripeToCashTransitionService,
+    StripeRenewalAuditService,
     StripeWebhookService,
   ],
   exports: [
@@ -26,6 +28,7 @@ import { StudioBillingController } from './studio-billing.controller';
     SubscriptionLifecycleService,
     SubscriptionReconciliationService,
     StripeToCashTransitionService,
+    StripeRenewalAuditService,
     StripeModule,
   ],
 })

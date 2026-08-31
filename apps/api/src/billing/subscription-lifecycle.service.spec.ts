@@ -142,7 +142,9 @@ describe('SubscriptionLifecycleService', () => {
         ...STRIPE_IMMEDIATE_UPGRADE_PARAMS,
         cancel_at_period_end: false,
       }),
-      undefined,
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^gymos_renewal_/),
+      }),
     );
     expect(prisma.subscription.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -199,7 +201,9 @@ describe('SubscriptionLifecycleService', () => {
         ...STRIPE_IMMEDIATE_UPGRADE_PARAMS,
         cancel_at_period_end: false,
       }),
-      undefined,
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^gymos_renewal_/),
+      }),
     );
     expect(prisma.subscription.update).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -485,7 +485,7 @@ export type PlanConfigurationHistoryMetadata = {
 
 export type PlanConfigurationHistoryEntryLike = {
   action: string;
-  actor: { firstName: string; lastName: string };
+  actor: { firstName: string; lastName: string } | null;
   metadata: PlanConfigurationHistoryMetadata;
 };
 
@@ -499,7 +499,9 @@ export function formatHistoryEntryCents(cents: number, currency: string): string
 }
 
 export function formatHistoryEntry(entry: PlanConfigurationHistoryEntryLike): string {
-  const actor = `${entry.actor.firstName} ${entry.actor.lastName}`.trim();
+  const actor = entry.actor
+    ? `${entry.actor.firstName} ${entry.actor.lastName}`.trim()
+    : "Sistema";
   const changes = entry.metadata.changes;
   if (entry.action === "MEMBERSHIP_PLAN_ARCHIVED") return `${actor} archivó el plan`;
   if (entry.action === "MEMBERSHIP_PLAN_CREATED") return `${actor} creó el plan`;

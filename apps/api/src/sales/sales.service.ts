@@ -243,6 +243,9 @@ export class SalesService {
     await this.stripeToCash.reconcileScheduledCashForMember(studioId, targetUserId);
 
     const stripeSub = await this.stripeToCash.findPrimaryStripeSubscription(studioId, targetUserId);
+    let canceledStripeForAudit: Awaited<
+      ReturnType<StripeToCashTransitionService['cancelStripeImmediately']>
+    > = null;
 
     if (stripeSub?.stripeSubscriptionId) {
       if (!dto.stripeResolution) {
@@ -285,6 +288,11 @@ export class SalesService {
             effectiveAt: scheduled.subscription.currentPeriodStart?.toISOString() ?? null,
             amountCents: dto.amountCents,
             paymentId: scheduled.payment.id,
+            origin: 'GYMOS',
+            sourceSurface: 'STRIPE_TO_CASH_TRANSITION',
+            previousCancelAtPeriodEnd: scheduled.stripe.previousCancelAtPeriodEnd,
+            newCancelAtPeriodEnd: true,
+            stripeIdempotencyKey: scheduled.stripe.stripeIdempotencyKey,
           },
         });
 
@@ -295,7 +303,7 @@ export class SalesService {
       }
 
       // cancel_immediately — Stripe cancel first, then ACTIVE cash below.
-      await this.stripeToCash.cancelStripeImmediately({
+      canceledStripeForAudit = await this.stripeToCash.cancelStripeImmediately({
         studioId,
         userId: targetUserId,
       });
@@ -528,6 +536,11 @@ export class SalesService {
               resolution: 'immediate',
               oldSource: 'STRIPE',
               newSource: 'CASH',
+              oldSubscriptionId: canceledStripeForAudit?.id ?? null,
+              stripeSubscriptionId: canceledStripeForAudit?.stripeSubscriptionId ?? null,
+              origin: 'GYMOS',
+              sourceSurface: 'STRIPE_TO_CASH_TRANSITION',
+              stripeIdempotencyKey: canceledStripeForAudit?.stripeIdempotencyKey ?? null,
             }
           : {}),
       },

@@ -4,7 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type AuditLogInput = {
   studioId: string;
-  actorUserId: string;
+  /** Null only for proven non-human / external origins (e.g. Stripe Portal mirror). */
+  actorUserId: string | null;
   action: string;
   targetUserId?: string;
   entityType?: string;

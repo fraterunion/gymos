@@ -535,6 +535,9 @@ const TIMELINE_CONFIG: Record<string, { dot: string; label?: string }> = {
   CRM_UPDATED:        { dot: "bg-zinc-400" },
   NOTE_CREATED:       { dot: "bg-violet-500" },
   WAIVER_ACCEPTED:    { dot: "bg-teal-500" },
+  STRIPE_RENEWAL_DISABLED: { dot: "bg-amber-500" },
+  STRIPE_RENEWAL_REACTIVATED: { dot: "bg-emerald-500" },
+  STRIPE_RENEWAL_EXTERNAL_CHANGE: { dot: "bg-orange-500" },
 };
 const TIMELINE_TITLES: Record<string, string> = {
   MEMBER_CREATED: "Miembro creado",
@@ -549,6 +552,9 @@ const TIMELINE_TITLES: Record<string, string> = {
   CRM_UPDATED: "Datos CRM actualizados",
   NOTE_CREATED: "Nota operativa agregada",
   WAIVER_ACCEPTED: "Carta responsiva aceptada",
+  STRIPE_RENEWAL_DISABLED: "Renovación automática desactivada",
+  STRIPE_RENEWAL_REACTIVATED: "Renovación automática reactivada",
+  STRIPE_RENEWAL_EXTERNAL_CHANGE: "Renovación modificada desde Stripe",
 };
 
 function TimelineTab({ studioId, userId }: { studioId: string; userId: string }) {
@@ -626,7 +632,15 @@ function TimelineTab({ studioId, userId }: { studioId: string; userId: string })
                         {ev.description && (
                           <p className="mt-0.5 text-sm text-zinc-500">{ev.description}</p>
                         )}
-                        {ev.actor ? <p className="mt-0.5 text-xs text-zinc-400">Por {ev.actor}</p> : null}
+                        {ev.actor ? (
+                          <p className="mt-0.5 text-xs text-zinc-400">
+                            {ev.type === "STRIPE_RENEWAL_EXTERNAL_CHANGE"
+                              ? ev.actor
+                              : `Por ${ev.actor}`}
+                          </p>
+                        ) : ev.type === "STRIPE_RENEWAL_EXTERNAL_CHANGE" ? (
+                          <p className="mt-0.5 text-xs text-zinc-400">Origen externo · actor no identificado</p>
+                        ) : null}
                       </div>
                       <p className="shrink-0 text-xs text-zinc-400">{time}</p>
                     </div>

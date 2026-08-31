@@ -40,4 +40,19 @@ describe('Member 360 operational summaries', () => {
     expect(sortMemberTimeline(events).map((event) => event.type)).toEqual(['ATTENDANCE', 'MEMBERSHIP', 'PAYMENT']);
     expect(sortMemberTimeline(events)[0]?.actor).toBe('Front Desk');
   });
+
+  it('keeps renewal audits additive and chronologically interleaved with other history', () => {
+    const events = [
+      { type: 'PAYMENT_SUCCEEDED', occurredAt: new Date('2026-08-13T17:19:00Z') },
+      { type: 'STRIPE_RENEWAL_EXTERNAL_CHANGE', occurredAt: new Date('2026-08-13T17:27:00Z') },
+      { type: 'CHECKED_IN', occurredAt: new Date('2026-08-20T12:00:00Z') },
+      { type: 'NOTE_CREATED', occurredAt: new Date('2026-08-15T10:00:00Z') },
+    ];
+    expect(sortMemberTimeline(events).map((e) => e.type)).toEqual([
+      'CHECKED_IN',
+      'NOTE_CREATED',
+      'STRIPE_RENEWAL_EXTERNAL_CHANGE',
+      'PAYMENT_SUCCEEDED',
+    ]);
+  });
 });
