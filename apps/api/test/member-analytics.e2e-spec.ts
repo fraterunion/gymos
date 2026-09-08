@@ -10,6 +10,31 @@ import {
   createStudio,
   createUserWithPassword,
 } from './helpers/factories';
+import {
+  getStudioLocalDateKey,
+  getStudioLocalHHmm,
+  studioLocalDateKeyToUtcAnchor,
+} from '../src/common/date/studio-local-date';
+
+/** Fixed UTC-6 year-round (Mexico abolished DST in 2022) — the local month starts
+ *  6 hours AFTER the UTC month, which is the boundary these fixtures exercise. */
+const TZ = 'America/Mexico_City';
+
+/** UTC instant when the CURRENT studio-local month began (1st 00:00 local = 1st 06:00Z). */
+function currentLocalMonthStartUtc(now: Date): Date {
+  const monthKey = getStudioLocalDateKey(now, TZ).slice(0, 8);
+  return studioLocalDateKeyToUtcAnchor(`${monthKey}01`, TZ);
+}
+
+/**
+ * An instant provably inside the this_month window [local month start, now] at ANY
+ * run date: the midpoint of the window. Valid even in the first second of the month
+ * (midpoint degenerates to the boundary, which is inclusive on both ends).
+ */
+function instantInsideCurrentLocalMonth(now: Date): Date {
+  const start = currentLocalMonthStartUtc(now);
+  return new Date(Math.floor((start.getTime() + now.getTime()) / 2));
+}
 
 async function loginAccessToken(
   app: INestApplication,
@@ -92,12 +117,16 @@ describe('Member Analytics (e2e)', () => {
     await createMembership(prisma, memberId, studio.id, Role.MEMBER);
 
     const template = await createClassTemplate(prisma, studio.id, { name: 'Pull' });
+
+    // In-window row: provably inside [studio-local month start, now] at any run date.
+    const now = new Date();
+    const inWindowCheckIn = instantInsideCurrentLocalMonth(now);
     const scheduled = await prisma.scheduledClass.create({
       data: {
         studioId: studio.id,
         classTemplateId: template.id,
-        startsAt: new Date('2026-08-15T12:00:00.000Z'),
-        endsAt: new Date('2026-08-15T13:00:00.000Z'),
+        startsAt: new Date(inWindowCheckIn.getTime() - 5 * 60_000),
+        endsAt: new Date(inWindowCheckIn.getTime() + 55 * 60_000),
         capacity: 12,
         status: ClassStatus.SCHEDULED,
       },
@@ -107,7 +136,36 @@ describe('Member Analytics (e2e)', () => {
         studioId: studio.id,
         scheduledClassId: scheduled.id,
         userId: memberId,
-        checkedInAt: new Date('2026-08-15T12:05:00.000Z'),
+        checkedInAt: inWindowCheckIn,
+        method: 'MANUAL',
+      },
+    });
+
+    // Timezone discriminator: 30 min BEFORE the local month started = 23:30 on the
+    // last day of the previous STUDIO-LOCAL month, but (CDMX = UTC-6) 05:30Z on the
+    // 1st — i.e. inside the current UTC calendar month, and always in the past
+    // (now is in the local month, so now >= local month start > this instant).
+    // Correct studio-timezone months exclude it; a UTC-month regression would count
+    // it and break the exact totals asserted below.
+    const prevLocalMonthCheckIn = new Date(
+      currentLocalMonthStartUtc(now).getTime() - 30 * 60_000,
+    );
+    const prevMonthClass = await prisma.scheduledClass.create({
+      data: {
+        studioId: studio.id,
+        classTemplateId: template.id,
+        startsAt: new Date(prevLocalMonthCheckIn.getTime() - 5 * 60_000),
+        endsAt: new Date(prevLocalMonthCheckIn.getTime() + 55 * 60_000),
+        capacity: 12,
+        status: ClassStatus.SCHEDULED,
+      },
+    });
+    await prisma.attendance.create({
+      data: {
+        studioId: studio.id,
+        scheduledClassId: prevMonthClass.id,
+        userId: memberId,
+        checkedInAt: prevLocalMonthCheckIn,
         method: 'MANUAL',
       },
     });
@@ -117,8 +175,10 @@ describe('Member Analytics (e2e)', () => {
       .set('Authorization', `Bearer ${ownerToken}`)
       .expect(200);
 
-    expect(summary.body.kpis.attendances).toBeGreaterThanOrEqual(1);
-    expect(summary.body.kpis.membersAttended).toBeGreaterThanOrEqual(1);
+    // Exactly the in-window attendance: the previous-local-month row must NOT be
+    // counted even though it falls in the current UTC month.
+    expect(summary.body.kpis.attendances).toBe(1);
+    expect(summary.body.kpis.membersAttended).toBe(1);
   });
 
   it('uses class startsAt for favorite schedule time, not check-in drift', async () => {
@@ -130,12 +190,26 @@ describe('Member Analytics (e2e)', () => {
     });
     await createMembership(prisma, memberId, studio.id, Role.MEMBER);
     const template = await createClassTemplate(prisma, studio.id, { name: 'Morning Pull' });
+
+    // Window inclusion is driven by checkedInAt; the DISPLAYED time must come from the
+    // class startsAt. Anchor the check-in provably inside [local month start, now], and
+    // put the class at 13:00Z on the check-in's studio-local day = 07:00 CDMX (UTC-6).
+    // The check-in instant is deliberately hours away from 07:00 local, so an
+    // implementation deriving favoriteTime from check-in time (or formatting the class
+    // time in UTC — 13:00) cannot produce the asserted '07:00'.
+    let checkedInAt = instantInsideCurrentLocalMonth(new Date());
+    if (getStudioLocalHHmm(checkedInAt, TZ) === '07:00') {
+      // Vanishingly rare collision with the asserted value; +90s keeps the instant
+      // inside the window (a 07:00-local midpoint implies >= 7h of window remains).
+      checkedInAt = new Date(checkedInAt.getTime() + 90_000);
+    }
+    const startsAt = new Date(`${getStudioLocalDateKey(checkedInAt, TZ)}T13:00:00.000Z`);
     const scheduled = await prisma.scheduledClass.create({
       data: {
         studioId: studio.id,
         classTemplateId: template.id,
-        startsAt: new Date('2026-08-18T13:00:00.000Z'), // 07:00 CDMX
-        endsAt: new Date('2026-08-18T14:00:00.000Z'),
+        startsAt, // 07:00 CDMX on the check-in's local day
+        endsAt: new Date(startsAt.getTime() + 60 * 60_000),
         capacity: 12,
         status: ClassStatus.SCHEDULED,
       },
@@ -145,7 +219,7 @@ describe('Member Analytics (e2e)', () => {
         studioId: studio.id,
         scheduledClassId: scheduled.id,
         userId: memberId,
-        checkedInAt: new Date('2026-08-18T13:03:00.000Z'),
+        checkedInAt,
         method: 'MANUAL',
       },
     });

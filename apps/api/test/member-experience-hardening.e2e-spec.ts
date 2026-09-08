@@ -21,6 +21,11 @@ import { WaitlistService } from '../src/waitlist/waitlist.service';
 import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
 import {
+  addDaysToDateKey,
+  getDayOfWeekFromDateKey,
+  getStudioLocalDateKey,
+} from '../src/common/date/studio-local-date';
+import {
   createActiveSubscription,
   createClassTemplate,
   createConfirmedBooking,
@@ -47,6 +52,15 @@ function futureClassDates(hoursFromNow = 48) {
   const start = new Date(Date.now() + hoursFromNow * 60 * 60 * 1000);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   return { start, end };
+}
+
+/** Next weekday on/after dateKey (JS getDay: 0=Sun … 6=Sat) — calendar21 pattern. */
+function nextWeekdayOnOrAfter(dateKey: string, weekday: number): string {
+  let key = dateKey;
+  while (getDayOfWeekFromDateKey(key) !== weekday) {
+    key = addDaysToDateKey(key, 1);
+  }
+  return key;
 }
 
 describe('Member experience reliability hardening (e2e)', () => {
@@ -146,10 +160,21 @@ describe('Member experience reliability hardening (e2e)', () => {
     });
 
     it('series SINGLE cancellation applies the same booking/waitlist invariant', async () => {
-      const studio = await createStudio(prisma, { timezone: 'America/Mexico_City' });
+      const TZ = 'America/Mexico_City';
+      const studio = await createStudio(prisma, { timezone: TZ });
       const plan = await createMembershipPlanForStudio(prisma, studio.id);
       const tpl = await createClassTemplate(prisma, studio.id);
       const admin = await seedAdmin(studio.id);
+      // Time-stable series window (calendar21 pattern): first Wednesday at least 7
+      // studio-local days out — strictly after studio "today" (createRecurringSeries
+      // clamps candidate starts to now), and with the second Wednesday at most
+      // today+20, far inside the 90-day materialization horizon. Two occurrences so
+      // SINGLE cancellation can prove it touches ONLY the targeted one.
+      const seriesStart = nextWeekdayOnOrAfter(
+        addDaysToDateKey(getStudioLocalDateKey(new Date(), TZ), 7),
+        3, // Wednesday
+      );
+      const seriesEnd = addDaysToDateKey(seriesStart, 7);
       await seriesService.createRecurringSeries(
         studio.id,
         {
@@ -157,20 +182,32 @@ describe('Member experience reliability hardening (e2e)', () => {
           daysOfWeek: [3],
           startTime: '07:00',
           intervalWeeks: 1,
-          startsOn: '2026-09-02',
-          endsOn: '2026-09-02',
+          startsOn: seriesStart,
+          endsOn: seriesEnd,
           capacity: 8,
           confirmWarnings: true,
         },
         admin.id,
       );
-      const occurrence = await prisma.scheduledClass.findFirstOrThrow({
+      const occurrences = await prisma.scheduledClass.findMany({
         where: { studioId: studio.id, classTemplateId: tpl.id },
+        orderBy: { startsAt: 'asc' },
       });
+      expect(occurrences).toHaveLength(2);
+      const [occurrence, sibling] = occurrences as [
+        (typeof occurrences)[number],
+        (typeof occurrences)[number],
+      ];
       const member = await createUserWithPassword(prisma, { email: 'series-book@e2e.local' });
       await createMembership(prisma, member.id, studio.id, Role.MEMBER);
       await createActiveSubscription(prisma, studio.id, member.id, plan.id);
       const booking = await createConfirmedBooking(prisma, studio.id, occurrence.id, member.id);
+      const siblingBooking = await createConfirmedBooking(
+        prisma,
+        studio.id,
+        sibling.id,
+        member.id,
+      );
 
       await seriesService.cancelOccurrence(
         studio.id,
@@ -187,6 +224,13 @@ describe('Member experience reliability hardening (e2e)', () => {
       expect((await prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe(
         BookingStatus.CANCELLED,
       );
+      // SINGLE means single: the sibling occurrence and its booking are untouched.
+      expect(
+        (await prisma.scheduledClass.findUniqueOrThrow({ where: { id: sibling.id } })).status,
+      ).toBe(ClassStatus.SCHEDULED);
+      expect(
+        (await prisma.booking.findUniqueOrThrow({ where: { id: siblingBooking.id } })).status,
+      ).toBe(BookingStatus.CONFIRMED);
     });
 
     it('bulk cancel applies the same booking invariant', async () => {
