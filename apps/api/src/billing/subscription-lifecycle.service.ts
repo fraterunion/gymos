@@ -18,6 +18,7 @@ import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
 import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
+import { findConflictingMemberships } from '../memberships/membership-compatibility';
 import {
   buildImmediateUpgradeUpdateParams,
   readCurrentStripePriceId,
@@ -85,6 +86,33 @@ export class SubscriptionLifecycleService {
     }) as Promise<SubscriptionWithPlan | null>;
   }
 
+  /** MM-1: plural variant — ALL current renewable/entitled memberships, newest first. */
+  async findCurrentRenewableSubscriptions(
+    studioId: string,
+    userId: string,
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<SubscriptionWithPlan[]> {
+    const now = new Date();
+    return tx.subscription.findMany({
+      where: {
+        studioId,
+        userId,
+        OR: [
+          {
+            stripeSubscriptionId: { not: null },
+            status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+          },
+          {
+            stripeSubscriptionId: null,
+            ...currentlyEntitledSubscriptionWhere(now),
+          },
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      include: { membershipPlan: true },
+    }) as Promise<SubscriptionWithPlan[]>;
+  }
+
   async findPrimaryStripeSubscription(
     studioId: string,
     userId: string,
@@ -100,6 +128,40 @@ export class SubscriptionLifecycleService {
       orderBy: [{ createdAt: 'desc' }],
       include: { membershipPlan: true },
     }) as Promise<SubscriptionWithPlan | null>;
+  }
+
+  /**
+   * MM-1 — plan-scoped replacement for "the member's Stripe subscription": the renewable
+   * Stripe subscription that CONFLICTS with purchasing/selling `targetPlan` (same plan, or
+   * same non-null exclusive group per membership-compatibility). With the multi-membership
+   * gate off this returns any renewable Stripe subscription — the legacy behavior —
+   * because every membership then conflicts by definition.
+   */
+  async findConflictingStripeSubscription(
+    studioId: string,
+    userId: string,
+    targetPlan: { id: string; exclusiveGroup: string | null },
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<SubscriptionWithPlan | null> {
+    const subs = (await tx.subscription.findMany({
+      where: {
+        studioId,
+        userId,
+        stripeSubscriptionId: { not: null },
+        status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      include: { membershipPlan: true },
+    })) as SubscriptionWithPlan[];
+    const conflicts = findConflictingMemberships(
+      subs.map((s) => ({
+        row: s,
+        membershipPlanId: s.membershipPlanId,
+        exclusiveGroupKey: s.exclusiveGroupKey,
+      })),
+      targetPlan,
+    );
+    return conflicts[0]?.row ?? null;
   }
 
   async getPlanChangePreview(params: {
@@ -192,7 +254,15 @@ export class SubscriptionLifecycleService {
       await this.reconciliation.assertHealthyForPlanChange(params.studioId, params.targetUserId);
     }
 
-    const stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.targetUserId);
+    // MM-1: only a CONFLICTING Stripe subscription (same plan or same exclusive group)
+    // routes to plan-change semantics. A compatible stackable plan gets its own checkout —
+    // buying Booty Lab while on Full Access must never CHANGE Full Access. With the
+    // multi-membership gate off, every renewable Stripe sub conflicts (legacy behavior).
+    const stripeSub = await this.findConflictingStripeSubscription(
+      params.studioId,
+      params.targetUserId,
+      targetPlan,
+    );
 
     if (!stripeSub?.stripeSubscriptionId) {
       const { checkoutUrl } = await params.createCheckout(params);
@@ -353,6 +423,9 @@ export class SubscriptionLifecycleService {
   /**
    * Read-only detection of multiple renewable subscriptions for the same member/studio.
    * Does NOT mutate Stripe or local rows — production duplicates require manual review.
+   * MM-1: two COMPATIBLE memberships (different plan, no shared non-null exclusive group)
+   * are legitimate, not duplicates — only same-plan/same-group siblings are flagged.
+   * Gate off → every sibling is flagged (legacy behavior).
    */
   async auditDuplicateRenewableSubscriptions(
     tx: Prisma.TransactionClient | PrismaService,
@@ -365,7 +438,7 @@ export class SubscriptionLifecycleService {
       stripeEventType?: string;
     },
   ): Promise<void> {
-    const siblings = await tx.subscription.findMany({
+    const allSiblings = await tx.subscription.findMany({
       where: {
         studioId: params.studioId,
         userId: params.userId,
@@ -373,9 +446,23 @@ export class SubscriptionLifecycleService {
         status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
       },
       include: {
-        membershipPlan: { select: { id: true, name: true } },
+        membershipPlan: { select: { id: true, name: true, exclusiveGroup: true } },
       },
     });
+    const keptRow = await tx.subscription.findUnique({
+      where: { id: params.keepSubscriptionId },
+      include: { membershipPlan: { select: { id: true, exclusiveGroup: true } } },
+    });
+    const siblings = keptRow
+      ? findConflictingMemberships(
+          allSiblings.map((s) => ({
+            row: s,
+            membershipPlanId: s.membershipPlanId,
+            exclusiveGroupKey: s.exclusiveGroupKey,
+          })),
+          { id: keptRow.membershipPlanId, exclusiveGroup: keptRow.membershipPlan.exclusiveGroup },
+        ).map((c) => c.row)
+      : allSiblings;
 
     if (siblings.length === 0) return;
 
@@ -412,8 +499,12 @@ export class SubscriptionLifecycleService {
     studioId: string;
     userId: string;
     allowStripeResolution?: 'cancel_immediately' | 'cancel_at_period_end';
+    /** MM-1: when provided, only a same-plan/same-group Stripe subscription conflicts. */
+    targetPlan?: { id: string; exclusiveGroup: string | null };
   }): Promise<void> {
-    const stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    const stripeSub = params.targetPlan
+      ? await this.findConflictingStripeSubscription(params.studioId, params.userId, params.targetPlan)
+      : await this.findPrimaryStripeSubscription(params.studioId, params.userId);
     if (!stripeSub?.stripeSubscriptionId) return;
 
     if (!params.allowStripeResolution) {

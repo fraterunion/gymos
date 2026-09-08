@@ -762,3 +762,99 @@ describe('SubscriptionReconciliationService — auditStudio', () => {
     expect(dup?.requiresManualResolution).toBe(true);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// MM-1 — compatible multi-membership is NOT corruption (gate ON)
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('SubscriptionReconciliationService — MM-1 compatibility-aware duplicates (gate ON)', () => {
+  beforeEach(() => {
+    process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+  });
+  afterEach(() => {
+    delete process.env['MULTI_MEMBERSHIP_ENABLED'];
+  });
+
+  const SEP_30 = new Date('2026-09-30T12:00:00Z');
+  const SEP_30_UNIX = Math.floor(SEP_30.getTime() / 1000);
+
+  function withGroup(local: ReturnType<typeof makeLocalSub>, exclusiveGroupKey: string | null) {
+    return {
+      ...local,
+      exclusiveGroupKey,
+      membershipPlan: { ...local.membershipPlan, exclusiveGroup: exclusiveGroupKey },
+    };
+  }
+
+  it('Full Access + Booty Lab (compatible pair) is accepted — no duplicate_renewable issue', async () => {
+    const localFull = withGroup(
+      makeLocalSub('local-full', 'sub_full_mm', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const localBooty = withGroup(
+      makeLocalSub('local-booty', 'sub_booty_mm', 'plan-booty', 'Booty Lab', 80000, 'price_booty_mm', SEP_30),
+      null,
+    );
+    const { service } = buildService({
+      localSubs: [localFull, localBooty],
+      stripeSubs: [
+        makeStripeSub('sub_full_mm', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+        makeStripeSub('sub_booty_mm', 'active', false, 'price_booty_mm', 80000, SEP_30_UNIX),
+      ],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    expect(result.issues.map((i) => i.kind)).not.toContain('duplicate_renewable');
+    expect(result.requiresManualResolution).toBe(false);
+  });
+
+  it('two renewable Stripe subs for the SAME plan are still flagged as duplicate_renewable', async () => {
+    const localFullA = withGroup(
+      makeLocalSub('local-full-a', 'sub_full_a', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const localFullB = withGroup(
+      makeLocalSub('local-full-b', 'sub_full_b', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const { service } = buildService({
+      localSubs: [localFullA, localFullB],
+      stripeSubs: [
+        makeStripeSub('sub_full_a', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+        makeStripeSub('sub_full_b', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+      ],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    const dup = result.issues.find((i) => i.kind === 'duplicate_renewable');
+    expect(dup).toBeDefined();
+    expect((dup as { stripeSubscriptionIds: string[] }).stripeSubscriptionIds.sort()).toEqual([
+      'sub_full_a',
+      'sub_full_b',
+    ]);
+  });
+
+  it('two renewable Stripe subs in the SAME exclusive group (Full + Basic) are flagged as duplicate_renewable', async () => {
+    const localFull = withGroup(
+      makeLocalSub('local-full', 'sub_full_g', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const localBasic = withGroup(
+      makeLocalSub('local-basic-g', 'sub_basic_g', 'plan-basic', 'Basic Access', 100000, 'price_basic_mm', SEP_30),
+      'CORE',
+    );
+    const { service } = buildService({
+      localSubs: [localFull, localBasic],
+      stripeSubs: [
+        makeStripeSub('sub_full_g', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+        makeStripeSub('sub_basic_g', 'active', false, 'price_basic_mm', 100000, SEP_30_UNIX),
+      ],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    expect(result.issues.map((i) => i.kind)).toContain('duplicate_renewable');
+  });
+});

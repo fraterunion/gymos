@@ -98,7 +98,8 @@ export class BookingsService {
           await acquireMembershipUsageAdvisoryLock(tx, studioId, actorUserId);
         }
 
-        await this.bookingAccess.assertAccess(
+        // MM-2: records which membership's entitlement authorized this booking.
+        const { subscriptionId: entitlementSubscriptionId } = await this.bookingAccess.assertAccess(
           tx,
           studioId,
           actorUserId,
@@ -144,6 +145,7 @@ export class BookingsService {
               scheduledClassId,
               userId: actorUserId,
               status: BookingStatus.CONFIRMED,
+              subscriptionId: entitlementSubscriptionId,
             },
           });
         } catch (e) {

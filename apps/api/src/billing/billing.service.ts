@@ -145,16 +145,6 @@ export class BillingService {
       throw new ForbiddenException('Checkout is available to studio members with the MEMBER role only');
     }
 
-    const existingStripe = await this.subscriptionLifecycle.findPrimaryStripeSubscription(
-      params.studioId,
-      params.targetUserId,
-    );
-    if (existingStripe?.stripeSubscriptionId) {
-      throw new BadRequestException(
-        'Member already has a Stripe subscription. Use plan change instead of creating a new checkout session.',
-      );
-    }
-
     const plan = await this.prisma.membershipPlan.findFirst({
       where: {
         id: params.planId,
@@ -165,6 +155,20 @@ export class BillingService {
     });
     if (!plan) {
       throw new NotFoundException('Membership plan not found');
+    }
+
+    // MM-1: checkout is only blocked by a CONFLICTING Stripe subscription (same plan or
+    // same exclusive group). A compatible stackable plan legitimately opens a second
+    // checkout. Gate off → any Stripe subscription conflicts (legacy behavior).
+    const existingStripe = await this.subscriptionLifecycle.findConflictingStripeSubscription(
+      params.studioId,
+      params.targetUserId,
+      { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
+    );
+    if (existingStripe?.stripeSubscriptionId) {
+      throw new BadRequestException(
+        'Member already has a Stripe subscription. Use plan change instead of creating a new checkout session.',
+      );
     }
 
     const { priceId } = await this.ensureMembershipPlanStripePrice(plan.id);

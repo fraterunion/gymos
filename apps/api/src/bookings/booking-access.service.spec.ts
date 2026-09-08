@@ -40,23 +40,30 @@ describe('BookingAccessService', () => {
 
     return {
       subscription: {
-        findFirst: jest.fn().mockResolvedValue(
+        // MM-2: assertAccess loads ALL entitled subscriptions via findMany.
+        findMany: jest.fn().mockResolvedValue(
           overrides.sub
-            ? {
-                currentPeriodStart: new Date('2026-08-01T00:00:00.000Z'),
-                currentPeriodEnd: new Date('2026-09-01T00:00:00.000Z'),
-                entitlementEndsAt: overrides.sub.entitlementEndsAt ?? null,
-                membershipPlan: {
-                  allClassesAccess: overrides.sub.allClassesAccess,
-                  allowedCategories: overrides.sub.allowedCategories,
-                  classCredits: overrides.sub.classCredits,
-                  classTemplateAccess: overrides.sub.allowedTemplateIds.map((id) => ({
-                    classTemplateId: id,
-                  })),
+            ? [
+                {
+                  id: 'sub-1',
+                  createdAt: new Date('2026-07-01T00:00:00.000Z'),
+                  currentPeriodStart: new Date('2026-08-01T00:00:00.000Z'),
+                  currentPeriodEnd: new Date('2026-09-01T00:00:00.000Z'),
+                  entitlementEndsAt: overrides.sub.entitlementEndsAt ?? null,
+                  membershipPlan: {
+                    allClassesAccess: overrides.sub.allClassesAccess,
+                    allowedCategories: overrides.sub.allowedCategories,
+                    classCredits: overrides.sub.classCredits,
+                    classTemplateAccess: overrides.sub.allowedTemplateIds.map((id) => ({
+                      classTemplateId: id,
+                    })),
+                  },
                 },
-              }
-            : null,
+              ]
+            : [],
         ),
+        // Fall-through expired-membership probe still uses findFirst.
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       classTemplate: {
         findUnique: jest.fn().mockResolvedValue({
@@ -95,8 +102,8 @@ describe('BookingAccessService', () => {
         classTemplateId,
         scheduledClassId,
       ),
-    ).resolves.toBeUndefined();
-    expect(tx.subscription.findFirst).not.toHaveBeenCalled();
+    ).resolves.toEqual({ subscriptionId: null });
+    expect(tx.subscription.findMany).not.toHaveBeenCalled();
   });
 
   it('allows unlimited plan members for any class', async () => {
@@ -120,14 +127,12 @@ describe('BookingAccessService', () => {
         classTemplateId,
         scheduledClassId,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ subscriptionId: 'sub-1' });
   });
 
   it('denies a stale ACTIVE subscription whose effective period has expired', async () => {
     const tx = makeTx({ sub: null });
-    tx.subscription.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'expired-sub' });
+    tx.subscription.findFirst.mockResolvedValueOnce({ id: 'expired-sub' });
 
     await expect(
       service.assertAccess(
@@ -158,7 +163,7 @@ describe('BookingAccessService', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
-    expect(tx.subscription.findFirst).toHaveBeenNthCalledWith(
+    expect(tx.subscription.findMany).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         where: expect.objectContaining({
@@ -191,7 +196,7 @@ describe('BookingAccessService', () => {
         'tpl-push',
         scheduledClassId,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ subscriptionId: 'sub-1' });
   });
 
   it('rejects member booking disallowed template', async () => {
@@ -265,7 +270,7 @@ describe('BookingAccessService', () => {
         'tpl-hyrox',
         scheduledClassId,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ subscriptionId: 'sub-1' });
   });
 
   it('day pass overrides class access restriction', async () => {
@@ -290,7 +295,7 @@ describe('BookingAccessService', () => {
         classTemplateId,
         scheduledClassId,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ subscriptionId: null });
   });
 
   it('no subscription + no day pass → ForbiddenException with generic message', async () => {
@@ -304,7 +309,7 @@ describe('BookingAccessService', () => {
     const tx = makeTx({ sub: null, dayPass: true });
     await expect(
       service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ subscriptionId: null });
   });
 
   it('day pass overrides exhausted credits', async () => {
@@ -322,7 +327,7 @@ describe('BookingAccessService', () => {
     );
     await expect(
       service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ subscriptionId: null });
   });
 
   it('credits exhausted + no day pass → ForbiddenException with credit message', async () => {
@@ -364,8 +369,8 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: null });
       await expect(
         service.assertAccess(tx as never, studioId, userId, role, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-      ).resolves.toBeUndefined();
-      expect(tx.subscription.findFirst).not.toHaveBeenCalled();
+      ).resolves.toEqual({ subscriptionId: null });
+      expect(tx.subscription.findMany).not.toHaveBeenCalled();
     },
   );
 
@@ -387,7 +392,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, withinWindow, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ subscriptionId: 'sub-1' });
     });
 
     it('denies booking before time window opens', async () => {
@@ -411,7 +416,7 @@ describe('BookingAccessService', () => {
       // classStartsAt is at 18:00 UTC — any time, no window set → no enforcement
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'Etc/GMT+6', classTemplateId, scheduledClassId),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ subscriptionId: 'sub-1' });
     });
 
     // ── Boundary conditions (09:59 / 10:00 / 16:59 / 17:00 / 17:01 local) ──────
@@ -429,7 +434,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1000, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ subscriptionId: 'sub-1' });
     });
 
     it('allows at 16:59 local (one minute before window closes)', async () => {
@@ -437,7 +442,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1659, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ subscriptionId: 'sub-1' });
     });
 
     it('denies at 17:00 local (window end is exclusive)', async () => {
@@ -474,7 +479,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: null, dayPass: true, dayPassClassEligible: true });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ subscriptionId: null });
     });
 
     it('Day Pass allowlist check runs even when subscription is restricted', async () => {
@@ -485,7 +490,7 @@ describe('BookingAccessService', () => {
       });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ subscriptionId: null });
       expect(tx.dayPassClassAccess.findFirst).toHaveBeenCalled();
     });
   });

@@ -20,9 +20,14 @@ import {
   SubscriptionEndReason,
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
+import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { OPEN_GYM_LABEL } from '../check-ins/open-gym.constants';
+import {
+  findConflictingMemberships,
+  selectPrimaryMembership,
+} from '../memberships/membership-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
@@ -383,14 +388,16 @@ export class MembersService {
 
     const profileNow = new Date();
     const thirtyDaysAgo = new Date(profileNow.getTime() - 30 * 86_400_000);
-    const [attendanceTotal, attendanceLast30, latestSubscription, bookingGroups, lastAttendance, nextBooking, upcomingBookingCount, lastPayment, recentNoShows, recentBookings] = await Promise.all([
+    const [attendanceTotal, attendanceLast30, allSubscriptions, bookingGroups, lastAttendance, nextBooking, upcomingBookingCount, lastPayment, recentNoShows, recentBookings] = await Promise.all([
       this.prisma.attendance.count({
         where: { studioId, userId },
       }),
       this.prisma.attendance.count({
         where: { studioId, userId, checkedInAt: { gte: thirtyDaysAgo } },
       }),
-      this.prisma.subscription.findFirst({
+      // MM-1/MM-4 foundation: load ALL subscriptions — the canonical PRIMARY one keeps the
+      // singular fields backward compatible; the memberships[] array carries the rest.
+      this.prisma.subscription.findMany({
         where: { studioId, userId },
         orderBy: { createdAt: 'desc' },
         include: {
@@ -405,6 +412,7 @@ export class MembersService {
               entitlementDays: true,
               allowedCategories: true,
               allClassesAccess: true,
+              exclusiveGroup: true,
               classTemplateAccess: {
                 select: {
                   classTemplateId: true,
@@ -476,6 +484,15 @@ export class MembersService {
     let creditsRemaining: number | null = null;
     let visitsCurrentPeriod = 0;
 
+    // MM-1: canonical PRIMARY membership — the entitled CORE-group row first, else the
+    // deterministic newest entitled row; falls back to the newest row of any state so a
+    // fully-lapsed member keeps seeing their last membership exactly as before.
+    const entitledSubscriptions = allSubscriptions.filter(
+      (s) => deriveMembershipLifecycle(s, profileNow).isEntitled,
+    );
+    const latestSubscription =
+      selectPrimaryMembership(entitledSubscriptions) ?? allSubscriptions[0] ?? null;
+
     const latestLifecycle = latestSubscription ? deriveMembershipLifecycle(latestSubscription, profileNow) : null;
     const latestPrimaryStatus = latestLifecycle && latestSubscription
       ? toPrimaryMembershipStatus(latestLifecycle.lifecycleStatus, {
@@ -500,6 +517,7 @@ export class MembersService {
             userId,
             period,
             classCredits,
+            latestSubscription.id,
           );
           creditsUsed = usage.creditsUsed;
           creditsRemaining = usage.creditsRemaining;
@@ -571,6 +589,75 @@ export class MembersService {
       ...(profileNow.getTime() - membership.createdAt.getTime() <= 30 * 86_400_000 ? ['NEW_MEMBER'] : []),
     ];
 
+    // MM-1 API foundation: one summary per current membership (entitled, or renewable —
+    // e.g. PAST_DUE Stripe — so a delinquent membership still surfaces). Each entry carries
+    // enough identity for future independent per-membership actions. Singular fields below
+    // (currentMembership / activeSubscription) remain untouched for existing clients.
+    const membershipSummaryRows = allSubscriptions.filter((s) => {
+      const lc = deriveMembershipLifecycle(s, profileNow);
+      return (
+        lc.isEntitled ||
+        (RENEWABLE_SUBSCRIPTION_STATUSES as SubscriptionStatus[]).includes(s.status)
+      );
+    });
+    const memberships = await Promise.all(
+      membershipSummaryRows.map(async (s) => {
+        const lc = deriveMembershipLifecycle(s, profileNow);
+        let subCreditsUsed: number | null = null;
+        let subCreditsRemaining: number | null = null;
+        if (s.membershipPlan.classCredits !== null) {
+          const period = this.membershipUsage.resolveBillingPeriodForClassDate(
+            s,
+            s.currentPeriodStart ?? profileNow,
+          );
+          if (period) {
+            const usage = await this.membershipUsage.getUsageForPeriod(
+              this.prisma,
+              studioId,
+              userId,
+              period,
+              s.membershipPlan.classCredits,
+              s.id,
+            );
+            subCreditsUsed = usage.creditsUsed;
+            subCreditsRemaining = usage.creditsRemaining;
+          }
+        }
+        return {
+          subscriptionId: s.id,
+          membershipPlanId: s.membershipPlanId,
+          exclusiveGroup: s.exclusiveGroupKey,
+          status: s.status,
+          source: s.source,
+          accessState: lc.accessState,
+          lifecycleStatus: lc.lifecycleStatus,
+          isEntitled: lc.isEntitled,
+          currentPeriodStart: s.currentPeriodStart,
+          currentPeriodEnd: s.currentPeriodEnd,
+          entitlementEndsAt: s.entitlementEndsAt,
+          effectiveEnd: lc.effectiveEnd,
+          cancelAtPeriodEnd: s.cancelAtPeriodEnd,
+          plan: {
+            id: s.membershipPlan.id,
+            name: s.membershipPlan.name,
+            billingInterval: s.membershipPlan.billingInterval,
+            priceCents: s.membershipPlan.priceCents,
+            currency: s.membershipPlan.currency,
+            classCredits: s.membershipPlan.classCredits,
+            entitlementDays: s.membershipPlan.entitlementDays,
+          },
+          pendingPlan: s.pendingMembershipPlan
+            ? {
+                id: s.pendingMembershipPlan.id,
+                name: s.pendingMembershipPlan.name,
+              }
+            : null,
+          creditsUsed: subCreditsUsed,
+          creditsRemaining: subCreditsRemaining,
+        };
+      }),
+    );
+
     return {
       user: membership.user,
       role: membership.role,
@@ -579,6 +666,7 @@ export class MembersService {
         createdAt: membership.createdAt,
         updatedAt: membership.updatedAt,
       },
+      memberships,
       attendances: {
         totalInStudio: attendanceTotal,
       },
@@ -1079,17 +1167,27 @@ export class MembersService {
   ) {
     await this.assertMembership(studioId, userId);
 
-    const existing = await this.subscriptionLifecycle.findCurrentRenewableSubscription(studioId, userId);
-    if (existing) {
-      throw new ConflictException(
-        'Member already has a current membership. Change or cancel it before creating another.',
-      );
-    }
-
     const plan = await this.prisma.membershipPlan.findFirst({
       where: { id: planId, studioId, deletedAt: null, active: true },
     });
     if (!plan) throw new NotFoundException('Membership plan not found');
+
+    // MM-1: only a CONFLICTING current membership (same plan or same non-null exclusive
+    // group) blocks manual creation. Gate off → any current membership blocks (legacy).
+    const existing = await this.subscriptionLifecycle.findCurrentRenewableSubscriptions(studioId, userId);
+    const conflicting = findConflictingMemberships(
+      existing.map((s) => ({
+        row: s,
+        membershipPlanId: s.membershipPlanId,
+        exclusiveGroupKey: s.exclusiveGroupKey,
+      })),
+      { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
+    );
+    if (conflicting.length > 0) {
+      throw new ConflictException(
+        'Member already has a current membership. Change or cancel it before creating another.',
+      );
+    }
 
     const now = new Date();
     const periodEnd = new Date(now);
@@ -1116,6 +1214,7 @@ export class MembersService {
         status: SubscriptionStatus.ACTIVE,
         source: stripeSubscriptionId ? SubscriptionSource.STRIPE : SubscriptionSource.MANUAL,
         stripeSubscriptionId: stripeSubscriptionId ?? null,
+        exclusiveGroupKey: plan.exclusiveGroup,
         currentPeriodStart: now,
         currentPeriodEnd: periodEnd,
         ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),

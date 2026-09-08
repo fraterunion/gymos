@@ -28,6 +28,7 @@ describe('SalesService', () => {
     membershipEntitlementCycle: { create: jest.Mock };
     payment: { create: jest.Mock };
     $transaction: jest.Mock;
+    $executeRaw: jest.Mock;
   };
   let authService: { hashPassword: jest.Mock };
   let billingService: { createStaffInitiatedCheckoutSession: jest.Mock };
@@ -36,7 +37,9 @@ describe('SalesService', () => {
   let salesSettingsService: { getSettings: jest.Mock };
   let stripeToCash: {
     findPrimaryStripeSubscription: jest.Mock;
+    findConflictingStripeSubscription: jest.Mock;
     findPendingScheduledCash: jest.Mock;
+    findPendingScheduledCashForPlan: jest.Mock;
     buildConflictException: jest.Mock;
     assertCanResolveStripe: jest.Mock;
     scheduleCashAtStripePeriodEnd: jest.Mock;
@@ -65,6 +68,7 @@ describe('SalesService', () => {
       subscription: { create: jest.fn(), update: jest.fn(), count: jest.fn(), updateMany: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
       membershipEntitlementCycle: { create: jest.fn().mockResolvedValue({ id: 'cycle-1' }) },
       payment: { create: jest.fn() },
+      $executeRaw: jest.fn().mockResolvedValue(undefined),
       $transaction: jest.fn(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)),
     };
     authService = { hashPassword: jest.fn().mockResolvedValue('hashed') };
@@ -75,7 +79,9 @@ describe('SalesService', () => {
     };
     stripeToCash = {
       findPrimaryStripeSubscription: jest.fn().mockResolvedValue(null),
+      findConflictingStripeSubscription: jest.fn().mockResolvedValue(null),
       findPendingScheduledCash: jest.fn().mockResolvedValue(null),
+      findPendingScheduledCashForPlan: jest.fn().mockResolvedValue(null),
       buildConflictException: jest.fn(
         () =>
           new ConflictException({
@@ -301,7 +307,7 @@ describe('SalesService', () => {
       classCredits: 12,
     });
     prisma.subscription.findMany.mockResolvedValue([
-      { id: 'sub-alvaro-old', membershipPlanId: 'plan-basic' },
+      { id: 'sub-alvaro-old', membershipPlanId: 'plan-basic', exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } },
     ]);
     prisma.subscription.update.mockResolvedValue({});
     prisma.subscription.updateMany.mockResolvedValue({ count: 1 });
@@ -377,7 +383,7 @@ describe('SalesService', () => {
       entitlementDays: null,
     });
     prisma.subscription.findMany.mockResolvedValue([
-      { id: 'sub-basic', membershipPlanId: 'plan-basic' },
+      { id: 'sub-basic', membershipPlanId: 'plan-basic', exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } },
     ]);
     prisma.subscription.update.mockResolvedValue({});
     prisma.subscription.updateMany.mockResolvedValue({ count: 1 });
@@ -453,7 +459,7 @@ describe('SalesService', () => {
       name: 'Pro',
       entitlementDays: null,
     });
-    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+    stripeToCash.findConflictingStripeSubscription.mockResolvedValue({
       id: 'stripe-local',
       stripeSubscriptionId: 'sub_x',
       membershipPlanId: 'plan-1',
@@ -492,7 +498,7 @@ describe('SalesService', () => {
       name: 'Pro',
       entitlementDays: null,
     });
-    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+    stripeToCash.findConflictingStripeSubscription.mockResolvedValue({
       id: 'stripe-local',
       stripeSubscriptionId: 'sub_x',
       membershipPlanId: 'plan-1',
@@ -529,7 +535,7 @@ describe('SalesService', () => {
       name: 'Pro',
       entitlementDays: null,
     });
-    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+    stripeToCash.findConflictingStripeSubscription.mockResolvedValue({
       id: 'stripe-local',
       stripeSubscriptionId: 'sub_x',
       membershipPlanId: 'plan-1',
@@ -592,7 +598,7 @@ describe('SalesService', () => {
       name: 'Pro',
       entitlementDays: null,
     });
-    stripeToCash.findPrimaryStripeSubscription.mockResolvedValue({
+    stripeToCash.findConflictingStripeSubscription.mockResolvedValue({
       id: 'stripe-local',
       stripeSubscriptionId: 'sub_x',
       membershipPlanId: 'plan-1',

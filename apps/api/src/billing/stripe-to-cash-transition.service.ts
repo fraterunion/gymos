@@ -29,8 +29,13 @@ import {
   buildGymosStripeToCashImmediateIdempotencyKey,
   buildGymosStripeToCashPeriodEndIdempotencyKey,
 } from './stripe-renewal-audit.utils';
+import { findConflictingMemberships } from '../memberships/membership-compatibility';
+import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 
 type StripeSubWithPlan = Subscription & { membershipPlan: MembershipPlan };
+
+/** MM-3: the membership family a transition/activation is scoped to. */
+export type TransitionPlanScope = { id: string; exclusiveGroup: string | null };
 
 export type ScheduledCashResult = {
   subscription: {
@@ -128,6 +133,39 @@ export class StripeToCashTransitionService {
     });
   }
 
+  /**
+   * MM-3: the pending SCHEDULED CASH successor that belongs to `forPlan`'s membership
+   * family (same plan or same non-null exclusive group). Successors from other families
+   * (e.g. a Booty Lab successor while transitioning Full Access) are invisible here.
+   */
+  async findPendingScheduledCashForPlan(
+    studioId: string,
+    userId: string,
+    forPlan: TransitionPlanScope,
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<Subscription | null> {
+    const rows = await tx.subscription.findMany({
+      where: {
+        studioId,
+        userId,
+        status: SubscriptionStatus.SCHEDULED,
+        source: SubscriptionSource.CASH,
+      },
+      include: { membershipPlan: { select: { exclusiveGroup: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return (
+      findConflictingMemberships(
+        rows.map((r) => ({
+          row: r as Subscription,
+          membershipPlanId: r.membershipPlanId,
+          exclusiveGroupKey: r.exclusiveGroupKey,
+        })),
+        forPlan,
+      )[0]?.row ?? null
+    );
+  }
+
   async findPrimaryStripeSubscription(
     studioId: string,
     userId: string,
@@ -146,14 +184,51 @@ export class StripeToCashTransitionService {
   }
 
   /**
+   * MM-3: plan-scoped replacement for "the member's Stripe subscription" in transition
+   * flows — the renewable Stripe subscription in the SAME membership family as `forPlan`.
+   * With the multi-membership gate off every Stripe subscription conflicts (legacy).
+   */
+  async findConflictingStripeSubscription(
+    studioId: string,
+    userId: string,
+    forPlan: TransitionPlanScope,
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<StripeSubWithPlan | null> {
+    const subs = (await tx.subscription.findMany({
+      where: {
+        studioId,
+        userId,
+        stripeSubscriptionId: { not: null },
+        status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      include: { membershipPlan: true },
+    })) as StripeSubWithPlan[];
+    return (
+      findConflictingMemberships(
+        subs.map((s) => ({
+          row: s,
+          membershipPlanId: s.membershipPlanId,
+          exclusiveGroupKey: s.exclusiveGroupKey,
+        })),
+        forPlan,
+      )[0]?.row ?? null
+    );
+  }
+
+  /**
    * Cancel Stripe immediately and mark the local row CANCELED.
    * Idempotent when local is already CANCELED (recovery after Stripe-succeeded / DB-failed).
    */
   async cancelStripeImmediately(params: {
     studioId: string;
     userId: string;
+    /** MM-3: scope to this membership family. Without it, legacy newest-first lookup. */
+    forPlan?: TransitionPlanScope;
   }): Promise<(StripeSubWithPlan & { stripeIdempotencyKey: string | null }) | null> {
-    const stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    const stripeSub = params.forPlan
+      ? await this.findConflictingStripeSubscription(params.studioId, params.userId, params.forPlan)
+      : await this.findPrimaryStripeSubscription(params.studioId, params.userId);
     if (!stripeSub?.stripeSubscriptionId) {
       // Recovery: Stripe already canceled locally — allow cash creation to proceed.
       return null;
@@ -219,9 +294,14 @@ export class StripeToCashTransitionService {
     notes: string | null;
     defaultPeriodEnd: (start: Date, interval: MembershipPlan['billingInterval']) => Date;
   }): Promise<ScheduledCashResult> {
-    const stripeSub = await this.findPrimaryStripeSubscription(
+    // MM-3: the transition targets the Stripe subscription in the SAME membership family
+    // as the cash plan being sold — a sibling membership (e.g. Booty Lab while
+    // transitioning Full Access) receives zero mutations from this entire flow.
+    const planScope: TransitionPlanScope = { id: params.plan.id, exclusiveGroup: params.plan.exclusiveGroup };
+    const stripeSub = await this.findConflictingStripeSubscription(
       params.studioId,
       params.targetUserId,
+      planScope,
     );
     if (!stripeSub?.stripeSubscriptionId) {
       throw new BadRequestException(
@@ -234,9 +314,10 @@ export class StripeToCashTransitionService {
       );
     }
 
-    const existingScheduled = await this.findPendingScheduledCash(
+    const existingScheduled = await this.findPendingScheduledCashForPlan(
       params.studioId,
       params.targetUserId,
+      planScope,
     );
     if (existingScheduled) {
       return this.buildIdempotentScheduledResult({
@@ -272,6 +353,8 @@ export class StripeToCashTransitionService {
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
+        // MM-1 concurrency: serialize compatibility check + successor creation per member.
+        await acquireSubscriptionWriteAdvisoryLock(tx, params.studioId, params.targetUserId);
         const subscription = await tx.subscription.create({
           data: {
             studioId: params.studioId,
@@ -280,6 +363,7 @@ export class StripeToCashTransitionService {
             status: SubscriptionStatus.SCHEDULED,
             source: SubscriptionSource.CASH,
             stripeSubscriptionId: null,
+            exclusiveGroupKey: params.plan.exclusiveGroup,
             currentPeriodStart: periodStart,
             currentPeriodEnd: periodEnd,
             cancelAtPeriodEnd: true,
@@ -360,7 +444,11 @@ export class StripeToCashTransitionService {
     } catch (e) {
       // Concurrent period-end requests: unique SCHEDULED index wins; return existing row + payment.
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        const raced = await this.findPendingScheduledCash(params.studioId, params.targetUserId);
+        const raced = await this.findPendingScheduledCashForPlan(
+          params.studioId,
+          params.targetUserId,
+          planScope,
+        );
         if (raced) {
           return this.buildIdempotentScheduledResult({
             existingScheduled: raced,
@@ -472,91 +560,149 @@ export class StripeToCashTransitionService {
    */
   async activateScheduledCashIfDue(
     tx: Prisma.TransactionClient,
-    params: { studioId: string; userId: string; now?: Date },
+    params: {
+      studioId: string;
+      userId: string;
+      now?: Date;
+      /**
+       * MM-3: scope activation to this membership family (the plan of the subscription
+       * that just ended). Without it — reconciliation fallback — every SCHEDULED row is
+       * evaluated against the Stripe subscriptions of ITS OWN family only, so a Booty Lab
+       * cancellation can never activate a Full Access successor and vice versa.
+       */
+      forPlan?: TransitionPlanScope;
+    },
   ): Promise<Subscription | null> {
     const now = params.now ?? new Date();
-    const scheduled = await tx.subscription.findFirst({
+    const allScheduled = await tx.subscription.findMany({
       where: {
         studioId: params.studioId,
         userId: params.userId,
         status: SubscriptionStatus.SCHEDULED,
         source: SubscriptionSource.CASH,
       },
+      include: { membershipPlan: { select: { id: true, exclusiveGroup: true } } },
       orderBy: { createdAt: 'desc' },
     });
-    if (!scheduled) {
+    const scheduledCandidates = params.forPlan
+      ? findConflictingMemberships(
+          allScheduled.map((r) => ({
+            row: r,
+            membershipPlanId: r.membershipPlanId,
+            exclusiveGroupKey: r.exclusiveGroupKey,
+          })),
+          params.forPlan,
+        ).map((c) => c.row)
+      : allScheduled;
+    if (scheduledCandidates.length === 0) {
       // Already activated by a concurrent worker — treat as success/no-op.
       return null;
     }
 
-    const stripeRenewable = await tx.subscription.findFirst({
+    const stripeRenewables = (await tx.subscription.findMany({
       where: {
         studioId: params.studioId,
         userId: params.userId,
         stripeSubscriptionId: { not: null },
         status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
       },
+      include: { membershipPlan: true },
       orderBy: { createdAt: 'desc' },
-    });
+    })) as StripeSubWithPlan[];
 
-    if (stripeRenewable) {
-      const periodEnd = stripeRenewable.currentPeriodEnd;
-      if (periodEnd && periodEnd > now) {
-        return null;
+    for (const scheduled of scheduledCandidates) {
+      const familyScope: TransitionPlanScope = {
+        id: scheduled.membershipPlanId,
+        exclusiveGroup: scheduled.exclusiveGroupKey,
+      };
+      // Only a Stripe subscription in the SAME family blocks this successor's activation.
+      const stripeRenewable =
+        findConflictingMemberships(
+          stripeRenewables.map((s) => ({
+            row: s,
+            membershipPlanId: s.membershipPlanId,
+            exclusiveGroupKey: s.exclusiveGroupKey,
+          })),
+          familyScope,
+        )[0]?.row ?? null;
+
+      if (stripeRenewable) {
+        const periodEnd = stripeRenewable.currentPeriodEnd;
+        if (periodEnd && periodEnd > now) {
+          continue;
+        }
+        await tx.subscription.update({
+          where: { id: stripeRenewable.id },
+          data: {
+            status: SubscriptionStatus.CANCELED,
+            cancelAtPeriodEnd: false,
+            endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+            supersededBySubscriptionId: scheduled.id,
+          },
+        });
+      } else {
+        // Orphan-link recovery, scoped to this successor's own family: only a CANCELED
+        // Stripe row it actually superseded may be linked to it.
+        const cancelledStripeRows = await tx.subscription.findMany({
+          where: {
+            studioId: params.studioId,
+            userId: params.userId,
+            source: SubscriptionSource.STRIPE,
+            status: SubscriptionStatus.CANCELED,
+            supersededBySubscriptionId: null,
+            endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
+          },
+          include: { membershipPlan: { select: { exclusiveGroup: true } } },
+        });
+        const linkable = findConflictingMemberships(
+          cancelledStripeRows.map((r) => ({
+            row: r,
+            membershipPlanId: r.membershipPlanId,
+            exclusiveGroupKey: r.exclusiveGroupKey,
+          })),
+          familyScope,
+        ).map((c) => c.row.id);
+        if (linkable.length > 0) {
+          await tx.subscription.updateMany({
+            where: { id: { in: linkable } },
+            data: { supersededBySubscriptionId: scheduled.id },
+          });
+        }
       }
-      await tx.subscription.update({
-        where: { id: stripeRenewable.id },
-        data: {
-          status: SubscriptionStatus.CANCELED,
-          cancelAtPeriodEnd: false,
-          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
-          supersededBySubscriptionId: scheduled.id,
-        },
-      });
-    } else {
-      await tx.subscription.updateMany({
+
+      // Conditional promote: only one concurrent transaction can move SCHEDULED → ACTIVE.
+      const promoted = await tx.subscription.updateMany({
         where: {
+          id: scheduled.id,
+          status: SubscriptionStatus.SCHEDULED,
+        },
+        data: { status: SubscriptionStatus.ACTIVE },
+      });
+      if (promoted.count === 0) {
+        continue;
+      }
+
+      const activated = await tx.subscription.findUniqueOrThrow({
+        where: { id: scheduled.id },
+      });
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'stripe_to_cash_scheduled_activated',
           studioId: params.studioId,
           userId: params.userId,
-          source: SubscriptionSource.STRIPE,
-          status: SubscriptionStatus.CANCELED,
-          supersededBySubscriptionId: null,
-          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
-        },
-        data: { supersededBySubscriptionId: scheduled.id },
-      });
+          scheduledCashId: activated.id,
+          activatedAt: now.toISOString(),
+        }),
+      );
+
+      return activated;
     }
 
-    // Conditional promote: only one concurrent transaction can move SCHEDULED → ACTIVE.
-    const promoted = await tx.subscription.updateMany({
-      where: {
-        id: scheduled.id,
-        status: SubscriptionStatus.SCHEDULED,
-      },
-      data: { status: SubscriptionStatus.ACTIVE },
-    });
-    if (promoted.count === 0) {
-      return null;
-    }
-
-    const activated = await tx.subscription.findUniqueOrThrow({
-      where: { id: scheduled.id },
-    });
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'stripe_to_cash_scheduled_activated',
-        studioId: params.studioId,
-        userId: params.userId,
-        scheduledCashId: activated.id,
-        activatedAt: now.toISOString(),
-      }),
-    );
-
-    return activated;
+    return null;
   }
 
-  /** Reconciliation / missed-webhook fallback for one member. */
+  /** Reconciliation / missed-webhook fallback for one member (all families evaluated). */
   async reconcileScheduledCashForMember(studioId: string, userId: string): Promise<boolean> {
     const activated = await this.prisma.$transaction((tx) =>
       this.activateScheduledCashIfDue(tx, { studioId, userId }),

@@ -54,7 +54,16 @@ export class MembershipUsageService {
     userId: string,
     periodStart: Date,
     periodEnd: Date,
+    subscriptionId?: string | null,
   ): Promise<number> {
+    // MM-2: when a subscription is given, consumption is scoped to rows ATTRIBUTED to it,
+    // plus legacy NULL-attribution rows (pre-attribution history — for a single-membership
+    // member every historical row is theirs, so counts are unchanged; new multi-membership
+    // consumption is always attributed at write time and never cross-counts).
+    const attributionFilter = (column: Prisma.Sql) =>
+      subscriptionId != null
+        ? Prisma.sql`AND (${column} = ${subscriptionId} OR ${column} IS NULL)`
+        : Prisma.empty;
     const rows = await client.$queryRaw<{ count: bigint }[]>`
       SELECT COUNT(*)::bigint AS count
       FROM (
@@ -66,6 +75,7 @@ export class MembershipUsageService {
           AND b.status IN (${CREDIT_CONSUMING_BOOKING_STATUS_SQL})
           AND sc.starts_at >= ${periodStart}
           AND sc.starts_at < ${periodEnd}
+          ${attributionFilter(Prisma.sql`b.subscription_id`)}
         UNION
         SELECT a.scheduled_class_id
         FROM attendances a
@@ -74,6 +84,7 @@ export class MembershipUsageService {
           AND a.user_id = ${userId}
           AND sc.starts_at >= ${periodStart}
           AND sc.starts_at < ${periodEnd}
+          ${attributionFilter(Prisma.sql`a.subscription_id`)}
       ) consumed
     `;
     return Number(rows[0]?.count ?? 0n);
@@ -86,7 +97,12 @@ export class MembershipUsageService {
     scheduledClassId: string,
     periodStart: Date,
     periodEnd: Date,
+    subscriptionId?: string | null,
   ): Promise<boolean> {
+    const attributionFilter = (column: Prisma.Sql) =>
+      subscriptionId != null
+        ? Prisma.sql`AND (${column} = ${subscriptionId} OR ${column} IS NULL)`
+        : Prisma.empty;
     const rows = await client.$queryRaw<{ exists: boolean }[]>`
       SELECT EXISTS (
         SELECT 1
@@ -100,6 +116,7 @@ export class MembershipUsageService {
             AND b.status IN (${CREDIT_CONSUMING_BOOKING_STATUS_SQL})
             AND sc.starts_at >= ${periodStart}
             AND sc.starts_at < ${periodEnd}
+            ${attributionFilter(Prisma.sql`b.subscription_id`)}
           UNION
           SELECT a.scheduled_class_id
           FROM attendances a
@@ -109,6 +126,7 @@ export class MembershipUsageService {
             AND a.scheduled_class_id = ${scheduledClassId}
             AND sc.starts_at >= ${periodStart}
             AND sc.starts_at < ${periodEnd}
+            ${attributionFilter(Prisma.sql`a.subscription_id`)}
         ) consumed
       ) AS exists
     `;
@@ -121,6 +139,7 @@ export class MembershipUsageService {
     userId: string,
     period: BillingPeriodBounds,
     classCredits: number | null,
+    subscriptionId?: string | null,
   ): Promise<MembershipUsageSnapshot> {
     if (classCredits === null) {
       return {
@@ -137,6 +156,7 @@ export class MembershipUsageService {
       userId,
       period.start,
       period.end,
+      subscriptionId,
     );
     return {
       classCredits,
@@ -197,6 +217,7 @@ export class MembershipUsageService {
       scheduledClassId,
       period.start,
       period.end,
+      subscription.id ?? null,
     );
     if (alreadyConsumed) {
       return;
@@ -208,6 +229,7 @@ export class MembershipUsageService {
       userId,
       period.start,
       period.end,
+      subscription.id ?? null,
     );
     if (used >= classCredits) {
       const err =
