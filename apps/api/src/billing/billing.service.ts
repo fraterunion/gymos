@@ -95,6 +95,11 @@ export class BillingService {
     });
   }
 
+  /** MM-5: batched catalog CTA semantics (see membership-purchase-options). */
+  async getMembershipPurchaseOptions(studioId: string, userId: string) {
+    return this.subscriptionLifecycle.getMembershipPurchaseOptions(studioId, userId);
+  }
+
   private async initiateMembershipPurchase(params: {
     userId: string;
     studioId: string;

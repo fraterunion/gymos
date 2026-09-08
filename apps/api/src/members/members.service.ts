@@ -413,6 +413,7 @@ export class MembersService {
               entitlementDays: true,
               allowedCategories: true,
               allClassesAccess: true,
+              openGymAccess: true,
               exclusiveGroup: true,
               classTemplateAccess: {
                 select: {
@@ -598,7 +599,10 @@ export class MembersService {
       const lc = deriveMembershipLifecycle(s, profileNow);
       return (
         lc.isEntitled ||
-        (RENEWABLE_SUBSCRIPTION_STATUSES as SubscriptionStatus[]).includes(s.status)
+        (RENEWABLE_SUBSCRIPTION_STATUSES as SubscriptionStatus[]).includes(s.status) ||
+        // MM-5: SCHEDULED successors are part of the member's current picture — clients
+        // attach them under the membership whose supersededBySubscriptionId points here.
+        s.status === SubscriptionStatus.SCHEDULED
       );
     });
     const memberships = await Promise.all(
@@ -638,6 +642,9 @@ export class MembersService {
           entitlementEndsAt: s.entitlementEndsAt,
           effectiveEnd: lc.effectiveEnd,
           cancelAtPeriodEnd: s.cancelAtPeriodEnd,
+          // MM-5: when set, this membership is superseded by the row with that id —
+          // clients render that SCHEDULED successor attached to THIS card.
+          supersededBySubscriptionId: s.supersededBySubscriptionId,
           plan: {
             id: s.membershipPlan.id,
             name: s.membershipPlan.name,
@@ -646,6 +653,13 @@ export class MembersService {
             currency: s.membershipPlan.currency,
             classCredits: s.membershipPlan.classCredits,
             entitlementDays: s.membershipPlan.entitlementDays,
+            openGymAccess: s.membershipPlan.openGymAccess,
+            allClassesAccess: s.membershipPlan.allClassesAccess,
+            allowedCategories: s.membershipPlan.allowedCategories,
+            allowedTemplates: s.membershipPlan.classTemplateAccess.map((a) => ({
+              id: a.classTemplateId,
+              name: a.classTemplate.name,
+            })),
           },
           pendingPlan: s.pendingMembershipPlan
             ? {

@@ -263,7 +263,7 @@ describe('[6] Class access rules apply independently from credit count', () => {
         'tpl-strength',
         scheduledClassId,
       ),
-    ).resolves.toEqual({ subscriptionId: 'sub-pro' });
+    ).resolves.toMatchObject({ subscriptionId: 'sub-pro' });
     expect(membershipUsage.assertCreditAvailableForClass).toHaveBeenCalledTimes(1);
   });
 

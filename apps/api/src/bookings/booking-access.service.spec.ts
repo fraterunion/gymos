@@ -102,7 +102,7 @@ describe('BookingAccessService', () => {
         classTemplateId,
         scheduledClassId,
       ),
-    ).resolves.toEqual({ subscriptionId: null });
+    ).resolves.toMatchObject({ subscriptionId: null, chargedMembership: null });
     expect(tx.subscription.findMany).not.toHaveBeenCalled();
   });
 
@@ -127,7 +127,7 @@ describe('BookingAccessService', () => {
         classTemplateId,
         scheduledClassId,
       ),
-    ).resolves.toEqual({ subscriptionId: 'sub-1' });
+    ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
   });
 
   it('denies a stale ACTIVE subscription whose effective period has expired', async () => {
@@ -196,7 +196,7 @@ describe('BookingAccessService', () => {
         'tpl-push',
         scheduledClassId,
       ),
-    ).resolves.toEqual({ subscriptionId: 'sub-1' });
+    ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
   });
 
   it('rejects member booking disallowed template', async () => {
@@ -270,7 +270,7 @@ describe('BookingAccessService', () => {
         'tpl-hyrox',
         scheduledClassId,
       ),
-    ).resolves.toEqual({ subscriptionId: 'sub-1' });
+    ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
   });
 
   it('day pass overrides class access restriction', async () => {
@@ -295,7 +295,7 @@ describe('BookingAccessService', () => {
         classTemplateId,
         scheduledClassId,
       ),
-    ).resolves.toEqual({ subscriptionId: null });
+    ).resolves.toMatchObject({ subscriptionId: null, chargedMembership: null });
   });
 
   it('no subscription + no day pass → ForbiddenException with generic message', async () => {
@@ -309,7 +309,7 @@ describe('BookingAccessService', () => {
     const tx = makeTx({ sub: null, dayPass: true });
     await expect(
       service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-    ).resolves.toEqual({ subscriptionId: null });
+    ).resolves.toMatchObject({ subscriptionId: null, chargedMembership: null });
   });
 
   it('day pass overrides exhausted credits', async () => {
@@ -327,7 +327,7 @@ describe('BookingAccessService', () => {
     );
     await expect(
       service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-    ).resolves.toEqual({ subscriptionId: null });
+    ).resolves.toMatchObject({ subscriptionId: null, chargedMembership: null });
   });
 
   it('credits exhausted + no day pass → ForbiddenException with credit message', async () => {
@@ -369,7 +369,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: null });
       await expect(
         service.assertAccess(tx as never, studioId, userId, role, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-      ).resolves.toEqual({ subscriptionId: null });
+      ).resolves.toMatchObject({ subscriptionId: null, chargedMembership: null });
       expect(tx.subscription.findMany).not.toHaveBeenCalled();
     },
   );
@@ -392,7 +392,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, withinWindow, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
-      ).resolves.toEqual({ subscriptionId: 'sub-1' });
+      ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
     });
 
     it('denies booking before time window opens', async () => {
@@ -416,7 +416,7 @@ describe('BookingAccessService', () => {
       // classStartsAt is at 18:00 UTC — any time, no window set → no enforcement
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'Etc/GMT+6', classTemplateId, scheduledClassId),
-      ).resolves.toEqual({ subscriptionId: 'sub-1' });
+      ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
     });
 
     // ── Boundary conditions (09:59 / 10:00 / 16:59 / 17:00 / 17:01 local) ──────
@@ -434,7 +434,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1000, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
-      ).resolves.toEqual({ subscriptionId: 'sub-1' });
+      ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
     });
 
     it('allows at 16:59 local (one minute before window closes)', async () => {
@@ -442,7 +442,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: openGymSub, templateTimeWindow: { start: '10:00', end: '17:00' } });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, at1659, 'Etc/GMT+6', 'tpl-open-gym', scheduledClassId),
-      ).resolves.toEqual({ subscriptionId: 'sub-1' });
+      ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
     });
 
     it('denies at 17:00 local (window end is exclusive)', async () => {
@@ -479,7 +479,7 @@ describe('BookingAccessService', () => {
       const tx = makeTx({ sub: null, dayPass: true, dayPassClassEligible: true });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-      ).resolves.toEqual({ subscriptionId: null });
+      ).resolves.toMatchObject({ subscriptionId: null, chargedMembership: null });
     });
 
     it('Day Pass allowlist check runs even when subscription is restricted', async () => {
@@ -490,7 +490,7 @@ describe('BookingAccessService', () => {
       });
       await expect(
         service.assertAccess(tx as never, studioId, userId, Role.MEMBER, classStartsAt, 'America/Mexico_City', classTemplateId, scheduledClassId),
-      ).resolves.toEqual({ subscriptionId: null });
+      ).resolves.toMatchObject({ subscriptionId: null, chargedMembership: null });
       expect(tx.dayPassClassAccess.findFirst).toHaveBeenCalled();
     });
   });

@@ -31,6 +31,16 @@ const bypassRoles: ReadonlySet<Role> = new Set([
 
 export const CLASS_TIME_WINDOW_DENIED_MESSAGE = MEMBER_ERRORS.timeWindowDenied;
 
+export type BookingAccessResult = {
+  subscriptionId: string | null;
+  /** MM-5: which membership this booking is charged to (null for role bypass / Day Pass). */
+  chargedMembership: {
+    subscriptionId: string;
+    planName: string;
+    creditConsumed: boolean;
+  } | null;
+};
+
 /**
  * Shared booking access guard used by BookingsService (direct booking) and
  * WaitlistService (waitlist join + promotion). Single canonical path enforcing:
@@ -50,6 +60,8 @@ export class BookingAccessService {
    * MM-2: returns the id of the subscription whose entitlement authorized this access, so
    * callers persist it as Booking.subscriptionId. Null when authorization came from a role
    * bypass or the Day Pass fallback (no membership entitlement was consumed).
+   * MM-5: also returns chargedMembership for the booking response — which membership the
+   * booking is charged to and whether a scarce credit was consumed (false for unlimited).
    */
   async assertAccess(
     tx: Prisma.TransactionClient,
@@ -60,9 +72,9 @@ export class BookingAccessService {
     studioTimezone: string,
     classTemplateId: string,
     scheduledClassId: string,
-  ): Promise<{ subscriptionId: string | null }> {
+  ): Promise<BookingAccessResult> {
     if (bypassRoles.has(membershipRole)) {
-      return { subscriptionId: null };
+      return { subscriptionId: null, chargedMembership: null };
     }
 
     // Always fetch template metadata — needed for time-window and category checks.
@@ -101,6 +113,7 @@ export class BookingAccessService {
         entitlementEndsAt: true,
         membershipPlan: {
           select: {
+            name: true,
             allClassesAccess: true,
             allowedCategories: true,
             classCredits: true,
@@ -139,7 +152,14 @@ export class BookingAccessService {
         let firstNonExhaustedError: ForbiddenException | null = null;
         for (const sub of ordered) {
           if (sub.membershipPlan.classCredits === null) {
-            return { subscriptionId: sub.id };
+            return {
+              subscriptionId: sub.id,
+              chargedMembership: {
+                subscriptionId: sub.id,
+                planName: sub.membershipPlan.name,
+                creditConsumed: false,
+              },
+            };
           }
 
           // For fixed-duration plans, entitlementEndsAt is the actual access window end.
@@ -151,7 +171,14 @@ export class BookingAccessService {
           if (!effectiveSub.currentPeriodStart || !effectiveSub.currentPeriodEnd) {
             // No resolvable period — cannot meter credits; matches the legacy single-sub
             // behavior of allowing the booking rather than inventing a denial.
-            return { subscriptionId: sub.id };
+            return {
+              subscriptionId: sub.id,
+              chargedMembership: {
+                subscriptionId: sub.id,
+                planName: sub.membershipPlan.name,
+                creditConsumed: false,
+              },
+            };
           }
           try {
             await this.membershipUsage.assertCreditAvailableForClass(
@@ -163,7 +190,14 @@ export class BookingAccessService {
               effectiveSub,
               { errorType: 'forbidden' },
             );
-            return { subscriptionId: sub.id };
+            return {
+              subscriptionId: sub.id,
+              chargedMembership: {
+                subscriptionId: sub.id,
+                planName: sub.membershipPlan.name,
+                creditConsumed: true,
+              },
+            };
           } catch (e) {
             if (
               e instanceof ForbiddenException &&
@@ -214,7 +248,7 @@ export class BookingAccessService {
           validForDate,
         },
       });
-      if (pass) return { subscriptionId: null };
+      if (pass) return { subscriptionId: null, chargedMembership: null };
     }
 
     if (subscriptionRestricted) {

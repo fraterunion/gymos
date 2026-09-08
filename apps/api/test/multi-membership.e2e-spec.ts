@@ -626,6 +626,168 @@ describe('Multi-membership MM-1..MM-4 (e2e, gate ON, FINAL constraint shape)', (
     return Number(rows[0]?.count ?? 0n);
   }
 
+  // ── MM-5A: multi-membership experience contract ────────────────────────────
+
+  async function fetchPurchaseOptions(studioId: string, token: string) {
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studioId}/membership-plans/purchase-options`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    return res.body.options as Array<{
+      planId: string;
+      purchaseAction: string;
+      relatedSubscriptionId: string | null;
+      relatedPlanName: string | null;
+      reasonCode: string | null;
+    }>;
+  }
+
+  it('purchase-options for a Stripe Full holder: CURRENT / CHANGE / ADD — and never ADD with the gate OFF', async () => {
+    const { studio, fullPlan, basicPlan, bootyPlan } = await setupStudioWithPlans();
+    const { member, memberToken } = await setupMemberAndAdmin(studio.id, 'opts-full');
+    await webhookService.upsertSubscriptionFromStripe(
+      stripePayload('sub_opts_full', studio.id, member.id, fullPlan.id),
+      { userId: member.id, studioId: studio.id, planId: fullPlan.id },
+      'customer.subscription.created',
+    );
+
+    const byPlan = new Map((await fetchPurchaseOptions(studio.id, memberToken)).map((o) => [o.planId, o]));
+    expect(byPlan.get(fullPlan.id)?.purchaseAction).toBe('CURRENT');
+    expect(byPlan.get(basicPlan.id)?.purchaseAction).toBe('CHANGE');
+    expect(byPlan.get(basicPlan.id)?.relatedPlanName).toBe('Full Access');
+    expect(byPlan.get(bootyPlan.id)?.purchaseAction).toBe('ADD');
+    // No compatibility vocabulary leaks to clients.
+    expect(JSON.stringify([...byPlan.values()])).not.toMatch(/exclusiveGroup|CORE/);
+
+    process.env['MULTI_MEMBERSHIP_ENABLED'] = 'false';
+    try {
+      const gated = new Map((await fetchPurchaseOptions(studio.id, memberToken)).map((o) => [o.planId, o]));
+      expect(gated.get(bootyPlan.id)?.purchaseAction).toBe('BLOCKED');
+      expect(gated.get(bootyPlan.id)?.reasonCode).toBe('STACKING_DISABLED');
+      expect(gated.get(basicPlan.id)?.purchaseAction).toBe('CHANGE');
+    } finally {
+      process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+    }
+  });
+
+  it('purchase-options for a dual member resolve from each OWN membership row, never from the primary', async () => {
+    const ctx = await setupFullPlusBooty('opts-dual');
+    const byPlan = new Map((await fetchPurchaseOptions(ctx.studio.id, ctx.memberToken)).map((o) => [o.planId, o]));
+    expect(byPlan.get(ctx.fullPlan.id)?.purchaseAction).toBe('CURRENT');
+    expect(byPlan.get(ctx.fullPlan.id)?.relatedSubscriptionId).toBe(ctx.fullSub.id);
+    expect(byPlan.get(ctx.bootyPlan.id)?.purchaseAction).toBe('CURRENT');
+    expect(byPlan.get(ctx.bootyPlan.id)?.relatedSubscriptionId).toBe(ctx.bootySub.id);
+  });
+
+  it('scheduled successor: memberships[] carries the SCHEDULED row, links it to its family, and options say SCHEDULED', async () => {
+    const { studio, fullPlan } = await setupStudioWithPlans();
+    const { member, memberToken } = await setupMemberAndAdmin(studio.id, 'opts-sched');
+    await webhookService.upsertSubscriptionFromStripe(
+      stripePayload('sub_sched_full', studio.id, member.id, fullPlan.id),
+      { userId: member.id, studioId: studio.id, planId: fullPlan.id },
+      'customer.subscription.created',
+    );
+    const fullRow = await prisma.subscription.findFirstOrThrow({
+      where: { studioId: studio.id, userId: member.id, membershipPlanId: fullPlan.id },
+    });
+    const successor = await prisma.subscription.create({
+      data: {
+        ...subRow(studio.id, member.id, fullPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.SCHEDULED),
+        currentPeriodStart: new Date(Date.now() + 30 * 86_400_000),
+        currentPeriodEnd: new Date(Date.now() + 60 * 86_400_000),
+      },
+    });
+    await prisma.subscription.update({
+      where: { id: fullRow.id },
+      data: { supersededBySubscriptionId: successor.id, cancelAtPeriodEnd: true },
+    });
+
+    const me = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/members/me`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(200);
+    const memberships = me.body.memberships as Array<{
+      subscriptionId: string;
+      status: string;
+      supersededBySubscriptionId: string | null;
+      plan: { openGymAccess: boolean; allClassesAccess: boolean; allowedTemplates: Array<{ id: string; name: string }> };
+    }>;
+    const scheduledRow = memberships.find((m) => m.subscriptionId === successor.id);
+    const activeRow = memberships.find((m) => m.subscriptionId === fullRow.id);
+    expect(scheduledRow?.status).toBe('SCHEDULED');
+    expect(activeRow?.supersededBySubscriptionId).toBe(successor.id);
+    expect(activeRow?.plan.allowedTemplates.map((t) => t.name)).toContain('Strength');
+    expect(typeof activeRow?.plan.openGymAccess).toBe('boolean');
+
+    const byPlan = new Map((await fetchPurchaseOptions(studio.id, memberToken)).map((o) => [o.planId, o]));
+    expect(byPlan.get(fullPlan.id)?.purchaseAction).toBe('SCHEDULED');
+    expect(byPlan.get(fullPlan.id)?.relatedSubscriptionId).toBe(successor.id);
+  });
+
+  it('canceled-but-entitled Booty: payload keeps entitlement state and options say RENEW', async () => {
+    const { studio, bootyPlan } = await setupStudioWithPlans();
+    const { member, memberToken } = await setupMemberAndAdmin(studio.id, 'opts-centitled');
+    const endsAt = new Date(Date.now() + 10 * 86_400_000);
+    await prisma.subscription.create({
+      data: {
+        ...subRow(studio.id, member.id, bootyPlan.id, null, SubscriptionStatus.CANCELED),
+        entitlementEndsAt: endsAt,
+      },
+    });
+
+    const me = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/members/me`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(200);
+    const bootyRow = (me.body.memberships as Array<{ membershipPlanId: string; status: string; isEntitled: boolean; entitlementEndsAt: string }>)
+      .find((m) => m.membershipPlanId === bootyPlan.id);
+    expect(bootyRow?.status).toBe('CANCELED');
+    expect(bootyRow?.isEntitled).toBe(true);
+    expect(new Date(bootyRow!.entitlementEndsAt).getTime()).toBe(endsAt.getTime());
+
+    const byPlan = new Map((await fetchPurchaseOptions(studio.id, memberToken)).map((o) => [o.planId, o]));
+    expect(byPlan.get(bootyPlan.id)?.purchaseAction).toBe('RENEW');
+    expect(byPlan.get(bootyPlan.id)?.reasonCode).toBe('RESUBSCRIBE');
+  });
+
+  it('booking response echoes chargedMembership: Booty credit consumed; unlimited Full consumes none', async () => {
+    const ctx = await setupFullPlusBooty('resp-attr');
+    const bootyClass = await createClass(ctx.studio.id, ctx.bootyTemplate.id);
+    const bootyRes = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${ctx.studio.id}/classes/${bootyClass.id}/bookings`)
+      .set('Authorization', `Bearer ${ctx.memberToken}`)
+      .expect(201);
+    expect(bootyRes.body.chargedMembership).toEqual({
+      subscriptionId: ctx.bootySub.id,
+      planName: 'Booty Lab by Etzia',
+      creditConsumed: true,
+    });
+
+    const fullClass = await createClass(ctx.studio.id, ctx.generalTemplate.id, 1);
+    const fullRes = await request(app.getHttpServer())
+      .post(`/api/v1/studios/${ctx.studio.id}/classes/${fullClass.id}/bookings`)
+      .set('Authorization', `Bearer ${ctx.memberToken}`)
+      .expect(201);
+    expect(fullRes.body.chargedMembership).toEqual({
+      subscriptionId: ctx.fullSub.id,
+      planName: 'Full Access',
+      creditConsumed: false,
+    });
+  });
+
+  it('staff purchase-options endpoint returns the same contract for a target member', async () => {
+    const ctx = await setupFullPlusBooty('opts-staff');
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${ctx.studio.id}/members/${ctx.member.id}/purchase-options`)
+      .set('Authorization', `Bearer ${ctx.adminToken}`)
+      .expect(200);
+    const byPlan = new Map((res.body.options as Array<{ planId: string; purchaseAction: string }>).map((o) => [o.planId, o]));
+    // Staff context: cash memberships are desk-renewable/changeable (cash-sale supersede).
+    expect(byPlan.get(ctx.fullPlan.id)?.purchaseAction).toBe('RENEW');
+    expect(byPlan.get(ctx.bootyPlan.id)?.purchaseAction).toBe('RENEW');
+    expect(byPlan.get(ctx.basicPlan.id)?.purchaseAction).toBe('CHANGE');
+  });
+
   // ── MM-4 A: final physical invariants (direct inserts against the real indexes) ──
 
   function subRow(studioId: string, userId: string, planId: string, groupKey: string | null, status: SubscriptionStatus) {

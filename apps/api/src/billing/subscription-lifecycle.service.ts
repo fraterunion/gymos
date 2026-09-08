@@ -17,11 +17,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
-import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
+import {
+  currentlyEntitledSubscriptionWhere,
+  isSubscriptionCurrentlyEntitled,
+} from '../memberships/membership-entitlement';
 import {
   allowNewMembershipStacks,
   findConflictingMemberships,
 } from '../memberships/membership-compatibility';
+import {
+  resolvePurchaseAction,
+  type PurchaseOption,
+  type PurchaseOptionContext,
+  type PurchaseOptionMembershipRow,
+} from '../memberships/membership-purchase-options';
 import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 import {
   buildImmediateUpgradeUpdateParams,
@@ -167,6 +176,58 @@ export class SubscriptionLifecycleService {
       targetPlan,
     );
     return conflicts[0]?.row ?? null;
+  }
+
+  /**
+   * MM-5 — batched, server-computed catalog CTA semantics for one member (see
+   * membership-purchase-options). One query for plans, one for the member's rows —
+   * never per-plan lookups. exclusiveGroup is consumed here and never exposed.
+   */
+  async getMembershipPurchaseOptions(
+    studioId: string,
+    userId: string,
+    context: PurchaseOptionContext = 'member',
+  ): Promise<{ options: PurchaseOption[] }> {
+    const now = new Date();
+    const [plans, rows] = await Promise.all([
+      this.prisma.membershipPlan.findMany({
+        where: { studioId, active: true, deletedAt: null },
+        select: { id: true, name: true, exclusiveGroup: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.subscription.findMany({
+        where: {
+          studioId,
+          userId,
+          OR: [
+            { status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } },
+            currentlyEntitledSubscriptionWhere(now),
+            { status: SubscriptionStatus.SCHEDULED },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { membershipPlan: { select: { name: true } } },
+      }),
+    ]);
+
+    const toOptionRow = (s: (typeof rows)[number]): PurchaseOptionMembershipRow => ({
+      id: s.id,
+      membershipPlanId: s.membershipPlanId,
+      exclusiveGroupKey: s.exclusiveGroupKey,
+      status: s.status,
+      stripeSubscriptionId: s.stripeSubscriptionId,
+      isEntitled: isSubscriptionCurrentlyEntitled(s, now),
+      currentPeriodStart: s.currentPeriodStart,
+      planName: s.membershipPlan.name,
+    });
+    const scheduledRows = rows.filter((s) => s.status === SubscriptionStatus.SCHEDULED).map(toOptionRow);
+    const currentRows = rows.filter((s) => s.status !== SubscriptionStatus.SCHEDULED).map(toOptionRow);
+
+    return {
+      options: plans.map((plan) =>
+        resolvePurchaseAction(plan, currentRows, scheduledRows, undefined, context),
+      ),
+    };
   }
 
   async getPlanChangePreview(params: {

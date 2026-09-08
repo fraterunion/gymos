@@ -44,6 +44,14 @@ export class MembershipPlansController {
     return this.billingService.checkPlanPricingIntegrity(studioId);
   }
 
+  /** MM-5: batched, server-computed CTA per plan for the CURRENT member (no N+1). */
+  @Get('purchase-options')
+  @UseGuards(RolesGuard)
+  @Roles(Role.MEMBER)
+  purchaseOptions(@Param('studioId') studioId: string, @Req() req: RequestWithUser) {
+    return this.billingService.getMembershipPurchaseOptions(studioId, req.user.sub);
+  }
+
   @Get(':planId/checkout-preview')
   @UseGuards(RolesGuard)
   @Roles(Role.MEMBER)
