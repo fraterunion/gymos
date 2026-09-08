@@ -775,6 +775,26 @@ describe('Multi-membership MM-1..MM-4 (e2e, gate ON, FINAL constraint shape)', (
     });
   });
 
+  it('analytics plan utilization counts a dual member once under EACH plan, while member KPIs count one person', async () => {
+    const ctx = await setupFullPlusBooty('analytics-dual');
+
+    const activity = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${ctx.studio.id}/analytics/members/activity?period=this_month`)
+      .set('Authorization', `Bearer ${ctx.adminToken}`)
+      .expect(200);
+    const utilization = activity.body.planUtilization as Array<{ planId: string; memberCount: number }>;
+    const fullRow = utilization.find((p) => p.planId === ctx.fullPlan.id);
+    const bootyRow = utilization.find((p) => p.planId === ctx.bootyPlan.id);
+    expect(fullRow?.memberCount).toBe(1);
+    expect(bootyRow?.memberCount).toBe(1);
+
+    const summary = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${ctx.studio.id}/analytics/members/summary?period=this_month`)
+      .set('Authorization', `Bearer ${ctx.adminToken}`)
+      .expect(200);
+    expect(summary.body.kpis.activeMembers).toBe(1);
+  });
+
   it('staff purchase-options endpoint returns the same contract for a target member', async () => {
     const ctx = await setupFullPlusBooty('opts-staff');
     const res = await request(app.getHttpServer())

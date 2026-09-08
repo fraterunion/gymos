@@ -175,7 +175,8 @@ export function OverviewBar({
   ];
 
   return (
-    <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <div className="mb-8">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
       {tiles.map(({ label, value, onClick }) => {
         const inner = (
           <>
@@ -201,6 +202,11 @@ export function OverviewBar({
           </div>
         );
       })}
+    </div>
+    {/* MM-5: multi-membership members appear under each plan they hold, but count once here. */}
+    <p className="mt-2 text-xs text-zinc-400">
+      Un miembro con más de una membresía puede aparecer en más de un plan; en “Miembros activos” cuenta una sola vez.
+    </p>
     </div>
   );
 }

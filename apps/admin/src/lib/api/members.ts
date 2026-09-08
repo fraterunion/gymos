@@ -210,6 +210,8 @@ export type MemberProfile = {
     averageVisitsPerWeekLast30: number;
     daysSinceLastVisit: number | null;
   };
+  /** MM-5: every current membership (entitled, renewable, or SCHEDULED successor). */
+  memberships: MembershipSummary[];
   currentMembership: ({
     id: string;
     status: SubStatus;
@@ -251,6 +253,43 @@ export type MemberProfile = {
     cancelAtPeriodEnd: boolean;
     plan: MemberPlan;
   } | null;
+};
+
+export type MembershipSummary = {
+  subscriptionId: string;
+  membershipPlanId: string;
+  /** Internal ordering only — never rendered as customer copy. */
+  exclusiveGroup: string | null;
+  status: SubStatus | "SCHEDULED";
+  source: PaymentSource;
+  accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
+  lifecycleStatus: LifecycleStatus;
+  isEntitled: boolean;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  entitlementEndsAt: string | null;
+  effectiveEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  supersededBySubscriptionId: string | null;
+  plan: MemberPlan & {
+    openGymAccess: boolean;
+    allClassesAccess: boolean;
+    allowedCategories: string[];
+    allowedTemplates: Array<{ id: string; name: string }>;
+  };
+  pendingPlan: Pick<MemberPlan, "id" | "name"> | null;
+  creditsUsed: number | null;
+  creditsRemaining: number | null;
+};
+
+/** MM-5: server-computed sale relationship for a target member (never derived client-side). */
+export type MemberPurchaseOption = {
+  planId: string;
+  purchaseAction: "SUBSCRIBE" | "CURRENT" | "RENEW" | "CHANGE" | "ADD" | "SCHEDULED" | "BLOCKED";
+  relatedSubscriptionId: string | null;
+  relatedPlanName: string | null;
+  effectiveDate: string | null;
+  reasonCode: string | null;
 };
 
 export type MemberCrmProfile = {
@@ -572,4 +611,14 @@ export async function fetchPlanChangePreview(
     `/studios/${studioId}/members/${memberId}/plan-change-preview?planId=${encodeURIComponent(planId)}`,
     { method: "GET" },
   );
+}
+
+export async function fetchMemberPurchaseOptions(
+  studioId: string,
+  userId: string,
+): Promise<MemberPurchaseOption[]> {
+  const res = await apiRequest<{ options: MemberPurchaseOption[] }>(
+    `/studios/${studioId}/members/${userId}/purchase-options`,
+  );
+  return res.options;
 }

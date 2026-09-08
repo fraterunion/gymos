@@ -12,7 +12,7 @@ import {
   adminPrimaryBtn,
   adminSecondaryBtn,
 } from "@/lib/adminSurface";
-import { fetchMembers, type MemberListItem } from "@/lib/api/members";
+import { fetchMembers, fetchMemberPurchaseOptions, type MemberListItem, type MemberPurchaseOption } from "@/lib/api/members";
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import {
   createOfflineSubscription,
@@ -114,6 +114,9 @@ export default function WalkInSalesPage() {
 
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
+  // MM-5: server-computed relationship (agregar vs cambiar vs renovar), keyed by the
+  // member it was fetched for so a slow response can never describe the wrong member.
+  const [memberOptions, setMemberOptions] = useState<{ userId: string; options: MemberPurchaseOption[] } | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodChoice>("stripe");
 
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
@@ -134,6 +137,39 @@ export default function WalkInSalesPage() {
     () => plans.find((p) => p.id === selectedPlanId) ?? null,
     [plans, selectedPlanId],
   );
+
+  useEffect(() => {
+    if (!selectedStudioId || !selectedMember) return;
+    const userId = selectedMember.user.id;
+    let cancelled = false;
+    void fetchMemberPurchaseOptions(selectedStudioId, userId)
+      .then((options) => { if (!cancelled) setMemberOptions({ userId, options }); })
+      .catch(() => { if (!cancelled) setMemberOptions({ userId, options: [] }); });
+    return () => { cancelled = true; };
+  }, [selectedStudioId, selectedMember]);
+
+  const saleRelationship = useMemo(() => {
+    if (!selectedPlan || !selectedMember) return null;
+    if (!memberOptions || memberOptions.userId !== selectedMember.user.id) return null;
+    const option = memberOptions.options.find((o) => o.planId === selectedPlan.id);
+    if (!option) return null;
+    switch (option.purchaseAction) {
+      case "ADD":
+        return { title: `Agregar ${selectedPlan.name}`, note: "Las membresías actuales del miembro no se modifican." };
+      case "CHANGE":
+        return { title: `Cambiar ${option.relatedPlanName ?? "plan actual"} → ${selectedPlan.name}`, note: null };
+      case "RENEW":
+        return { title: `Renovar ${selectedPlan.name}`, note: null };
+      case "CURRENT":
+        return { title: selectedPlan.name, note: "El miembro ya tiene este plan activo." };
+      case "SCHEDULED":
+        return { title: selectedPlan.name, note: "Ya hay un cambio programado para este plan." };
+      case "BLOCKED":
+        return { title: selectedPlan.name, note: "Revisa el estado de la membresía antes de vender." };
+      default:
+        return { title: `Nueva membresía: ${selectedPlan.name}`, note: null };
+    }
+  }, [selectedPlan, selectedMember, memberOptions]);
 
   useEffect(() => {
     if (!selectedStudioId) return;
@@ -558,6 +594,12 @@ export default function WalkInSalesPage() {
               </li>
             ))}
           </ul>
+          {saleRelationship ? (
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+              <p className="text-sm font-semibold text-zinc-900">{saleRelationship.title}</p>
+              {saleRelationship.note ? <p className="mt-0.5 text-xs text-zinc-500">{saleRelationship.note}</p> : null}
+            </div>
+          ) : null}
           <div className="flex gap-2">
             <button type="button" onClick={() => setStep(2)} className="text-sm text-zinc-500">
               ← Atrás
@@ -572,6 +614,12 @@ export default function WalkInSalesPage() {
       {step === 4 && selectedMember && selectedPlan ? (
         <SurfaceCard className="space-y-4">
           <h2 className="text-lg font-medium">Método de pago</h2>
+          {saleRelationship ? (
+            <p className="text-sm font-medium text-zinc-600">
+              {saleRelationship.title}
+              {saleRelationship.note ? ` — ${saleRelationship.note}` : ""}
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
