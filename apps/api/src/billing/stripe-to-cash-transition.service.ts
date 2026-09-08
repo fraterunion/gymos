@@ -186,7 +186,8 @@ export class StripeToCashTransitionService {
   /**
    * MM-3: plan-scoped replacement for "the member's Stripe subscription" in transition
    * flows — the renewable Stripe subscription in the SAME membership family as `forPlan`.
-   * With the multi-membership gate off every Stripe subscription conflicts (legacy).
+   * MM-4: ALWAYS family-scoped (never gated) — transition targeting must stay correct for
+   * dual members even when creation of new stacks is disabled.
    */
   async findConflictingStripeSubscription(
     studioId: string,
@@ -704,9 +705,12 @@ export class StripeToCashTransitionService {
 
   /** Reconciliation / missed-webhook fallback for one member (all families evaluated). */
   async reconcileScheduledCashForMember(studioId: string, userId: string): Promise<boolean> {
-    const activated = await this.prisma.$transaction((tx) =>
-      this.activateScheduledCashIfDue(tx, { studioId, userId }),
-    );
+    const activated = await this.prisma.$transaction(async (tx) => {
+      // MM-4: same member-scoped subscription-write lock as webhooks/sales — successor
+      // activation must not interleave with a concurrent creation path.
+      await acquireSubscriptionWriteAdvisoryLock(tx, studioId, userId);
+      return this.activateScheduledCashIfDue(tx, { studioId, userId });
+    });
     return Boolean(activated);
   }
 }

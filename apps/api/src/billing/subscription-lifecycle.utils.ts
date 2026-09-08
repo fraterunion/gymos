@@ -22,9 +22,6 @@ export function isUpgrade(currentPriceCents: number, nextPriceCents: number): bo
   return nextPriceCents > currentPriceCents;
 }
 
-export function subscriptionLockKey(studioId: string, userId: string): string {
-  return `${studioId}:${userId}`;
-}
 
 export function hasStripeRenewal(sub: Pick<Subscription, 'stripeSubscriptionId' | 'source'>): boolean {
   return sub.stripeSubscriptionId != null;

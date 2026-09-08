@@ -9,6 +9,7 @@ import { Role } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
+import { allowNewMembershipStacks } from '../memberships/membership-compatibility';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { billingIntervalToStripeRecurring } from './stripe-plan-interval';
@@ -157,15 +158,24 @@ export class BillingService {
       throw new NotFoundException('Membership plan not found');
     }
 
-    // MM-1: checkout is only blocked by a CONFLICTING Stripe subscription (same plan or
-    // same exclusive group). A compatible stackable plan legitimately opens a second
-    // checkout. Gate off → any Stripe subscription conflicts (legacy behavior).
+    // MM-4: a SAME-FAMILY Stripe subscription always blocks a fresh checkout (renew/change
+    // it instead); with stacking allowed, a compatible stackable plan legitimately opens a
+    // second checkout; with stacking disabled, ANY Stripe subscription blocks creating an
+    // out-of-family membership (legacy acceptance).
     const existingStripe = await this.subscriptionLifecycle.findConflictingStripeSubscription(
       params.studioId,
       params.targetUserId,
       { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
     );
-    if (existingStripe?.stripeSubscriptionId) {
+    const blockingStripe =
+      existingStripe ??
+      (!allowNewMembershipStacks()
+        ? await this.subscriptionLifecycle.findPrimaryStripeSubscription(
+            params.studioId,
+            params.targetUserId,
+          )
+        : null);
+    if (blockingStripe?.stripeSubscriptionId) {
       throw new BadRequestException(
         'Member already has a Stripe subscription. Use plan change instead of creating a new checkout session.',
       );

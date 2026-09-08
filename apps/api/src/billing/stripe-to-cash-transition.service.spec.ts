@@ -252,9 +252,14 @@ describe('StripeToCashTransitionService', () => {
     );
   });
 
-  describe('MM-3 — family-scoped activation isolation (gate ON)', () => {
+  // MM-4: family scoping is ALWAYS on — these isolation guarantees must hold identically
+  // with the creation gate ON and OFF (the post-launch kill switch for dual members).
+  describe.each([
+    ['creation gate ON', 'true'],
+    ['creation gate OFF — post-launch kill switch', 'false'],
+  ])('MM-3/MM-4 — family-scoped activation isolation (%s)', (_label, gateValue) => {
     beforeEach(() => {
-      process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+      process.env['MULTI_MEMBERSHIP_ENABLED'] = gateValue;
     });
     afterEach(() => {
       delete process.env['MULTI_MEMBERSHIP_ENABLED'];

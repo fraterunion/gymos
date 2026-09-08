@@ -15,15 +15,24 @@
  * snapshot: the MM-1 migration backfills all existing rows before the gate can ever turn
  * on, and every creation site writes it explicitly. Snapshot null = sold as stackable.
  *
- * The capability gate: until the final DB constraint swap, production must behave exactly
- * like the legacy single-membership invariant. With the gate off, EVERY existing renewable
- * membership conflicts with any new one — byte-for-byte today's semantics.
+ * MM-4 — gate semantics. MULTI_MEMBERSHIP_ENABLED answers exactly ONE question: "may the
+ * system CREATE a new compatible simultaneous membership?" (allowNewMembershipStacks).
+ * It is consulted ONLY at creation-acceptance sites, via findCreationConflicts. Family
+ * relationships between EXISTING rows (Stripe→Cash targeting, supersede sets, successor
+ * activation, reconciliation grouping) are ALWAYS snapshot/family-scoped — turning the
+ * gate off after dual memberships exist must freeze new stacks without ever mis-scoping
+ * a live member's siblings. For all-'CORE' data (pre-rollout), family scoping is provably
+ * identical to the legacy single-membership semantics: any two CORE rows conflict.
  */
 
 export const CORE_EXCLUSIVE_GROUP = 'CORE';
 
-/** Reads the capability gate at call time (validateEnv normalizes it to 'true'/'false'). */
-export function isMultiMembershipEnabled(): boolean {
+/**
+ * The creation gate: may a NEW compatible simultaneous membership be created right now?
+ * Read at call time (validateEnv normalizes MULTI_MEMBERSHIP_ENABLED to 'true'/'false').
+ * This gate NEVER changes how existing memberships are scoped or related.
+ */
+export function allowNewMembershipStacks(): boolean {
   return process.env['MULTI_MEMBERSHIP_ENABLED'] === 'true';
 }
 
@@ -38,14 +47,12 @@ export type CompatibilityExistingMembership = {
   exclusiveGroupKey: string | null;
 };
 
+/** Family relationship between an existing row and a target plan. ALWAYS snapshot-scoped —
+ *  never gated. Use for every scoping/mutation decision about existing memberships. */
 export function isConflictingMembership(
   existing: CompatibilityExistingMembership,
   targetPlan: CompatibilityTargetPlan,
-  multiMembershipEnabled: boolean = isMultiMembershipEnabled(),
 ): boolean {
-  if (!multiMembershipEnabled) {
-    return true;
-  }
   if (existing.membershipPlanId === targetPlan.id) {
     return true;
   }
@@ -56,12 +63,30 @@ export function isConflictingMembership(
   );
 }
 
+/** Family-scoped filter over existing rows. ALWAYS snapshot-scoped — never gated. */
 export function findConflictingMemberships<T extends CompatibilityExistingMembership>(
   existing: readonly T[],
   targetPlan: CompatibilityTargetPlan,
-  multiMembershipEnabled: boolean = isMultiMembershipEnabled(),
 ): T[] {
-  return existing.filter((row) => isConflictingMembership(row, targetPlan, multiMembershipEnabled));
+  return existing.filter((row) => isConflictingMembership(row, targetPlan));
+}
+
+/**
+ * Creation-acceptance filter: the rows that block CREATING a membership of `targetPlan`.
+ * With stacking allowed this is exactly the family conflicts; with stacking disabled,
+ * EVERY existing row blocks creation (legacy single-membership acceptance). Use ONLY at
+ * sites deciding whether a new row may come into existence (checkout, purchase routing,
+ * webhook new-row acceptance, cash-sale acceptance, manual creation) — never for scoping.
+ */
+export function findCreationConflicts<T extends CompatibilityExistingMembership>(
+  existing: readonly T[],
+  targetPlan: CompatibilityTargetPlan,
+  allowStacks: boolean = allowNewMembershipStacks(),
+): T[] {
+  if (!allowStacks) {
+    return [...existing];
+  }
+  return findConflictingMemberships(existing, targetPlan);
 }
 
 export type PrimaryMembershipCandidate = {

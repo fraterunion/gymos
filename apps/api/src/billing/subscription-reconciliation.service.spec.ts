@@ -15,12 +15,13 @@ function makeStripeSub(
   periodEndUnix: number,
   studioId = 'studio-1',
   userId = 'user-1',
+  planId: string | null = null,
 ) {
   return {
     id,
     status,
     cancel_at_period_end: cancelAtPeriodEnd,
-    metadata: { studioId, userId },
+    metadata: { studioId, userId, ...(planId ? { planId } : {}) },
     items: {
       data: [
         {
@@ -54,7 +55,10 @@ function makeLocalSub(
     currentPeriodStart: new Date(periodEnd.getTime() - 30 * 86400_000),
     currentPeriodEnd: periodEnd,
     membershipPlanId: planId,
-    membershipPlan: { id: planId, name: planName, priceCents, stripePriceId },
+    // Post-backfill reality: every existing row snapshots the CORE group until a plan
+    // is deliberately made stackable (gate-ON tests override via withGroup).
+    exclusiveGroupKey: 'CORE' as string | null,
+    membershipPlan: { id: planId, name: planName, priceCents, stripePriceId, exclusiveGroup: 'CORE' as string | null },
   };
 }
 
@@ -65,6 +69,7 @@ function buildService(overrides: {
   localSubs?: ReturnType<typeof makeLocalSub>[];
   stripeSubs?: ReturnType<typeof makeStripeSub>[];
   planByPrice?: Record<string, { id: string } | null>;
+  planById?: Record<string, { id: string; exclusiveGroup: string | null } | null>;
   deadLetters?: Array<{ stripeEventId: string; eventType: string; createdAt: Date }>;
 }) {
   const prisma = {
@@ -79,7 +84,10 @@ function buildService(overrides: {
       update: jest.fn().mockResolvedValue({}),
     },
     membershipPlan: {
-      findFirst: jest.fn().mockImplementation(async (args: { where: { stripePriceId?: string } }) => {
+      findFirst: jest.fn().mockImplementation(async (args: { where: { stripePriceId?: string; id?: string } }) => {
+        if (args.where.id) {
+          return (overrides.planById ?? {})[args.where.id] ?? null;
+        }
         const priceId = args.where.stripePriceId;
         if (!priceId) return null;
         return (overrides.planByPrice ?? {})[priceId] ?? null;
@@ -119,7 +127,7 @@ const LOCAL_BASIC = makeLocalSub(
 );
 
 const STRIPE_BASIC = makeStripeSub('sub_basic', 'active', false, 'price_basic', 130000, SEP_6_UNIX);
-const STRIPE_FULL = makeStripeSub('sub_full', 'active', false, 'price_full', 150000, SEP_6_UNIX + 30 * 86400);
+const STRIPE_FULL = makeStripeSub('sub_full', 'active', false, 'price_full', 150000, SEP_6_UNIX + 30 * 86400, 'studio-1', 'user-1', 'plan-full');
 
 // ──────────────────────────────────────────────────────────────────────────────
 // healthy state
@@ -195,6 +203,7 @@ describe('SubscriptionReconciliationService — Emilia-class: duplicate renewabl
       planByPrice: {
         price_full: { id: 'plan-full' },
       },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
@@ -229,6 +238,7 @@ describe('SubscriptionReconciliationService — Emilia-class: duplicate renewabl
       localSubs: [LOCAL_BASIC],
       stripeSubs: [STRIPE_BASIC, STRIPE_FULL],
       planByPrice: { price_full: { id: 'plan-full' } },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     await expect(
@@ -250,6 +260,7 @@ describe('SubscriptionReconciliationService — Emilia-class: duplicate renewabl
       localSubs: [LOCAL_BASIC],
       stripeSubs: [STRIPE_BASIC, STRIPE_FULL],
       planByPrice: { price_full: { id: 'plan-full' } },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     await service.reconcile({ studioId: 'studio-1', userId: 'user-1', applyRepairs: true });
@@ -749,6 +760,7 @@ describe('SubscriptionReconciliationService — auditStudio', () => {
       localSubs: [LOCAL_BASIC],
       stripeSubs: [STRIPE_BASIC, STRIPE_FULL],
       planByPrice: { price_full: { id: 'plan-full' } },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     const result = await service.auditStudio('studio-1');
@@ -764,12 +776,17 @@ describe('SubscriptionReconciliationService — auditStudio', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// MM-1 — compatible multi-membership is NOT corruption (gate ON)
+// MM-1/MM-4 — compatible multi-membership is NOT corruption. Family grouping is
+// ALWAYS on: a legitimate dual membership must not be flagged even when the
+// creation gate is OFF (post-launch kill switch).
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe('SubscriptionReconciliationService — MM-1 compatibility-aware duplicates (gate ON)', () => {
+describe.each([
+  ['creation gate ON', 'true'],
+  ['creation gate OFF — kill switch', 'false'],
+])('SubscriptionReconciliationService — compatibility-aware duplicates (%s)', (_label, gateValue) => {
   beforeEach(() => {
-    process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+    process.env['MULTI_MEMBERSHIP_ENABLED'] = gateValue;
   });
   afterEach(() => {
     delete process.env['MULTI_MEMBERSHIP_ENABLED'];

@@ -19,7 +19,10 @@ import { BillingService, type MembershipCheckoutResponse } from '../billing/bill
 import { StripeToCashTransitionService } from '../billing/stripe-to-cash-transition.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
 import { acquireSubscriptionWriteAdvisoryLock } from '../billing/subscription-write-advisory-lock';
-import { findConflictingMemberships } from '../memberships/membership-compatibility';
+import {
+  allowNewMembershipStacks,
+  findConflictingMemberships,
+} from '../memberships/membership-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { AuditService } from './audit.service';
@@ -432,10 +435,11 @@ export class SalesService {
             include: planInclude,
           });
         } else {
-          // MM-1: supersede only rows CONFLICTING with the plan being sold (same plan or
-          // same non-null exclusive group). Selling cash Booty Lab to a Full Access member
-          // must leave Full Access untouched. Gate off → every renewable row conflicts
-          // (legacy behavior, matching the still-live one-ACTIVE-per-member index).
+          // MM-4: supersede ONLY rows in the same family as the plan being sold (same plan
+          // or same non-null exclusive group) — ALWAYS, regardless of the creation gate.
+          // Selling cash Booty Lab to a Full Access member must leave Full Access
+          // untouched, and renewing one membership of a dual member must never cancel the
+          // sibling even with stacking disabled.
           const renewableRows = await tx.subscription.findMany({
             where: {
               studioId,
@@ -452,6 +456,21 @@ export class SalesService {
             })),
             planScope,
           ).map((c) => c.row);
+
+          // MM-4 creation acceptance (gated): a sale that opens a NEW family (nothing to
+          // supersede, yet the member already holds renewable memberships) creates an
+          // additional simultaneous membership — blocked while stacking is disabled.
+          // Pre-rollout all-CORE data never reaches this state (any renewable row is
+          // same-family and lands in toSupersede), so legacy sales are unaffected.
+          if (
+            !allowNewMembershipStacks() &&
+            toSupersede.length === 0 &&
+            renewableRows.length > 0
+          ) {
+            throw new ConflictException(
+              'Additional simultaneous memberships are not enabled for this studio.',
+            );
+          }
 
           for (const row of toSupersede) {
             await tx.subscription.update({

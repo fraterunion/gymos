@@ -76,8 +76,9 @@ function normalizeBuildWorkerEnabled(v: unknown): string {
   return 'false';
 }
 
-/** MM-1: multi-membership capability gate. Defaults to 'false' — production behavior stays
- *  identical to the single-membership invariant until the final constraint rollout flips it. */
+/** MM-4: multi-membership CREATION gate (may a new compatible simultaneous membership be
+ *  created?). Defaults to 'false' — creation acceptance stays legacy until rollout flips it;
+ *  family scoping of existing memberships is always on and not controlled by this flag. */
 function normalizeMultiMembershipEnabled(v: unknown): string {
   if (typeof v === 'string' && v.trim().toLowerCase() === 'true') return 'true';
   return 'false';

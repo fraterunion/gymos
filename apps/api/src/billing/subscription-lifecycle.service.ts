@@ -18,7 +18,11 @@ import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
 import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
-import { findConflictingMemberships } from '../memberships/membership-compatibility';
+import {
+  allowNewMembershipStacks,
+  findConflictingMemberships,
+} from '../memberships/membership-compatibility';
+import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 import {
   buildImmediateUpgradeUpdateParams,
   readCurrentStripePriceId,
@@ -27,7 +31,6 @@ import {
 } from './subscription-plan-resolution.utils';
 import {
   isUpgrade,
-  subscriptionLockKey,
   toPlanSummary,
   type PlanSummary,
 } from './subscription-lifecycle.utils';
@@ -132,10 +135,12 @@ export class SubscriptionLifecycleService {
 
   /**
    * MM-1 — plan-scoped replacement for "the member's Stripe subscription": the renewable
-   * Stripe subscription that CONFLICTS with purchasing/selling `targetPlan` (same plan, or
-   * same non-null exclusive group per membership-compatibility). With the multi-membership
-   * gate off this returns any renewable Stripe subscription — the legacy behavior —
-   * because every membership then conflicts by definition.
+   * Stripe subscription in the SAME membership family as `targetPlan` (same plan, or same
+   * non-null exclusive group per membership-compatibility).
+   * MM-4: ALWAYS family-scoped, regardless of the creation gate — this function selects
+   * which existing subscription an operation targets, and that must stay family-correct
+   * even when new stacks are disabled. Creation acceptance is gated separately by the
+   * callers (see initiateMembershipPurchase / assertNoRenewableSubscriptionConflict).
    */
   async findConflictingStripeSubscription(
     studioId: string,
@@ -254,10 +259,10 @@ export class SubscriptionLifecycleService {
       await this.reconciliation.assertHealthyForPlanChange(params.studioId, params.targetUserId);
     }
 
-    // MM-1: only a CONFLICTING Stripe subscription (same plan or same exclusive group)
-    // routes to plan-change semantics. A compatible stackable plan gets its own checkout —
-    // buying Booty Lab while on Full Access must never CHANGE Full Access. With the
-    // multi-membership gate off, every renewable Stripe sub conflicts (legacy behavior).
+    // MM-4: routing is ALWAYS family-scoped — a same-family Stripe subscription routes to
+    // renewal/plan-change semantics targeting THAT row (never a sibling membership), with
+    // or without the creation gate. Buying Booty Lab while on Full Access must never
+    // CHANGE Full Access.
     const stripeSub = await this.findConflictingStripeSubscription(
       params.studioId,
       params.targetUserId,
@@ -265,6 +270,22 @@ export class SubscriptionLifecycleService {
     );
 
     if (!stripeSub?.stripeSubscriptionId) {
+      // No same-family membership → this purchase would CREATE an additional membership.
+      // Gated: with stacking disabled, a member who already has any renewable Stripe
+      // subscription may not open a second family. (Pre-rollout, all-CORE data never
+      // reaches this branch with an existing subscription — family scoping already
+      // routed it above, so legacy behavior is untouched.)
+      if (!allowNewMembershipStacks()) {
+        const anyStripe = await this.findPrimaryStripeSubscription(
+          params.studioId,
+          params.targetUserId,
+        );
+        if (anyStripe?.stripeSubscriptionId) {
+          throw new ConflictException(
+            'Additional simultaneous memberships are not enabled. Use a plan change instead.',
+          );
+        }
+      }
       const { checkoutUrl } = await params.createCheckout(params);
       return { action: 'checkout', url: checkoutUrl };
     }
@@ -381,7 +402,8 @@ export class SubscriptionLifecycleService {
       effectivePlanIdFromStripe === targetPlan.id;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscriptionLockKey(params.studioId, params.userId)}))`;
+      // MM-4: unified member-scoped subscription-write lock (same key as webhooks/sales).
+      await acquireSubscriptionWriteAdvisoryLock(tx, params.studioId, params.userId);
 
       return tx.subscription.update({
         where: { id: localSubscription.id },
@@ -425,7 +447,8 @@ export class SubscriptionLifecycleService {
    * Does NOT mutate Stripe or local rows — production duplicates require manual review.
    * MM-1: two COMPATIBLE memberships (different plan, no shared non-null exclusive group)
    * are legitimate, not duplicates — only same-plan/same-group siblings are flagged.
-   * Gate off → every sibling is flagged (legacy behavior).
+   * MM-4: ALWAYS family-scoped (never gated) — a legitimate dual membership must not be
+   * flagged as a duplicate merely because the creation gate is off.
    */
   async auditDuplicateRenewableSubscriptions(
     tx: Prisma.TransactionClient | PrismaService,
@@ -502,9 +525,14 @@ export class SubscriptionLifecycleService {
     /** MM-1: when provided, only a same-plan/same-group Stripe subscription conflicts. */
     targetPlan?: { id: string; exclusiveGroup: string | null };
   }): Promise<void> {
-    const stripeSub = params.targetPlan
+    // MM-4: same-family targeting is unconditional; with stacking disabled, ANY renewable
+    // Stripe subscription additionally blocks creating an out-of-family membership.
+    let stripeSub = params.targetPlan
       ? await this.findConflictingStripeSubscription(params.studioId, params.userId, params.targetPlan)
       : await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    if (!stripeSub?.stripeSubscriptionId && params.targetPlan && !allowNewMembershipStacks()) {
+      stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    }
     if (!stripeSub?.stripeSubscriptionId) return;
 
     if (!params.allowStripeResolution) {

@@ -8,7 +8,7 @@ import { StripeToCashTransitionService } from './stripe-to-cash-transition.servi
 import { StripeRenewalAuditService } from './stripe-renewal-audit.service';
 import { buildPaidFixedEntitlementCycle } from './fixed-entitlement-cycle';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
-import { subscriptionLockKey } from './subscription-lifecycle.utils';
+import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 import {
   readCurrentStripePriceId,
   readPendingPlanIdFromMetadata,
@@ -21,7 +21,10 @@ import {
   type WebhookSubscriptionPayload,
 } from './stripe-webhook-payloads';
 import { mapStripeSubscriptionStatus } from './stripe-subscription-status';
-import { findConflictingMemberships } from '../memberships/membership-compatibility';
+import {
+  findConflictingMemberships,
+  findCreationConflicts,
+} from '../memberships/membership-compatibility';
 import { readInvoiceSubscriptionId } from './stripe-invoice.utils';
 import { readCancellationDetails } from './stripe-renewal-audit.utils';
 
@@ -256,9 +259,10 @@ export class StripeWebhookService {
         : {};
 
     const saved = await this.prisma.$transaction(async (tx) => {
-      // Serialise concurrent webhook deliveries for the same member/studio, preventing
-      // races where two deliveries both pass the conflict check and both try to CREATE.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscriptionLockKey(studioId, userId)}))`;
+      // MM-4: unified member-scoped subscription-write lock — serialises concurrent webhook
+      // deliveries AND cash sales / scheduled-cash creation for the same member, preventing
+      // races where two paths both pass the conflict check and both try to CREATE.
+      await acquireSubscriptionWriteAdvisoryLock(tx, studioId, userId);
 
       const { membershipPlanId, pendingMembershipPlanId } =
         await this.subscriptionLifecycle.reconcileSubscriptionPlansFromStripe(tx, {
@@ -311,17 +315,19 @@ export class StripeWebhookService {
 
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
         if (!existingRowForThisSub) {
-          // MM-1: only a same-plan/same-exclusive-group row conflicts. A legitimately paid
-          // COMPATIBLE subscription (e.g. Booty Lab arriving while Full Access is active)
-          // falls through to the upsert below and creates its own local row — it must
-          // never be silently dropped/acknowledged as a conflict. Gate off → every
-          // renewable row conflicts (legacy behavior, matching the still-live DB index).
+          // MM-4 creation acceptance (gated): with stacking allowed, only a same-plan/
+          // same-exclusive-group row conflicts — a legitimately paid COMPATIBLE
+          // subscription (e.g. Booty Lab arriving while Full Access is active) falls
+          // through to the upsert below and creates its own local row; it must never be
+          // silently dropped/acknowledged as a conflict. With stacking disabled, every
+          // renewable row blocks the NEW row (legacy acceptance) — and the conflict
+          // handler below never mutates a live sibling (it only supersedes expired cash).
           const renewableRows = await tx.subscription.findMany({
             where: { studioId, userId, status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } },
             include: { membershipPlan: { select: { exclusiveGroup: true } } },
             orderBy: { createdAt: 'desc' },
           });
-          const conflictingRow = findConflictingMemberships(
+          const conflictingRow = findCreationConflicts(
             renewableRows.map((r) => ({
               row: r,
               membershipPlanId: r.membershipPlanId,

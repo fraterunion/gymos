@@ -1,7 +1,6 @@
 import { ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import { SubscriptionStatus, type MembershipPlan, type Subscription } from '@prisma/client';
 import type Stripe from 'stripe';
-import { isMultiMembershipEnabled } from '../memberships/membership-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
@@ -427,18 +426,16 @@ export class SubscriptionReconciliationService {
    * belonging to any family that has 2+ subs — genuine duplicates. Family identity per sub:
    * the local row's purchase-time snapshot when one exists, else the plan resolved from
    * Stripe metadata. A sub whose plan cannot be resolved is left unflagged (it will
-   * already surface separately as a stripe_orphan). Gate off → all ids are returned
-   * whenever 2+ renewable subs exist (legacy behavior).
+   * already surface separately as a stripe_orphan).
+   * MM-4: ALWAYS family-scoped (never gated) — a legitimate dual membership must not be
+   * flagged as duplicate_renewable merely because the creation gate is off. For all-CORE
+   * data (pre-rollout), family grouping flags exactly what legacy any-2+ detection did.
    */
   private async findIncompatibleStripeSubscriptionIds(
     studioId: string,
     renewableStripeSubs: Stripe.Subscription[],
     localSubs: Array<Subscription & { membershipPlan: MembershipPlan }>,
   ): Promise<string[]> {
-    if (!isMultiMembershipEnabled()) {
-      return renewableStripeSubs.map((s) => s.id);
-    }
-
     const localByStripeId = new Map(
       localSubs.filter((l) => l.stripeSubscriptionId).map((l) => [l.stripeSubscriptionId!, l]),
     );

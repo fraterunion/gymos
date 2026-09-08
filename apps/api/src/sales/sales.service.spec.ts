@@ -381,9 +381,11 @@ describe('SalesService', () => {
       billingInterval: 'MONTHLY',
       name: 'Pro',
       entitlementDays: null,
+      // Post-backfill reality: every plan/row carries the CORE group until made stackable.
+      exclusiveGroup: 'CORE',
     });
     prisma.subscription.findMany.mockResolvedValue([
-      { id: 'sub-basic', membershipPlanId: 'plan-basic', exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } },
+      { id: 'sub-basic', membershipPlanId: 'plan-basic', exclusiveGroupKey: 'CORE', membershipPlan: { exclusiveGroup: 'CORE' } },
     ]);
     prisma.subscription.update.mockResolvedValue({});
     prisma.subscription.updateMany.mockResolvedValue({ count: 1 });

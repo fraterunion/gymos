@@ -21,11 +21,12 @@ import {
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
+import { acquireSubscriptionWriteAdvisoryLock } from '../billing/subscription-write-advisory-lock';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { OPEN_GYM_LABEL } from '../check-ins/open-gym.constants';
 import {
-  findConflictingMemberships,
+  findCreationConflicts,
   selectPrimaryMembership,
 } from '../memberships/membership-compatibility';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1172,23 +1173,6 @@ export class MembersService {
     });
     if (!plan) throw new NotFoundException('Membership plan not found');
 
-    // MM-1: only a CONFLICTING current membership (same plan or same non-null exclusive
-    // group) blocks manual creation. Gate off → any current membership blocks (legacy).
-    const existing = await this.subscriptionLifecycle.findCurrentRenewableSubscriptions(studioId, userId);
-    const conflicting = findConflictingMemberships(
-      existing.map((s) => ({
-        row: s,
-        membershipPlanId: s.membershipPlanId,
-        exclusiveGroupKey: s.exclusiveGroupKey,
-      })),
-      { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
-    );
-    if (conflicting.length > 0) {
-      throw new ConflictException(
-        'Member already has a current membership. Change or cancel it before creating another.',
-      );
-    }
-
     const now = new Date();
     const periodEnd = new Date(now);
     if (plan.entitlementDays != null) {
@@ -1206,22 +1190,50 @@ export class MembersService {
     // since manual subscriptions have no separate Stripe billing cycle to worry about).
     const entitlementEndsAt = plan.entitlementDays != null ? periodEnd : undefined;
 
-    return this.prisma.subscription.create({
-      data: {
+    return this.prisma.$transaction(async (tx) => {
+      // MM-4: same member-scoped subscription-write lock as sales/webhooks/plan changes,
+      // with the acceptance check inside the lock so no two creation paths can both pass.
+      await acquireSubscriptionWriteAdvisoryLock(tx, studioId, userId);
+
+      // MM-4 creation acceptance (gated): with stacking allowed, only a CONFLICTING current
+      // membership (same plan or same non-null exclusive group) blocks manual creation;
+      // with stacking disabled, any current membership blocks (legacy acceptance).
+      const existing = await this.subscriptionLifecycle.findCurrentRenewableSubscriptions(
         studioId,
         userId,
-        membershipPlanId: planId,
-        status: SubscriptionStatus.ACTIVE,
-        source: stripeSubscriptionId ? SubscriptionSource.STRIPE : SubscriptionSource.MANUAL,
-        stripeSubscriptionId: stripeSubscriptionId ?? null,
-        exclusiveGroupKey: plan.exclusiveGroup,
-        currentPeriodStart: now,
-        currentPeriodEnd: periodEnd,
-        ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
-      },
-      include: {
-        membershipPlan: { select: { id: true, name: true, billingInterval: true, priceCents: true, currency: true, allowedCategories: true } },
-      },
+        tx,
+      );
+      const conflicting = findCreationConflicts(
+        existing.map((s) => ({
+          row: s,
+          membershipPlanId: s.membershipPlanId,
+          exclusiveGroupKey: s.exclusiveGroupKey,
+        })),
+        { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
+      );
+      if (conflicting.length > 0) {
+        throw new ConflictException(
+          'Member already has a current membership. Change or cancel it before creating another.',
+        );
+      }
+
+      return tx.subscription.create({
+        data: {
+          studioId,
+          userId,
+          membershipPlanId: planId,
+          status: SubscriptionStatus.ACTIVE,
+          source: stripeSubscriptionId ? SubscriptionSource.STRIPE : SubscriptionSource.MANUAL,
+          stripeSubscriptionId: stripeSubscriptionId ?? null,
+          exclusiveGroupKey: plan.exclusiveGroup,
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
+          ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
+        },
+        include: {
+          membershipPlan: { select: { id: true, name: true, billingInterval: true, priceCents: true, currency: true, allowedCategories: true } },
+        },
+      });
     });
   }
 

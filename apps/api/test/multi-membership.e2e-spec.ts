@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import type { INestApplication } from '@nestjs/common';
 import { BookingStatus, ClassStatus, Prisma, Role, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import request from 'supertest';
@@ -7,16 +9,18 @@ import { CORE_EXCLUSIVE_GROUP } from '../src/memberships/membership-compatibilit
 import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
 import { createMembership, createStudio, createUserWithPassword } from './helpers/factories';
+import { runBootyStackable, runBootyStackableReverse } from '../scripts/mm4-booty-stackable';
 
 /**
- * MM-1..MM-3 — multi-membership invariant, entitlement aggregation, attribution, and
- * isolation, exercised over real HTTP against the real services with the capability gate ON.
+ * MM-1..MM-4 — multi-membership invariant, entitlement aggregation, attribution, isolation,
+ * the creation-gate kill switch, and the FINAL physical constraint shape, exercised over
+ * real HTTP against the real services.
  *
- * TEST-DATABASE-ONLY index swap: this suite previews the FUTURE gated constraint rollout by
- * replacing the two member-scoped partial unique indexes with the plan/group-scoped ones in
- * the dedicated test database (beforeAll), and restores the production-shaped originals in
- * afterAll. No migration file for the swap exists yet — that remains a separate, explicitly
- * gated release. Production is never touched by this suite.
+ * MM-4 index parity: the dedicated test database is migrated with the REAL
+ * multi_membership_constraint_swap migration (via prisma migrate deploy), and beforeAll
+ * asserts both that migration.sql contains exactly the intended index DDL and that
+ * pg_indexes reports exactly the final four definitions — so the tested shape and the
+ * production shape cannot silently drift. Production is never touched by this suite.
  */
 
 type WebhookSubPayload = {
@@ -44,7 +48,25 @@ async function loginAccessToken(app: INestApplication, email: string, password: 
   return (res.body as { accessToken: string }).accessToken;
 }
 
-describe('Multi-membership MM-1..MM-3 (e2e, gate ON, future indexes previewed in test DB)', () => {
+/** The four FINAL index definitions exactly as pg_indexes renders them post-migration —
+ *  asserted against the live test DB so tested and deployed shapes cannot drift. */
+const FINAL_INDEX_DEFS: Record<string, string> = {
+  subscriptions_one_renewable_per_member_plan_idx:
+    'CREATE UNIQUE INDEX subscriptions_one_renewable_per_member_plan_idx ON public.subscriptions USING btree (studio_id, user_id, membership_plan_id) WHERE (status = ANY (ARRAY[\'ACTIVE\'::"SubscriptionStatus", \'TRIALING\'::"SubscriptionStatus", \'PAST_DUE\'::"SubscriptionStatus", \'PAUSED\'::"SubscriptionStatus"]))',
+  subscriptions_one_renewable_per_member_group_idx:
+    'CREATE UNIQUE INDEX subscriptions_one_renewable_per_member_group_idx ON public.subscriptions USING btree (studio_id, user_id, exclusive_group_key) WHERE ((status = ANY (ARRAY[\'ACTIVE\'::"SubscriptionStatus", \'TRIALING\'::"SubscriptionStatus", \'PAST_DUE\'::"SubscriptionStatus", \'PAUSED\'::"SubscriptionStatus"])) AND (exclusive_group_key IS NOT NULL))',
+  subscriptions_one_scheduled_per_member_plan_idx:
+    'CREATE UNIQUE INDEX subscriptions_one_scheduled_per_member_plan_idx ON public.subscriptions USING btree (studio_id, user_id, membership_plan_id) WHERE (status = \'SCHEDULED\'::"SubscriptionStatus")',
+  subscriptions_one_scheduled_per_member_group_idx:
+    'CREATE UNIQUE INDEX subscriptions_one_scheduled_per_member_group_idx ON public.subscriptions USING btree (studio_id, user_id, exclusive_group_key) WHERE ((status = \'SCHEDULED\'::"SubscriptionStatus") AND (exclusive_group_key IS NOT NULL))',
+};
+
+const SWAP_MIGRATION_PATH = join(
+  __dirname,
+  '../prisma/migrations/20260908220000_multi_membership_constraint_swap/migration.sql',
+);
+
+describe('Multi-membership MM-1..MM-4 (e2e, gate ON, FINAL constraint shape)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let webhookService: WebhookServiceUnderTest;
@@ -55,42 +77,46 @@ describe('Multi-membership MM-1..MM-3 (e2e, gate ON, future indexes previewed in
     prisma = app.get(PrismaService);
     webhookService = app.get(StripeWebhookService) as unknown as WebhookServiceUnderTest;
 
-    // Preview of the future gated constraint swap — TEST DB ONLY.
-    await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "subscriptions_one_active_per_user_per_studio_idx"`);
-    await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "subscriptions_one_scheduled_per_user_per_studio_idx"`);
-    await prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX "mm_test_one_renewable_per_member_plan_idx"
+    // MM-4 parity gate 1: the swap migration file must contain exactly the intended DDL.
+    const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const migrationSql = norm(readFileSync(SWAP_MIGRATION_PATH, 'utf8'));
+    expect(migrationSql).toContain(norm(`
+      CREATE UNIQUE INDEX "subscriptions_one_renewable_per_member_plan_idx"
       ON "subscriptions" ("studio_id", "user_id", "membership_plan_id")
-      WHERE "status" IN ('ACTIVE','TRIALING','PAST_DUE','PAUSED')
-    `);
-    await prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX "mm_test_one_renewable_per_member_group_idx"
+      WHERE "status" IN ('ACTIVE','TRIALING','PAST_DUE','PAUSED')`));
+    expect(migrationSql).toContain(norm(`
+      CREATE UNIQUE INDEX "subscriptions_one_renewable_per_member_group_idx"
       ON "subscriptions" ("studio_id", "user_id", "exclusive_group_key")
-      WHERE "status" IN ('ACTIVE','TRIALING','PAST_DUE','PAUSED') AND "exclusive_group_key" IS NOT NULL
-    `);
-    await prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX "mm_test_one_scheduled_per_member_plan_idx"
+      WHERE "status" IN ('ACTIVE','TRIALING','PAST_DUE','PAUSED')
+        AND "exclusive_group_key" IS NOT NULL`));
+    expect(migrationSql).toContain(norm(`
+      CREATE UNIQUE INDEX "subscriptions_one_scheduled_per_member_plan_idx"
       ON "subscriptions" ("studio_id", "user_id", "membership_plan_id")
+      WHERE "status" = 'SCHEDULED'`));
+    expect(migrationSql).toContain(norm(`
+      CREATE UNIQUE INDEX "subscriptions_one_scheduled_per_member_group_idx"
+      ON "subscriptions" ("studio_id", "user_id", "exclusive_group_key")
       WHERE "status" = 'SCHEDULED'
-    `);
+        AND "exclusive_group_key" IS NOT NULL`));
+    expect(migrationSql).toContain('DROP INDEX "subscriptions_one_active_per_user_per_studio_idx"');
+    expect(migrationSql).toContain('DROP INDEX "subscriptions_one_scheduled_per_user_per_studio_idx"');
+
+    // MM-4 parity gate 2: the live (migrate-deployed) test DB carries exactly that shape.
+    const liveIndexes = await prisma.$queryRawUnsafe<Array<{ indexname: string; indexdef: string }>>(
+      `SELECT indexname, indexdef FROM pg_indexes
+       WHERE tablename = 'subscriptions' AND indexname LIKE '%one\\_%' ORDER BY indexname`,
+    );
+    const byName = new Map(liveIndexes.map((r) => [r.indexname, r.indexdef]));
+    for (const [name, def] of Object.entries(FINAL_INDEX_DEFS)) {
+      expect(byName.get(name)).toBe(def);
+    }
+    expect(byName.has('subscriptions_one_active_per_user_per_studio_idx')).toBe(false);
+    expect(byName.has('subscriptions_one_scheduled_per_user_per_studio_idx')).toBe(false);
+    expect(liveIndexes).toHaveLength(Object.keys(FINAL_INDEX_DEFS).length);
   });
 
   afterAll(async () => {
-    // Restore the production-shaped indexes so every other e2e suite sees today's invariant.
-    await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "mm_test_one_renewable_per_member_plan_idx"`);
-    await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "mm_test_one_renewable_per_member_group_idx"`);
-    await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS "mm_test_one_scheduled_per_member_plan_idx"`);
     await truncateAll(prisma);
-    await prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX "subscriptions_one_active_per_user_per_studio_idx"
-      ON "subscriptions" ("studio_id", "user_id")
-      WHERE "status" = 'ACTIVE'::"SubscriptionStatus"
-    `);
-    await prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX "subscriptions_one_scheduled_per_user_per_studio_idx"
-      ON "subscriptions" ("studio_id", "user_id")
-      WHERE "status" = 'SCHEDULED'::"SubscriptionStatus"
-    `);
     delete process.env['MULTI_MEMBERSHIP_ENABLED'];
     await app.close();
   });
@@ -599,4 +625,274 @@ describe('Multi-membership MM-1..MM-3 (e2e, gate ON, future indexes previewed in
     `);
     return Number(rows[0]?.count ?? 0n);
   }
+
+  // ── MM-4 A: final physical invariants (direct inserts against the real indexes) ──
+
+  function subRow(studioId: string, userId: string, planId: string, groupKey: string | null, status: SubscriptionStatus) {
+    return {
+      studioId, userId, membershipPlanId: planId,
+      status, source: SubscriptionSource.CASH,
+      exclusiveGroupKey: groupKey,
+      currentPeriodStart: new Date(), currentPeriodEnd: new Date(Date.now() + 30 * 86_400_000),
+    };
+  }
+
+  it('every CORE plan stacks with Booty Lab at the DB level (Full/Basic/Pro/Open Gym + Booty)', async () => {
+    const { studio, fullPlan, basicPlan, bootyPlan, generalTemplate } = await setupStudioWithPlans();
+    const proPlan = await prisma.membershipPlan.create({
+      data: {
+        studioId: studio.id, name: 'Pro', priceCents: 120000, currency: 'mxn',
+        billingInterval: 'MONTHLY', active: true, allClassesAccess: false,
+        exclusiveGroup: CORE_EXCLUSIVE_GROUP,
+        classTemplateAccess: { create: [{ studioId: studio.id, classTemplateId: generalTemplate.id }] },
+      },
+    });
+    const openGymPlan = await prisma.membershipPlan.create({
+      data: {
+        studioId: studio.id, name: 'Open Gym', priceCents: 60000, currency: 'mxn',
+        billingInterval: 'MONTHLY', active: true, allClassesAccess: false, openGymAccess: true,
+        exclusiveGroup: CORE_EXCLUSIVE_GROUP,
+      },
+    });
+    for (const [i, corePlan] of [fullPlan, basicPlan, proPlan, openGymPlan].entries()) {
+      const member = await createUserWithPassword(prisma, { email: `a-matrix-${i}@e2e.local` });
+      await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+      await prisma.subscription.create({ data: subRow(studio.id, member.id, corePlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.ACTIVE) });
+      await prisma.subscription.create({ data: subRow(studio.id, member.id, bootyPlan.id, null, SubscriptionStatus.ACTIVE) });
+      const rows = await activeSubs(studio.id, member.id);
+      expect(rows).toHaveLength(2);
+    }
+  });
+
+  it('SCHEDULED invariants: Full+Booty successors coexist; Full+Basic successors rejected; same-plan SCHEDULED duplicate rejected; ACTIVE+SCHEDULED same plan allowed', async () => {
+    const { studio, fullPlan, basicPlan, bootyPlan } = await setupStudioWithPlans();
+    const { member } = await setupMemberAndAdmin(studio.id, 'sched-matrix');
+
+    // A10: ACTIVE Full + SCHEDULED Full — the designed Stripe→Cash transition pair.
+    await prisma.subscription.create({ data: subRow(studio.id, member.id, fullPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.ACTIVE) });
+    await prisma.subscription.create({ data: subRow(studio.id, member.id, fullPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.SCHEDULED) });
+
+    // A8: Booty successor coexists with the Full successor (different family).
+    await prisma.subscription.create({ data: subRow(studio.id, member.id, bootyPlan.id, null, SubscriptionStatus.SCHEDULED) });
+
+    // A9: a second CORE-family successor (Basic) is rejected by the scheduled-group index.
+    await expect(
+      prisma.subscription.create({ data: subRow(studio.id, member.id, basicPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.SCHEDULED) }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+
+    // Same-plan SCHEDULED duplicate (Booty twice) rejected by the scheduled-plan index.
+    await expect(
+      prisma.subscription.create({ data: subRow(studio.id, member.id, bootyPlan.id, null, SubscriptionStatus.SCHEDULED) }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
+
+  // ── MM-4 B: creation-gate kill switch (dual membership established, then gate OFF) ──
+
+  it('kill switch: with the gate OFF, renewals of BOTH memberships stay family-scoped and no sibling is touched', async () => {
+    const { studio, fullPlan, bootyPlan } = await setupStudioWithPlans();
+    const { member, adminToken } = await setupMemberAndAdmin(studio.id, 'kill-renew');
+    await cashSale(studio.id, adminToken, member.id, fullPlan.id, 150000).expect(201);
+    await cashSale(studio.id, adminToken, member.id, bootyPlan.id, 80000).expect(201);
+
+    process.env['MULTI_MEMBERSHIP_ENABLED'] = 'false';
+    try {
+      // Full cash renewal: supersedes ONLY the Full row; Booty is untouched.
+      await cashSale(studio.id, adminToken, member.id, fullPlan.id, 150000).expect(201);
+      let subs = await activeSubs(studio.id, member.id);
+      expect(subs.map((s) => s.membershipPlan.name).sort()).toEqual(['Booty Lab by Etzia', 'Full Access']);
+      const bootyRow = subs.find((s) => s.membershipPlan.name.includes('Booty'))!;
+      expect(bootyRow.endReason).toBeNull();
+
+      // Booty cash renewal (fixed-duration renew-in-place): Full untouched.
+      await cashSale(studio.id, adminToken, member.id, bootyPlan.id, 80000).expect(201);
+      subs = await activeSubs(studio.id, member.id);
+      expect(subs).toHaveLength(2);
+      const fullRow = subs.find((s) => s.membershipPlan.name === 'Full Access')!;
+      expect(fullRow.endReason).toBeNull();
+      expect(fullRow.status).toBe(SubscriptionStatus.ACTIVE);
+    } finally {
+      process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+    }
+  });
+
+  it('kill switch: with the gate OFF, a NEW stack cannot be created (cash sale rejected), while an existing dual member keeps both', async () => {
+    const { studio, fullPlan, bootyPlan } = await setupStudioWithPlans();
+    const { member, adminToken } = await setupMemberAndAdmin(studio.id, 'kill-newstack');
+    await cashSale(studio.id, adminToken, member.id, fullPlan.id, 150000).expect(201);
+
+    process.env['MULTI_MEMBERSHIP_ENABLED'] = 'false';
+    try {
+      const res = await cashSale(studio.id, adminToken, member.id, bootyPlan.id, 80000);
+      expect(res.status).toBe(409);
+      const subs = await activeSubs(studio.id, member.id);
+      expect(subs).toHaveLength(1);
+      expect(subs[0]!.membershipPlan.name).toBe('Full Access');
+    } finally {
+      process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+    }
+  });
+
+  // ── MM-4 C: concurrency across creation paths (unified subscription-write lock) ──
+
+  it('cash sale racing a same-plan Stripe webhook: exactly one renewable row in the family, no corruption', async () => {
+    const { studio, fullPlan } = await setupStudioWithPlans();
+    const { member, adminToken } = await setupMemberAndAdmin(studio.id, 'race-xpath');
+
+    const [cashRes] = await Promise.all([
+      cashSale(studio.id, adminToken, member.id, fullPlan.id, 150000),
+      webhookService.upsertSubscriptionFromStripe(
+        stripePayload('sub_race_full', studio.id, member.id, fullPlan.id),
+        { userId: member.id, studioId: studio.id, planId: fullPlan.id },
+        'customer.subscription.created',
+      ),
+    ]);
+
+    // Either order is legal: cash first → the webhook acks the conflict without mutating;
+    // webhook first → the cash sale demands a Stripe resolution (409). Never two rows.
+    expect([201, 409]).toContain(cashRes.status);
+    const renewable = await prisma.subscription.findMany({
+      where: {
+        studioId: studio.id, userId: member.id, membershipPlanId: fullPlan.id,
+        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE, SubscriptionStatus.PAUSED] },
+      },
+    });
+    expect(renewable).toHaveLength(1);
+  });
+
+  it('concurrent same-family different-plan cash sales: exactly one renewable CORE row survives', async () => {
+    const { studio, fullPlan, basicPlan } = await setupStudioWithPlans();
+    const { member, adminToken } = await setupMemberAndAdmin(studio.id, 'race-family');
+
+    const [a, b] = await Promise.all([
+      cashSale(studio.id, adminToken, member.id, fullPlan.id, 150000),
+      cashSale(studio.id, adminToken, member.id, basicPlan.id, 100000),
+    ]);
+    expect([a.status, b.status].every((s) => s === 201 || s === 409)).toBe(true);
+    const subs = await activeSubs(studio.id, member.id);
+    expect(subs).toHaveLength(1);
+  });
+
+  // ── MM-4 D: Booty stackable script (dry-run / execute / idempotence / reverse) ──
+
+  describe('mm4-booty-stackable script', () => {
+    async function setupBootyCoreWorld() {
+      // Starting state for stage E: Booty plan still CORE, all rows snapshotted CORE.
+      const { studio, fullPlan, bootyPlan } = await setupStudioWithPlans();
+      await prisma.membershipPlan.update({ where: { id: bootyPlan.id }, data: { exclusiveGroup: CORE_EXCLUSIVE_GROUP } });
+
+      const mk = async (email: string) => {
+        const u = await createUserWithPassword(prisma, { email });
+        await createMembership(prisma, u.id, studio.id, Role.MEMBER);
+        return u;
+      };
+      const m1 = await mk('booty-script-1@e2e.local');
+      const m2 = await mk('booty-script-2@e2e.local');
+      const m3 = await mk('booty-script-3@e2e.local');
+      const m4 = await mk('booty-script-4@e2e.local');
+
+      const activeCash = await prisma.subscription.create({
+        data: subRow(studio.id, m1.id, bootyPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.ACTIVE),
+      });
+      const trialingStripe = await prisma.subscription.create({
+        data: {
+          ...subRow(studio.id, m2.id, bootyPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.TRIALING),
+          source: SubscriptionSource.STRIPE, stripeSubscriptionId: 'sub_booty_script_trial',
+        },
+      });
+      const canceledEntitled = await prisma.subscription.create({
+        data: {
+          ...subRow(studio.id, m3.id, bootyPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.CANCELED),
+          entitlementEndsAt: new Date(Date.now() + 10 * 86_400_000),
+        },
+      });
+      const canceledEnded = await prisma.subscription.create({
+        data: {
+          ...subRow(studio.id, m4.id, bootyPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.CANCELED),
+          entitlementEndsAt: new Date(Date.now() - 10 * 86_400_000),
+        },
+      });
+      return { studio, fullPlan, bootyPlan, m1, activeCash, trialingStripe, canceledEntitled, canceledEnded };
+    }
+
+    const silent = () => undefined;
+
+    it('dry-run selects exactly the live/entitled CORE rows and mutates NOTHING', async () => {
+      const w = await setupBootyCoreWorld();
+      const result = await runBootyStackable(prisma, {
+        studioId: w.studio.id, planId: w.bootyPlan.id, execute: false, log: silent,
+      });
+      expect(result.changedRowIds.sort()).toEqual(
+        [w.activeCash.id, w.trialingStripe.id, w.canceledEntitled.id].sort(),
+      );
+      expect(result.planChanged).toBe(false);
+      const plan = await prisma.membershipPlan.findUniqueOrThrow({ where: { id: w.bootyPlan.id } });
+      expect(plan.exclusiveGroup).toBe(CORE_EXCLUSIVE_GROUP);
+      const stillCore = await prisma.subscription.count({
+        where: { membershipPlanId: w.bootyPlan.id, exclusiveGroupKey: CORE_EXCLUSIVE_GROUP },
+      });
+      expect(stillCore).toBe(4);
+    });
+
+    it('execute reclassifies ONLY the intended rows (ended history untouched), audits, and is idempotent', async () => {
+      const w = await setupBootyCoreWorld();
+      const result = await runBootyStackable(prisma, {
+        studioId: w.studio.id, planId: w.bootyPlan.id, execute: true, log: silent,
+      });
+      expect(result.planChanged).toBe(true);
+      expect(result.changedRowIds.sort()).toEqual(
+        [w.activeCash.id, w.trialingStripe.id, w.canceledEntitled.id].sort(),
+      );
+
+      const plan = await prisma.membershipPlan.findUniqueOrThrow({ where: { id: w.bootyPlan.id } });
+      expect(plan.exclusiveGroup).toBeNull();
+      for (const id of [w.activeCash.id, w.trialingStripe.id, w.canceledEntitled.id]) {
+        const row = await prisma.subscription.findUniqueOrThrow({ where: { id } });
+        expect(row.exclusiveGroupKey).toBeNull();
+      }
+      // Fully-ended historical row keeps the snapshot it was sold under.
+      const ended = await prisma.subscription.findUniqueOrThrow({ where: { id: w.canceledEnded.id } });
+      expect(ended.exclusiveGroupKey).toBe(CORE_EXCLUSIVE_GROUP);
+      expect(ended.status).toBe(SubscriptionStatus.CANCELED);
+
+      const audit = await prisma.auditLog.findFirst({
+        where: { studioId: w.studio.id, action: 'MM4_BOOTY_STACKABLE_EXECUTED' },
+      });
+      expect(audit).not.toBeNull();
+      expect((audit!.metadata as { rowCount: number }).rowCount).toBe(3);
+
+      // Idempotence: a second execute changes nothing and reports nothing to change.
+      const second = await runBootyStackable(prisma, {
+        studioId: w.studio.id, planId: w.bootyPlan.id, execute: true, log: silent,
+      });
+      expect(second.changedRowIds).toEqual([]);
+      expect(second.planChanged).toBe(false);
+    });
+
+    it('reverse refuses while a legitimate stacked pair involving Booty exists; works pre-dual', async () => {
+      const w = await setupBootyCoreWorld();
+      await runBootyStackable(prisma, { studioId: w.studio.id, planId: w.bootyPlan.id, execute: true, log: silent });
+
+      // m1 now stacks Full alongside Booty — reversal must refuse.
+      await prisma.subscription.create({
+        data: subRow(w.studio.id, w.m1.id, w.fullPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.ACTIVE),
+      });
+      await expect(
+        runBootyStackableReverse(prisma, { studioId: w.studio.id, planId: w.bootyPlan.id, execute: true, log: silent }),
+      ).rejects.toThrow(/REVERSE blocked/);
+
+      // Remove the stack → reversal proceeds and restores plan + live snapshots to CORE.
+      await prisma.subscription.deleteMany({
+        where: { studioId: w.studio.id, userId: w.m1.id, membershipPlanId: w.fullPlan.id },
+      });
+      const reversed = await runBootyStackableReverse(prisma, {
+        studioId: w.studio.id, planId: w.bootyPlan.id, execute: true, log: silent,
+      });
+      expect(reversed.planChanged).toBe(true);
+      expect(reversed.changedRowIds.sort()).toEqual(
+        [w.activeCash.id, w.trialingStripe.id, w.canceledEntitled.id].sort(),
+      );
+      const plan = await prisma.membershipPlan.findUniqueOrThrow({ where: { id: w.bootyPlan.id } });
+      expect(plan.exclusiveGroup).toBe(CORE_EXCLUSIVE_GROUP);
+    });
+  });
 });

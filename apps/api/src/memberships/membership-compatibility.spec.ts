@@ -1,8 +1,9 @@
 import {
   CORE_EXCLUSIVE_GROUP,
+  allowNewMembershipStacks,
   findConflictingMemberships,
+  findCreationConflicts,
   isConflictingMembership,
-  isMultiMembershipEnabled,
   orderEntitlementCandidates,
   selectPrimaryMembership,
 } from './membership-compatibility';
@@ -18,8 +19,7 @@ function owns(plan: { id: string; exclusiveGroup: string | null }) {
   return { membershipPlanId: plan.id, exclusiveGroupKey: plan.exclusiveGroup };
 }
 
-describe('membership-compatibility — canonical conflict rules (gate ON)', () => {
-  const ON = true;
+describe('membership-compatibility — canonical family rules (always on, never gated)', () => {
 
   it.each([
     ['Full Access', fullAccess],
@@ -27,8 +27,8 @@ describe('membership-compatibility — canonical conflict rules (gate ON)', () =
     ['Pro', pro],
     ['Open Gym', openGym],
   ])('%s + Booty Lab → compatible (stackable specialty)', (_name, corePlan) => {
-    expect(isConflictingMembership(owns(corePlan), bootyLab, ON)).toBe(false);
-    expect(isConflictingMembership(owns(bootyLab), corePlan, ON)).toBe(false);
+    expect(isConflictingMembership(owns(corePlan), bootyLab)).toBe(false);
+    expect(isConflictingMembership(owns(bootyLab), corePlan)).toBe(false);
   });
 
   it.each([
@@ -37,31 +37,31 @@ describe('membership-compatibility — canonical conflict rules (gate ON)', () =
     ['Basic + Pro', basicAccess, pro],
     ['Open Gym + Full', openGym, fullAccess],
   ])('%s → conflict (same CORE exclusive group)', (_name, a, b) => {
-    expect(isConflictingMembership(owns(a), b, ON)).toBe(true);
-    expect(isConflictingMembership(owns(b), a, ON)).toBe(true);
+    expect(isConflictingMembership(owns(a), b)).toBe(true);
+    expect(isConflictingMembership(owns(b), a)).toBe(true);
   });
 
   it('Full + Full duplicate → conflict (same plan)', () => {
-    expect(isConflictingMembership(owns(fullAccess), fullAccess, ON)).toBe(true);
+    expect(isConflictingMembership(owns(fullAccess), fullAccess)).toBe(true);
   });
 
   it('Booty + Booty duplicate → conflict even though the plan is stackable (same plan always conflicts)', () => {
-    expect(isConflictingMembership(owns(bootyLab), bootyLab, ON)).toBe(true);
+    expect(isConflictingMembership(owns(bootyLab), bootyLab)).toBe(true);
   });
 
   it('two DIFFERENT stackable (null-group) plans are compatible', () => {
     const nutrition = { id: 'plan-nutrition', exclusiveGroup: null };
-    expect(isConflictingMembership(owns(bootyLab), nutrition, ON)).toBe(false);
+    expect(isConflictingMembership(owns(bootyLab), nutrition)).toBe(false);
   });
 
   it('uses the subscription SNAPSHOT (exclusiveGroupKey), never the plan\'s current group', () => {
     // Sold as stackable; the plan was later edited into CORE. The live row keeps the
     // contract it was sold under — later plan edits never re-classify existing rows.
     const soldAsStackable = { membershipPlanId: 'plan-x', exclusiveGroupKey: null };
-    expect(isConflictingMembership(soldAsStackable, fullAccess, ON)).toBe(false);
+    expect(isConflictingMembership(soldAsStackable, fullAccess)).toBe(false);
     // And the reverse: sold as CORE stays CORE-conflicting even if the plan later goes stackable.
     const soldAsCore = { membershipPlanId: 'plan-y', exclusiveGroupKey: CORE_EXCLUSIVE_GROUP };
-    expect(isConflictingMembership(soldAsCore, fullAccess, ON)).toBe(true);
+    expect(isConflictingMembership(soldAsCore, fullAccess)).toBe(true);
   });
 
   it('findConflictingMemberships returns only the conflicting subset', () => {
@@ -69,23 +69,49 @@ describe('membership-compatibility — canonical conflict rules (gate ON)', () =
       { ...owns(fullAccess), label: 'full' },
       { ...owns(bootyLab), label: 'booty' },
     ];
-    const conflicts = findConflictingMemberships(rows, basicAccess, ON);
+    const conflicts = findConflictingMemberships(rows, basicAccess);
     expect(conflicts.map((c) => c.label)).toEqual(['full']);
   });
 });
 
-describe('membership-compatibility — gate OFF preserves legacy semantics', () => {
-  it('EVERY existing membership conflicts with any purchase, even compatible ones', () => {
-    expect(isConflictingMembership(owns(fullAccess), bootyLab, false)).toBe(true);
-    expect(isConflictingMembership(owns(bootyLab), fullAccess, false)).toBe(true);
+describe('membership-compatibility — MM-4 creation gate (findCreationConflicts)', () => {
+  it('stacking disabled: EVERY existing membership blocks creation, even compatible ones', () => {
+    const rows = [
+      { ...owns(fullAccess), label: 'full' },
+      { ...owns(bootyLab), label: 'booty' },
+    ];
+    const blockers = findCreationConflicts(rows, bootyLab, false);
+    expect(blockers.map((b) => b.label)).toEqual(['full', 'booty']);
   });
 
-  it('isMultiMembershipEnabled reads the env gate (default off)', () => {
+  it('stacking enabled: creation is blocked only by the family conflicts', () => {
+    const rows = [
+      { ...owns(fullAccess), label: 'full' },
+      { ...owns(bootyLab), label: 'booty' },
+    ];
+    expect(findCreationConflicts(rows, bootyLab, true).map((b) => b.label)).toEqual(['booty']);
+    expect(findCreationConflicts(rows, basicAccess, true).map((b) => b.label)).toEqual(['full']);
+  });
+
+  it('the gate NEVER affects family scoping: isConflictingMembership has no gate parameter', () => {
+    // Full + Booty stay compatible as existing rows regardless of the env flag.
+    const prev = process.env['MULTI_MEMBERSHIP_ENABLED'];
+    try {
+      process.env['MULTI_MEMBERSHIP_ENABLED'] = 'false';
+      expect(isConflictingMembership(owns(fullAccess), bootyLab)).toBe(false);
+      expect(findConflictingMemberships([owns(fullAccess)], bootyLab)).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env['MULTI_MEMBERSHIP_ENABLED'];
+      else process.env['MULTI_MEMBERSHIP_ENABLED'] = prev;
+    }
+  });
+
+  it('allowNewMembershipStacks reads the env gate (default off)', () => {
     const prev = process.env['MULTI_MEMBERSHIP_ENABLED'];
     delete process.env['MULTI_MEMBERSHIP_ENABLED'];
-    expect(isMultiMembershipEnabled()).toBe(false);
+    expect(allowNewMembershipStacks()).toBe(false);
     process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
-    expect(isMultiMembershipEnabled()).toBe(true);
+    expect(allowNewMembershipStacks()).toBe(true);
     if (prev === undefined) delete process.env['MULTI_MEMBERSHIP_ENABLED'];
     else process.env['MULTI_MEMBERSHIP_ENABLED'] = prev;
   });
