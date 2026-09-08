@@ -17,6 +17,7 @@ import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { usePublicStudio } from '@/contexts/PublicStudioContext';
 import { useStudioActivity } from '@/contexts/StudioActivityContext';
 import { cancelBooking, createClassBooking } from '@/lib/api/bookingsApi';
+import { bookingChargeLine } from '@/lib/membershipDisplay';
 import { fetchPublicSchedule } from '@/lib/api/publicScheduleApi';
 import { fetchMyDayPasses, type DayPassDto } from '@/lib/api/dayPassesApi';
 import { fetchMyMemberProfile, type MyMemberProfileDto } from '@/lib/api/membershipApi';
@@ -187,6 +188,8 @@ export default function ClassDetailScreen() {
   /** Set when the API rejects booking/waitlist because the class already started. */
   const [serverClassClosed, setServerClassClosed] = useState(false);
   const [bookingConfirmed, setBookingConfirmed] = useState(false);
+  // MM-5: spoken only when a scarce credit was consumed (unlimited stays quiet).
+  const [bookingChargeNote, setBookingChargeNote] = useState<string | null>(null);
 
   const studioId = matched?.studio.id;
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
@@ -423,7 +426,10 @@ export default function ClassDetailScreen() {
       secondaryCTA = {
         label: 'Volver a intentar',
         onPress: () =>
-          void run(async () => { await createClassBooking(memberStudioId, classId); }, true),
+          void run(async () => {
+            const created = await createClassBooking(memberStudioId, classId);
+            setBookingChargeNote(bookingChargeLine(created.chargedMembership));
+          }, true),
       };
     } else if (hasAccess === null) {
       primaryCTA = {
@@ -446,7 +452,10 @@ export default function ClassDetailScreen() {
       primaryCTA = {
         label: 'Reservar clase',
         onPress: () =>
-          void run(async () => { await createClassBooking(memberStudioId, classId); }, true),
+          void run(async () => {
+            const created = await createClassBooking(memberStudioId, classId);
+            setBookingChargeNote(bookingChargeLine(created.chargedMembership));
+          }, true),
       };
     }
   }
@@ -672,7 +681,11 @@ export default function ClassDetailScreen() {
         visible={bookingConfirmed}
         appDisplayName={appDisplayName}
         accentColor={accentColor}
-        onDismiss={() => setBookingConfirmed(false)}
+        chargeNote={bookingChargeNote}
+        onDismiss={() => {
+          setBookingConfirmed(false);
+          setBookingChargeNote(null);
+        }}
       />
 
       <AuthRequiredModal

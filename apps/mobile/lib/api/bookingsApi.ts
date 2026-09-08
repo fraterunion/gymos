@@ -5,8 +5,22 @@ export async function fetchMyBookings(studioId: string): Promise<BookingWithClas
   return apiRequest<BookingWithClass[]>(`/studios/${studioId}/bookings/me`, { method: 'GET' });
 }
 
-export async function createClassBooking(studioId: string, classId: string): Promise<unknown> {
-  return apiRequest<unknown>(`/studios/${studioId}/classes/${classId}/bookings`, {
+/** MM-5: the API echoes which membership the booking is charged to (null for Day Pass /
+ *  staff bypass) so the confirmation can say when a scarce credit was consumed. */
+export type BookingCreatedResponse = {
+  id: string;
+  chargedMembership: {
+    subscriptionId: string;
+    planName: string;
+    creditConsumed: boolean;
+  } | null;
+};
+
+export async function createClassBooking(
+  studioId: string,
+  classId: string,
+): Promise<BookingCreatedResponse> {
+  return apiRequest<BookingCreatedResponse>(`/studios/${studioId}/classes/${classId}/bookings`, {
     method: 'POST',
     body: '{}',
   });

@@ -24,6 +24,12 @@ import {
   paymentStatusLabel,
 } from '@/lib/memberBillingHelpers';
 import { formatProfileDate, subscriptionSourceLabel } from '@/lib/memberProfileHelpers';
+import {
+  membershipCreditsDisplay,
+  membershipPriceLine,
+  membershipStatusDisplay,
+  paymentSourceLine,
+} from '@/lib/membershipDisplay';
 import { staffSalesHref } from '@/lib/memberProfileRoutes';
 import { getColors, type ThemeColors } from '@/constants/Theme';
 
@@ -170,6 +176,13 @@ export function MemberBillingCenter({
   const lastPayment = findLastPayment(payments);
   const lastPaymentSummary = formatLastPaymentSummary(lastPayment);
   const pastDue = isPastDue(sub);
+  // MM-5: one billing block per current membership — never just the primary.
+  const currentMemberships = (profile.memberships ?? []).filter((m) => m.status !== 'SCHEDULED');
+  const scheduledSuccessors = (profile.memberships ?? []).filter((m) => m.status === 'SCHEDULED');
+  const pastDueMemberships = currentMemberships.filter((m) => m.status === 'PAST_DUE');
+  void statusPill;
+  void renewalLabel;
+  void pastDue;
 
   const showActions = canPerformBillingActions(role);
   const showCheckout = canGenerateCheckoutLink(role, salesSettings);
@@ -201,9 +214,9 @@ export function MemberBillingCenter({
       </Text>
 
       <Animated.View entering={FadeInDown.delay(animationDelay).duration(380)} style={cardStyle(C)}>
-        {sub ? (
+        {currentMemberships.length > 0 ? (
           <>
-            {pastDue ? (
+            {pastDueMemberships.length > 0 ? (
               <View
                 style={{
                   borderRadius: 16,
@@ -214,9 +227,11 @@ export function MemberBillingCenter({
                   marginBottom: 18,
                 }}
               >
-                <Text style={{ fontSize: 14, fontWeight: '700', color: C.caution }}>Pago pendiente</Text>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: C.caution }}>
+                  {pastDueMemberships.map((m) => m.plan.name).join(' · ')} · Pago pendiente
+                </Text>
                 <Text style={{ fontSize: 13, lineHeight: 19, color: C.textSub, marginTop: 4 }}>
-                  La membresía tiene un pago vencido. Genera un link de pago o registra el cobro en ventas.
+                  Genera un link de pago o registra el cobro en ventas.
                 </Text>
               </View>
             ) : null}
@@ -231,33 +246,75 @@ export function MemberBillingCenter({
                 marginBottom: 10,
               }}
             >
-              Membresía actual
+              {currentMemberships.length > 1 ? 'Membresías' : 'Membresía actual'}
             </Text>
-            <Text
-              style={{
-                fontSize: 24,
-                fontWeight: '800',
-                letterSpacing: -0.6,
-                color: C.text,
-                marginBottom: 6,
-              }}
-            >
-              {sub.plan.name}
-            </Text>
-            {planPrice ? (
-              <Text style={{ fontSize: 15, color: C.textSub, marginBottom: 16 }}>{planPrice}</Text>
-            ) : null}
-            <StatusPill label={statusPill.label} bg={statusPill.bg} textColor={statusPill.textColor} />
+            {currentMemberships.map((m, idx) => {
+              const display = membershipStatusDisplay(m);
+              const credits = membershipCreditsDisplay(m.plan.classCredits, m.creditsUsed, m.creditsRemaining);
+              const successor = scheduledSuccessors.find(
+                (sched) => m.supersededBySubscriptionId === sched.subscriptionId,
+              );
+              const toneColors =
+                display.tone === 'positive'
+                  ? { bg: 'rgba(52,211,153,0.12)', text: C.positive }
+                  : display.tone === 'caution'
+                    ? { bg: 'rgba(251,191,36,0.12)', text: C.caution }
+                    : display.tone === 'negative'
+                      ? { bg: 'rgba(248,113,113,0.12)', text: C.negative }
+                      : { bg: 'rgba(255,255,255,0.08)', text: C.textMute };
+              return (
+                <View
+                  key={m.subscriptionId}
+                  style={
+                    idx < currentMemberships.length - 1
+                      ? { marginBottom: 20, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: C.separator }
+                      : undefined
+                  }
+                >
+                  <Text
+                    style={{
+                      fontSize: 24,
+                      fontWeight: '800',
+                      letterSpacing: -0.6,
+                      color: C.text,
+                      marginBottom: 6,
+                    }}
+                    numberOfLines={2}
+                  >
+                    {m.plan.name}
+                  </Text>
+                  <Text style={{ fontSize: 15, color: C.textSub, marginBottom: 14 }}>
+                    {membershipPriceLine(m.plan)}
+                  </Text>
+                  <StatusPill label={display.label} bg={toneColors.bg} textColor={toneColors.text} />
 
-            <View style={{ marginTop: 20 }}>
-              {sourceLabel ? <InfoRow label="Origen de pago" value={sourceLabel} /> : null}
-              <InfoRow label="Periodo termina" value={formatProfileDate(sub.currentPeriodEnd)} />
-              {renewalLabel ? <InfoRow label="Renovación" value={renewalLabel} /> : null}
-              {lastPaymentSummary ? <InfoRow label="Último pago" value={lastPaymentSummary} /> : null}
-              {sub.creditsRemaining != null ? (
-                <InfoRow label="Créditos" value={`${sub.creditsRemaining} restantes`} />
-              ) : null}
-            </View>
+                  <View style={{ marginTop: 18 }}>
+                    <InfoRow label="Origen de pago" value={paymentSourceLine(m.source) || m.source} />
+                    {m.effectiveEnd ? (
+                      <InfoRow label="Vigencia" value={formatProfileDate(m.effectiveEnd)} />
+                    ) : null}
+                    <InfoRow
+                      label="Renovación"
+                      value={m.cancelAtPeriodEnd || m.status === 'CANCELED' ? 'No renovará' : 'Automática'}
+                    />
+                    {m.plan.classCredits != null ? (
+                      <InfoRow label="Créditos" value={credits.primary} />
+                    ) : null}
+                    {successor ? (
+                      <InfoRow
+                        label="Programada"
+                        value={`Sucesora inicia ${formatProfileDate(successor.currentPeriodStart)}`}
+                      />
+                    ) : null}
+                  </View>
+                </View>
+              );
+            })}
+            {lastPaymentSummary ? (
+              <View style={{ marginTop: 8 }}>
+                <InfoRow label="Último pago" value={lastPaymentSummary} />
+              </View>
+            ) : null}
           </>
         ) : (
           <>
@@ -287,7 +344,7 @@ export function MemberBillingCenter({
               />
             ) : null}
             <BrandButton
-              label={sub ? 'Renovar o cambiar plan' : 'Iniciar venta'}
+              label={currentMemberships.length > 0 ? 'Renovar, cambiar o agregar plan' : 'Iniciar venta'}
               accentColor={primaryColor}
               variant={showCheckout ? 'ghost' : undefined}
               onPress={() =>
