@@ -10,6 +10,11 @@ import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
 import { createMembership, createStudio, createUserWithPassword } from './helpers/factories';
 import { runBootyStackable, runBootyStackableReverse } from '../scripts/mm4-booty-stackable';
+import {
+  runIvonneStackReconcile,
+  type StripeReadClient,
+  type StripeSubscriptionLike,
+} from '../scripts/mm5-ivonne-stripe-stack-reconcile';
 
 /**
  * MM-1..MM-4 — multi-membership invariant, entitlement aggregation, attribution, isolation,
@@ -952,6 +957,231 @@ describe('Multi-membership MM-1..MM-4 (e2e, gate ON, FINAL constraint shape)', (
     expect([a.status, b.status].every((s) => s === 201 || s === 409)).toBe(true);
     const subs = await activeSubs(studio.id, member.id);
     expect(subs).toHaveLength(1);
+  });
+
+  // ── MM-5 Stage 5b: Ivonne stack reconciliation script ──────────────────────
+
+  describe('mm5-ivonne-stripe-stack-reconcile script', () => {
+    const STRIPE_SUB_ID = 'sub_test_ivonne';
+    const STRIPE_PRICE = 'price_test_pro';
+    const INVOICE_ID = 'in_test_pro_1';
+    const NOW_SEC = Math.floor(Date.now() / 1000);
+
+    function fakeStripe(overrides: {
+      sub?: Partial<StripeSubscriptionLike>;
+      extraLive?: StripeSubscriptionLike[];
+      invoiceSubByInvoiceId?: Record<string, string>;
+    } = {}): StripeReadClient {
+      const sub: StripeSubscriptionLike = {
+        id: STRIPE_SUB_ID,
+        status: 'active',
+        cancel_at_period_end: false,
+        customer: 'cus_test_ivonne',
+        metadata: { userId: '', studioId: '', planId: '' },
+        items: {
+          data: [
+            {
+              price: { id: STRIPE_PRICE },
+              current_period_start: NOW_SEC - 10 * 86_400,
+              current_period_end: NOW_SEC + 20 * 86_400,
+            },
+          ],
+        },
+        ...overrides.sub,
+      } as StripeSubscriptionLike;
+      return {
+        subscriptions: {
+          retrieve: async (id: string) => {
+            if (id !== STRIPE_SUB_ID) throw new Error(`no such subscription ${id}`);
+            return sub;
+          },
+          list: async () => ({ data: [sub, ...(overrides.extraLive ?? [])] }),
+        },
+        invoices: {
+          retrieve: async (id: string) => ({
+            subscription: overrides.invoiceSubByInvoiceId?.[id] ?? STRIPE_SUB_ID,
+          }),
+        },
+      };
+    }
+
+    async function setupIvonneWorld() {
+      const fixtures = await setupStudioWithPlans();
+      const member = await createUserWithPassword(prisma, { email: 'ivonne-test@e2e.local' });
+      await createMembership(prisma, member.id, fixtures.studio.id, Role.MEMBER);
+      const proPlan = await prisma.membershipPlan.create({
+        data: {
+          studioId: fixtures.studio.id, name: 'Pro', priceCents: 60000, currency: 'mxn',
+          billingInterval: 'MONTHLY', active: true, allClassesAccess: false, classCredits: 5,
+          exclusiveGroup: CORE_EXCLUSIVE_GROUP, stripePriceId: STRIPE_PRICE,
+        },
+      });
+      // Existing cash Booty membership, already Stage-E reclassified (snapshot NULL).
+      const bootyRow = await prisma.subscription.create({
+        data: {
+          ...subRow(fixtures.studio.id, member.id, fixtures.bootyPlan.id, null, SubscriptionStatus.ACTIVE),
+          entitlementEndsAt: new Date(Date.now() + 20 * 86_400_000),
+        },
+      });
+      // The already-recorded Stripe payment (invoice.paid via customer resolution).
+      const payment = await prisma.payment.create({
+        data: {
+          studioId: fixtures.studio.id, userId: member.id, subscriptionId: null,
+          membershipPlanId: proPlan.id, amountCents: 60000, currency: 'mxn',
+          status: 'SUCCEEDED', paymentMethod: 'STRIPE', stripeInvoiceId: INVOICE_ID,
+          paidAt: new Date(Date.now() - 10 * 86_400_000),
+        },
+      });
+      const identity = {
+        studioId: fixtures.studio.id,
+        userId: member.id,
+        bootySubscriptionId: bootyRow.id,
+        proPlanId: proPlan.id,
+        stripeSubscriptionId: STRIPE_SUB_ID,
+        expectedStripePriceId: STRIPE_PRICE,
+      };
+      const stripeMeta = { userId: member.id, studioId: fixtures.studio.id, planId: proPlan.id };
+      return { ...fixtures, member, proPlan, bootyRow, payment, identity, stripeMeta };
+    }
+
+    const silent = () => undefined;
+
+    async function runFlagOff<T>(fn: () => Promise<T>): Promise<T> {
+      process.env['MULTI_MEMBERSHIP_ENABLED'] = 'false';
+      try {
+        return await fn();
+      } finally {
+        process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+      }
+    }
+
+    it('dry-run passes all preconditions, plans the exact mutation, and writes NOTHING', async () => {
+      const w = await setupIvonneWorld();
+      const result = await runFlagOff(() =>
+        runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta } }), {
+          identity: w.identity, execute: false, log: silent,
+        }),
+      );
+      expect(result.status).toBe('DRY_RUN');
+      expect(result.linkedPaymentIds).toEqual([w.payment.id]);
+      expect(await prisma.subscription.count({ where: { stripeSubscriptionId: STRIPE_SUB_ID } })).toBe(0);
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: w.payment.id } });
+      expect(payment.subscriptionId).toBeNull();
+      expect(await prisma.auditLog.count({ where: { action: 'MM5_IVONNE_STRIPE_STACK_RECONCILED' } })).toBe(0);
+    });
+
+    it('execute mirrors live Stripe truth, links ONLY verified payments, leaves Booty untouched, audits once', async () => {
+      const w = await setupIvonneWorld();
+      // Decoy: a null-subscription Pro payment whose invoice belongs to ANOTHER Stripe sub.
+      const decoy = await prisma.payment.create({
+        data: {
+          studioId: w.studio.id, userId: w.member.id, subscriptionId: null,
+          membershipPlanId: w.proPlan.id, amountCents: 60000, currency: 'mxn',
+          status: 'SUCCEEDED', paymentMethod: 'STRIPE', stripeInvoiceId: 'in_other_sub',
+          paidAt: new Date(),
+        },
+      });
+      const paymentsBefore = await prisma.payment.count();
+      const bootyBefore = await prisma.subscription.findUniqueOrThrow({ where: { id: w.bootyRow.id } });
+
+      const result = await runFlagOff(() =>
+        runIvonneStackReconcile(
+          prisma,
+          fakeStripe({
+            sub: { metadata: w.stripeMeta },
+            invoiceSubByInvoiceId: { [INVOICE_ID]: STRIPE_SUB_ID, in_other_sub: 'sub_someone_else' },
+          }),
+          { identity: w.identity, execute: true, log: silent },
+        ),
+      );
+      expect(result.status).toBe('EXECUTED');
+
+      const pro = await prisma.subscription.findUniqueOrThrow({ where: { stripeSubscriptionId: STRIPE_SUB_ID } });
+      expect(pro.membershipPlanId).toBe(w.proPlan.id);
+      expect(pro.status).toBe(SubscriptionStatus.ACTIVE);
+      expect(pro.source).toBe(SubscriptionSource.STRIPE);
+      expect(pro.exclusiveGroupKey).toBe(CORE_EXCLUSIVE_GROUP);
+      expect(pro.entitlementEndsAt).toBeNull();
+      expect(pro.cancelAtPeriodEnd).toBe(false);
+      expect(pro.currentPeriodStart?.getTime()).toBe((NOW_SEC - 10 * 86_400) * 1000);
+      expect(pro.currentPeriodEnd?.getTime()).toBe((NOW_SEC + 20 * 86_400) * 1000);
+
+      // Verified payment linked; decoy NOT linked; no payment rows created; nothing amended.
+      const linked = await prisma.payment.findUniqueOrThrow({ where: { id: w.payment.id } });
+      expect(linked.subscriptionId).toBe(pro.id);
+      expect(linked.amountCents).toBe(60000);
+      expect(linked.stripeInvoiceId).toBe(INVOICE_ID);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: decoy.id } })).subscriptionId).toBeNull();
+      expect(await prisma.payment.count()).toBe(paymentsBefore);
+
+      // Booty byte-identical.
+      const bootyAfter = await prisma.subscription.findUniqueOrThrow({ where: { id: w.bootyRow.id } });
+      expect(bootyAfter).toEqual(bootyBefore);
+
+      // Exactly two compatible renewable memberships; one audit row.
+      const renewable = await activeSubs(w.studio.id, w.member.id);
+      expect(renewable).toHaveLength(2);
+      expect(await prisma.auditLog.count({ where: { action: 'MM5_IVONNE_STRIPE_STACK_RECONCILED' } })).toBe(1);
+    });
+
+    it('rerun after success returns ALREADY_RECONCILED with no new row and no new audit entry', async () => {
+      const w = await setupIvonneWorld();
+      const stripe = fakeStripe({ sub: { metadata: w.stripeMeta } });
+      await runFlagOff(() => runIvonneStackReconcile(prisma, stripe, { identity: w.identity, execute: true, log: silent }));
+      const again = await runFlagOff(() =>
+        runIvonneStackReconcile(prisma, stripe, { identity: w.identity, execute: true, log: silent }),
+      );
+      expect(again.status).toBe('ALREADY_RECONCILED');
+      expect(await prisma.subscription.count({ where: { stripeSubscriptionId: STRIPE_SUB_ID } })).toBe(1);
+      expect(await prisma.auditLog.count({ where: { action: 'MM5_IVONNE_STRIPE_STACK_RECONCILED' } })).toBe(1);
+    });
+
+    it('fails closed on every identity/state mismatch and never writes', async () => {
+      const w = await setupIvonneWorld();
+      const runs: Array<[string, () => Promise<unknown>]> = [
+        ['flag ON', async () => {
+          process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+          try {
+            return await runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta } }), { identity: w.identity, execute: true, log: silent });
+          } finally { process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true'; }
+        }],
+        ['wrong Stripe metadata userId', () => runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: { ...w.stripeMeta, userId: 'someone-else' } } }), { identity: w.identity, execute: true, log: silent }))],
+        ['wrong Stripe metadata studioId', () => runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: { ...w.stripeMeta, studioId: 'other-studio' } } }), { identity: w.identity, execute: true, log: silent }))],
+        ['wrong Booty row', () => runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta } }), { identity: { ...w.identity, bootySubscriptionId: 'nonexistent' }, execute: true, log: silent }))],
+        ['live price mismatch', () => runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta, items: { data: [{ price: { id: 'price_wrong' }, current_period_start: NOW_SEC, current_period_end: NOW_SEC + 86400 }] } } }), { identity: w.identity, execute: true, log: silent }))],
+        ['unexpected second live Stripe subscription', () => runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta }, extraLive: [{ id: 'sub_surprise', status: 'active', cancel_at_period_end: false, customer: 'cus_test_ivonne', metadata: { studioId: w.studio.id }, items: { data: [] } }] }), { identity: w.identity, execute: true, log: silent }))],
+      ];
+      for (const [label, run] of runs) {
+        await expect(run()).rejects.toThrow(/IVONNE RECONCILE ABORT/);
+        expect(await prisma.subscription.count({ where: { stripeSubscriptionId: STRIPE_SUB_ID } })).toBe(0);
+        void label;
+      }
+
+      // Booty still CORE (Stage E not done) aborts.
+      await prisma.subscription.update({ where: { id: w.bootyRow.id }, data: { exclusiveGroupKey: CORE_EXCLUSIVE_GROUP } });
+      await expect(
+        runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta } }), { identity: w.identity, execute: true, log: silent })),
+      ).rejects.toThrow(/Stage E/);
+      await prisma.subscription.update({ where: { id: w.bootyRow.id }, data: { exclusiveGroupKey: null } });
+
+      // Wrong plan Stripe price aborts.
+      await prisma.membershipPlan.update({ where: { id: w.proPlan.id }, data: { stripePriceId: 'price_changed' } });
+      await expect(
+        runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta } }), { identity: w.identity, execute: true, log: silent })),
+      ).rejects.toThrow(/stripePriceId/);
+      await prisma.membershipPlan.update({ where: { id: w.proPlan.id }, data: { stripePriceId: STRIPE_PRICE } });
+
+      // A pre-existing renewable Pro row (not the reconciled one) aborts.
+      const stray = await prisma.subscription.create({
+        data: subRow(w.studio.id, w.member.id, w.proPlan.id, CORE_EXCLUSIVE_GROUP, SubscriptionStatus.ACTIVE),
+      });
+      await expect(
+        runFlagOff(() => runIvonneStackReconcile(prisma, fakeStripe({ sub: { metadata: w.stripeMeta } }), { identity: w.identity, execute: true, log: silent })),
+      ).rejects.toThrow(/renewable Pro/);
+      await prisma.subscription.delete({ where: { id: stray.id } });
+
+      expect(await prisma.auditLog.count({ where: { action: 'MM5_IVONNE_STRIPE_STACK_RECONCILED' } })).toBe(0);
+    });
   });
 
   // ── MM-4 D: Booty stackable script (dry-run / execute / idempotence / reverse) ──
