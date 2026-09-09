@@ -1,9 +1,10 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { INestApplication } from '@nestjs/common';
-import { BookingStatus, ClassStatus, Prisma, Role, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
+import { BookingStatus, CheckInMethod, ClassStatus, Role, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { MembershipUsageService } from '../src/membership-usage/membership-usage.service';
 import { StripeWebhookService } from '../src/billing/stripe-webhook.service';
 import { CORE_EXCLUSIVE_GROUP } from '../src/memberships/membership-compatibility';
 import { createTestApp } from './helpers/create-app';
@@ -612,24 +613,133 @@ describe('Multi-membership MM-1..MM-4 (e2e, gate ON, FINAL constraint shape)', (
     expect(anyOpenGym).toBe(true);
   });
 
-  // Subscription-scoped consumption via the real service SQL.
+  // Subscription-scoped consumption via the REAL usage service — exercises the MM-5.1
+  // canonical-event + deterministic-ownership path against the live schema. The window is
+  // deliberately wide so it counts a subscription's full ledger like the old helper did.
   async function countScoped(studioId: string, userId: string, subscriptionId: string): Promise<number> {
-    const rows = await prisma.$queryRaw<{ count: bigint }[]>(Prisma.sql`
-      SELECT COUNT(*)::bigint AS count
-      FROM (
-        SELECT b.scheduled_class_id FROM bookings b
-        WHERE b.studio_id = ${studioId} AND b.user_id = ${userId}
-          AND b.status IN ('CONFIRMED'::"BookingStatus", 'COMPLETED'::"BookingStatus")
-          AND (b.subscription_id = ${subscriptionId} OR b.subscription_id IS NULL)
-        UNION
-        SELECT a.scheduled_class_id FROM attendances a
-        WHERE a.studio_id = ${studioId} AND a.user_id = ${userId}
-          AND a.scheduled_class_id IS NOT NULL
-          AND (a.subscription_id = ${subscriptionId} OR a.subscription_id IS NULL)
-      ) consumed
-    `);
-    return Number(rows[0]?.count ?? 0n);
+    const usage = app.get(MembershipUsageService);
+    return usage.countConsumedClasses(
+      prisma, studioId, userId, new Date('2000-01-01T00:00:00Z'), new Date('2100-01-01T00:00:00Z'), subscriptionId,
+    );
   }
+
+  // ── MM-5.1: legacy NULL attribution — one event, ONE ledger ───────────────
+
+  describe('MM-5.1 legacy NULL usage attribution', () => {
+    it('future-booking edge (unlimited + credit): legacy NULL booking, then a second membership before class — exactly ONE ledger', async () => {
+      // The exact problematic sequence: member books under a single membership while
+      // attribution was NULL, then a compatible second membership starts BEFORE the class.
+      const fixtures = await setupStudioWithPlans();
+      const { member, adminToken } = await setupMemberAndAdmin(fixtures.studio.id, 'mm51-future-unl');
+      await cashSale(fixtures.studio.id, adminToken, member.id, fixtures.bootyPlan.id, 80000).expect(201);
+      const bootySub = (await activeSubs(fixtures.studio.id, member.id))[0]!;
+
+      // Full also includes the Booty template, so BOTH plans qualify for the class.
+      await prisma.membershipPlanClassAccess.create({
+        data: { studioId: fixtures.studio.id, membershipPlanId: fixtures.fullPlan.id, classTemplateId: fixtures.bootyTemplate.id },
+      });
+
+      const futureClass = await createClass(fixtures.studio.id, fixtures.bootyTemplate.id, 48);
+      await prisma.booking.create({
+        data: {
+          studioId: fixtures.studio.id, scheduledClassId: futureClass.id, userId: member.id,
+          status: BookingStatus.CONFIRMED, subscriptionId: null,
+        },
+      });
+
+      await cashSale(fixtures.studio.id, adminToken, member.id, fixtures.fullPlan.id, 150000).expect(201);
+      const fullSub = (await activeSubs(fixtures.studio.id, member.id)).find(
+        (s) => s.membershipPlanId === fixtures.fullPlan.id,
+      )!;
+
+      const fullCount = await countScoped(fixtures.studio.id, member.id, fullSub.id);
+      const bootyCount = await countScoped(fixtures.studio.id, member.id, bootySub.id);
+      expect(fullCount + bootyCount).toBe(1);
+      // Deterministic owner: unlimited Full absorbs legacy history, scarce Booty credits survive.
+      expect(fullCount).toBe(1);
+      expect(bootyCount).toBe(0);
+    });
+
+    it('future-booking edge (two credit plans): the soonest-ending entitlement owns the event — exactly ONE ledger', async () => {
+      const fixtures = await setupStudioWithPlans();
+      const pilatesPlan = await prisma.membershipPlan.create({
+        data: {
+          studioId: fixtures.studio.id, name: 'Pilates Pack', priceCents: 90000, currency: 'mxn',
+          billingInterval: 'MONTHLY', active: true, allClassesAccess: false, classCredits: 8,
+          exclusiveGroup: null,
+          classTemplateAccess: { create: [{ studioId: fixtures.studio.id, classTemplateId: fixtures.bootyTemplate.id }] },
+        },
+      });
+      const { member, adminToken } = await setupMemberAndAdmin(fixtures.studio.id, 'mm51-future-2cr');
+      await cashSale(fixtures.studio.id, adminToken, member.id, fixtures.bootyPlan.id, 80000).expect(201);
+      const bootySub = (await activeSubs(fixtures.studio.id, member.id))[0]!;
+
+      const futureClass = await createClass(fixtures.studio.id, fixtures.bootyTemplate.id, 48);
+      await prisma.booking.create({
+        data: {
+          studioId: fixtures.studio.id, scheduledClassId: futureClass.id, userId: member.id,
+          status: BookingStatus.CONFIRMED, subscriptionId: null,
+        },
+      });
+
+      await cashSale(fixtures.studio.id, adminToken, member.id, pilatesPlan.id, 90000).expect(201);
+      const pilatesSub = (await activeSubs(fixtures.studio.id, member.id)).find(
+        (s) => s.membershipPlanId === pilatesPlan.id,
+      )!;
+
+      const bootyCount = await countScoped(fixtures.studio.id, member.id, bootySub.id);
+      const pilatesCount = await countScoped(fixtures.studio.id, member.id, pilatesSub.id);
+      expect(bootyCount + pilatesCount).toBe(1);
+
+      // The owner is the candidate with the earliest effective entitlement end —
+      // computed from the persisted rows, so the assertion is exact, not incidental.
+      const effectiveEnd = (s: { entitlementEndsAt: Date | null; currentPeriodEnd: Date | null }) =>
+        (s.entitlementEndsAt ?? s.currentPeriodEnd)!.getTime();
+      const expectedOwner = effectiveEnd(bootySub) <= effectiveEnd(pilatesSub) ? bootySub.id : pilatesSub.id;
+      expect(bootyCount === 1 ? bootySub.id : pilatesSub.id).toBe(expectedOwner);
+    });
+
+    it('Ivonne-shape regression (matrix W): historical Booty NULL usage never leaks into a later CORE membership', async () => {
+      const fixtures = await setupStudioWithPlans();
+      const { member, adminToken } = await setupMemberAndAdmin(fixtures.studio.id, 'mm51-ivonne-shape');
+      await cashSale(fixtures.studio.id, adminToken, member.id, fixtures.bootyPlan.id, 80000).expect(201);
+      const bootySub = (await activeSubs(fixtures.studio.id, member.id))[0]!;
+
+      // Historical consumed class: BOTH legs legacy NULL (booking + attendance) — must dedup to ONE credit.
+      const pastClass = await createClass(fixtures.studio.id, fixtures.bootyTemplate.id, 1);
+      await prisma.booking.create({
+        data: {
+          studioId: fixtures.studio.id, scheduledClassId: pastClass.id, userId: member.id,
+          status: BookingStatus.COMPLETED, subscriptionId: null,
+        },
+      });
+      await prisma.attendance.create({
+        data: {
+          studioId: fixtures.studio.id, scheduledClassId: pastClass.id, userId: member.id,
+          method: CheckInMethod.MANUAL, subscriptionId: null,
+        },
+      });
+      // Non-consuming legacy row (matrix S): a CANCELLED NULL booking never counts anywhere.
+      const cancelledClass = await createClass(fixtures.studio.id, fixtures.bootyTemplate.id, 2);
+      await prisma.booking.create({
+        data: {
+          studioId: fixtures.studio.id, scheduledClassId: cancelledClass.id, userId: member.id,
+          status: BookingStatus.CANCELLED, subscriptionId: null,
+        },
+      });
+
+      // Then the CORE membership arrives (credit-limited Basic — the Pro/Booty stack shape).
+      await cashSale(fixtures.studio.id, adminToken, member.id, fixtures.basicPlan.id, 100000).expect(201);
+      const coreSub = (await activeSubs(fixtures.studio.id, member.id)).find(
+        (s) => s.membershipPlanId === fixtures.basicPlan.id,
+      )!;
+
+      // Booty (the only plan that includes the class) keeps its ONE deduped credit;
+      // the CORE ledger sees nothing. Never 2, never one-in-each.
+      expect(await countScoped(fixtures.studio.id, member.id, bootySub.id)).toBe(1);
+      expect(await countScoped(fixtures.studio.id, member.id, coreSub.id)).toBe(0);
+    });
+  });
 
   // ── MM-5A: multi-membership experience contract ────────────────────────────
 
