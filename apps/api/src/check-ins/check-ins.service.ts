@@ -25,6 +25,7 @@ import { MANUAL_ATTENDANCE_ROLES } from '../auth/desk-roles';
 import { acquireMembershipUsageAdvisoryLock } from '../membership-usage/membership-usage-advisory-lock';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { currentlyEntitledSubscriptionWhere, MEMBERSHIP_EXPIRED_MESSAGE } from '../memberships/membership-entitlement';
+import { orderEntitlementCandidates } from '../memberships/membership-compatibility';
 import { assertEligibleForCheckIn } from './check-in-eligibility';
 import { CHECK_IN_LATE_GRACE_MINUTES, isWithinCheckInWindow } from './check-in-window.utils';
 import {
@@ -323,6 +324,7 @@ export class CheckInsService {
         userId: booking.userId,
         method: CheckInMethod.QR,
         checkedInByUserId: null,
+        subscriptionId: booking.subscriptionId,
       });
     });
 
@@ -360,6 +362,7 @@ export class CheckInsService {
       userId: booking.userId,
       method: CheckInMethod.MANUAL,
       checkedInByUserId: actorUserId,
+      subscriptionId: booking.subscriptionId,
     });
 
     this.logCheckInCompleted('manual', { studioId, attendance, actorUserId });
@@ -471,6 +474,7 @@ export class CheckInsService {
         userId: booking.userId,
         method: CheckInMethod.QR,
         checkedInByUserId: null,
+        subscriptionId: booking.subscriptionId,
       });
     });
 
@@ -920,7 +924,7 @@ export class CheckInsService {
         await acquireMembershipUsageAdvisoryLock(tx, studioId, memberId);
 
         const now = new Date();
-        const [membership, scheduledClass, activeSubscription] = await Promise.all([
+        const [membership, scheduledClass, entitledSubscriptions] = await Promise.all([
           tx.studioMembership.findFirst({
             where: {
               studioId,
@@ -936,14 +940,18 @@ export class CheckInsService {
             where: { id: scheduledClassId, studioId },
             include: { classTemplate: { select: { id: true, name: true, category: true } } },
           }),
-          tx.subscription.findFirst({
+          // MM-2: ALL currently entitled memberships — resolution below picks the one
+          // whose entitlement this walk-in attendance actually consumes.
+          tx.subscription.findMany({
             where: {
               studioId,
               userId: memberId,
               ...currentlyEntitledSubscriptionWhere(now),
             },
+            orderBy: { createdAt: 'asc' },
             select: {
               id: true,
+              createdAt: true,
               currentPeriodStart: true,
               currentPeriodEnd: true,
               entitlementEndsAt: true,
@@ -983,7 +991,7 @@ export class CheckInsService {
           }),
         );
 
-        if (!activeSubscription) {
+        if (entitledSubscriptions.length === 0) {
           throw new BadRequestException(
             MEMBERSHIP_EXPIRED_MESSAGE,
           );
@@ -1011,17 +1019,24 @@ export class CheckInsService {
 
         // Class template entitlement check — must happen before credit check.
         // Staff cannot silently book an incompatible plan member into a restricted class.
-        const { allClassesAccess, allowedCategories, classTemplateAccess, id: planId, name: planName } =
-          activeSubscription.membershipPlan;
-        const allowedTemplateIds = classTemplateAccess.map((a) => a.classTemplateId);
-
-        const hasTemplateAccess = isClassIncludedInPlan({
-          allClassesAccess,
-          allowedTemplateIds,
-          allowedCategories,
-          classTemplateId: scheduledClass.classTemplate.id,
-          templateCategory: scheduledClass.classTemplate.category,
-        });
+        // MM-2: candidates are the memberships whose plan includes this class, resolved by
+        // the canonical precedence (unlimited first, then soonest-ending credits).
+        const qualifying = orderEntitlementCandidates(
+          entitledSubscriptions.filter((sub) =>
+            isClassIncludedInPlan({
+              allClassesAccess: sub.membershipPlan.allClassesAccess,
+              allowedTemplateIds: sub.membershipPlan.classTemplateAccess.map((a) => a.classTemplateId),
+              allowedCategories: sub.membershipPlan.allowedCategories,
+              classTemplateId: scheduledClass.classTemplate.id,
+              templateCategory: scheduledClass.classTemplate.category,
+            }),
+          ),
+        );
+        // Override path metadata + credit anchor when nothing qualifies: the deterministic
+        // top-precedence entitled membership (legacy behavior used the single sub).
+        const overrideFallback = orderEntitlementCandidates(entitledSubscriptions)[0]!;
+        const { id: planId, name: planName } = (qualifying[0] ?? overrideFallback).membershipPlan;
+        const hasTemplateAccess = qualifying.length > 0;
 
         if (!hasTemplateAccess) {
           if (!overrideEntitlement) {
@@ -1069,20 +1084,37 @@ export class CheckInsService {
         }
 
         this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.assertCredits' }));
-        // Use entitlementEndsAt as the effective period end for fixed-duration plans.
-        const subForCredits = {
-          ...activeSubscription,
-          currentPeriodEnd: activeSubscription.entitlementEndsAt ?? activeSubscription.currentPeriodEnd,
-        };
-        await this.membershipUsage.assertCreditAvailableForClass(
-          tx,
-          studioId,
-          memberId,
-          scheduledClassId,
-          scheduledClass.startsAt,
-          subForCredits,
-          { errorType: 'bad_request' },
-        );
+        // MM-2: try candidates in canonical order; the first whose credits (if metered)
+        // are available is the membership this attendance consumes. A single-membership
+        // member follows exactly the legacy path: one candidate, same checks, same errors.
+        const candidates = qualifying.length > 0 ? qualifying : [overrideFallback];
+        let chosenSubscription: (typeof candidates)[number] | null = null;
+        let firstCandidateError: unknown = null;
+        for (const candidate of candidates) {
+          // Use entitlementEndsAt as the effective period end for fixed-duration plans.
+          const subForCredits = {
+            ...candidate,
+            currentPeriodEnd: candidate.entitlementEndsAt ?? candidate.currentPeriodEnd,
+          };
+          try {
+            await this.membershipUsage.assertCreditAvailableForClass(
+              tx,
+              studioId,
+              memberId,
+              scheduledClassId,
+              scheduledClass.startsAt,
+              subForCredits,
+              { errorType: 'bad_request' },
+            );
+            chosenSubscription = candidate;
+            break;
+          } catch (candidateError) {
+            firstCandidateError = firstCandidateError ?? candidateError;
+          }
+        }
+        if (!chosenSubscription) {
+          throw firstCandidateError;
+        }
 
         this.logger.log(JSON.stringify({ event: 'registerManualClassAttendance.createAttendance' }));
         try {
@@ -1094,6 +1126,8 @@ export class CheckInsService {
               userId: memberId,
               method: CheckInMethod.MANUAL,
               checkedInByUserId: actorUserId,
+              // MM-2: this walk-in attendance consumes the chosen membership's entitlement.
+              subscriptionId: chosenSubscription.id,
             },
             include: { user: { select: attendanceUserSelect } },
           });
@@ -1206,6 +1240,8 @@ export class CheckInsService {
       userId: string;
       method: CheckInMethod;
       checkedInByUserId: string | null;
+      /** MM-2: entitlement attribution inherited from the booking (null for legacy rows). */
+      subscriptionId?: string | null;
     },
   ): Promise<AttendanceSummary> {
     try {
@@ -1219,6 +1255,7 @@ export class CheckInsService {
           userId: input.userId,
           method: input.method,
           checkedInByUserId: input.checkedInByUserId,
+          subscriptionId: input.subscriptionId ?? null,
         },
         include: { user: { select: attendanceUserSelect } },
       });

@@ -181,8 +181,10 @@ export class WaitlistService {
         await acquireMembershipUsageAdvisoryLock(tx, studioId, candidate.userId);
       }
 
+      // MM-2: records which membership's entitlement authorized the promoted booking.
+      let entitlementSubscriptionId: string | null = null;
       try {
-        await this.bookingAccess.assertAccess(
+        ({ subscriptionId: entitlementSubscriptionId } = await this.bookingAccess.assertAccess(
           tx,
           studioId,
           candidate.userId,
@@ -191,7 +193,7 @@ export class WaitlistService {
           studio.timezone,
           scheduledClass.classTemplateId,
           scheduledClassId,
-        );
+        ));
       } catch (e) {
         if (e instanceof ForbiddenException) continue;
         throw e;
@@ -223,6 +225,7 @@ export class WaitlistService {
             scheduledClassId,
             userId: candidate.userId,
             status: BookingStatus.CONFIRMED,
+            subscriptionId: entitlementSubscriptionId,
           },
         });
         await tx.waitlistEntry.update({

@@ -76,6 +76,14 @@ function normalizeBuildWorkerEnabled(v: unknown): string {
   return 'false';
 }
 
+/** MM-4: multi-membership CREATION gate (may a new compatible simultaneous membership be
+ *  created?). Defaults to 'false' — creation acceptance stays legacy until rollout flips it;
+ *  family scoping of existing memberships is always on and not controlled by this flag. */
+function normalizeMultiMembershipEnabled(v: unknown): string {
+  if (typeof v === 'string' && v.trim().toLowerCase() === 'true') return 'true';
+  return 'false';
+}
+
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...config };
 
@@ -113,6 +121,7 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
     }
   }
   out['BUILD_WORKER_ENABLED'] = normalizeBuildWorkerEnabled(out['BUILD_WORKER_ENABLED']);
+  out['MULTI_MEMBERSHIP_ENABLED'] = normalizeMultiMembershipEnabled(out['MULTI_MEMBERSHIP_ENABLED']);
   out['JWT_ACCESS_TTL'] = assertJwtAccessTtl(out['JWT_ACCESS_TTL']);
   out['JWT_REFRESH_TTL_DAYS'] = assertJwtRefreshTtlDays(out['JWT_REFRESH_TTL_DAYS']);
   out['BCRYPT_ROUNDS'] = assertBcryptRounds(out['BCRYPT_ROUNDS']);

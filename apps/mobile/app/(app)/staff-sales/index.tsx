@@ -41,6 +41,8 @@ import {
   createWalkInMember,
   fetchSalesSettings,
   type SalesSettings,
+  fetchMemberPurchaseOptions,
+  type StaffPurchaseOptionDto,
 } from '@/lib/api/salesApi';
 import {
   attestMemberWaiver,
@@ -54,6 +56,7 @@ import {
   immediateCashSalePeriod,
 } from '@/lib/cashSalePeriod';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
+import { staffSaleRelationshipCopy } from '@/lib/membershipDisplay';
 import {
   canAccessSales,
   canCreateWalkInMember,
@@ -509,6 +512,9 @@ export default function StaffSalesScreen() {
   const [plans, setPlans] = useState<MembershipPlanDto[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState('');
+  // MM-5: server-computed relationship (add vs change vs renew), keyed by the member it
+  // was fetched for so a slow response can never describe the wrong member.
+  const [memberOptions, setMemberOptions] = useState<{ userId: string; options: StaffPurchaseOptionDto[] } | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodChoice>('stripe');
 
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
@@ -534,6 +540,29 @@ export default function StaffSalesScreen() {
     () => plans.find((p) => p.id === selectedPlanId) ?? null,
     [plans, selectedPlanId],
   );
+
+  useEffect(() => {
+    if (!studioId || !selectedMember) return;
+    const userId = selectedMember.user.id;
+    let cancelled = false;
+    void fetchMemberPurchaseOptions(studioId, userId)
+      .then((options) => { if (!cancelled) setMemberOptions({ userId, options }); })
+      .catch(() => { if (!cancelled) setMemberOptions({ userId, options: [] }); });
+    return () => { cancelled = true; };
+  }, [studioId, selectedMember]);
+
+  const selectedRelationship = useMemo(() => {
+    if (!selectedPlan || !selectedMember) return null;
+    if (!memberOptions || memberOptions.userId !== selectedMember.user.id) return null;
+    const option = memberOptions.options.find((o) => o.planId === selectedPlan.id);
+    if (!option) return null;
+    return staffSaleRelationshipCopy({
+      action: option.purchaseAction,
+      planName: selectedPlan.name,
+      relatedPlanName: option.relatedPlanName,
+      memberName: selectedMember ? memberDisplayName(selectedMember) : null,
+    });
+  }, [selectedPlan, memberOptions, selectedMember]);
 
   const waiverOk = !waiverStatus?.required || waiverStatus.accepted;
   const cashBlockedByWaiver = paymentMethod === 'cash' && !waiverOk;
@@ -1172,6 +1201,29 @@ export default function StaffSalesScreen() {
                 ))
               )}
 
+              {selectedRelationship ? (
+                <View
+                  style={{
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: C.separator,
+                    backgroundColor: 'rgba(255,255,255,0.04)',
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    marginBottom: 16,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }}>
+                    {selectedRelationship.title}
+                  </Text>
+                  {selectedRelationship.note ? (
+                    <Text style={{ fontSize: 13, color: C.textSub, marginTop: 4, lineHeight: 19 }}>
+                      {selectedRelationship.note}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+
               <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
                 <View style={{ flex: 1 }}>
                   <BrandButton
@@ -1196,6 +1248,12 @@ export default function StaffSalesScreen() {
           {step === 4 && selectedMember && selectedPlan ? (
             <Animated.View entering={FadeInDown.duration(300)}>
               <SectionTitle>Método de pago</SectionTitle>
+              {selectedRelationship ? (
+                <Text style={{ fontSize: 14, fontWeight: '600', color: C.textSub, marginBottom: 16, lineHeight: 20 }}>
+                  {selectedRelationship.title}
+                  {selectedRelationship.note ? ` — ${selectedRelationship.note}` : ''}
+                </Text>
+              ) : null}
 
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
                 {canCheckout ? (

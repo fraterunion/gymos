@@ -8,7 +8,7 @@ import { StripeToCashTransitionService } from './stripe-to-cash-transition.servi
 import { StripeRenewalAuditService } from './stripe-renewal-audit.service';
 import { buildPaidFixedEntitlementCycle } from './fixed-entitlement-cycle';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
-import { subscriptionLockKey } from './subscription-lifecycle.utils';
+import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 import {
   readCurrentStripePriceId,
   readPendingPlanIdFromMetadata,
@@ -21,6 +21,10 @@ import {
   type WebhookSubscriptionPayload,
 } from './stripe-webhook-payloads';
 import { mapStripeSubscriptionStatus } from './stripe-subscription-status';
+import {
+  findConflictingMemberships,
+  findCreationConflicts,
+} from '../memberships/membership-compatibility';
 import { readInvoiceSubscriptionId } from './stripe-invoice.utils';
 import { readCancellationDetails } from './stripe-renewal-audit.utils';
 
@@ -255,9 +259,10 @@ export class StripeWebhookService {
         : {};
 
     const saved = await this.prisma.$transaction(async (tx) => {
-      // Serialise concurrent webhook deliveries for the same member/studio, preventing
-      // races where two deliveries both pass the conflict check and both try to CREATE.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscriptionLockKey(studioId, userId)}))`;
+      // MM-4: unified member-scoped subscription-write lock — serialises concurrent webhook
+      // deliveries AND cash sales / scheduled-cash creation for the same member, preventing
+      // races where two paths both pass the conflict check and both try to CREATE.
+      await acquireSubscriptionWriteAdvisoryLock(tx, studioId, userId);
 
       const { membershipPlanId, pendingMembershipPlanId } =
         await this.subscriptionLifecycle.reconcileSubscriptionPlansFromStripe(tx, {
@@ -281,6 +286,7 @@ export class StripeWebhookService {
           name: true,
           billingInterval: true,
           entitlementDays: true,
+          exclusiveGroup: true,
         },
       });
       if (!plan) {
@@ -309,9 +315,26 @@ export class StripeWebhookService {
 
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
         if (!existingRowForThisSub) {
-          const conflictingRow = await tx.subscription.findFirst({
+          // MM-4 creation acceptance (gated): with stacking allowed, only a same-plan/
+          // same-exclusive-group row conflicts — a legitimately paid COMPATIBLE
+          // subscription (e.g. Booty Lab arriving while Full Access is active) falls
+          // through to the upsert below and creates its own local row; it must never be
+          // silently dropped/acknowledged as a conflict. With stacking disabled, every
+          // renewable row blocks the NEW row (legacy acceptance) — and the conflict
+          // handler below never mutates a live sibling (it only supersedes expired cash).
+          const renewableRows = await tx.subscription.findMany({
             where: { studioId, userId, status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } },
+            include: { membershipPlan: { select: { exclusiveGroup: true } } },
+            orderBy: { createdAt: 'desc' },
           });
+          const conflictingRow = findCreationConflicts(
+            renewableRows.map((r) => ({
+              row: r,
+              membershipPlanId: r.membershipPlanId,
+              exclusiveGroupKey: r.exclusiveGroupKey,
+            })),
+            { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
+          )[0]?.row;
           if (conflictingRow) {
             return {
               row: await this.handleWebhookActiveConflict(tx, {
@@ -319,6 +342,7 @@ export class StripeWebhookService {
                 incomingSub: sub,
                 incomingStatus: status,
                 incomingMembershipPlanId: membershipPlanId,
+                incomingExclusiveGroup: plan.exclusiveGroup,
                 incomingPendingMembershipPlanId: pendingMembershipPlanId,
                 incomingPeriodData: periodData,
                 entitlementEndsAt,
@@ -343,6 +367,8 @@ export class StripeWebhookService {
           status: plan.entitlementDays != null ? SubscriptionStatus.PAST_DUE : status,
           stripeSubscriptionId: sub.id,
           cancelAtPeriodEnd: sub.cancel_at_period_end,
+          // MM-1: purchase-time snapshot of the plan's exclusivity group.
+          exclusiveGroupKey: plan.exclusiveGroup,
           ...periodData,
           // entitlementEndsAt is set only at creation — decoupled from Stripe period updates
           ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
@@ -376,15 +402,27 @@ export class StripeWebhookService {
       }
 
       if (status === SubscriptionStatus.CANCELED) {
-        const pendingCash = await tx.subscription.findFirst({
+        // MM-3: only a successor belonging to the ENDING membership's plan/family may be
+        // linked or activated. A Booty Lab cancellation must never touch a Full Access
+        // cash successor (and vice versa).
+        const scheduledCashRows = await tx.subscription.findMany({
           where: {
             studioId,
             userId,
             status: SubscriptionStatus.SCHEDULED,
             source: SubscriptionSource.CASH,
           },
-          select: { id: true },
+          include: { membershipPlan: { select: { exclusiveGroup: true } } },
+          orderBy: { createdAt: 'desc' },
         });
+        const pendingCash = findConflictingMemberships(
+          scheduledCashRows.map((r) => ({
+            row: r,
+            membershipPlanId: r.membershipPlanId,
+            exclusiveGroupKey: r.exclusiveGroupKey,
+          })),
+          { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
+        )[0]?.row ?? null;
         if (row.endReason == null) {
           row = await tx.subscription.update({
             where: { id: row.id },
@@ -403,7 +441,11 @@ export class StripeWebhookService {
             data: { supersededBySubscriptionId: pendingCash.id },
           });
         }
-        await this.stripeToCash.activateScheduledCashIfDue(tx, { studioId, userId });
+        await this.stripeToCash.activateScheduledCashIfDue(tx, {
+          studioId,
+          userId,
+          forPlan: { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
+        });
       }
 
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
@@ -497,6 +539,7 @@ export class StripeWebhookService {
       incomingSub: WebhookSubscriptionPayload;
       incomingStatus: SubscriptionStatus;
       incomingMembershipPlanId: string;
+      incomingExclusiveGroup: string | null;
       incomingPendingMembershipPlanId: string | null;
       incomingPeriodData: { currentPeriodStart?: Date; currentPeriodEnd?: Date };
       entitlementEndsAt?: Date;
@@ -524,6 +567,7 @@ export class StripeWebhookService {
           status: params.incomingStatus,
           stripeSubscriptionId: incomingSub.id,
           cancelAtPeriodEnd: incomingSub.cancel_at_period_end,
+          exclusiveGroupKey: params.incomingExclusiveGroup,
           ...params.incomingPeriodData,
           ...(params.entitlementEndsAt !== undefined ? { entitlementEndsAt: params.entitlementEndsAt } : {}),
         },

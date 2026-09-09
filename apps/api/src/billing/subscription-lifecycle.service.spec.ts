@@ -26,6 +26,7 @@ describe('SubscriptionLifecycleService', () => {
     subscription: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
+      findUnique: jest.fn(),
       update: jest.fn(),
     },
     $transaction: jest.fn(),
@@ -106,6 +107,21 @@ describe('SubscriptionLifecycleService', () => {
         billingInterval: 'MONTHLY',
       },
     });
+    prisma.subscription.findMany.mockResolvedValue([{
+      id: 'sub-local-1',
+      studioId: 'studio-1',
+      userId: 'user-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+      membershipPlan: {
+        id: 'plan-basic',
+        name: 'Basic Access',
+        priceCents: 1300,
+        currency: 'mxn',
+        billingInterval: 'MONTHLY',
+      },
+    }]);
     prisma.membershipPlan.findFirst.mockImplementation(async (args: { where: { id?: string; stripePriceId?: string } }) => {
       if (args.where.id === 'plan-full') {
         return { id: 'plan-full', name: 'Full Access', priceCents: 1500, currency: 'mxn', billingInterval: 'MONTHLY' };
@@ -167,6 +183,15 @@ describe('SubscriptionLifecycleService', () => {
       pendingMembershipPlanId: null,
       membershipPlan: { id: 'plan-basic', name: 'Basic Access', priceCents: 1300, currency: 'mxn', billingInterval: 'MONTHLY' },
     });
+    prisma.subscription.findMany.mockResolvedValue([{
+      id: 'sub-local-1',
+      studioId: 'studio-1',
+      userId: 'user-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+      membershipPlan: { id: 'plan-basic', name: 'Basic Access', priceCents: 1300, currency: 'mxn', billingInterval: 'MONTHLY' },
+    }]);
     prisma.membershipPlan.findFirst.mockImplementation(async (args: { where: { id?: string; stripePriceId?: string } }) => {
       if (args.where.id === 'plan-full') return { id: 'plan-full', name: 'Full Access', priceCents: 1500, currency: 'mxn', billingInterval: 'MONTHLY' };
       if (args.where.stripePriceId === 'price_full') return { id: 'plan-full' };
@@ -394,13 +419,21 @@ describe('SubscriptionLifecycleService', () => {
         id: 'sub-old',
         stripeSubscriptionId: 'sub_old',
         membershipPlanId: 'plan-basic',
-        membershipPlan: { id: 'plan-basic', name: 'Basic Access' },
+        exclusiveGroupKey: 'CORE',
+        membershipPlan: { id: 'plan-basic', name: 'Basic Access', exclusiveGroup: 'CORE' },
         status: SubscriptionStatus.ACTIVE,
         source: 'STRIPE',
         cancelAtPeriodEnd: false,
         createdAt: new Date(),
       },
     ]);
+
+    prisma.subscription.findUnique.mockResolvedValue({
+      id: 'sub-new',
+      membershipPlanId: 'plan-full',
+      exclusiveGroupKey: 'CORE',
+      membershipPlan: { id: 'plan-full', exclusiveGroup: 'CORE' },
+    });
 
     await service.auditDuplicateRenewableSubscriptions(prisma as never, {
       studioId: 'studio-1',
@@ -426,6 +459,13 @@ describe('SubscriptionLifecycleService', () => {
       pendingMembershipPlanId: null,
       membershipPlan: { id: 'plan-basic', name: 'Basic', priceCents: 1300, currency: 'mxn', billingInterval: 'MONTHLY' },
     });
+    prisma.subscription.findMany.mockResolvedValue([{
+      id: 'sub-local-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-basic',
+      pendingMembershipPlanId: null,
+      membershipPlan: { id: 'plan-basic', name: 'Basic', priceCents: 1300, currency: 'mxn', billingInterval: 'MONTHLY' },
+    }]);
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-full',
       name: 'Full Access',
@@ -553,6 +593,13 @@ describe('SubscriptionLifecycleService', () => {
       pendingMembershipPlanId: null,
       membershipPlan: { id: 'plan-full', name: 'Full', priceCents: 1500, currency: 'mxn', billingInterval: 'MONTHLY' },
     });
+    prisma.subscription.findMany.mockResolvedValue([{
+      id: 'sub-local-1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      membershipPlanId: 'plan-full',
+      pendingMembershipPlanId: null,
+      membershipPlan: { id: 'plan-full', name: 'Full', priceCents: 1500, currency: 'mxn', billingInterval: 'MONTHLY' },
+    }]);
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-full',
       name: 'Full Access',
@@ -862,5 +909,224 @@ describe('SubscriptionLifecycleService', () => {
 
     expect(result.effective).toBe('immediate');
     expect(stripe.updateSubscription).toHaveBeenCalled();
+  });
+});
+
+describe('SubscriptionLifecycleService — MM-1 purchase routing (gate ON)', () => {
+  const prisma = {
+    membershipPlan: { findFirst: jest.fn() },
+    subscription: { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  };
+  const stripe = { retrieveSubscription: jest.fn(), updateSubscription: jest.fn(), cancelSubscription: jest.fn() };
+  let service: SubscriptionLifecycleService;
+
+  const fullStripeSub = {
+    id: 'sub-local-full',
+    studioId: 'studio-1',
+    userId: 'user-1',
+    stripeSubscriptionId: 'sub_stripe_full',
+    membershipPlanId: 'plan-full',
+    pendingMembershipPlanId: null,
+    exclusiveGroupKey: 'CORE',
+    membershipPlan: { id: 'plan-full', name: 'Full Access', priceCents: 150000, currency: 'mxn', billingInterval: 'MONTHLY', exclusiveGroup: 'CORE' },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env['MULTI_MEMBERSHIP_ENABLED'] = 'true';
+    service = new SubscriptionLifecycleService(prisma as never, stripe as never);
+    prisma.subscription.findMany.mockResolvedValue([fullStripeSub]);
+  });
+
+  afterEach(() => {
+    delete process.env['MULTI_MEMBERSHIP_ENABLED'];
+  });
+
+  it('buying a COMPATIBLE stackable plan (Booty) with Full Access active → NEW checkout, never a plan change', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-booty', name: 'Booty Lab', priceCents: 80000, currency: 'mxn',
+      billingInterval: 'MONTHLY', exclusiveGroup: null, active: true, deletedAt: null,
+    });
+    const createCheckout = jest.fn().mockResolvedValue({ checkoutUrl: 'https://checkout.example/booty' });
+    const changeSpy = jest.spyOn(service, 'changeStripeSubscriptionPlan').mockResolvedValue({} as never);
+
+    const result = await service.initiateMembershipPurchase({
+      targetUserId: 'user-1',
+      studioId: 'studio-1',
+      planId: 'plan-booty',
+      newStripePriceId: 'price_booty',
+      createCheckout,
+    });
+
+    expect(result).toEqual({ action: 'checkout', url: 'https://checkout.example/booty' });
+    expect(createCheckout).toHaveBeenCalledTimes(1);
+    expect(changeSpy).not.toHaveBeenCalled();
+  });
+
+  it('buying a CONFLICTING same-group plan (Basic) with Full Access active → plan change, never a second membership', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-basic', name: 'Basic Access', priceCents: 100000, currency: 'mxn',
+      billingInterval: 'MONTHLY', exclusiveGroup: 'CORE', active: true, deletedAt: null,
+    });
+    const createCheckout = jest.fn();
+    const changeSpy = jest
+      .spyOn(service, 'changeStripeSubscriptionPlan')
+      .mockResolvedValue({ action: 'plan_changed' } as never);
+
+    const result = await service.initiateMembershipPurchase({
+      targetUserId: 'user-1',
+      studioId: 'studio-1',
+      planId: 'plan-basic',
+      newStripePriceId: 'price_basic',
+      createCheckout,
+    });
+
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(changeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ localSubscription: expect.objectContaining({ id: 'sub-local-full' }) }),
+    );
+    expect(result).toEqual({ action: 'plan_changed' });
+  });
+
+  it('buying the SAME plan again → routed to renewal semantics (rejected as already-owned), not a second membership', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-full', name: 'Full Access', priceCents: 150000, currency: 'mxn',
+      billingInterval: 'MONTHLY', exclusiveGroup: 'CORE', active: true, deletedAt: null,
+    });
+    const createCheckout = jest.fn();
+
+    await expect(
+      service.initiateMembershipPurchase({
+        targetUserId: 'user-1',
+        studioId: 'studio-1',
+        planId: 'plan-full',
+        newStripePriceId: 'price_full',
+        createCheckout,
+      }),
+    ).rejects.toThrow('Member already has this membership plan.');
+    expect(createCheckout).not.toHaveBeenCalled();
+  });
+});
+
+// MM-4 — post-launch kill switch: with dual memberships already in existence, turning the
+// creation gate OFF must freeze NEW stacks while every lifecycle operation stays
+// family-scoped (never touching or retargeting the sibling membership).
+describe('SubscriptionLifecycleService — MM-4 creation gate OFF (kill switch)', () => {
+  const prisma = {
+    membershipPlan: { findFirst: jest.fn() },
+    subscription: { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  };
+  const stripe = { retrieveSubscription: jest.fn(), updateSubscription: jest.fn(), cancelSubscription: jest.fn() };
+  let service: SubscriptionLifecycleService;
+
+  const fullStripeSub = {
+    id: 'sub-local-full',
+    studioId: 'studio-1',
+    userId: 'user-1',
+    stripeSubscriptionId: 'sub_stripe_full',
+    membershipPlanId: 'plan-full',
+    pendingMembershipPlanId: null,
+    exclusiveGroupKey: 'CORE',
+    createdAt: new Date('2026-01-01'),
+    membershipPlan: { id: 'plan-full', name: 'Full Access', priceCents: 150000, currency: 'mxn', billingInterval: 'MONTHLY', exclusiveGroup: 'CORE' },
+  };
+  const bootyStripeSub = {
+    id: 'sub-local-booty',
+    studioId: 'studio-1',
+    userId: 'user-1',
+    stripeSubscriptionId: 'sub_stripe_booty',
+    membershipPlanId: 'plan-booty',
+    pendingMembershipPlanId: null,
+    exclusiveGroupKey: null,
+    // Newest first in the findMany ordering — the legacy any-renewable pick would land here.
+    createdAt: new Date('2026-06-01'),
+    membershipPlan: { id: 'plan-booty', name: 'Booty Lab', priceCents: 80000, currency: 'mxn', billingInterval: 'MONTHLY', exclusiveGroup: null },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env['MULTI_MEMBERSHIP_ENABLED']; // gate OFF (default)
+    service = new SubscriptionLifecycleService(prisma as never, stripe as never);
+    prisma.subscription.findMany.mockResolvedValue([bootyStripeSub, fullStripeSub]);
+  });
+
+  it('Full→Basic plan change targets the FULL membership, never the (newer) Booty sibling', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-basic', name: 'Basic Access', priceCents: 100000, currency: 'mxn',
+      billingInterval: 'MONTHLY', exclusiveGroup: 'CORE', active: true, deletedAt: null,
+    });
+    const createCheckout = jest.fn();
+    const changeSpy = jest
+      .spyOn(service, 'changeStripeSubscriptionPlan')
+      .mockResolvedValue({ action: 'plan_changed' } as never);
+
+    await service.initiateMembershipPurchase({
+      targetUserId: 'user-1',
+      studioId: 'studio-1',
+      planId: 'plan-basic',
+      newStripePriceId: 'price_basic',
+      createCheckout,
+    });
+
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(changeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ localSubscription: expect.objectContaining({ id: 'sub-local-full' }) }),
+    );
+  });
+
+  it('Booty renewal routes to the BOOTY membership (same-plan semantics), never the Full sibling', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-booty', name: 'Booty Lab', priceCents: 80000, currency: 'mxn',
+      billingInterval: 'MONTHLY', exclusiveGroup: null, active: true, deletedAt: null,
+    });
+
+    await expect(
+      service.initiateMembershipPurchase({
+        targetUserId: 'user-1',
+        studioId: 'studio-1',
+        planId: 'plan-booty',
+        newStripePriceId: 'price_booty',
+        createCheckout: jest.fn(),
+      }),
+    ).rejects.toThrow('Member already has this membership plan.');
+  });
+
+  it('a NEW out-of-family purchase is rejected while the gate is OFF (no checkout, no plan change)', async () => {
+    // Member holds Full only; buying a stackable specialty must be refused, not converted.
+    prisma.subscription.findMany.mockResolvedValue([fullStripeSub]);
+    prisma.subscription.findFirst.mockResolvedValue(fullStripeSub); // findPrimaryStripeSubscription
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-yoga', name: 'Yoga Pass', priceCents: 50000, currency: 'mxn',
+      billingInterval: 'MONTHLY', exclusiveGroup: null, active: true, deletedAt: null,
+    });
+    const createCheckout = jest.fn();
+    const changeSpy = jest.spyOn(service, 'changeStripeSubscriptionPlan').mockResolvedValue({} as never);
+
+    await expect(
+      service.initiateMembershipPurchase({
+        targetUserId: 'user-1',
+        studioId: 'studio-1',
+        planId: 'plan-yoga',
+        newStripePriceId: 'price_yoga',
+        createCheckout,
+      }),
+    ).rejects.toThrow('Additional simultaneous memberships are not enabled.');
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(changeSpy).not.toHaveBeenCalled();
+  });
+
+  it('duplicate audit does NOT flag the Full+Booty pair as duplicates with the gate OFF', async () => {
+    const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    prisma.subscription.findMany.mockResolvedValue([bootyStripeSub]);
+    prisma.subscription.findUnique.mockResolvedValue(fullStripeSub);
+
+    await service.auditDuplicateRenewableSubscriptions(prisma as never, {
+      studioId: 'studio-1',
+      userId: 'user-1',
+      keepSubscriptionId: 'sub-local-full',
+      source: 'api',
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });

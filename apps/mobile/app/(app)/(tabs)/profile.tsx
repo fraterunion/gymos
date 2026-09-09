@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { fetchMyMemberProfile, type MyMemberProfileDto } from '@/lib/api/membershipApi';
+import { membershipCreditsDisplay, membershipStatusDisplay } from '@/lib/membershipDisplay';
 import { fetchMyProgress, type MemberProgressDto } from '@/lib/api/progressApi';
 import { fetchMyWaiverStatus, type WaiverStatusDto } from '@/lib/api/waiverApi';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -45,18 +46,6 @@ function SectionLabel({ children }: { children: string }) {
       {children}
     </Text>
   );
-}
-
-function membershipCreditsLine(
-  classCredits: number | null,
-  creditsUsed: number | null,
-  creditsRemaining: number | null,
-): string {
-  if (classCredits === null) return 'Clases ilimitadas';
-  if (typeof creditsUsed === 'number' && typeof creditsRemaining === 'number') {
-    return `${creditsUsed} / ${classCredits} usadas · ${creditsRemaining} restantes`;
-  }
-  return `${classCredits} clases por periodo`;
 }
 
 const GUEST_FEATURES = [
@@ -241,12 +230,6 @@ export default function ProfileScreen() {
   const initials = `${user.firstName?.[0] ?? ''}${user.lastName?.[0] ?? ''}`.toUpperCase() || '?';
   const isMembershipActive = sub?.status === 'ACTIVE' || sub?.status === 'TRIALING';
 
-  const renewsLabel = sub
-    ? `Se renueva el ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
-        new Date(sub.currentPeriodEnd),
-      )}${sub.cancelAtPeriodEnd ? ' · Cancelación programada' : ''}`
-    : null;
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['left', 'right', 'top']}>
       <ScrollView
@@ -372,53 +355,63 @@ export default function ProfileScreen() {
           </Animated.View>
         ) : null}
 
-        {/* Membership */}
+        {/* Memberships — MM-5: one compact row per current membership; credits are
+            per-membership and never aggregated. */}
         <Animated.View entering={FadeInDown.delay(140).duration(420)}>
-          <SectionLabel>Membresía</SectionLabel>
+          <SectionLabel>
+            {(profile?.memberships.filter((m) => m.status !== 'SCHEDULED').length ?? 0) > 1
+              ? 'Mis membresías'
+              : 'Membresía'}
+          </SectionLabel>
 
           {sub ? (
             <View style={[premiumCardStyle(C), { padding: 24 }]}>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 14,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 18,
-                    fontWeight: '700',
-                    letterSpacing: -0.3,
-                    color: C.text,
-                    flex: 1,
-                    marginRight: 12,
-                  }}
-                  numberOfLines={1}
-                >
-                  {sub.plan.name}
-                </Text>
-                <MembershipStatusPill
-                  status={sub.status}
-                  cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
-                  currentPeriodEnd={sub.entitlementEndsAt ?? sub.currentPeriodEnd}
-                />
-              </View>
-
-              {renewsLabel ? (
-                <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 6 }}>
-                  {renewsLabel}
-                </Text>
-              ) : null}
-
-              <Text style={{ fontSize: 13, color: C.textSub }}>
-                {membershipCreditsLine(
-                  sub.plan.classCredits,
-                  sub.creditsUsed,
-                  sub.creditsRemaining,
-                )}
-              </Text>
+              {(profile?.memberships.filter((m) => m.status !== 'SCHEDULED') ?? []).map((m, idx, arr) => {
+                const statusDisplay = membershipStatusDisplay(m, { timeZone });
+                const credits = membershipCreditsDisplay(m.plan.classCredits, m.creditsUsed, m.creditsRemaining);
+                return (
+                  <View
+                    key={m.subscriptionId}
+                    style={idx < arr.length - 1 ? { marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: C.separator } : undefined}
+                  >
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: 8,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 18,
+                          fontWeight: '700',
+                          letterSpacing: -0.3,
+                          color: C.text,
+                          flex: 1,
+                          marginRight: 12,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {m.plan.name}
+                      </Text>
+                      <MembershipStatusPill
+                        status={m.status}
+                        cancelAtPeriodEnd={m.cancelAtPeriodEnd}
+                        currentPeriodEnd={m.entitlementEndsAt ?? m.currentPeriodEnd}
+                      />
+                    </View>
+                    {statusDisplay.dateLine ? (
+                      <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 4 }}>
+                        {statusDisplay.dateLine}
+                      </Text>
+                    ) : null}
+                    <Text style={{ fontSize: 13, color: C.textSub }}>
+                      {credits.primary}
+                    </Text>
+                  </View>
+                );
+              })}
 
               <Pressable
                 accessibilityRole="button"

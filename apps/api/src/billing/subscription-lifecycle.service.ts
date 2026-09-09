@@ -17,7 +17,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
-import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
+import {
+  currentlyEntitledSubscriptionWhere,
+  isSubscriptionCurrentlyEntitled,
+} from '../memberships/membership-entitlement';
+import {
+  allowNewMembershipStacks,
+  findConflictingMemberships,
+} from '../memberships/membership-compatibility';
+import {
+  resolvePurchaseAction,
+  type PurchaseOption,
+  type PurchaseOptionContext,
+  type PurchaseOptionMembershipRow,
+} from '../memberships/membership-purchase-options';
+import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 import {
   buildImmediateUpgradeUpdateParams,
   readCurrentStripePriceId,
@@ -26,7 +40,6 @@ import {
 } from './subscription-plan-resolution.utils';
 import {
   isUpgrade,
-  subscriptionLockKey,
   toPlanSummary,
   type PlanSummary,
 } from './subscription-lifecycle.utils';
@@ -85,6 +98,33 @@ export class SubscriptionLifecycleService {
     }) as Promise<SubscriptionWithPlan | null>;
   }
 
+  /** MM-1: plural variant — ALL current renewable/entitled memberships, newest first. */
+  async findCurrentRenewableSubscriptions(
+    studioId: string,
+    userId: string,
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<SubscriptionWithPlan[]> {
+    const now = new Date();
+    return tx.subscription.findMany({
+      where: {
+        studioId,
+        userId,
+        OR: [
+          {
+            stripeSubscriptionId: { not: null },
+            status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+          },
+          {
+            stripeSubscriptionId: null,
+            ...currentlyEntitledSubscriptionWhere(now),
+          },
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      include: { membershipPlan: true },
+    }) as Promise<SubscriptionWithPlan[]>;
+  }
+
   async findPrimaryStripeSubscription(
     studioId: string,
     userId: string,
@@ -100,6 +140,94 @@ export class SubscriptionLifecycleService {
       orderBy: [{ createdAt: 'desc' }],
       include: { membershipPlan: true },
     }) as Promise<SubscriptionWithPlan | null>;
+  }
+
+  /**
+   * MM-1 — plan-scoped replacement for "the member's Stripe subscription": the renewable
+   * Stripe subscription in the SAME membership family as `targetPlan` (same plan, or same
+   * non-null exclusive group per membership-compatibility).
+   * MM-4: ALWAYS family-scoped, regardless of the creation gate — this function selects
+   * which existing subscription an operation targets, and that must stay family-correct
+   * even when new stacks are disabled. Creation acceptance is gated separately by the
+   * callers (see initiateMembershipPurchase / assertNoRenewableSubscriptionConflict).
+   */
+  async findConflictingStripeSubscription(
+    studioId: string,
+    userId: string,
+    targetPlan: { id: string; exclusiveGroup: string | null },
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<SubscriptionWithPlan | null> {
+    const subs = (await tx.subscription.findMany({
+      where: {
+        studioId,
+        userId,
+        stripeSubscriptionId: { not: null },
+        status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      include: { membershipPlan: true },
+    })) as SubscriptionWithPlan[];
+    const conflicts = findConflictingMemberships(
+      subs.map((s) => ({
+        row: s,
+        membershipPlanId: s.membershipPlanId,
+        exclusiveGroupKey: s.exclusiveGroupKey,
+      })),
+      targetPlan,
+    );
+    return conflicts[0]?.row ?? null;
+  }
+
+  /**
+   * MM-5 — batched, server-computed catalog CTA semantics for one member (see
+   * membership-purchase-options). One query for plans, one for the member's rows —
+   * never per-plan lookups. exclusiveGroup is consumed here and never exposed.
+   */
+  async getMembershipPurchaseOptions(
+    studioId: string,
+    userId: string,
+    context: PurchaseOptionContext = 'member',
+  ): Promise<{ options: PurchaseOption[] }> {
+    const now = new Date();
+    const [plans, rows] = await Promise.all([
+      this.prisma.membershipPlan.findMany({
+        where: { studioId, active: true, deletedAt: null },
+        select: { id: true, name: true, exclusiveGroup: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.subscription.findMany({
+        where: {
+          studioId,
+          userId,
+          OR: [
+            { status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } },
+            currentlyEntitledSubscriptionWhere(now),
+            { status: SubscriptionStatus.SCHEDULED },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { membershipPlan: { select: { name: true } } },
+      }),
+    ]);
+
+    const toOptionRow = (s: (typeof rows)[number]): PurchaseOptionMembershipRow => ({
+      id: s.id,
+      membershipPlanId: s.membershipPlanId,
+      exclusiveGroupKey: s.exclusiveGroupKey,
+      status: s.status,
+      stripeSubscriptionId: s.stripeSubscriptionId,
+      isEntitled: isSubscriptionCurrentlyEntitled(s, now),
+      currentPeriodStart: s.currentPeriodStart,
+      planName: s.membershipPlan.name,
+    });
+    const scheduledRows = rows.filter((s) => s.status === SubscriptionStatus.SCHEDULED).map(toOptionRow);
+    const currentRows = rows.filter((s) => s.status !== SubscriptionStatus.SCHEDULED).map(toOptionRow);
+
+    return {
+      options: plans.map((plan) =>
+        resolvePurchaseAction(plan, currentRows, scheduledRows, undefined, context),
+      ),
+    };
   }
 
   async getPlanChangePreview(params: {
@@ -192,9 +320,33 @@ export class SubscriptionLifecycleService {
       await this.reconciliation.assertHealthyForPlanChange(params.studioId, params.targetUserId);
     }
 
-    const stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.targetUserId);
+    // MM-4: routing is ALWAYS family-scoped — a same-family Stripe subscription routes to
+    // renewal/plan-change semantics targeting THAT row (never a sibling membership), with
+    // or without the creation gate. Buying Booty Lab while on Full Access must never
+    // CHANGE Full Access.
+    const stripeSub = await this.findConflictingStripeSubscription(
+      params.studioId,
+      params.targetUserId,
+      targetPlan,
+    );
 
     if (!stripeSub?.stripeSubscriptionId) {
+      // No same-family membership → this purchase would CREATE an additional membership.
+      // Gated: with stacking disabled, a member who already has any renewable Stripe
+      // subscription may not open a second family. (Pre-rollout, all-CORE data never
+      // reaches this branch with an existing subscription — family scoping already
+      // routed it above, so legacy behavior is untouched.)
+      if (!allowNewMembershipStacks()) {
+        const anyStripe = await this.findPrimaryStripeSubscription(
+          params.studioId,
+          params.targetUserId,
+        );
+        if (anyStripe?.stripeSubscriptionId) {
+          throw new ConflictException(
+            'Additional simultaneous memberships are not enabled. Use a plan change instead.',
+          );
+        }
+      }
       const { checkoutUrl } = await params.createCheckout(params);
       return { action: 'checkout', url: checkoutUrl };
     }
@@ -311,7 +463,8 @@ export class SubscriptionLifecycleService {
       effectivePlanIdFromStripe === targetPlan.id;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscriptionLockKey(params.studioId, params.userId)}))`;
+      // MM-4: unified member-scoped subscription-write lock (same key as webhooks/sales).
+      await acquireSubscriptionWriteAdvisoryLock(tx, params.studioId, params.userId);
 
       return tx.subscription.update({
         where: { id: localSubscription.id },
@@ -353,6 +506,10 @@ export class SubscriptionLifecycleService {
   /**
    * Read-only detection of multiple renewable subscriptions for the same member/studio.
    * Does NOT mutate Stripe or local rows — production duplicates require manual review.
+   * MM-1: two COMPATIBLE memberships (different plan, no shared non-null exclusive group)
+   * are legitimate, not duplicates — only same-plan/same-group siblings are flagged.
+   * MM-4: ALWAYS family-scoped (never gated) — a legitimate dual membership must not be
+   * flagged as a duplicate merely because the creation gate is off.
    */
   async auditDuplicateRenewableSubscriptions(
     tx: Prisma.TransactionClient | PrismaService,
@@ -365,7 +522,7 @@ export class SubscriptionLifecycleService {
       stripeEventType?: string;
     },
   ): Promise<void> {
-    const siblings = await tx.subscription.findMany({
+    const allSiblings = await tx.subscription.findMany({
       where: {
         studioId: params.studioId,
         userId: params.userId,
@@ -373,9 +530,23 @@ export class SubscriptionLifecycleService {
         status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
       },
       include: {
-        membershipPlan: { select: { id: true, name: true } },
+        membershipPlan: { select: { id: true, name: true, exclusiveGroup: true } },
       },
     });
+    const keptRow = await tx.subscription.findUnique({
+      where: { id: params.keepSubscriptionId },
+      include: { membershipPlan: { select: { id: true, exclusiveGroup: true } } },
+    });
+    const siblings = keptRow
+      ? findConflictingMemberships(
+          allSiblings.map((s) => ({
+            row: s,
+            membershipPlanId: s.membershipPlanId,
+            exclusiveGroupKey: s.exclusiveGroupKey,
+          })),
+          { id: keptRow.membershipPlanId, exclusiveGroup: keptRow.membershipPlan.exclusiveGroup },
+        ).map((c) => c.row)
+      : allSiblings;
 
     if (siblings.length === 0) return;
 
@@ -412,8 +583,17 @@ export class SubscriptionLifecycleService {
     studioId: string;
     userId: string;
     allowStripeResolution?: 'cancel_immediately' | 'cancel_at_period_end';
+    /** MM-1: when provided, only a same-plan/same-group Stripe subscription conflicts. */
+    targetPlan?: { id: string; exclusiveGroup: string | null };
   }): Promise<void> {
-    const stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    // MM-4: same-family targeting is unconditional; with stacking disabled, ANY renewable
+    // Stripe subscription additionally blocks creating an out-of-family membership.
+    let stripeSub = params.targetPlan
+      ? await this.findConflictingStripeSubscription(params.studioId, params.userId, params.targetPlan)
+      : await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    if (!stripeSub?.stripeSubscriptionId && params.targetPlan && !allowNewMembershipStacks()) {
+      stripeSub = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    }
     if (!stripeSub?.stripeSubscriptionId) return;
 
     if (!params.allowStripeResolution) {

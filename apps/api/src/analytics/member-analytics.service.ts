@@ -913,8 +913,11 @@ export class MemberAnalyticsService {
               )
           )
       ),
+      -- MM-5: one row per (member, entitled plan) pair — a member holding two compatible
+      -- memberships (e.g. Full + Booty) appears once under EACH plan, while remaining one
+      -- person in the member-level KPIs. Never duplicated within the same plan (DISTINCT).
       entitled_member_plans AS (
-        SELECT DISTINCT ON (em.user_id)
+        SELECT DISTINCT
           em.user_id,
           mp.id AS plan_id,
           mp.name AS plan_name
@@ -926,7 +929,6 @@ export class MemberAnalyticsService {
             (s.status IN ('ACTIVE','TRIALING') AND s.entitlement_ends_at IS NULL AND s.current_period_end > ${now})
             OR (s.status IN ('ACTIVE','TRIALING','CANCELED') AND s.entitlement_ends_at > ${now})
           )
-        ORDER BY em.user_id, s.created_at DESC
       )
       SELECT
         emp.plan_id,
@@ -934,10 +936,20 @@ export class MemberAnalyticsService {
         COUNT(DISTINCT emp.user_id) AS member_count,
         COUNT(a.id) AS attendances
       FROM entitled_member_plans emp
+      -- Attendance is attributed to the pair's plan via Booking/Attendance.subscription_id
+      -- where recorded; legacy NULL-attribution rows count via inference (same rule as
+      -- the usage service) so single-membership members are unchanged.
       LEFT JOIN attendances a ON a.studio_id = ${studioId}
         AND a.user_id = emp.user_id
         AND a.checked_in_at >= ${periodStart}
         AND a.checked_in_at <= ${periodEnd}
+        AND (
+          a.subscription_id IS NULL
+          OR EXISTS (
+            SELECT 1 FROM subscriptions sx
+            WHERE sx.id = a.subscription_id AND sx.membership_plan_id = emp.plan_id
+          )
+        )
       GROUP BY emp.plan_id, emp.plan_name
       ORDER BY member_count DESC
     `;

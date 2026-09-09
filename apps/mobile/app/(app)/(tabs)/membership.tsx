@@ -37,11 +37,22 @@ import {
   fetchCheckoutPreview,
   fetchMembershipPlans,
   fetchMyMemberProfile,
+  fetchPurchaseOptions,
   type BillingInterval,
   type CheckoutPreviewDto,
   type MembershipPlanDto,
   type MyMemberProfileDto,
+  type PurchaseOptionDto,
 } from '@/lib/api/membershipApi';
+import { MembershipList } from '@/components/membership/MembershipCards';
+import {
+  addConfirmationCopy,
+  blockedReasonCopy,
+  changeConfirmationCopy,
+  isPurchaseActionDisabled,
+  purchaseCtaLabel,
+  type PurchaseActionLike,
+} from '@/lib/membershipDisplay';
 import {
   createDayPassPaymentSheet,
   fetchDayPassCatalog,
@@ -955,6 +966,109 @@ function BreakdownRow({
 // Checkout breakdown modal — slides up before opening Stripe
 // ---------------------------------------------------------------------------
 
+/**
+ * MM-5 — pre-checkout confirmation for ADD (a membership is being added, nothing is
+ * replaced) and CHANGE (both plans named explicitly). Copy comes from membershipDisplay;
+ * timing for CHANGE is decided by the API at execution, so no dates are computed here.
+ */
+function PurchaseConfirmSheet({
+  visible,
+  plan,
+  action,
+  relatedPlanName,
+  keptPlanNames,
+  primaryColor,
+  confirmBusy,
+  onConfirm,
+  onCancel,
+}: {
+  visible: boolean;
+  plan: MembershipPlanDto;
+  action: 'ADD' | 'CHANGE';
+  relatedPlanName: string | null;
+  keptPlanNames: string[];
+  primaryColor: string;
+  confirmBusy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const C = getColors();
+  const insets = useSafeAreaInsets();
+  const copy =
+    action === 'ADD'
+      ? addConfirmationCopy({ planName: plan.name, keptPlanNames })
+      : { ...changeConfirmationCopy({ currentPlanName: relatedPlanName ?? 'tu plan actual', targetPlanName: plan.name }), keptLine: null };
+  const priceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
+  const planDetail = plan.classCredits === null
+    ? `${priceStr}${billingIntervalLabel(plan.billingInterval)} · Clases ilimitadas`
+    : `${priceStr}${billingIntervalLabel(plan.billingInterval)} · ${plan.classCredits} créditos`;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel} statusBarTranslucent>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Cerrar confirmación"
+        onPress={onCancel}
+        style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.72)' }}
+      >
+        <Pressable
+          onPress={() => {}}
+          style={{
+            backgroundColor: '#141416',
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            borderWidth: 1,
+            borderColor: C.separator,
+            paddingHorizontal: 24,
+            paddingTop: 28,
+            paddingBottom: 24 + insets.bottom,
+          }}
+        >
+          <Text style={{ fontSize: 24, fontWeight: '800', letterSpacing: -0.7, color: C.text, marginBottom: 10 }}>
+            {copy.title}
+          </Text>
+          <Text style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>{copy.body}</Text>
+
+          <View
+            style={{
+              marginTop: 18,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: C.separator,
+              backgroundColor: 'rgba(255,255,255,0.04)',
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+              gap: 10,
+            }}
+          >
+            <View>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: C.text }}>{plan.name}</Text>
+              <Text style={{ fontSize: 13, color: C.textSub, marginTop: 2 }}>{planDetail}</Text>
+            </View>
+            {action === 'ADD' && copy.keptLine ? (
+              <View style={{ borderTopWidth: 1, borderTopColor: C.separator, paddingTop: 10 }}>
+                <Text style={{ fontSize: 13, color: C.textMute, lineHeight: 19 }}>{copy.keptLine}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={{ marginTop: 22, gap: 12 }}>
+            <BrandButton
+              label={confirmBusy ? 'Abriendo…' : 'Continuar al pago'}
+              accentColor={primaryColor}
+              onPress={onConfirm}
+              disabled={confirmBusy}
+            />
+            <Pressable accessibilityRole="button" onPress={onCancel} hitSlop={8} style={{ alignItems: 'center', paddingVertical: 6 }}>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: C.textSub }}>Cancelar</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 function CheckoutBreakdownModal({
   visible,
   plan,
@@ -1194,6 +1308,12 @@ export default function MembershipScreen() {
   const [dayPassCatalogError, setDayPassCatalogError] = useState<string | null>(null);
   const [checkoutPreview, setCheckoutPreview] = useState<CheckoutPreviewDto | null>(null);
   const [breakdownPlan, setBreakdownPlan] = useState<MembershipPlanDto | null>(null);
+  // MM-5: server-computed catalog CTAs + add/change pre-checkout confirmation.
+  const [purchaseOptions, setPurchaseOptions] = useState<PurchaseOptionDto[]>([]);
+  const [confirmPurchase, setConfirmPurchase] = useState<{
+    plan: MembershipPlanDto;
+    option: PurchaseOptionDto;
+  } | null>(null);
   const [confirmingCheckout, setConfirmingCheckout] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1292,12 +1412,16 @@ export default function MembershipScreen() {
       void loadDayPassCatalog();
 
       try {
-        const [p, prof] = await Promise.all([
+        const [p, prof, opts] = await Promise.all([
           fetchMembershipPlans(studioId),
           fetchMyMemberProfile(studioId),
+          // CTA semantics are server-decided; a transient failure falls back to
+          // conservative labels rather than blocking the screen.
+          fetchPurchaseOptions(studioId).catch(() => [] as PurchaseOptionDto[]),
         ]);
         setPlans(p);
         setProfile(prof);
+        setPurchaseOptions(opts);
 
         // Fetch enrollment preview for the first available plan (fee info is studio-wide)
         if (p.length > 0 && !prof.activeSubscription) {
@@ -1476,12 +1600,6 @@ export default function MembershipScreen() {
 
   const sub = profile?.activeSubscription;
 
-  const renewsLabel = sub
-    ? `Se renueva el ${new Intl.DateTimeFormat(undefined, { timeZone, dateStyle: 'medium' }).format(
-        new Date(sub.currentPeriodEnd),
-      )}${sub.cancelAtPeriodEnd ? ' · Cancelación programada' : ''}`
-    : '';
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
       <ScrollView
@@ -1561,20 +1679,21 @@ export default function MembershipScreen() {
             onRegister={() => openAuthModal('membership')}
             onLogin={() => goToAuthLogin('membership')}
           />
-        ) : sub ? (
-          <MembershipCard
-            planName={sub.plan.name}
-            status={sub.status}
-            cancelAtPeriodEnd={sub.cancelAtPeriodEnd}
-            currentPeriodEnd={sub.entitlementEndsAt ?? sub.currentPeriodEnd}
-            renewsAt={renewsLabel}
-            classCredits={sub.plan.classCredits}
-            creditsUsed={sub.creditsUsed}
-            creditsRemaining={sub.creditsRemaining}
-            primaryColor={primaryColor}
-            onManage={() => void openPortal()}
-            portalBusy={portalBusy}
-          />
+        ) : (profile?.memberships.length ?? 0) > 0 ? (
+          <View>
+            <SectionLabel>
+              {profile!.memberships.filter((m) => m.status !== 'SCHEDULED').length > 1
+                ? 'Mis membresías'
+                : 'Mi membresía'}
+            </SectionLabel>
+            <MembershipList
+              memberships={profile!.memberships}
+              primaryColor={primaryColor}
+              timeZone={timeZone}
+              onManage={() => void openPortal()}
+              portalBusy={portalBusy}
+            />
+          </View>
         ) : (
           <NoMembershipPrompt
             primaryColor={primaryColor}
@@ -1627,28 +1746,48 @@ export default function MembershipScreen() {
             ) : null}
 
             {plans.map((plan, i) => {
-              const isCurrentPlan = !isGuest && sub?.plan.id === plan.id;
-              const subscribeLabel = isGuest
-                ? 'Únete ahora'
-                : isCurrentPlan
-                  ? 'Plan actual'
-                  : sub
-                    ? 'Cambiar membresía'
-                    : 'Suscribirme';
-              return (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                primaryColor={primaryColor}
-                index={i}
-                isLoading={!isGuest && checkoutPlanId === plan.id}
-                isDisabled={
-                  isCurrentPlan ||
-                  (!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id)
+              // MM-5: CTAs are the server's purchaseAction, rendered verbatim — the client
+              // never derives compatibility. Fallback (options unavailable): conservative
+              // legacy labels.
+              const option = purchaseOptions.find((o) => o.planId === plan.id) ?? null;
+              const action: PurchaseActionLike = isGuest
+                ? 'SUBSCRIBE'
+                : option?.purchaseAction ?? (sub ? 'CHANGE' : 'SUBSCRIBE');
+              const subscribeLabel = isGuest ? 'Únete ahora' : purchaseCtaLabel(action);
+              const disabled = !isGuest && isPurchaseActionDisabled(action);
+              const blockedNote =
+                !isGuest && action === 'BLOCKED' ? blockedReasonCopy(option?.reasonCode ?? null) : null;
+              const onSubscribe = () => {
+                if (isGuest) {
+                  openAuthModal('membership');
+                  return;
                 }
-                subscribeLabel={subscribeLabel}
-                onSubscribe={() => void (isGuest ? openAuthModal('membership') : openCheckout(plan.id))}
-              />
+                if ((action === 'ADD' || action === 'CHANGE') && option) {
+                  setConfirmPurchase({ plan, option });
+                  return;
+                }
+                void openCheckout(plan.id);
+              };
+              return (
+              <View key={plan.id}>
+                <PlanCard
+                  plan={plan}
+                  primaryColor={primaryColor}
+                  index={i}
+                  isLoading={!isGuest && checkoutPlanId === plan.id}
+                  isDisabled={
+                    disabled ||
+                    (!isGuest && checkoutPlanId !== null && checkoutPlanId !== plan.id)
+                  }
+                  subscribeLabel={subscribeLabel}
+                  onSubscribe={onSubscribe}
+                />
+                {blockedNote ? (
+                  <Text style={{ fontSize: 12, color: C.textMute, marginTop: -12, marginBottom: 16, lineHeight: 18 }}>
+                    {blockedNote}
+                  </Text>
+                ) : null}
+              </View>
             );})}
           </View>
         ) : loading ? (
@@ -1865,6 +2004,26 @@ export default function MembershipScreen() {
           ) : null}
         </View>
       </ScrollView>
+
+      {confirmPurchase ? (
+        <PurchaseConfirmSheet
+          visible
+          plan={confirmPurchase.plan}
+          action={confirmPurchase.option.purchaseAction === 'ADD' ? 'ADD' : 'CHANGE'}
+          relatedPlanName={confirmPurchase.option.relatedPlanName}
+          keptPlanNames={(profile?.memberships ?? [])
+            .filter((m) => m.status !== 'SCHEDULED' && m.membershipPlanId !== confirmPurchase.plan.id)
+            .map((m) => m.plan.name)}
+          primaryColor={primaryColor}
+          confirmBusy={checkoutPlanId === confirmPurchase.plan.id}
+          onConfirm={() => {
+            const planId = confirmPurchase.plan.id;
+            setConfirmPurchase(null);
+            void openCheckout(planId);
+          }}
+          onCancel={() => setConfirmPurchase(null)}
+        />
+      ) : null}
 
       {breakdownPlan && checkoutPreview ? (
         <CheckoutBreakdownModal

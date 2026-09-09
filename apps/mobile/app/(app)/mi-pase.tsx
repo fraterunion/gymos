@@ -10,6 +10,7 @@ import { WalletButtons } from '@/components/WalletButtons';
 import { useBranding } from '@/contexts/BrandingContext';
 import { useMemberStudio } from '@/contexts/MemberStudioContext';
 import { fetchMyMemberProfile, type MyMemberProfileDto } from '@/lib/api/membershipApi';
+import { passPlanLine } from '@/lib/membershipDisplay';
 import { fetchWalletBarcode, fetchWalletReissue } from '@/lib/api/walletApi';
 import { getCachedBarcode, setCachedBarcode } from '@/lib/walletCredentialStore';
 import { deriveMiPaseState } from '@/lib/walletPassState';
@@ -167,7 +168,10 @@ export default function MiPaseScreen() {
             appDisplayName={appDisplayName}
             primaryColor={primaryColor}
             memberName={memberDisplayName(profile)}
-            planName={profile?.activeSubscription?.plan.name ?? null}
+            planName={passPlanLine(
+              profile?.activeSubscription?.plan.name ?? null,
+              profile?.memberships.filter((m) => m.status !== 'SCHEDULED').length ?? 0,
+            )}
             barcode={state.barcode}
             studioId={studioId}
           />

@@ -34,12 +34,12 @@ import {
   type TimelineEvent,
   type UpsertCrmProfileInput,
 } from "@/lib/api/members";
-import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
+import { fetchMembershipPlans, type MembershipPlanDto , setCancelAtPeriodEnd } from "@/lib/api/memberships";
 import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/sales";
 import { ApiError } from "@/lib/api/errors";
 import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
 import { subscriptionTransitionPresentation } from "@/lib/membershipPlanSummary";
-import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, paymentSourceLabel, renewalBehavior, usagePresentation } from "@/lib/member360";
+import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, paymentSourceLabel, renewalBehavior, usagePresentation , membershipRowRenewalActions, extraMembershipsChip, currentMembershipRows, membershipUsageLine, attentionItemTitle } from "@/lib/member360";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -1081,6 +1081,21 @@ function MembershipTab({
 
   useEffect(() => { const t = setTimeout(() => void load(), 0); return () => clearTimeout(t); }, [load]);
 
+  // MM-5: renewal toggle binds to the exact row's subscriptionId (see member360 helpers).
+  async function handleRenewalToggle(subId: string, cancel: boolean) {
+    setActionLoading(subId);
+    setActionError(null);
+    try {
+      const updated = await setCancelAtPeriodEnd(studioId, userId, subId, cancel);
+      setSubs((prev) => prev.map((s) => (s.id === subId ? { ...s, cancelAtPeriodEnd: updated.cancelAtPeriodEnd } : s)));
+      onProfileRefresh?.();
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : "No se pudo actualizar la renovación");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function handleStatusChange(subId: string, newStatus: SubStatus) {
     setActionLoading(subId);
     setActionError(null);
@@ -1149,6 +1164,18 @@ function MembershipTab({
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
+                {membershipRowRenewalActions(studioRole, { subscriptionId: s.id, source: s.source, status: s.status, isEntitled: s.isEntitled, cancelAtPeriodEnd: s.cancelAtPeriodEnd, lifecycleStatus: s.lifecycleStatus }).map((action) => (
+                  <button
+                    key={action.kind}
+                    onClick={() => void handleRenewalToggle(action.subscriptionId, action.kind === "cancel_renewal")}
+                    disabled={actionLoading === s.id}
+                    className={action.kind === "cancel_renewal"
+                      ? "rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                      : "rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"}
+                  >
+                    {actionLoading === s.id ? "…" : action.label}
+                  </button>
+                ))}
                 {s.lifecycleStatus !== "REPLACED" && canChangePlan && (s.isEntitled || s.lifecycleStatus === "EXPIRED" || s.status === "PAST_DUE") && (
                   <button
                     onClick={() => setChangePlanSub(s)}
@@ -1189,7 +1216,7 @@ function MembershipTab({
               </div>
               <div>
                 <p className="text-xs text-zinc-400">Créditos</p>
-                <p className="text-sm text-zinc-700">{s.membershipPlan.classCredits == null ? "Ilimitado" : profile.currentMembership?.id === s.id ? `${profile.currentMembership.creditsUsed ?? 0} / ${s.membershipPlan.classCredits} usados · ${profile.currentMembership.creditsRemaining ?? 0} restantes` : `${s.membershipPlan.classCredits} por periodo`}</p>
+                <p className="text-sm text-zinc-700">{s.membershipPlan.classCredits == null ? "Ilimitado" : (() => { const mm = profile.memberships?.find((m) => m.subscriptionId === s.id); return mm ? `${mm.creditsUsed ?? 0} / ${s.membershipPlan.classCredits} usados · ${mm.creditsRemaining ?? 0} restantes` : `${s.membershipPlan.classCredits} por periodo`; })()}</p>
               </div>
               <div>
                 <p className="text-xs text-zinc-400">Método de pago</p>
@@ -1708,6 +1735,7 @@ export default function MemberProfilePage() {
                     {MEMBER_ROLE_LABELS[profile.role] ?? profile.role}
                   </span>
                   {profile.currentMembership ? <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${PRIMARY_STATUS_COLORS[profile.currentMembership.primaryStatus]}`}>{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]}</span> : <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-500">Sin membresía</span>}
+                  {extraMembershipsChip(profile.memberships) ? <span className="rounded-full bg-zinc-900 px-2.5 py-0.5 text-xs font-medium text-white">{extraMembershipsChip(profile.memberships)}</span> : null}
                   {badges.map((b) => (
                     <span key={b.label} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${b.color}`}>
                       {b.label}
@@ -1717,8 +1745,8 @@ export default function MemberProfilePage() {
               </div>
             </div>
             <div className="mt-6 grid gap-x-6 gap-y-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Membresía actual</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin membresía"}</p></div>
-              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Uso</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.classCredits === null ? "Ilimitado" : profile.currentMembership ? `${profile.currentMembership.creditsUsed ?? 0} / ${profile.currentMembership.plan.classCredits} clases usadas` : "—"}</p><p className="text-xs text-zinc-500">{profile.currentMembership?.creditsRemaining != null ? profile.currentMembership.creditsRemaining === 0 ? "Sin créditos" : `${profile.currentMembership.creditsRemaining} restantes` : null}</p></div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">{currentMembershipRows(profile.memberships).length > 1 ? "Membresías" : "Membresía actual"}</p>{currentMembershipRows(profile.memberships).length > 0 ? currentMembershipRows(profile.memberships).map((m) => <p key={m.subscriptionId} className="mt-1 text-sm font-semibold text-zinc-900">{m.plan.name}</p>) : <p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin membresía"}</p>}</div>
+              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Uso</p>{currentMembershipRows(profile.memberships).length > 0 ? currentMembershipRows(profile.memberships).map((m) => <p key={m.subscriptionId} className="mt-1 text-sm font-semibold text-zinc-900">{currentMembershipRows(profile.memberships).length > 1 ? `${m.plan.name}: ` : ""}{membershipUsageLine(m)}</p>) : <p className="mt-1 text-sm font-semibold text-zinc-900">—</p>}</div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Vigencia</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership ? `${studioDate(profile.currentMembership.currentPeriodStart)} → ${studioDate(profile.currentMembership.effectiveEnd)}` : "—"}</p><p className="text-xs text-zinc-500">{profileRenewal?.detail}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Método de pago</p><p className="mt-1 text-sm font-semibold text-zinc-900">{paymentSourceLabel(profile.currentMembership?.source)}</p><p className="text-xs text-zinc-500">{profile.currentMembership ? `Renovación: ${renewalBehavior(profile.currentMembership)}` : null}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profileVisit.title}</p><p className="text-xs text-zinc-500">{profileVisit.detail}</p></div>
@@ -1734,7 +1762,7 @@ export default function MemberProfilePage() {
             <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-amber-900">Atención requerida</h2>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado"}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
+                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{attentionItemTitle(item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado", ["INACTIVE", "NO_SHOWS"].includes(item.code) ? null : profile.currentMembership?.plan.name ?? null, currentMembershipRows(profile.memberships).length)}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
               </div>
             </section>
           ) : null}
@@ -1777,9 +1805,9 @@ export default function MemberProfilePage() {
                   <div className="mt-4 border-t border-zinc-100 pt-4"><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm text-zinc-800">{profile.operations.lastVisit ? `${fmtDateTime(profile.operations.lastVisit.checkedInAt)} · ${profile.operations.lastVisit.scheduledClass?.classTemplate.name ?? "Open Gym"}` : "Nunca ha asistido"}</p></div>
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-                  <h2 className="text-sm font-semibold text-zinc-900">Estado de membresía</h2>
-                  <p className="mt-3 text-lg font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin plan"}</p>
-                  {profile.currentMembership ? <><p className="text-sm text-zinc-500">{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]} · {studioDate(profile.currentMembership.currentPeriodStart)} → {studioDate(profile.currentMembership.effectiveEnd)}</p><div className="mt-3 flex flex-wrap gap-1.5">{allowedClasses.map((label) => <span key={label} className="rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700">{label}</span>)}</div><p className="mt-3 text-sm font-medium text-zinc-700">{profileRenewal?.title}</p><p className="text-sm text-zinc-500">{profileRenewal?.detail}</p></> : null}
+                  <h2 className="text-sm font-semibold text-zinc-900">{currentMembershipRows(profile.memberships).length > 1 ? "Membresías" : "Estado de membresía"}</h2>
+                  {currentMembershipRows(profile.memberships).length > 0 ? currentMembershipRows(profile.memberships).map((m, idx) => <div key={m.subscriptionId} className={idx > 0 ? "mt-4 border-t border-zinc-100 pt-4" : undefined}><p className="mt-3 text-lg font-semibold text-zinc-900">{m.plan.name}</p><p className="text-sm text-zinc-500">{studioDate(m.currentPeriodStart)} → {studioDate(m.effectiveEnd)} · {membershipUsageLine(m)}</p></div>) : <p className="mt-3 text-lg font-semibold text-zinc-900">Sin plan</p>}
+                  {profile.currentMembership ? <><div className="mt-3 flex flex-wrap gap-1.5">{allowedClasses.map((label) => <span key={label} className="rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700">{label}</span>)}</div><p className="mt-3 text-sm font-medium text-zinc-700">{profileRenewal?.title}</p><p className="text-sm text-zinc-500">{profileRenewal?.detail}</p></> : null}
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-zinc-900">Actividad reciente</h2>

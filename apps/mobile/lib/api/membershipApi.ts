@@ -16,6 +16,41 @@ export type MembershipPlanDto = {
   updatedAt: string;
 };
 
+/** MM-5: one entry per current membership (entitled, renewable, or SCHEDULED successor). */
+export type MembershipSummaryDto = {
+  subscriptionId: string;
+  membershipPlanId: string;
+  /** Internal ordering only — never rendered to the member. */
+  exclusiveGroup: string | null;
+  status: string;
+  source: string;
+  accessState: 'ENTITLED' | 'NOT_STARTED' | 'EXPIRED' | 'INACTIVE';
+  lifecycleStatus: string;
+  isEntitled: boolean;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  entitlementEndsAt: string | null;
+  effectiveEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  supersededBySubscriptionId: string | null;
+  plan: {
+    id: string;
+    name: string;
+    billingInterval: BillingInterval;
+    priceCents: number;
+    currency: string;
+    classCredits: number | null;
+    entitlementDays: number | null;
+    openGymAccess: boolean;
+    allClassesAccess: boolean;
+    allowedCategories: string[];
+    allowedTemplates: Array<{ id: string; name: string }>;
+  };
+  pendingPlan: { id: string; name: string } | null;
+  creditsUsed: number | null;
+  creditsRemaining: number | null;
+};
+
 export type MyMemberProfileDto = {
   user: {
     id: string;
@@ -27,6 +62,8 @@ export type MyMemberProfileDto = {
   };
   role: string;
   membership: { id: string; createdAt: string; updatedAt: string };
+  /** MM-5: every current membership — the singular activeSubscription stays the primary. */
+  memberships: MembershipSummaryDto[];
   attendances: { totalInStudio: number };
   activeSubscription: {
     id: string;
@@ -128,6 +165,24 @@ export async function createMembershipCheckoutSession(
     method: 'POST',
     body: '{}',
   });
+}
+
+/** MM-5: server-computed catalog CTA per plan — clients render it verbatim. */
+export type PurchaseOptionDto = {
+  planId: string;
+  purchaseAction: 'SUBSCRIBE' | 'CURRENT' | 'RENEW' | 'CHANGE' | 'ADD' | 'SCHEDULED' | 'BLOCKED';
+  relatedSubscriptionId: string | null;
+  relatedPlanName: string | null;
+  effectiveDate: string | null;
+  reasonCode: string | null;
+};
+
+export async function fetchPurchaseOptions(studioId: string): Promise<PurchaseOptionDto[]> {
+  const res = await apiRequest<{ options: PurchaseOptionDto[] }>(
+    `/studios/${studioId}/membership-plans/purchase-options`,
+    { method: 'GET' },
+  );
+  return res.options;
 }
 
 export async function createBillingPortalSession(studioId: string): Promise<{ url: string }> {

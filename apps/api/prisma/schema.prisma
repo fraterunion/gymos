@@ -389,6 +389,11 @@ model MembershipPlan {
   /// range is a policy someone can be refused by, and "no policy" must not look like one.
   openGymWindowStart    String? @map("open_gym_window_start")
   openGymWindowEnd      String? @map("open_gym_window_end")
+  /// Multi-membership (MM-1): plans sharing the same non-null group are mutually exclusive
+  /// per member (e.g. 'CORE' for Full/Basic/Pro/Open Gym). NULL = stackable alongside any
+  /// other plan — duplicate renewable rows of the SAME plan remain forbidden regardless.
+  /// Never hardcode plan names to decide compatibility; this field is the only mechanism.
+  exclusiveGroup   String?         @map("exclusive_group")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   deletedAt        DateTime?       @map("deleted_at")
@@ -423,6 +428,10 @@ model Subscription {
   /// Never overwritten by Stripe webhooks — access checks use this over currentPeriodEnd
   /// when present, decoupling Stripe billing renewal from the member's access window.
   entitlementEndsAt    DateTime?            @map("entitlement_ends_at")
+  /// Multi-membership (MM-1): purchase-time SNAPSHOT of the plan's exclusiveGroup. Later
+  /// edits to MembershipPlan.exclusiveGroup never rewrite this — live rows keep the
+  /// compatibility contract they were sold under. NULL = stackable at purchase time.
+  exclusiveGroupKey    String?           @map("exclusive_group_key")
   /// Set when this record was replaced by another subscription (renewal, plan/payment change).
   supersededBySubscriptionId String?      @map("superseded_by_subscription_id")
   /// Why this record ended — separates true cancellation from administrative supersession.
@@ -441,9 +450,12 @@ model Subscription {
   supersedes     Subscription[] @relation("SubscriptionSupersession")
   payments       Payment[]
   entitlementCycles MembershipEntitlementCycle[]
+  attributedBookings    Booking[]    @relation("BookingEntitlementSubscription")
+  attributedAttendances Attendance[] @relation("AttendanceEntitlementSubscription")
 
   @@index([studioId])
   @@index([studioId, userId])
+  @@index([studioId, userId, exclusiveGroupKey])
   @@index([userId])
   @@index([membershipPlanId])
   @@index([status])
@@ -613,17 +625,23 @@ model Booking {
   status           BookingStatus
   cancelSource     CancelSource?  @map("cancel_source")
   cancelledAt      DateTime?      @map("cancelled_at")
+  /// Multi-membership (MM-2): the subscription whose entitlement authorized this booking,
+  /// recorded at authorization time. NULL for pre-attribution history, staff/role-bypass
+  /// bookings, and Day Pass fallback — usage queries treat NULL rows via legacy inference.
+  subscriptionId   String?        @map("subscription_id")
   createdAt        DateTime       @default(now()) @map("created_at")
   updatedAt        DateTime       @updatedAt @map("updated_at")
 
   studio         Studio         @relation(fields: [studioId], references: [id], onDelete: Restrict)
   scheduledClass ScheduledClass @relation(fields: [scheduledClassId], references: [id], onDelete: Restrict)
   user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subscription   Subscription?  @relation("BookingEntitlementSubscription", fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   @@index([studioId])
   @@index([studioId, scheduledClassId])
   @@index([studioId, userId])
   @@index([scheduledClassId, status])
+  @@index([subscriptionId])
   @@index([userId])
   @@map("bookings")
 }
@@ -666,11 +684,16 @@ model Attendance {
   checkedInAt         DateTime      @default(now()) @map("checked_in_at")
   /// Staff/instructor who performed a manual check-in; null for QR or other methods.
   checkedInByUserId String?       @map("checked_in_by_user_id")
+  /// Multi-membership (MM-2): the subscription whose entitlement this attendance consumed.
+  /// Inherited from the booking when one exists; resolved directly for walk-in manual
+  /// attendance. NULL for pre-attribution history and non-consuming rows (staff, Open Gym).
+  subscriptionId    String?       @map("subscription_id")
 
   studio         Studio          @relation(fields: [studioId], references: [id], onDelete: Restrict)
   scheduledClass ScheduledClass? @relation(fields: [scheduledClassId], references: [id], onDelete: Restrict)
   user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
   checkedInBy    User?           @relation("AttendanceRecordedBy", fields: [checkedInByUserId], references: [id], onDelete: SetNull)
+  subscription   Subscription?   @relation("AttendanceEntitlementSubscription", fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   /// Still one class attendance per member per class. Postgres treats NULLs as distinct, so this
   /// intentionally does not constrain OPEN_GYM rows — repeat visits in a day are legitimate data
@@ -682,6 +705,7 @@ model Attendance {
   @@index([studioId, userId, checkedInAt])
   /// Serves both the Open Gym double-scan lookup and gym-traffic/Open-Gym-usage reporting.
   @@index([studioId, type, checkedInAt])
+  @@index([subscriptionId])
   @@map("attendances")
 }
 

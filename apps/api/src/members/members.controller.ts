@@ -112,6 +112,17 @@ export class MembersController {
     return this.membersService.getMemberProfile(studioId, userId);
   }
 
+  /** MM-5: staff view of the catalog CTA semantics for a target member (sales UX). */
+  @Get(':userId/purchase-options')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
+  getMemberPurchaseOptions(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.subscriptionLifecycle.getMembershipPurchaseOptions(studioId, userId, 'staff');
+  }
+
   // ── Bookings ───────────────────────────────────────────────────────────────
 
   @Get(':userId/bookings')

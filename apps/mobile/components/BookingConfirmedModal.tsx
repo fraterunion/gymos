@@ -9,6 +9,8 @@ export type BookingConfirmedModalProps = {
   /** Studio-branded app name, so the arrival hint reads correctly for any tenant. */
   appDisplayName: string;
   accentColor: string;
+  /** MM-5: e.g. "Usará 1 crédito de Booty Lab" — only set when a scarce credit was consumed. */
+  chargeNote?: string | null;
   onDismiss: () => void;
 };
 
@@ -23,6 +25,7 @@ export function BookingConfirmedModal({
   visible,
   appDisplayName,
   accentColor,
+  chargeNote,
   onDismiss,
 }: BookingConfirmedModalProps) {
   const C = getColors();
@@ -102,6 +105,21 @@ export function BookingConfirmedModal({
           >
             Tu reserva ya aparece en Mis reservas.
           </Text>
+
+          {chargeNote ? (
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: '600',
+                color: C.text,
+                lineHeight: 21,
+                textAlign: 'center',
+                marginBottom: 12,
+              }}
+            >
+              {chargeNote}
+            </Text>
+          ) : null}
 
           <Text
             style={{

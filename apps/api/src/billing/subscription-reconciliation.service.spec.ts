@@ -15,12 +15,13 @@ function makeStripeSub(
   periodEndUnix: number,
   studioId = 'studio-1',
   userId = 'user-1',
+  planId: string | null = null,
 ) {
   return {
     id,
     status,
     cancel_at_period_end: cancelAtPeriodEnd,
-    metadata: { studioId, userId },
+    metadata: { studioId, userId, ...(planId ? { planId } : {}) },
     items: {
       data: [
         {
@@ -54,7 +55,10 @@ function makeLocalSub(
     currentPeriodStart: new Date(periodEnd.getTime() - 30 * 86400_000),
     currentPeriodEnd: periodEnd,
     membershipPlanId: planId,
-    membershipPlan: { id: planId, name: planName, priceCents, stripePriceId },
+    // Post-backfill reality: every existing row snapshots the CORE group until a plan
+    // is deliberately made stackable (gate-ON tests override via withGroup).
+    exclusiveGroupKey: 'CORE' as string | null,
+    membershipPlan: { id: planId, name: planName, priceCents, stripePriceId, exclusiveGroup: 'CORE' as string | null },
   };
 }
 
@@ -65,6 +69,7 @@ function buildService(overrides: {
   localSubs?: ReturnType<typeof makeLocalSub>[];
   stripeSubs?: ReturnType<typeof makeStripeSub>[];
   planByPrice?: Record<string, { id: string } | null>;
+  planById?: Record<string, { id: string; exclusiveGroup: string | null } | null>;
   deadLetters?: Array<{ stripeEventId: string; eventType: string; createdAt: Date }>;
 }) {
   const prisma = {
@@ -79,7 +84,10 @@ function buildService(overrides: {
       update: jest.fn().mockResolvedValue({}),
     },
     membershipPlan: {
-      findFirst: jest.fn().mockImplementation(async (args: { where: { stripePriceId?: string } }) => {
+      findFirst: jest.fn().mockImplementation(async (args: { where: { stripePriceId?: string; id?: string } }) => {
+        if (args.where.id) {
+          return (overrides.planById ?? {})[args.where.id] ?? null;
+        }
         const priceId = args.where.stripePriceId;
         if (!priceId) return null;
         return (overrides.planByPrice ?? {})[priceId] ?? null;
@@ -119,7 +127,7 @@ const LOCAL_BASIC = makeLocalSub(
 );
 
 const STRIPE_BASIC = makeStripeSub('sub_basic', 'active', false, 'price_basic', 130000, SEP_6_UNIX);
-const STRIPE_FULL = makeStripeSub('sub_full', 'active', false, 'price_full', 150000, SEP_6_UNIX + 30 * 86400);
+const STRIPE_FULL = makeStripeSub('sub_full', 'active', false, 'price_full', 150000, SEP_6_UNIX + 30 * 86400, 'studio-1', 'user-1', 'plan-full');
 
 // ──────────────────────────────────────────────────────────────────────────────
 // healthy state
@@ -195,6 +203,7 @@ describe('SubscriptionReconciliationService — Emilia-class: duplicate renewabl
       planByPrice: {
         price_full: { id: 'plan-full' },
       },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
@@ -229,6 +238,7 @@ describe('SubscriptionReconciliationService — Emilia-class: duplicate renewabl
       localSubs: [LOCAL_BASIC],
       stripeSubs: [STRIPE_BASIC, STRIPE_FULL],
       planByPrice: { price_full: { id: 'plan-full' } },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     await expect(
@@ -250,6 +260,7 @@ describe('SubscriptionReconciliationService — Emilia-class: duplicate renewabl
       localSubs: [LOCAL_BASIC],
       stripeSubs: [STRIPE_BASIC, STRIPE_FULL],
       planByPrice: { price_full: { id: 'plan-full' } },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     await service.reconcile({ studioId: 'studio-1', userId: 'user-1', applyRepairs: true });
@@ -749,6 +760,7 @@ describe('SubscriptionReconciliationService — auditStudio', () => {
       localSubs: [LOCAL_BASIC],
       stripeSubs: [STRIPE_BASIC, STRIPE_FULL],
       planByPrice: { price_full: { id: 'plan-full' } },
+      planById: { 'plan-full': { id: 'plan-full', exclusiveGroup: 'CORE' } },
     });
 
     const result = await service.auditStudio('studio-1');
@@ -760,5 +772,106 @@ describe('SubscriptionReconciliationService — auditStudio', () => {
     expect(dup).toBeDefined();
     expect(dup?.severity).toBe('critical');
     expect(dup?.requiresManualResolution).toBe(true);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// MM-1/MM-4 — compatible multi-membership is NOT corruption. Family grouping is
+// ALWAYS on: a legitimate dual membership must not be flagged even when the
+// creation gate is OFF (post-launch kill switch).
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe.each([
+  ['creation gate ON', 'true'],
+  ['creation gate OFF — kill switch', 'false'],
+])('SubscriptionReconciliationService — compatibility-aware duplicates (%s)', (_label, gateValue) => {
+  beforeEach(() => {
+    process.env['MULTI_MEMBERSHIP_ENABLED'] = gateValue;
+  });
+  afterEach(() => {
+    delete process.env['MULTI_MEMBERSHIP_ENABLED'];
+  });
+
+  const SEP_30 = new Date('2026-09-30T12:00:00Z');
+  const SEP_30_UNIX = Math.floor(SEP_30.getTime() / 1000);
+
+  function withGroup(local: ReturnType<typeof makeLocalSub>, exclusiveGroupKey: string | null) {
+    return {
+      ...local,
+      exclusiveGroupKey,
+      membershipPlan: { ...local.membershipPlan, exclusiveGroup: exclusiveGroupKey },
+    };
+  }
+
+  it('Full Access + Booty Lab (compatible pair) is accepted — no duplicate_renewable issue', async () => {
+    const localFull = withGroup(
+      makeLocalSub('local-full', 'sub_full_mm', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const localBooty = withGroup(
+      makeLocalSub('local-booty', 'sub_booty_mm', 'plan-booty', 'Booty Lab', 80000, 'price_booty_mm', SEP_30),
+      null,
+    );
+    const { service } = buildService({
+      localSubs: [localFull, localBooty],
+      stripeSubs: [
+        makeStripeSub('sub_full_mm', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+        makeStripeSub('sub_booty_mm', 'active', false, 'price_booty_mm', 80000, SEP_30_UNIX),
+      ],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    expect(result.issues.map((i) => i.kind)).not.toContain('duplicate_renewable');
+    expect(result.requiresManualResolution).toBe(false);
+  });
+
+  it('two renewable Stripe subs for the SAME plan are still flagged as duplicate_renewable', async () => {
+    const localFullA = withGroup(
+      makeLocalSub('local-full-a', 'sub_full_a', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const localFullB = withGroup(
+      makeLocalSub('local-full-b', 'sub_full_b', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const { service } = buildService({
+      localSubs: [localFullA, localFullB],
+      stripeSubs: [
+        makeStripeSub('sub_full_a', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+        makeStripeSub('sub_full_b', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+      ],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    const dup = result.issues.find((i) => i.kind === 'duplicate_renewable');
+    expect(dup).toBeDefined();
+    expect((dup as { stripeSubscriptionIds: string[] }).stripeSubscriptionIds.sort()).toEqual([
+      'sub_full_a',
+      'sub_full_b',
+    ]);
+  });
+
+  it('two renewable Stripe subs in the SAME exclusive group (Full + Basic) are flagged as duplicate_renewable', async () => {
+    const localFull = withGroup(
+      makeLocalSub('local-full', 'sub_full_g', 'plan-full', 'Full Access', 150000, 'price_full_mm', SEP_30),
+      'CORE',
+    );
+    const localBasic = withGroup(
+      makeLocalSub('local-basic-g', 'sub_basic_g', 'plan-basic', 'Basic Access', 100000, 'price_basic_mm', SEP_30),
+      'CORE',
+    );
+    const { service } = buildService({
+      localSubs: [localFull, localBasic],
+      stripeSubs: [
+        makeStripeSub('sub_full_g', 'active', false, 'price_full_mm', 150000, SEP_30_UNIX),
+        makeStripeSub('sub_basic_g', 'active', false, 'price_basic_mm', 100000, SEP_30_UNIX),
+      ],
+    });
+
+    const result = await service.reconcile({ studioId: 'studio-1', userId: 'user-1' });
+
+    expect(result.issues.map((i) => i.kind)).toContain('duplicate_renewable');
   });
 });

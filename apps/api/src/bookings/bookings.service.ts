@@ -98,7 +98,10 @@ export class BookingsService {
           await acquireMembershipUsageAdvisoryLock(tx, studioId, actorUserId);
         }
 
-        await this.bookingAccess.assertAccess(
+        // MM-2: records which membership's entitlement authorized this booking.
+        // MM-5: chargedMembership is echoed on the response so clients can say which
+        // membership (and whether a credit) this booking consumed.
+        const { subscriptionId: entitlementSubscriptionId, chargedMembership } = await this.bookingAccess.assertAccess(
           tx,
           studioId,
           actorUserId,
@@ -138,14 +141,16 @@ export class BookingsService {
         }
 
         try {
-          return await tx.booking.create({
+          const booking = await tx.booking.create({
             data: {
               studioId,
               scheduledClassId,
               userId: actorUserId,
               status: BookingStatus.CONFIRMED,
+              subscriptionId: entitlementSubscriptionId,
             },
           });
+          return { ...booking, chargedMembership: chargedMembership ?? null };
         } catch (e) {
           if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
             throw new ConflictException(MEMBER_ERRORS.alreadyBooked);

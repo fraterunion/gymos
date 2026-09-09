@@ -616,6 +616,8 @@ function makeSubscriptionWebhookMocks() {
     findUnique: jest.fn().mockResolvedValue(null),
     // Default: no conflicting ACTIVE row (conflict check finds nothing to conflict with)
     findFirst: jest.fn().mockResolvedValue(null),
+    // MM-1: renewable-conflict + scheduled-cash lookups now use findMany.
+    findMany: jest.fn().mockResolvedValue([]),
     update: jest.fn().mockResolvedValue({ id: 'sub-local-cash-1', status: 'CANCELED' }),
     create: jest.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
       const row = { id: 'sub-local-new', ...data };
@@ -1000,6 +1002,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     });
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue(expiredCashRow);
+    txSubscription.findMany.mockResolvedValue([{ ...(expiredCashRow), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
 
     const logSpy = jest.spyOn(Logger.prototype, 'log');
 
@@ -1050,6 +1053,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     });
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue({ ...expiredCashRow, cancelAtPeriodEnd: false });
+    txSubscription.findMany.mockResolvedValue([{ ...({ ...expiredCashRow, cancelAtPeriodEnd: false }), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
 
     await service.upsertSubscriptionFromStripe(
       { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
@@ -1077,6 +1081,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     });
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue(activeCashRow);
+    txSubscription.findMany.mockResolvedValue([{ ...(activeCashRow), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
 
     const errorSpy = jest.spyOn(Logger.prototype, 'error');
 
@@ -1110,6 +1115,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     });
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue(stripeBackedRow);
+    txSubscription.findMany.mockResolvedValue([{ ...(stripeBackedRow), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
 
     const errorSpy = jest.spyOn(Logger.prototype, 'error');
 
@@ -1179,7 +1185,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
         select: expect.objectContaining({ cancelAtPeriodEnd: true }),
       }),
     );
-    expect(txSubscription.findFirst).toHaveBeenCalledWith(
+    expect(txSubscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ status: SubscriptionStatus.SCHEDULED }),
       }),
@@ -1198,6 +1204,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     });
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue(expiredCashRow);
+    txSubscription.findMany.mockResolvedValue([{ ...(expiredCashRow), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
 
     await service.upsertSubscriptionFromStripe(
       { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
@@ -1221,6 +1228,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     });
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue(expiredCashRow);
+    txSubscription.findMany.mockResolvedValue([{ ...(expiredCashRow), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
     // Simulate DB failure during the CASH row update
     txSubscription.update.mockRejectedValue(new Error('connection timeout'));
 
@@ -1242,6 +1250,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     });
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue(activeCashRow);
+    txSubscription.findMany.mockResolvedValue([{ ...(activeCashRow), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     // Must resolve (not reject) so the outer handleIncomingWebhook marks processed=true
@@ -1272,6 +1281,15 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       cancelAtPeriodEnd: false,
       membershipPlanId: 'plan-basic',
     });
+    txSubscription.findMany.mockResolvedValue([{ ...({
+      id: 'local-basic-emilia',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.STRIPE,
+      stripeSubscriptionId: 'sub_1TqKw5GuUoCXNOREO80x7acx',  // Emilia's Basic
+      currentPeriodEnd: new Date('2026-09-06T00:00:00Z'),
+      cancelAtPeriodEnd: false,
+      membershipPlanId: 'plan-basic',
+    }), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     await service.upsertSubscriptionFromStripe(
@@ -1308,6 +1326,16 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       cancelAtPeriodEnd: true,
       membershipPlanId: 'plan-full',
     });
+    txSubscription.findMany.mockResolvedValue([{ ...({
+      id: 'cmr5e5tl3002hm60r9s2d08cc',  // Carlo's CASH sub
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      stripeSubscriptionId: null,
+      currentPeriodEnd: new Date('2026-08-04T05:59:59Z'),  // expired Aug 4
+      currentPeriodStart: new Date('2026-07-03T18:00:00Z'),
+      cancelAtPeriodEnd: true,
+      membershipPlanId: 'plan-full',
+    }), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
 
     await service.upsertSubscriptionFromStripe(
       {

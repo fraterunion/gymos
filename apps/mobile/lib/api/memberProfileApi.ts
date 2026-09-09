@@ -1,4 +1,5 @@
 import { apiRequest } from '@/lib/api/client';
+import type { MembershipSummaryDto } from '@/lib/api/membershipApi';
 
 export type SubStatus = 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'TRIALING' | 'PAUSED';
 
@@ -23,6 +24,8 @@ export type MemberProfileDto = {
   role: string;
   membership: { id: string; createdAt: string; updatedAt: string };
   attendances: { totalInStudio: number };
+  /** MM-5: every current membership (entitled, renewable, or SCHEDULED successor). */
+  memberships: MembershipSummaryDto[];
   bookingStats: {
     totalBookings: number;
     attendedCount: number;

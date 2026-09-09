@@ -224,18 +224,24 @@ describe('[6] Class access rules apply independently from credit count', () => {
   ) {
     return {
       subscription: {
-        findFirst: jest.fn().mockResolvedValue({
-          currentPeriodStart: PERIOD_START,
-          currentPeriodEnd: PERIOD_END,
-          membershipPlan: {
-            allClassesAccess: subConfig.allClassesAccess,
-            allowedCategories: subConfig.allowedCategories,
-            classCredits: PRO_CLASS_CREDITS,
-            classTemplateAccess: subConfig.allowedTemplateIds.map((id) => ({
-              classTemplateId: id,
-            })),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'sub-pro',
+            createdAt: new Date('2026-07-01T00:00:00.000Z'),
+            currentPeriodStart: PERIOD_START,
+            currentPeriodEnd: PERIOD_END,
+            entitlementEndsAt: null,
+            membershipPlan: {
+              allClassesAccess: subConfig.allClassesAccess,
+              allowedCategories: subConfig.allowedCategories,
+              classCredits: PRO_CLASS_CREDITS,
+              classTemplateAccess: subConfig.allowedTemplateIds.map((id) => ({
+                classTemplateId: id,
+              })),
+            },
           },
-        }),
+        ]),
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       classTemplate: {
         findUnique: jest.fn().mockResolvedValue({ category: templateCategory }),
@@ -257,7 +263,7 @@ describe('[6] Class access rules apply independently from credit count', () => {
         'tpl-strength',
         scheduledClassId,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ subscriptionId: 'sub-pro' });
     expect(membershipUsage.assertCreditAvailableForClass).toHaveBeenCalledTimes(1);
   });
 

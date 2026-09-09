@@ -115,3 +115,24 @@ export async function createOfflineSubscription(
     },
   );
 }
+
+/** MM-5: staff view of server-computed purchase relationship for a target member. */
+export type StaffPurchaseOptionDto = {
+  planId: string;
+  purchaseAction: 'SUBSCRIBE' | 'CURRENT' | 'RENEW' | 'CHANGE' | 'ADD' | 'SCHEDULED' | 'BLOCKED';
+  relatedSubscriptionId: string | null;
+  relatedPlanName: string | null;
+  effectiveDate: string | null;
+  reasonCode: string | null;
+};
+
+export async function fetchMemberPurchaseOptions(
+  studioId: string,
+  userId: string,
+): Promise<StaffPurchaseOptionDto[]> {
+  const res = await apiRequest<{ options: StaffPurchaseOptionDto[] }>(
+    `/studios/${studioId}/members/${userId}/purchase-options`,
+    { method: 'GET' },
+  );
+  return res.options;
+}

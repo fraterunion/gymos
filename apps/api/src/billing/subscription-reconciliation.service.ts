@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import { SubscriptionStatus, type MembershipPlan, type Subscription } from '@prisma/client';
+import type Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
@@ -198,12 +199,22 @@ export class SubscriptionReconciliationService {
       RENEWABLE_STRIPE_STATUSES.has(s.status),
     );
 
-    // 3. Detect duplicate renewable Stripe subscriptions
+    // 3. Detect duplicate renewable Stripe subscriptions.
+    // MM-1: two COMPATIBLE memberships (different plan, no shared non-null exclusive
+    // group) are legitimate, not corruption — only same-plan or same-group multiples are
+    // flagged. Gate off → any 2+ renewable Stripe subs are flagged (legacy behavior).
     if (renewableStripeSubs.length > 1) {
-      issues.push({
-        kind: 'duplicate_renewable',
-        stripeSubscriptionIds: renewableStripeSubs.map((s) => s.id),
-      });
+      const duplicateIds = await this.findIncompatibleStripeSubscriptionIds(
+        params.studioId,
+        renewableStripeSubs,
+        localSubs,
+      );
+      if (duplicateIds.length > 1) {
+        issues.push({
+          kind: 'duplicate_renewable',
+          stripeSubscriptionIds: duplicateIds,
+        });
+      }
     }
 
     const localByStripeId = new Map(
@@ -408,6 +419,59 @@ export class SubscriptionReconciliationService {
       reconciliationStatus: result.status,
       issues: result.issues.map((i) => i.kind),
     });
+  }
+
+  /**
+   * MM-1: groups renewable Stripe subscriptions by membership family and returns the ids
+   * belonging to any family that has 2+ subs — genuine duplicates. Family identity per sub:
+   * the local row's purchase-time snapshot when one exists, else the plan resolved from
+   * Stripe metadata. A sub whose plan cannot be resolved is left unflagged (it will
+   * already surface separately as a stripe_orphan).
+   * MM-4: ALWAYS family-scoped (never gated) — a legitimate dual membership must not be
+   * flagged as duplicate_renewable merely because the creation gate is off. For all-CORE
+   * data (pre-rollout), family grouping flags exactly what legacy any-2+ detection did.
+   */
+  private async findIncompatibleStripeSubscriptionIds(
+    studioId: string,
+    renewableStripeSubs: Stripe.Subscription[],
+    localSubs: Array<Subscription & { membershipPlan: MembershipPlan }>,
+  ): Promise<string[]> {
+    const localByStripeId = new Map(
+      localSubs.filter((l) => l.stripeSubscriptionId).map((l) => [l.stripeSubscriptionId!, l]),
+    );
+
+    const familyKeyBySubId = new Map<string, string>();
+    for (const stripeSub of renewableStripeSubs) {
+      const local = localByStripeId.get(stripeSub.id);
+      let planId: string | null = local?.membershipPlanId ?? null;
+      // Snapshot-only for existing rows (see membership-compatibility); a not-yet-created
+      // row (stripe orphan) has no snapshot, so its plan's CURRENT group — the group it
+      // would be sold under — is resolved below from metadata.
+      let group: string | null = local ? local.exclusiveGroupKey ?? null : null;
+      if (!planId) {
+        const metadataPlanId = stripeSub.metadata?.['planId'] ?? null;
+        if (metadataPlanId) {
+          const plan = await this.prisma.membershipPlan.findFirst({
+            where: { id: metadataPlanId, studioId },
+            select: { id: true, exclusiveGroup: true },
+          });
+          if (plan) {
+            planId = plan.id;
+            group = plan.exclusiveGroup;
+          }
+        }
+      }
+      if (!planId) continue; // unresolvable — surfaces as stripe_orphan elsewhere
+      familyKeyBySubId.set(stripeSub.id, group !== null ? `group:${group}` : `plan:${planId}`);
+    }
+
+    const countsByFamily = new Map<string, number>();
+    for (const key of familyKeyBySubId.values()) {
+      countsByFamily.set(key, (countsByFamily.get(key) ?? 0) + 1);
+    }
+    return [...familyKeyBySubId.entries()]
+      .filter(([, key]) => (countsByFamily.get(key) ?? 0) > 1)
+      .map(([id]) => id);
   }
 
   /** Apply safe local-DB-only repairs produced by reconcile(). Never touches Stripe. */

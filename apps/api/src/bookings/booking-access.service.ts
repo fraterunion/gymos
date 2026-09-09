@@ -19,6 +19,7 @@ import {
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
 } from '../membership-plans/membership-plan-class-access.utils';
 import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
+import { orderEntitlementCandidates } from '../memberships/membership-compatibility';
 import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
 const bypassRoles: ReadonlySet<Role> = new Set([
@@ -29,6 +30,16 @@ const bypassRoles: ReadonlySet<Role> = new Set([
 ]);
 
 export const CLASS_TIME_WINDOW_DENIED_MESSAGE = MEMBER_ERRORS.timeWindowDenied;
+
+export type BookingAccessResult = {
+  subscriptionId: string | null;
+  /** MM-5: which membership this booking is charged to (null for role bypass / Day Pass). */
+  chargedMembership: {
+    subscriptionId: string;
+    planName: string;
+    creditConsumed: boolean;
+  } | null;
+};
 
 /**
  * Shared booking access guard used by BookingsService (direct booking) and
@@ -45,6 +56,13 @@ export const CLASS_TIME_WINDOW_DENIED_MESSAGE = MEMBER_ERRORS.timeWindowDenied;
 export class BookingAccessService {
   constructor(private readonly membershipUsage: MembershipUsageService) {}
 
+  /**
+   * MM-2: returns the id of the subscription whose entitlement authorized this access, so
+   * callers persist it as Booking.subscriptionId. Null when authorization came from a role
+   * bypass or the Day Pass fallback (no membership entitlement was consumed).
+   * MM-5: also returns chargedMembership for the booking response — which membership the
+   * booking is charged to and whether a scarce credit was consumed (false for unlimited).
+   */
   async assertAccess(
     tx: Prisma.TransactionClient,
     studioId: string,
@@ -54,9 +72,9 @@ export class BookingAccessService {
     studioTimezone: string,
     classTemplateId: string,
     scheduledClassId: string,
-  ): Promise<void> {
+  ): Promise<BookingAccessResult> {
     if (bypassRoles.has(membershipRole)) {
-      return;
+      return { subscriptionId: null, chargedMembership: null };
     }
 
     // Always fetch template metadata — needed for time-window and category checks.
@@ -76,23 +94,26 @@ export class BookingAccessService {
 
     const now = new Date();
 
-    // Find the member's effective subscription: active/trialing, OR cancelled with a
-    // valid GymOS entitlement window (fixed-duration products like Booty Lab 45-day).
-    const sub = await tx.subscription.findFirst({
+    // MM-2: load ALL currently entitled memberships (active/trialing, OR cancelled with a
+    // valid GymOS entitlement window — fixed-duration products like Booty Lab 45-day) and
+    // resolve deterministically instead of picking one arbitrary row.
+    const entitledSubs = await tx.subscription.findMany({
       where: {
         userId,
         studioId,
         ...currentlyEntitledSubscriptionWhere(now),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: 'asc' },
       select: {
         id: true,
         status: true,
+        createdAt: true,
         currentPeriodStart: true,
         currentPeriodEnd: true,
         entitlementEndsAt: true,
         membershipPlan: {
           select: {
+            name: true,
             allClassesAccess: true,
             allowedCategories: true,
             classCredits: true,
@@ -108,33 +129,57 @@ export class BookingAccessService {
     let subscriptionRestricted = false;
     let creditsExhausted = false;
 
-    if (sub) {
-      const { allClassesAccess, allowedCategories, classCredits, classTemplateAccess } =
-        sub.membershipPlan;
-      const allowedTemplateIds = classTemplateAccess.map((row) => row.classTemplateId);
-
-      if (
-        !isClassIncludedInPlan({
-          allClassesAccess,
-          allowedTemplateIds,
-          allowedCategories,
+    if (entitledSubs.length > 0) {
+      // Candidates: only memberships whose plan actually includes this class.
+      const qualifying = entitledSubs.filter((sub) =>
+        isClassIncludedInPlan({
+          allClassesAccess: sub.membershipPlan.allClassesAccess,
+          allowedTemplateIds: sub.membershipPlan.classTemplateAccess.map((row) => row.classTemplateId),
+          allowedCategories: sub.membershipPlan.allowedCategories,
           classTemplateId,
           templateCategory: template?.category ?? null,
-        })
-      ) {
+        }),
+      );
+
+      if (qualifying.length === 0) {
         subscriptionRestricted = true;
-      }
+      } else {
+        // Canonical precedence (membership-compatibility): unlimited first — never burn
+        // scarce credits when an unlimited membership already covers the class; then
+        // credit-limited by soonest-ending entitlement; stable tie-breaks.
+        const ordered = orderEntitlementCandidates(qualifying);
 
-      if (!subscriptionRestricted && classCredits !== null) {
-        // For fixed-duration plans, entitlementEndsAt is the actual access window end.
-        // Use it as the effective period end so credits count across the full entitlement.
-        const effectivePeriodEnd = sub.entitlementEndsAt ?? sub.currentPeriodEnd;
-        const effectiveSub = {
-          ...sub,
-          currentPeriodEnd: effectivePeriodEnd,
-        };
+        let firstNonExhaustedError: ForbiddenException | null = null;
+        for (const sub of ordered) {
+          if (sub.membershipPlan.classCredits === null) {
+            return {
+              subscriptionId: sub.id,
+              chargedMembership: {
+                subscriptionId: sub.id,
+                planName: sub.membershipPlan.name,
+                creditConsumed: false,
+              },
+            };
+          }
 
-        if (effectiveSub.currentPeriodStart && effectiveSub.currentPeriodEnd) {
+          // For fixed-duration plans, entitlementEndsAt is the actual access window end.
+          // Use it as the effective period end so credits count across the full entitlement.
+          const effectiveSub = {
+            ...sub,
+            currentPeriodEnd: sub.entitlementEndsAt ?? sub.currentPeriodEnd,
+          };
+          if (!effectiveSub.currentPeriodStart || !effectiveSub.currentPeriodEnd) {
+            // No resolvable period — cannot meter credits; matches the legacy single-sub
+            // behavior of allowing the booking rather than inventing a denial.
+            return {
+              subscriptionId: sub.id,
+              chargedMembership: {
+                subscriptionId: sub.id,
+                planName: sub.membershipPlan.name,
+                creditConsumed: false,
+              },
+            };
+          }
           try {
             await this.membershipUsage.assertCreditAvailableForClass(
               tx,
@@ -145,21 +190,41 @@ export class BookingAccessService {
               effectiveSub,
               { errorType: 'forbidden' },
             );
+            return {
+              subscriptionId: sub.id,
+              chargedMembership: {
+                subscriptionId: sub.id,
+                planName: sub.membershipPlan.name,
+                creditConsumed: true,
+              },
+            };
           } catch (e) {
             if (
               e instanceof ForbiddenException &&
               e.message === MEMBERSHIP_CLASS_CREDITS_EXHAUSTED_MESSAGE
             ) {
               creditsExhausted = true;
-            } else {
-              throw e;
+              continue;
             }
+            if (e instanceof ForbiddenException) {
+              // e.g. no paid entitlement cycle covers this class — this candidate cannot
+              // authorize, but another one still might.
+              firstNonExhaustedError = firstNonExhaustedError ?? e;
+              continue;
+            }
+            throw e;
           }
         }
-      }
 
-      if (!subscriptionRestricted && !creditsExhausted) {
-        return;
+        // No candidate could authorize. Preserve legacy single-membership semantics:
+        // a non-exhausted failure (e.g. missing paid cycle) propagates as-is unless an
+        // exhausted-credits outcome should win the Day Pass fallback below.
+        if (!creditsExhausted && firstNonExhaustedError) {
+          throw firstNonExhaustedError;
+        }
+        if (!creditsExhausted) {
+          creditsExhausted = true;
+        }
       }
     }
 
@@ -183,7 +248,7 @@ export class BookingAccessService {
           validForDate,
         },
       });
-      if (pass) return;
+      if (pass) return { subscriptionId: null, chargedMembership: null };
     }
 
     if (subscriptionRestricted) {

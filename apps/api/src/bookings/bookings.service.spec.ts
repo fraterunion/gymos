@@ -85,7 +85,7 @@ describe('BookingsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    bookingAccess = { assertAccess: jest.fn().mockResolvedValue(undefined) };
+    bookingAccess = { assertAccess: jest.fn().mockResolvedValue({ subscriptionId: null }) };
     waiverService = { assertMemberWaiverAccepted: jest.fn().mockResolvedValue(undefined) };
     waitlistService = { promoteNextAfterSpotOpened: jest.fn().mockResolvedValue(null) };
     prisma = { $transaction: jest.fn() };
@@ -128,7 +128,7 @@ describe('BookingsService', () => {
       });
       bookingAccess.assertAccess.mockImplementation(() => {
         lockOrder.push('assertAccess');
-        return Promise.resolve();
+        return Promise.resolve({ subscriptionId: null });
       });
       await service.createBooking(STUDIO_ID, CLASS_ID, USER_ID);
       const lockIdx = lockOrder.indexOf('usageLock');
