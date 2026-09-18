@@ -309,7 +309,7 @@ async function main(): Promise<void> {
         brandPrimaryColor: '#0f172a',
         brandSecondaryColor: '#c9a227',
         brandLogoUrl: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400',
-        supportEmail: 'hello@aresfitness.mx',
+        supportEmail: 'support@arestrainingclub.com',
         supportPhone: '+52 55 0000 0000',
         privacyUrl: 'https://aresfitness.mx/privacidad',
         termsUrl: 'https://aresfitness.mx/terminos',
