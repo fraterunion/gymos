@@ -8,6 +8,7 @@ import { Field } from '@/components/Field';
 import { useBranding } from '@/contexts/BrandingContext';
 import { forgotPasswordRequest } from '@/lib/api/auth';
 import { ApiError } from '@/lib/api/errors';
+import { canSubmitRecoveryRequest, normalizeRecoveryEmail } from '@/lib/auth/passwordRecovery';
 import { getColors, Space } from '@/constants/Theme';
 
 /**
@@ -17,7 +18,7 @@ import { getColors, Space } from '@/constants/Theme';
 export default function ForgotPasswordScreen() {
   const router = useRouter();
   const C = getColors();
-  const { primaryColor, appDisplayName, slug: studioSlug } = useBranding();
+  const { primaryColor, slug: studioSlug } = useBranding();
 
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -26,11 +27,12 @@ export default function ForgotPasswordScreen() {
 
   async function onSubmit() {
     setError(null);
-    const trimmed = email.trim();
-    if (!trimmed) {
-      setError('Ingresa tu correo.');
+    // Also blocks a second request while one is in flight (double tap on a slow network).
+    if (!canSubmitRecoveryRequest(email, busy)) {
+      if (!busy) setError('Ingresa tu correo.');
       return;
     }
+    const trimmed = normalizeRecoveryEmail(email);
     setBusy(true);
     try {
       await forgotPasswordRequest(trimmed, studioSlug || undefined);
@@ -92,7 +94,7 @@ export default function ForgotPasswordScreen() {
             >
               {sent
                 ? 'Si existe una cuenta asociada a este correo, recibirás instrucciones para restablecer tu contraseña.'
-                : `Te enviaremos un enlace para crear una nueva contraseña de ${appDisplayName}.`}
+                : 'Ingresa el correo asociado a tu cuenta y te enviaremos instrucciones para crear una nueva contraseña.'}
             </Text>
           </View>
 
@@ -115,21 +117,23 @@ export default function ForgotPasswordScreen() {
                     marginBottom: 20,
                   }}
                 >
-                  El enlace caduca en 30 minutos y solo puede usarse una vez. Si no lo
+                  El enlace caduca en 30 minutos y solo puede utilizarse una vez. Si no lo
                   encuentras, revisa tu carpeta de spam.
                 </Text>
                 <BrandButton
-                  label="Ya tengo un código"
+                  label="Volver a iniciar sesión"
                   variant="white"
                   accentColor={primaryColor}
-                  onPress={() => router.push('/(auth)/reset-password' as Href)}
+                  onPress={() => router.replace('/(auth)/login' as Href)}
                 />
                 <View style={{ marginTop: 12 }}>
+                  {/* Fallback for a member whose mail client strips the link: the same
+                      generic-error reset screen, reached by pasting the code. */}
                   <BrandButton
-                    label="Volver a iniciar sesión"
+                    label="Ya tengo un código"
                     variant="ghost"
                     accentColor={primaryColor}
-                    onPress={() => router.replace('/(auth)/login' as Href)}
+                    onPress={() => router.push('/(auth)/reset-password' as Href)}
                   />
                 </View>
               </>

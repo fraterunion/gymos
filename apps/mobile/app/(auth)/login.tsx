@@ -14,6 +14,13 @@ import { BrandButton } from '@/components/BrandButton';
 import { Field } from '@/components/Field';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchAuthCapabilities } from '@/lib/api/auth';
+import {
+  RECOVERY_PROBE_FAILED,
+  RECOVERY_PROBE_PENDING,
+  recoveryProbeResolved,
+  shouldShowForgotPasswordAction,
+  type RecoveryProbeState,
+} from '@/lib/auth/passwordRecovery';
 import { useBranding } from '@/contexts/BrandingContext';
 import { getColors, Space } from '@/constants/Theme';
 
@@ -41,19 +48,20 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
-  // Recovery is a per-environment capability. Assume available (the common case) and hide
-  // the link only once the server has actually said it is off, so a failed probe never
-  // strands a member who needs to reset.
-  const [recoveryAvailable, setRecoveryAvailable] = useState(true);
+  // Recovery is a per-environment capability. The decision lives in a pure module so the
+  // "a failed probe must never hide the way back in" rule is covered by tests.
+  const [recoveryProbe, setRecoveryProbe] = useState<RecoveryProbeState>(RECOVERY_PROBE_PENDING);
+  const recoveryAvailable = shouldShowForgotPasswordAction(recoveryProbe);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const caps = await fetchAuthCapabilities();
-        if (!cancelled) setRecoveryAvailable(caps.passwordRecoveryEnabled);
+        if (!cancelled) setRecoveryProbe(recoveryProbeResolved(caps.passwordRecoveryEnabled));
       } catch {
-        // Probe failed: leave the link visible rather than blocking recovery.
+        // Never blocks login, and deliberately leaves the action visible.
+        if (!cancelled) setRecoveryProbe(RECOVERY_PROBE_FAILED);
       }
     })();
     return () => {
@@ -157,6 +165,35 @@ export default function LoginScreen() {
               onChangeText={setPassword}
             />
 
+            {recoveryAvailable ? (
+              <View style={{ marginTop: -6, marginBottom: 18, alignItems: 'flex-end' }}>
+                <Link href={'/(auth)/forgot-password' as Href} asChild>
+                  <Pressable
+                    accessibilityRole="link"
+                    accessibilityLabel="¿Olvidaste tu contraseña?"
+                    accessibilityHint="Abre la pantalla para recibir instrucciones por correo"
+                    hitSlop={{ top: 12, bottom: 12, left: 16, right: 8 }}
+                    style={({ pressed }) => ({
+                      paddingVertical: 8,
+                      paddingHorizontal: 2,
+                      opacity: pressed ? 0.6 : 1,
+                    })}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: '600',
+                        letterSpacing: -0.1,
+                        color: C.textSub,
+                      }}
+                    >
+                      ¿Olvidaste tu contraseña?
+                    </Text>
+                  </Pressable>
+                </Link>
+              </View>
+            ) : null}
+
             {combinedError ? (
               <Text
                 style={{
@@ -178,25 +215,6 @@ export default function LoginScreen() {
               loading={busy}
               onPress={() => void onSubmit()}
             />
-
-            {recoveryAvailable ? (
-            <View style={{ marginTop: 16, alignItems: 'center' }}>
-              <Link href={'/(auth)/forgot-password' as Href} asChild>
-                <Pressable accessibilityRole="button" hitSlop={8}>
-                  <Text
-                    style={{
-                      fontSize: 15,
-                      fontWeight: '600',
-                      letterSpacing: -0.1,
-                      color: C.textSub,
-                    }}
-                  >
-                    ¿Olvidaste tu contraseña?
-                  </Text>
-                </Pressable>
-              </Link>
-            </View>
-            ) : null}
 
             <View style={{ marginTop: 16 }}>
               <Link href={{ pathname: '/(auth)/register', params: authLinkParams }} asChild>
