@@ -10,9 +10,12 @@ import type { ResolvedEmailBranding } from '../email-branding';
  *  · Transactional, not marketing: one action, no tracking pixel, no external script.
  *  · Table-based layout with inline styles — Outlook and Gmail ignore <style> blocks and
  *    modern CSS, so anything structural has to be attributes and inline declarations.
- *  · IMAGES OFF IS THE DEFAULT for a first-time sender in Gmail. The brand block therefore
- *    renders the studio's NAME as real text on the brand colour, with the logo layered as
- *    an enhancement — the email is complete and on-brand with every image blocked.
+ *  · IMAGES OFF IS THE DEFAULT for a first-time sender in Gmail. The brand block is
+ *    therefore always legible without loading anything: a studio that publishes a logo
+ *    gets the image carrying the studio name as styled ALT text (which Gmail and Outlook
+ *    render in place of a blocked image), and a studio without one gets the name as real
+ *    HTML text. Never both — a wordmark usually already spells the name, and printing it
+ *    twice underneath looks like a mistake.
  *  · The brand band uses the studio's own primary colour, which is the surface its logo was
  *    designed for. A wordmark drawn in white on transparent stays legible there without the
  *    template knowing anything about any particular studio.
@@ -103,11 +106,14 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
   const safeSurface = escapeHtml(surface);
   const safeUrl = escapeHtml(input.resetUrl);
 
-  // Wordmark as text, always present; the logo sits above it only when one is published.
-  // With images blocked the band still shows the brand colour and the studio's name.
-  const logoBlock = logo
-    ? `<img src="${escapeHtml(logo)}" alt="${safeBrand}" height="36" style="display:block;margin:0 auto 14px;max-height:36px;width:auto;border:0;outline:none;text-decoration:none" />`
-    : '';
+  // One lockup, never two. The image carries the studio name as alt text and is styled so
+  // that a blocked image degrades into the same uppercase brand type rather than a broken
+  // icon; with no logo published the name is plain HTML text in that same style.
+  const lockupType =
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#FFFFFF";
+  const brandLockup = logo
+    ? `<img src="${escapeHtml(logo)}" alt="${safeBrand}" height="36" style="display:block;margin:0 auto;max-height:36px;width:auto;border:0;outline:none;text-decoration:none;${lockupType}" />`
+    : `<div style="${lockupType}">${safeBrand}</div>`;
 
   const supportBlock = support
     ? `<div style="margin:6px 0 0"><a href="mailto:${escapeHtml(support)}" style="color:${MUTED};font-size:13px;text-decoration:none">${escapeHtml(support)}</a></div>`
@@ -130,8 +136,7 @@ export function renderPasswordResetEmail(input: PasswordResetEmailInput): Render
 
         <tr>
           <td align="center" style="background:${safeSurface};padding:34px 24px">
-            ${logoBlock}
-            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#FFFFFF">${safeBrand}</div>
+            ${brandLockup}
           </td>
         </tr>
 

@@ -181,7 +181,7 @@ describe('password reset email rendering', () => {
     expect(mail.html).toContain('&lt;script&gt;');
   });
 
-  it('survives images being blocked: brand name and colour are real text/markup', () => {
+  it('with NO logo published, renders the studio name as real HTML text on the brand band', () => {
     const mail = renderPasswordResetEmail({
       branding,
       resetUrl: 'https://x.test/r?token=1',
@@ -194,9 +194,13 @@ describe('password reset email rendering', () => {
     expect(withoutImages).toContain('#22AA55');
   });
 
-  it('gives the logo an alt of the studio name so blocked images still read as the brand', () => {
+  it('with a logo published, shows ONE lockup whose alt text carries the studio name', () => {
     const withLogo = resolveEmailBranding(
-      studio({ appDisplayName: 'Tiny Gym', logoUrl: 'https://cdn.test/logo.png' }),
+      studio({
+        appDisplayName: 'Tiny Gym',
+        primaryColor: '#22AA55',
+        logoUrl: 'https://cdn.test/logo.png',
+      }),
       DEFAULTS,
     );
     const mail = renderPasswordResetEmail({
@@ -204,7 +208,35 @@ describe('password reset email rendering', () => {
       resetUrl: 'https://x.test/r?token=1',
       expiresInMinutes: 30,
     });
+    // A wordmark already spells the name; printing it again beneath would look like a bug.
     expect(mail.html).toMatch(/<img[^>]+alt="Tiny Gym"/);
+    const band = mail.html.slice(mail.html.indexOf('#22AA55'), mail.html.indexOf('Hola'));
+    expect(band.match(/Tiny Gym/g)).toHaveLength(1);
+    // Blocked images fall back to alt text, so the img itself carries the brand type.
+    expect(mail.html).toMatch(/<img[^>]+text-transform:uppercase/);
+  });
+
+  it('keeps the brand band legible with images blocked in BOTH configurations', () => {
+    for (const b of [
+      branding,
+      resolveEmailBranding(
+        studio({
+          appDisplayName: 'Tiny Gym',
+          primaryColor: '#22AA55',
+          logoUrl: 'https://cdn.test/logo.png',
+        }),
+        DEFAULTS,
+      ),
+    ]) {
+      const mail = renderPasswordResetEmail({
+        branding: b,
+        resetUrl: 'https://x.test/r?token=1',
+        expiresInMinutes: 30,
+      });
+      // Either the name is HTML text, or it is the alt text of the single lockup image.
+      expect(mail.html).toMatch(/alt="Tiny Gym"|>Tiny Gym</);
+      expect(mail.html).toContain('#22AA55');
+    }
   });
 
   it('carries no tracking pixel, script or external stylesheet', () => {
