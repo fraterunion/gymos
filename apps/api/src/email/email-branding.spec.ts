@@ -181,6 +181,72 @@ describe('password reset email rendering', () => {
     expect(mail.html).toContain('&lt;script&gt;');
   });
 
+  it('survives images being blocked: brand name and colour are real text/markup', () => {
+    const mail = renderPasswordResetEmail({
+      branding,
+      resetUrl: 'https://x.test/r?token=1',
+      expiresInMinutes: 30,
+    });
+    // Gmail blocks remote images for unknown senders — the band must still identify the
+    // studio without loading anything.
+    const withoutImages = mail.html.replace(/<img[^>]*>/g, '');
+    expect(withoutImages).toContain('Tiny Gym');
+    expect(withoutImages).toContain('#22AA55');
+  });
+
+  it('gives the logo an alt of the studio name so blocked images still read as the brand', () => {
+    const withLogo = resolveEmailBranding(
+      studio({ appDisplayName: 'Tiny Gym', logoUrl: 'https://cdn.test/logo.png' }),
+      DEFAULTS,
+    );
+    const mail = renderPasswordResetEmail({
+      branding: withLogo,
+      resetUrl: 'https://x.test/r?token=1',
+      expiresInMinutes: 30,
+    });
+    expect(mail.html).toMatch(/<img[^>]+alt="Tiny Gym"/);
+  });
+
+  it('carries no tracking pixel, script or external stylesheet', () => {
+    const mail = renderPasswordResetEmail({
+      branding,
+      resetUrl: 'https://x.test/r?token=1',
+      expiresInMinutes: 30,
+    });
+    expect(mail.html).not.toMatch(/<script/i);
+    expect(mail.html).not.toMatch(/<link[^>]+stylesheet/i);
+    // A 1x1 beacon would be the classic tracking pattern.
+    expect(mail.html).not.toMatch(/width="1"|height="1"/);
+  });
+
+  it('keeps a plain-text alternative carrying the link and the brand', () => {
+    const mail = renderPasswordResetEmail({
+      branding,
+      resetUrl: 'https://x.test/r?token=abc',
+      expiresInMinutes: 30,
+      firstName: 'Ana',
+    });
+    expect(mail.text).toContain('TINY GYM');
+    expect(mail.text).toContain('Hola Ana,');
+    expect(mail.text).toContain('https://x.test/r?token=abc');
+    expect(mail.text).not.toMatch(/<[a-z]/i); // no markup leaked into the text part
+  });
+
+  it('escapes a hostile brand colour instead of letting it break out of the style attribute', () => {
+    const hostile = resolveEmailBranding(
+      studio({ appDisplayName: 'Tiny Gym', primaryColor: '#22AA55' }),
+      DEFAULTS,
+    );
+    // safeHexColor already rejects non-hex, so the surface can only ever be a hex literal.
+    const mail = renderPasswordResetEmail({
+      branding: { ...hostile, primaryColor: '" onload="alert(1)' },
+      resetUrl: 'https://x.test/r?token=1',
+      expiresInMinutes: 30,
+    });
+    expect(mail.html).not.toContain('onload="alert(1)"');
+    expect(mail.html).toContain('&quot; onload=&quot;alert(1)');
+  });
+
   it('never states whether the account exists', () => {
     const mail = renderPasswordResetEmail({
       branding,

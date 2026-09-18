@@ -1,8 +1,8 @@
 /**
  * Copy for the PUBLIC auth pages (/forgot-password, /reset-password).
  *
- * These pages are not desk screens: a gym member who tapped a link in a Spanish email
- * lands here, usually on a phone, often without the app installed. The copy therefore
+ * A gym member who tapped a link in a Spanish email lands here, usually on a phone, often
+ * without the app installed. The copy therefore
  * defaults to Spanish — matching the reset email — while staying a plain dictionary so
  * another language is a data change rather than a rewrite. Nothing here names a studio;
  * the studio's own name arrives at runtime through branding.
@@ -54,6 +54,7 @@ type ResetCopy = {
   network: string;
   unavailable: string;
   requestNewLink: string;
+  openApp: string;
 };
 
 export const FORGOT_COPY: Record<PublicAuthLocale, ForgotCopy> = {
@@ -115,6 +116,7 @@ export const RESET_COPY: Record<PublicAuthLocale, ResetCopy> = {
     successBody: "Tu contraseña se actualizó correctamente.",
     successNextApp: "Abre la app e inicia sesión con tu nueva contraseña.",
     successNextWeb: "Ya puedes iniciar sesión con tu nueva contraseña.",
+    openApp: "Abrir la app",
     missingToken: "Falta el código de restablecimiento. Abre el enlace desde tu correo.",
     tooShort: (min) => `La contraseña debe tener al menos ${min} caracteres.`,
     mismatch: "Las contraseñas no coinciden.",
@@ -140,6 +142,7 @@ export const RESET_COPY: Record<PublicAuthLocale, ResetCopy> = {
     successBody: "Your password was updated successfully.",
     successNextApp: "Open the app and sign in with your new password.",
     successNextWeb: "You can now sign in with your new password.",
+    openApp: "Open the app",
     missingToken: "This link is missing its reset code. Open the link from your email.",
     tooShort: (min) => `Use at least ${min} characters.`,
     mismatch: "The passwords do not match.",

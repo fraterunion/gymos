@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { fetchAuthCapabilities } from "@/lib/api/auth";
+import { MEMBER_RECOVERY_ORIGIN } from "@/lib/memberRecovery";
 import { getPublicApiOrigin } from "@/lib/env";
 
 export default function LoginPage() {
@@ -113,12 +114,12 @@ export default function LoginPage() {
             {busy ? "Signing in…" : "Continue"}
           </button>
           {recoveryAvailable ? (
-            <Link
-              href="/forgot-password"
+            <a
+              href={`${MEMBER_RECOVERY_ORIGIN}/forgot-password`}
               className="block text-center text-sm text-zinc-500 underline underline-offset-4 dark:text-zinc-400"
             >
               Forgot your password?
-            </Link>
+            </a>
           ) : null}
         </form>
         {user ? (
