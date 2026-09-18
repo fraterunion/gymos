@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ChangePasswordCard } from "@/components/ChangePasswordCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import { adminInput } from "@/lib/adminSurface";
@@ -629,6 +630,8 @@ export default function StudioSettingsPage() {
           </button>
         </div>
       </SectionCard>
+
+      <ChangePasswordCard />
 
       <SectionCard title="Danger zone" subtitle="Destructive actions for this studio.">
         <div className="flex flex-col gap-3 sm:flex-row">

@@ -10,7 +10,13 @@ import {
   type ReactNode,
 } from "react";
 
-import { loginRequest, logoutRequest, meRequest, type AuthUser } from "@/lib/api/auth";
+import {
+  changePasswordRequest,
+  loginRequest,
+  logoutRequest,
+  meRequest,
+  type AuthUser,
+} from "@/lib/api/auth";
 import { clearStoredStudioId } from "@/lib/studioStorage";
 import { userFacingApiMessage } from "@/lib/userFacingApiMessage";
 import { getApiV1Base } from "@/lib/env";
@@ -26,6 +32,8 @@ type AuthContextValue = {
   hydrated: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
+  /** Changes the password and adopts the fresh session the server returns. */
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -90,6 +98,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    // The server revokes every session and returns new credentials for THIS browser, so
+    // they must replace the stored ones or the next request would 401.
+    const bundle = await changePasswordRequest(currentPassword, newPassword);
+    setAccessToken(bundle.accessToken);
+    setRefreshToken(bundle.refreshToken);
+    setUser(bundle.user);
+  }, []);
+
   const logout = useCallback(async () => {
     setError(null);
     try {
@@ -115,8 +132,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       error,
       login,
       logout,
+      changePassword,
     }),
-    [user, hydrated, error, login, logout],
+    [user, hydrated, error, login, logout, changePassword],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

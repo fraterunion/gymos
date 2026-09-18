@@ -84,6 +84,18 @@ function normalizeMultiMembershipEnabled(v: unknown): string {
   return 'false';
 }
 
+/** Password recovery depends on outbound email, which is a per-environment capability.
+ *  Defaults: OFF in production (must be turned on deliberately, with delivery configured),
+ *  ON everywhere else (dev/test run against the suppressing provider). */
+function normalizePasswordRecoveryEnabled(v: unknown, nodeEnv: NodeEnv): string {
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    if (t === 'true') return 'true';
+    if (t === 'false') return 'false';
+  }
+  return nodeEnv === 'production' ? 'false' : 'true';
+}
+
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...config };
 
@@ -125,11 +137,63 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
   out['JWT_ACCESS_TTL'] = assertJwtAccessTtl(out['JWT_ACCESS_TTL']);
   out['JWT_REFRESH_TTL_DAYS'] = assertJwtRefreshTtlDays(out['JWT_REFRESH_TTL_DAYS']);
   out['BCRYPT_ROUNDS'] = assertBcryptRounds(out['BCRYPT_ROUNDS']);
+  out['PASSWORD_RECOVERY_ENABLED'] = normalizePasswordRecoveryEnabled(
+    out['PASSWORD_RECOVERY_ENABLED'],
+    nodeEnv,
+  );
+  assertPasswordRecoveryEnv(out, nodeEnv);
   assertStripeBillingEnv(out, nodeEnv);
   assertExpoBuildWebhookEnv(out, nodeEnv);
   assertDayPassEnv(out);
 
   return out;
+}
+
+/**
+ * Fail-fast so production can never serve a working-looking recovery UI that silently
+ * delivers nothing: with the feature ON in production, every piece of delivery
+ * configuration must be present and well-formed, or the process refuses to boot (Railway
+ * then keeps the previous deployment serving). Non-production may run it against the
+ * suppressing provider.
+ */
+function assertPasswordRecoveryEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): void {
+  if (out['PASSWORD_RECOVERY_ENABLED'] !== 'true' || nodeEnv !== 'production') {
+    return;
+  }
+
+  const apiKey = out['RESEND_API_KEY'];
+  if (typeof apiKey !== 'string' || apiKey.trim() === '') {
+    throw new Error(
+      'RESEND_API_KEY is required when PASSWORD_RECOVERY_ENABLED=true in production',
+    );
+  }
+
+  const from = out['EMAIL_FROM_ADDRESS'];
+  if (typeof from !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(from.trim())) {
+    throw new Error(
+      'EMAIL_FROM_ADDRESS is required and must be a valid address when PASSWORD_RECOVERY_ENABLED=true in production',
+    );
+  }
+
+  // Must be an absolute public URL: the reset link is opened from an email client, where
+  // a relative or localhost URL is useless. Never derived from CORS_ORIGIN — that list is
+  // ordered for browser origins, not for the surface that serves /reset-password.
+  const base = out['PASSWORD_RESET_URL_BASE'];
+  if (typeof base !== 'string' || base.trim() === '') {
+    throw new Error(
+      'PASSWORD_RESET_URL_BASE is required when PASSWORD_RECOVERY_ENABLED=true in production',
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(base.trim());
+  } catch {
+    throw new Error('PASSWORD_RESET_URL_BASE must be an absolute URL (https://…)');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('PASSWORD_RESET_URL_BASE must use https in production');
+  }
+  out['PASSWORD_RESET_URL_BASE'] = base.trim();
 }
 
 function assertExpoBuildWebhookEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): void {

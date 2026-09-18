@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BrandButton } from '@/components/BrandButton';
 import { Field } from '@/components/Field';
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchAuthCapabilities } from '@/lib/api/auth';
 import { useBranding } from '@/contexts/BrandingContext';
 import { getColors, Space } from '@/constants/Theme';
 
@@ -40,6 +41,25 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  // Recovery is a per-environment capability. Assume available (the common case) and hide
+  // the link only once the server has actually said it is off, so a failed probe never
+  // strands a member who needs to reset.
+  const [recoveryAvailable, setRecoveryAvailable] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const caps = await fetchAuthCapabilities();
+        if (!cancelled) setRecoveryAvailable(caps.passwordRecoveryEnabled);
+      } catch {
+        // Probe failed: leave the link visible rather than blocking recovery.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (hydrated && user) {
@@ -159,7 +179,26 @@ export default function LoginScreen() {
               onPress={() => void onSubmit()}
             />
 
-            <View style={{ marginTop: 12 }}>
+            {recoveryAvailable ? (
+            <View style={{ marginTop: 16, alignItems: 'center' }}>
+              <Link href={'/(auth)/forgot-password' as Href} asChild>
+                <Pressable accessibilityRole="button" hitSlop={8}>
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontWeight: '600',
+                      letterSpacing: -0.1,
+                      color: C.textSub,
+                    }}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </Text>
+                </Pressable>
+              </Link>
+            </View>
+            ) : null}
+
+            <View style={{ marginTop: 16 }}>
               <Link href={{ pathname: '/(auth)/register', params: authLinkParams }} asChild>
                 <Pressable
                   accessibilityRole="button"

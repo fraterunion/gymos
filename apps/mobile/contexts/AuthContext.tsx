@@ -1,7 +1,14 @@
 import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { loginRequest, logoutRequest, meRequest, registerRequest, type RegisterBody } from '@/lib/api/auth';
+import {
+  changePasswordRequest,
+  loginRequest,
+  logoutRequest,
+  meRequest,
+  registerRequest,
+  type RegisterBody,
+} from '@/lib/api/auth';
 import { ApiError } from '@/lib/api/errors';
 import { getApiV1BaseUrl } from '@/lib/env';
 import {
@@ -22,6 +29,8 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   register: (body: RegisterBody) => Promise<void>;
   logout: () => Promise<void>;
+  /** Changes the password and adopts the fresh session the server returns. */
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -126,6 +135,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    // The server revokes every session and hands back new credentials for THIS device,
+    // so the tokens must be swapped locally or the next request would 401.
+    const bundle = await changePasswordRequest(currentPassword, newPassword);
+    setAccessToken(bundle.accessToken);
+    await saveRefreshTokenToStore(bundle.refreshToken);
+    setUser(bundle.user);
+  }, []);
+
   const logout = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -156,8 +174,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       logout,
+      changePassword,
     }),
-    [user, hydrated, busy, error, clearError, login, register, logout],
+    [user, hydrated, busy, error, clearError, login, register, logout, changePassword],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

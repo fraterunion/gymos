@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { fetchAuthCapabilities } from "@/lib/api/auth";
 import { getPublicApiOrigin } from "@/lib/env";
 
 export default function LoginPage() {
@@ -14,6 +15,24 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  // Recovery is a per-environment capability. Assume available and hide the link only once
+  // the server says it is off, so a failed probe never strands someone who needs a reset.
+  const [recoveryAvailable, setRecoveryAvailable] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const caps = await fetchAuthCapabilities();
+        if (!cancelled) setRecoveryAvailable(caps.passwordRecoveryEnabled);
+      } catch {
+        // Probe failed: leave the link visible.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -93,6 +112,14 @@ export default function LoginPage() {
           >
             {busy ? "Signing in…" : "Continue"}
           </button>
+          {recoveryAvailable ? (
+            <Link
+              href="/forgot-password"
+              className="block text-center text-sm text-zinc-500 underline underline-offset-4 dark:text-zinc-400"
+            >
+              Forgot your password?
+            </Link>
+          ) : null}
         </form>
         {user ? (
           <p className="mt-6 text-center text-sm text-zinc-500">

@@ -3,6 +3,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import type { SignOptions } from 'jsonwebtoken';
+import { EmailModule } from '../email/email.module';
+import { PrismaModule } from '../prisma/prisma.module';
+import { AuditService } from '../sales/audit.service';
 import { WaiverModule } from '../waiver/waiver.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -17,6 +20,8 @@ import { PlatformOperatorService } from './platform-operator.service';
 
 @Module({
   imports: [
+    PrismaModule,
+    EmailModule,
     forwardRef(() => WaiverModule),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -33,6 +38,9 @@ import { PlatformOperatorService } from './platform-operator.service';
   controllers: [AuthController, StudioAccessController],
   providers: [
     AuthService,
+    // Stateless Prisma wrapper. Provided directly rather than by importing SalesModule,
+    // which already imports AuthModule — importing it back would be circular.
+    AuditService,
     JwtStrategy,
     JwtAuthGuard,
     StudioMemberGuard,

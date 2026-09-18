@@ -476,6 +476,14 @@ export default function ProfileScreen() {
         {/* Account */}
         <Animated.View entering={FadeInDown.delay(180).duration(420)}>
           <SectionLabel>Cuenta</SectionLabel>
+          <View style={{ marginBottom: 12 }}>
+            <BrandButton
+              label="Seguridad y contraseña"
+              variant="ghost"
+              accentColor={primaryColor}
+              onPress={() => router.push('/(app)/security' as Href)}
+            />
+          </View>
           <BrandButton
             label="Cerrar sesión"
             variant="ghost"

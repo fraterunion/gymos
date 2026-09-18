@@ -4,6 +4,8 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { TransactionalEmailService } from '../email/transactional-email.service';
+import { AuditService } from '../sales/audit.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { AuthService } from './auth.service';
 
@@ -95,6 +97,14 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: { signAsync: jwtSignAsync } },
         { provide: ConfigService, useValue: { get: configGet } },
         { provide: WaiverService, useValue: waiverService },
+        {
+          provide: TransactionalEmailService,
+          useValue: {
+            sendPasswordReset: jest.fn(),
+            resolveBrandingForUser: jest.fn().mockResolvedValue({ studioId: null }),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn() } },
       ],
     }).compile();
 

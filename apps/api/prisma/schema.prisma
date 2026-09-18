@@ -308,6 +308,7 @@ model User {
   walletCredentials   WalletCredential[]
   payments            Payment[]
   refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
   instructedClasses           ScheduledClass[]        @relation("ScheduledClassInstructor")
   defaultClassTemplates       ClassTemplate[]         @relation("ClassTemplateDefaultInstructor")
   buildJobsRequested          BuildJob[]
@@ -809,6 +810,32 @@ model RefreshToken {
   @@index([familyId])
   @@index([expiresAt])
   @@map("refresh_tokens")
+}
+
+/// Single-use password reset credential. Only the SHA-256 hash of the token is stored —
+/// the plaintext exists solely inside the reset email. Requesting a new reset invalidates
+/// the user's outstanding tokens, and completing a reset consumes the token and revokes
+/// every refresh token for that user.
+model PasswordResetToken {
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  tokenHash     String    @map("token_hash")
+  expiresAt     DateTime  @map("expires_at")
+  /// Set when the token was successfully exchanged for a new password.
+  consumedAt    DateTime? @map("consumed_at")
+  /// Set when superseded by a newer request or by a completed reset. Never reusable after.
+  invalidatedAt DateTime? @map("invalidated_at")
+  /// Request forensics only. Never contains the token or any credential material.
+  requestIp     String?   @map("request_ip")
+  requestUserAgent String? @map("request_user_agent")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenHash])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
 }
 
 model Payment {
