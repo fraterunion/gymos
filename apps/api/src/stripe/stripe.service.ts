@@ -233,8 +233,41 @@ export class StripeService {
     return invoice.hosted_invoice_url ?? null;
   }
 
-  async createPaymentIntent(params: Stripe.PaymentIntentCreateParams): Promise<Stripe.PaymentIntent> {
-    return this.getClient().paymentIntents.create(params);
+  /**
+   * Creates a PaymentIntent. Callers that represent a retryable purchase attempt MUST pass
+   * `options.idempotencyKey` so a client retry or a duplicate tap can never mint a second
+   * chargeable intent for the same attempt (Stripe replays the original response instead).
+   */
+  async createPaymentIntent(
+    params: Stripe.PaymentIntentCreateParams,
+    options?: Stripe.RequestOptions,
+  ): Promise<Stripe.PaymentIntent> {
+    return this.getClient().paymentIntents.create(params, options);
+  }
+
+  /**
+   * Live PaymentIntent status from Stripe. This is the authority for "was this attempt paid?":
+   * local rows and mobile clients only ever cache it.
+   */
+  async retrievePaymentIntent(paymentIntentId: string): Promise<Stripe.PaymentIntent> {
+    // latest_charge is expanded so callers can see refunds (a refund does not change the
+    // intent's `succeeded` status).
+    return this.getClient().paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] });
+  }
+
+  /**
+   * Cancels a PaymentIntent that has not succeeded. Stripe rejects cancellation of a
+   * `succeeded` or `processing` intent (payment_intent_invalid_cancellation_state), so callers
+   * must only invoke this after retrieving a status in requires_payment_method /
+   * requires_confirmation / requires_action.
+   */
+  async cancelPaymentIntent(
+    paymentIntentId: string,
+    cancellationReason: Stripe.PaymentIntentCancelParams.CancellationReason = 'abandoned',
+  ): Promise<Stripe.PaymentIntent> {
+    return this.getClient().paymentIntents.cancel(paymentIntentId, {
+      cancellation_reason: cancellationReason,
+    });
   }
 
   async createEphemeralKey(customerId: string, stripeApiVersion: string): Promise<Stripe.EphemeralKey> {

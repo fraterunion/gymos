@@ -79,4 +79,14 @@ export type WebhookPaymentIntentPayload = {
   currency: string | null;
   customer: string | { id: string } | null;
   metadata: Record<string, string> | null;
+  /** Present on payment_intent.payment_failed; the last decline/failure. Never contains card data. */
+  last_payment_error?: {
+    code?: string | null;
+    decline_code?: string | null;
+    type?: string | null;
+    message?: string | null;
+  } | null;
+  /** Present on payment_intent.canceled. */
+  cancellation_reason?: string | null;
+  canceled_at?: number | null;
 };

@@ -19,6 +19,17 @@ export const MEMBER_ERRORS = {
   waitlistDisabled: 'La lista de espera no está disponible en este estudio.',
   waitlistBookDirectly: 'Hay lugares disponibles. Reserva la clase directamente.',
   alreadyOnWaitlist: 'Ya estás en la lista de espera de esta clase.',
+  // Day Pass purchase lifecycle. A payment ATTEMPT is never ownership: only a Stripe-confirmed
+  // payment yields dayPassAlreadyOwned. The other two are transient and invite a retry.
+  dayPassAlreadyOwned: 'Ya tienes un pase diario activo para esta fecha.',
+  dayPassPaymentProcessing:
+    'Tu pago está en proceso. En cuanto se confirme verás tu pase aquí; no vuelvas a pagar.',
+  dayPassAttemptInProgress:
+    'Ya hay un intento de compra en curso para esta fecha. Espera unos segundos e inténtalo de nuevo.',
+  dayPassDateInPast: 'Solo puedes comprar un pase diario para hoy o una fecha próxima.',
+  dayPassUnavailable: 'Day Pass no está disponible en este momento.',
+  dayPassNeedsSupport:
+    'No pudimos confirmar el estado de tu pase diario para esta fecha. Contacta a tu estudio.',
 } as const;
 
 export type MemberErrorKey = keyof typeof MEMBER_ERRORS;

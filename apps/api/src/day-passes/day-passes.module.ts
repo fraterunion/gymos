@@ -5,6 +5,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { SalesModule } from '../sales/sales.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { WaiverModule } from '../waiver/waiver.module';
+import { DayPassAttemptSweepService } from './day-pass-attempt-sweep.service';
 import { DayPassClassAccessController } from './day-pass-class-access.controller';
 import { DayPassClassAccessService } from './day-pass-class-access.service';
 import { DayPassSettingsController } from './day-pass-settings.controller';
@@ -15,7 +16,7 @@ import { DayPassesService } from './day-passes.service';
 @Module({
   imports: [PrismaModule, AuthModule, StripeModule, ConfigModule, WaiverModule, SalesModule],
   controllers: [DayPassesController, DayPassClassAccessController, DayPassSettingsController],
-  providers: [DayPassesService, DayPassClassAccessService, DayPassSettingsService],
-  exports: [DayPassesService, DayPassClassAccessService, DayPassSettingsService],
+  providers: [DayPassesService, DayPassClassAccessService, DayPassSettingsService, DayPassAttemptSweepService],
+  exports: [DayPassesService, DayPassClassAccessService, DayPassSettingsService, DayPassAttemptSweepService],
 })
 export class DayPassesModule {}

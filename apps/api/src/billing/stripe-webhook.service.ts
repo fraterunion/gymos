@@ -27,6 +27,8 @@ import {
 } from '../memberships/membership-compatibility';
 import { readInvoiceSubscriptionId } from './stripe-invoice.utils';
 import { readCancellationDetails } from './stripe-renewal-audit.utils';
+import { activateDayPassFromSucceededPaymentIntent } from '../day-passes/day-pass-activation';
+import { logDayPassEvent } from '../day-passes/day-pass-events';
 
 type VerifiedStripeEvent = {
   id: string;
@@ -154,7 +156,15 @@ export class StripeWebhookService {
         await this.onInvoicePaymentFailed(event.data.object as WebhookInvoicePayload);
         break;
       case 'payment_intent.succeeded':
-        await this.onPaymentIntentSucceeded(event.data.object as WebhookPaymentIntentPayload);
+        await this.onPaymentIntentSucceeded(event.data.object as WebhookPaymentIntentPayload, event.id);
+        break;
+      case 'payment_intent.payment_failed':
+      case 'payment_intent.canceled':
+        await this.onPaymentIntentNotSucceeded(
+          event.data.object as WebhookPaymentIntentPayload,
+          event.type,
+          event.id,
+        );
         break;
       default:
         break;
@@ -962,93 +972,118 @@ export class StripeWebhookService {
     }
   }
 
-  private async onPaymentIntentSucceeded(paymentIntent: WebhookPaymentIntentPayload): Promise<void> {
+  /**
+   * Day Pass activation. The event type is the authority that the intent succeeded; all
+   * ownership/idempotency rules live in day-pass-activation.ts so the API's server-side
+   * retrieval path and this webhook can never disagree.
+   */
+  private async onPaymentIntentSucceeded(
+    paymentIntent: WebhookPaymentIntentPayload,
+    eventId: string,
+  ): Promise<void> {
     const md = paymentIntent.metadata;
     if (!md || md['type'] !== 'day_pass') {
       return;
     }
+    const outcome = await activateDayPassFromSucceededPaymentIntent(
+      this.prisma,
+      this.logger,
+      {
+        id: paymentIntent.id,
+        status: 'succeeded',
+        amount: paymentIntent.amount,
+        currency: paymentIntent.currency,
+        created: paymentIntent.created ?? null,
+        metadata: md,
+      },
+      'webhook',
+      eventId,
+    );
+    if (outcome.outcome === 'activated' && outcome.supersededIntentId) {
+      // The paid intent had been replaced; the unpaid replacement must not stay payable.
+      try {
+        await this.stripe.cancelPaymentIntent(outcome.supersededIntentId, 'duplicate');
+      } catch (err) {
+        this.logger.warn(
+          `Day Pass: could not cancel superseded PaymentIntent ${outcome.supersededIntentId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
 
+  /**
+   * payment_intent.payment_failed / payment_intent.canceled for a Day Pass attempt.
+   * Neither is a terminal state for the SLOT: the member may retry, and the API decides on
+   * the next attempt (live Stripe status) whether to re-present or replace the intent. Here we
+   * only cache what Stripe said, and only for the slot's CURRENT intent — a replaced intent's
+   * late failure must not overwrite the telemetry of the attempt that superseded it. An
+   * ACTIVE slot is never downgraded (out-of-order delivery after a success).
+   */
+  private async onPaymentIntentNotSucceeded(
+    paymentIntent: WebhookPaymentIntentPayload,
+    eventType: string,
+    eventId: string,
+  ): Promise<void> {
+    const md = paymentIntent.metadata;
+    if (!md || md['type'] !== 'day_pass') {
+      return;
+    }
+    const canceled = eventType === 'payment_intent.canceled';
+    const eventName = canceled ? 'DAY_PASS_PAYMENT_CANCELED' : 'DAY_PASS_PAYMENT_FAILED';
     const dayPassId = md['dayPassId'] ?? null;
-    const studioId = md['studioId'] ?? null;
-    const userId = md['userId'] ?? null;
-
-    if (!dayPassId || !studioId || !userId) {
-      this.logger.warn(
-        `payment_intent.succeeded ${paymentIntent.id}: day_pass metadata incomplete; skipping`,
-      );
+    const base = {
+      dayPassId,
+      studioId: md['studioId'] ?? null,
+      userId: md['userId'] ?? null,
+      stripePaymentIntentId: paymentIntent.id,
+      eventId,
+      source: 'webhook' as const,
+    };
+    if (!dayPassId) {
+      logDayPassEvent(this.logger, 'DAY_PASS_WEBHOOK_IGNORED', { ...base, reason: 'metadata_incomplete' }, 'warn');
       return;
     }
 
     const dayPass = await this.prisma.dayPass.findUnique({
       where: { id: dayPassId },
-      select: {
-        id: true,
-        studioId: true,
-        userId: true,
-        status: true,
-        priceCents: true,
-        currency: true,
-        stripePaymentIntentId: true,
+      select: { id: true, studioId: true, userId: true, status: true, stripePaymentIntentId: true },
+    });
+    if (!dayPass) {
+      logDayPassEvent(this.logger, 'DAY_PASS_WEBHOOK_IGNORED', { ...base, reason: 'day_pass_not_found' }, 'warn');
+      return;
+    }
+    if (dayPass.studioId !== md['studioId'] || dayPass.userId !== md['userId']) {
+      logDayPassEvent(this.logger, 'DAY_PASS_WEBHOOK_IGNORED', { ...base, reason: 'tenant_mismatch' }, 'warn');
+      return;
+    }
+    if (dayPass.stripePaymentIntentId !== paymentIntent.id) {
+      logDayPassEvent(this.logger, 'DAY_PASS_WEBHOOK_IGNORED', {
+        ...base,
+        reason: 'stale_intent',
+        currentIntent: dayPass.stripePaymentIntentId,
+      });
+      return;
+    }
+    if (dayPass.status === DayPassStatus.ACTIVE || dayPass.status === DayPassStatus.REFUNDED) {
+      logDayPassEvent(this.logger, 'DAY_PASS_WEBHOOK_IGNORED', { ...base, reason: `slot_${dayPass.status.toLowerCase()}` });
+      return;
+    }
+
+    const errorCode = paymentIntent.last_payment_error?.code ?? null;
+    const declineCode = paymentIntent.last_payment_error?.decline_code ?? null;
+    await this.prisma.dayPass.updateMany({
+      where: { id: dayPassId, stripePaymentIntentId: paymentIntent.id, status: { not: DayPassStatus.ACTIVE } },
+      data: {
+        lastStripeStatus: canceled ? 'canceled' : paymentIntent.status || 'requires_payment_method',
+        ...(canceled ? {} : { lastPaymentErrorCode: errorCode, lastPaymentDeclineCode: declineCode }),
       },
     });
-
-    if (!dayPass) {
-      this.logger.warn(
-        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} not found; skipping`,
-      );
-      return;
-    }
-
-    if (dayPass.studioId !== studioId || dayPass.userId !== userId) {
-      this.logger.warn(
-        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} studioId/userId mismatch; ignoring`,
-      );
-      return;
-    }
-
-    if (dayPass.stripePaymentIntentId !== null && dayPass.stripePaymentIntentId !== paymentIntent.id) {
-      this.logger.warn(
-        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} already linked to different PaymentIntent ${dayPass.stripePaymentIntentId}; ignoring`,
-      );
-      return;
-    }
-
-    if (dayPass.status === DayPassStatus.REFUNDED || dayPass.status === DayPassStatus.EXPIRED) {
-      this.logger.warn(
-        `payment_intent.succeeded ${paymentIntent.id}: DayPass ${dayPassId} has terminal status ${dayPass.status}; skipping`,
-      );
-      return;
-    }
-
-    // Activate only if not already ACTIVE; the Payment upsert always runs so a partial
-    // failure on a prior delivery (DayPass activated but Payment not written) is repaired.
-    if (dayPass.status !== DayPassStatus.ACTIVE) {
-      await this.prisma.dayPass.update({
-        where: { id: dayPassId },
-        data: {
-          status: DayPassStatus.ACTIVE,
-          stripePaymentIntentId: paymentIntent.id,
-        },
-      });
-    }
-
-    const paidAt = paymentIntent.created ? new Date(paymentIntent.created * 1000) : new Date();
-
-    await this.prisma.payment.upsert({
-      where: { stripePaymentIntentId: paymentIntent.id },
-      create: {
-        studioId: dayPass.studioId,
-        userId: dayPass.userId,
-        amountCents: dayPass.priceCents,
-        currency: dayPass.currency.toLowerCase(),
-        status: PaymentStatus.SUCCEEDED,
-        stripePaymentIntentId: paymentIntent.id,
-        paidAt,
-      },
-      update: {
-        status: PaymentStatus.SUCCEEDED,
-        paidAt,
-      },
+    logDayPassEvent(this.logger, eventName, {
+      ...base,
+      stripeStatus: canceled ? 'canceled' : paymentIntent.status,
+      errorCode,
+      declineCode,
+      reason: canceled ? paymentIntent.cancellation_reason ?? null : null,
     });
   }
 }

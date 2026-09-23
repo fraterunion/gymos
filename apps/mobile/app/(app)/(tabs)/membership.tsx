@@ -58,15 +58,22 @@ import {
   fetchDayPassCatalog,
   fetchMyDayPasses,
   fetchPublicDayPassCatalog,
+  syncDayPass,
   type DayPassCatalogDto,
   type DayPassDto,
   type DayPassStatus,
 } from '@/lib/api/dayPassesApi';
+import {
+  DAY_PASS_COPY,
+  canStartDayPassPurchase,
+  describePostPaymentStatus,
+  isAlreadyOwnedConflict,
+  resolvePaymentSheetOutcome,
+} from '@/lib/dayPassPurchase';
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import { resolveAresPlanBenefits, resolveAresPricePerClassLabel } from '@/lib/aresMembershipPlans';
 import { FitnessImages } from '@/lib/imagery';
 import { statusConfig } from '@/lib/membershipStatus';
-import { todayKeyInZone } from '@/lib/datetime';
 import { getStudioSlug } from '@/lib/env';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -1325,11 +1332,15 @@ export default function MembershipScreen() {
   const [dayPassError, setDayPassError] = useState<string | null>(null);
   const [dayPassLoadError, setDayPassLoadError] = useState<string | null>(null);
   const [dayPassSuccess, setDayPassSuccess] = useState(false);
+  const [dayPassNotice, setDayPassNotice] = useState<string | null>(null);
+  // Flips synchronously at the start of a purchase so a second tap in the same frame is ignored.
+  const dayPassInFlight = useRef(false);
   const [authModalVisible, setAuthModalVisible] = useState(false);
   const [authModalKind, setAuthModalKind] = useState<AuthModalKind>('membership');
   const expectReturnFromBrowser = useRef(false);
   const hasLoadedOnce = useRef(false);
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dayPassNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { hasLoadedOnce.current = false; }, [studioId, isGuest]);
 
@@ -1337,6 +1348,7 @@ export default function MembershipScreen() {
   useEffect(() => {
     return () => {
       if (successTimer.current) clearTimeout(successTimer.current);
+      if (dayPassNoticeTimer.current) clearTimeout(dayPassNoticeTimer.current);
     };
   }, []);
 
@@ -1542,12 +1554,17 @@ export default function MembershipScreen() {
   async function buyDayPass() {
     if (isGuest) { openAuthModal('day-pass'); return; }
     if (!studioId) return;
+    if (!canStartDayPassPurchase(dayPassBusy, dayPassInFlight.current)) return;
+    dayPassInFlight.current = true;
     setDayPassBusy(true);
     setDayPassError(null);
+    setDayPassNotice(null);
     setDayPassSuccess(false);
+    if (dayPassNoticeTimer.current) clearTimeout(dayPassNoticeTimer.current);
     try {
-      const validForDate = todayKeyInZone(timeZone);
-      const data = await createDayPassPaymentSheet(studioId, validForDate);
+      // The server decides which day "today" is (studio timezone). A retry after an abandoned
+      // or declined sheet resumes the same attempt: it is never a second purchase.
+      const data = await createDayPassPaymentSheet(studioId);
 
       // Set the Stripe key returned from the server before initializing the sheet.
       await initStripe({ publishableKey: data.publishableKey });
@@ -1561,26 +1578,54 @@ export default function MembershipScreen() {
         returnURL: createURL('billing/return'),
       });
       if (initError) {
-        setDayPassError(initError.message);
+        if (__DEV__) console.warn('[DayPass] initPaymentSheet failed:', initError.code, initError.message);
+        setDayPassError(DAY_PASS_COPY.sheetInitFailed);
         return;
       }
 
       const { error: presentError } = await presentPaymentSheet();
-      if (presentError) {
-        // Canceled is silent — the user dismissed the sheet intentionally.
-        if ((presentError.code as string) === 'Canceled') return;
-        setDayPassError(presentError.message);
+      const outcome = resolvePaymentSheetOutcome(presentError);
+      if (outcome.kind === 'canceled') return; // deliberate dismissal: silent, attempt stays reusable
+      if (outcome.kind === 'failed') {
+        if (__DEV__) console.warn('[DayPass] presentPaymentSheet failed:', presentError?.code, presentError?.message);
+        setDayPassError(outcome.message);
         return;
       }
 
-      // Payment completed. Show brief success feedback and reload day passes.
-      setDayPassSuccess(true);
-      if (successTimer.current) clearTimeout(successTimer.current);
-      successTimer.current = setTimeout(() => setDayPassSuccess(false), 4000);
+      // Card step finished. Only the server, after asking Stripe, can say the pass is ours.
+      let status: DayPassStatus | null = null;
+      try {
+        status = (await syncDayPass(studioId, data.dayPassId)).status;
+      } catch (e) {
+        if (__DEV__) console.warn('[DayPass] sync failed; webhook will activate:', e);
+      }
+      const next = describePostPaymentStatus(status);
+      if (next.kind === 'activated') {
+        setDayPassSuccess(true);
+        if (successTimer.current) clearTimeout(successTimer.current);
+        successTimer.current = setTimeout(() => setDayPassSuccess(false), 4000);
+      } else {
+        // Webhook or a later sync will land; never tell the member it failed.
+        setDayPassNotice(next.message);
+        dayPassNoticeTimer.current = setTimeout(() => {
+          void loadDayPasses();
+          setDayPassNotice(null);
+        }, 4000);
+      }
       void load('refresh');
     } catch (e) {
-      setDayPassError(userFacingApiMessage(e, 'No se pudo iniciar la compra del pase diario. Inténtalo de nuevo.'));
+      if (isAlreadyOwnedConflict(e)) {
+        // Good news, not an error (e.g. the server just confirmed a late payment): show it
+        // neutrally and reload so the pass appears in "Tus pases". Cleared after a few seconds
+        // so it can never linger into another day.
+        setDayPassNotice((e as Error).message);
+        void loadDayPasses();
+        dayPassNoticeTimer.current = setTimeout(() => setDayPassNotice(null), 6000);
+      } else {
+        setDayPassError(userFacingApiMessage(e, DAY_PASS_COPY.startFailed));
+      }
     } finally {
+      dayPassInFlight.current = false;
       setDayPassBusy(false);
     }
   }
@@ -1941,6 +1986,12 @@ export default function MembershipScreen() {
                     }}
                   >
                     Pase diario activado.
+                  </Text>
+                ) : null}
+
+                {!isGuest && dayPassNotice ? (
+                  <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 12, lineHeight: 19 }}>
+                    {dayPassNotice}
                   </Text>
                 ) : null}
 

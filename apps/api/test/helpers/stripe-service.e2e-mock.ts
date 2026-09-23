@@ -101,6 +101,23 @@ export function createE2eStripeServiceMock(config: {
       client_secret: 'pi_e2e_test_secret',
     } as Stripe.PaymentIntent),
 
+    retrievePaymentIntent: jest.fn().mockImplementation(async (id: string) => ({
+      id,
+      object: 'payment_intent',
+      status: 'requires_payment_method',
+      amount: 20000,
+      currency: 'mxn',
+      customer: 'cus_e2e_test_customer',
+      client_secret: `${id}_secret`,
+      metadata: {},
+    }) as Stripe.PaymentIntent),
+
+    cancelPaymentIntent: jest.fn().mockImplementation(async (id: string) => ({
+      id,
+      object: 'payment_intent',
+      status: 'canceled',
+    }) as Stripe.PaymentIntent),
+
     createEphemeralKey: jest.fn().mockResolvedValue({
       id: 'ek_e2e_test',
       object: 'ephemeral_key',

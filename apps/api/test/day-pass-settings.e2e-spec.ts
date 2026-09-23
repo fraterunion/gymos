@@ -252,6 +252,7 @@ describe('Day Pass commercial settings (e2e)', () => {
         currency: 'mxn',
         metadata: expect.objectContaining({ stripePriceId: 'price_sync_200' }),
       }),
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^day_pass:/) }),
     );
   });
 

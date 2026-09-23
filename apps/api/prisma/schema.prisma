@@ -1012,6 +1012,13 @@ model MemberOperationalNote {
 /// validForDate stores the UTC midnight of the CDMX calendar date the pass covers.
 /// e.g. June 10 CDMX (UTC-6) is stored as 2026-06-10T06:00:00Z.
 /// Never use raw UTC date here — always convert using the studio timezone first.
+/// One row per (studio, user, calendar day) — the PURCHASE SLOT for that day.
+/// `status` is the ENTITLEMENT state: only ACTIVE means the member owns a pass, and only a
+/// Stripe-confirmed payment (webhook or server-side PaymentIntent retrieval) sets it.
+/// PENDING is an open checkout attempt (no money moved) and is never ownership: a retry for the
+/// same day reuses this row, re-presenting its PaymentIntent when Stripe still allows it or
+/// replacing the intent otherwise. EXPIRED is an attempt whose day lapsed unpaid.
+/// The `last*` / `attempt*` columns are attempt telemetry cached from Stripe, never authority.
 model DayPass {
   id                      String        @id @default(cuid())
   studioId                String        @map("studio_id")
@@ -1022,13 +1029,26 @@ model DayPass {
   status                  DayPassStatus @default(PENDING)
   stripeCheckoutSessionId String?       @unique @map("stripe_checkout_session_id")
   stripePaymentIntentId   String?       @unique @map("stripe_payment_intent_id")
+  /// PaymentIntents this slot used before the current one (replaced after cancel / price change).
+  /// Keeps the Stripe trail of every attempt without a second table; never pruned.
+  previousStripePaymentIntentIds String[] @default([]) @map("previous_stripe_payment_intent_ids")
+  /// Checkout attempts against this slot (first create = 1; each reuse/replace increments).
+  attemptCount            Int           @default(1) @map("attempt_count")
+  lastAttemptAt           DateTime?     @map("last_attempt_at")
+  /// Last PaymentIntent status observed from Stripe (webhook or retrieval). Cache only.
+  lastStripeStatus        String?       @map("last_stripe_status")
+  lastPaymentErrorCode    String?       @map("last_payment_error_code")
+  lastPaymentDeclineCode  String?       @map("last_payment_decline_code")
+  activatedAt             DateTime?     @map("activated_at")
+  expiredAt               DateTime?     @map("expired_at")
   createdAt               DateTime      @default(now()) @map("created_at")
   updatedAt               DateTime      @updatedAt @map("updated_at")
 
   studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  /// One pass per user per studio per calendar day — prevents duplicate purchases.
+  /// One SLOT per user per studio per calendar day. Together with "only ACTIVE is ownership"
+  /// this guarantees at most one purchased pass per day while still allowing retries.
   @@unique([studioId, userId, validForDate])
   @@index([studioId, userId])
   @@index([studioId, validForDate])

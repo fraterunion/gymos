@@ -68,6 +68,31 @@ export function userFacingApiMessage(error: unknown, fallback = GENERIC): string
     return 'Ya estás en la lista de espera de esta clase.';
   }
 
+  // Day Pass purchase lifecycle. The legacy API 409 ("A Day Pass already exists for this
+  // date") was raised for abandoned payment attempts too, so it is mapped to a retry-friendly
+  // message rather than an ownership claim; the current API sends Spanish copy directly.
+  if (/pase diario activo para esta fecha/i.test(m)) {
+    return 'Ya tienes un pase diario activo para esta fecha.';
+  }
+  if (/pago está en proceso/i.test(m)) {
+    return 'Tu pago está en proceso. En cuanto se confirme verás tu pase aquí; no vuelvas a pagar.';
+  }
+  if (/intento de compra en curso/i.test(m)) {
+    return 'Ya hay un intento de compra en curso para esta fecha. Espera unos segundos e inténtalo de nuevo.';
+  }
+  if (/A Day Pass already exists for this date/i.test(m)) {
+    return 'No pudimos iniciar el pago de tu pase diario. Espera unos segundos e inténtalo de nuevo.';
+  }
+  if (/validForDate must be today or a future date|hoy o una fecha pr/i.test(m)) {
+    return 'Solo puedes comprar un pase diario para hoy o una fecha próxima.';
+  }
+  if (/No pudimos confirmar el estado de tu pase diario/i.test(m)) {
+    return 'No pudimos confirmar el estado de tu pase diario para esta fecha. Contacta a tu estudio.';
+  }
+  if (/Day Pass no está disponible/i.test(m)) {
+    return 'El pase diario no está disponible en este momento.';
+  }
+
   if (m.length > 180) {
     return fallback;
   }

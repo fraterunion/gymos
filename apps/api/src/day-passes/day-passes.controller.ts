@@ -27,6 +27,20 @@ export class DayPassesController {
     return this.dayPassesService.listMyDayPasses(studioId, userId);
   }
 
+  /**
+   * Server-verified refresh after PaymentSheet reports success. The API asks Stripe for the
+   * intent's live status; the client's own claim of success is never what activates the pass.
+   */
+  @Post(':dayPassId/sync')
+  @HttpCode(HttpStatus.OK)
+  syncFromStripe(
+    @Param('studioId') studioId: string,
+    @Param('dayPassId') dayPassId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.dayPassesService.syncDayPassFromStripe({ studioId, userId, dayPassId });
+  }
+
   @Post('payment-sheet')
   @HttpCode(HttpStatus.CREATED)
   createPaymentSheet(

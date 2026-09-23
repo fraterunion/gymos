@@ -246,6 +246,14 @@ function assertDayPassEnv(out: Record<string, unknown>): void {
     }
     out['DAY_PASS_CURRENCY'] = c;
   }
+
+  // Day Pass lapse sweep switches, normalised to '1' | '0'. Anything but an explicit true/1 is
+  // OFF: the sweep does not run at all unless DAY_PASS_SWEEP_ENABLED=1, and even then it only
+  // cancels PaymentIntents at Stripe when DAY_PASS_SWEEP_CANCEL_STRIPE_INTENTS=1.
+  for (const key of ['DAY_PASS_SWEEP_ENABLED', 'DAY_PASS_SWEEP_CANCEL_STRIPE_INTENTS']) {
+    const norm = String(out[key] ?? '').trim().toLowerCase();
+    out[key] = norm === '1' || norm === 'true' ? '1' : '0';
+  }
 }
 
 function assertStripeBillingEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): void {
