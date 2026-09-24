@@ -81,7 +81,7 @@ describe('DayPassAttemptSweepService', () => {
     stripe.retrievePaymentIntent.mockResolvedValue(piRow('pi_paid', 'succeeded'));
     prisma.dayPass.findUnique.mockResolvedValue({
       id: 'dp_paid', studioId: 'mx', userId: 'u1', status: DayPassStatus.PENDING, priceCents: 25000, currency: 'mxn',
-      stripePaymentIntentId: 'pi_paid', previousStripePaymentIntentIds: [], validForDate: new Date('2026-09-20T06:00:00.000Z'),
+      stripePaymentIntentId: 'pi_paid', previousStripePaymentIntentIds: [], studio: { timezone: 'America/Mexico_City' }, validForDate: new Date('2026-09-20T06:00:00.000Z'),
     });
 
     const r = await service.expireLapsedAttempts(new Date('2026-09-23T12:00:00.000Z'));

@@ -236,6 +236,14 @@ export default function ClassDetailScreen() {
     setInlineError(null);
   }, [classId]);
 
+  const [accessRefreshTick, setAccessRefreshTick] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      // Re-check entitlement when the member returns (e.g. after buying a pass for this day).
+      setAccessRefreshTick((t) => t + 1);
+    }, []),
+  );
+
   useEffect(() => {
     if (isGuest || !studioId || !cls) return;
 
@@ -283,7 +291,7 @@ export default function ClassDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isGuest, studioId, cls, timeZone]);
+  }, [isGuest, studioId, cls, timeZone, accessRefreshTick]);
 
   const booking = useMemo(
     () =>
@@ -438,9 +446,16 @@ export default function ClassDetailScreen() {
         disabled: true,
       };
     } else if (hasAccess === false) {
+      // Hand the class day to the membership screen so the Day Pass picker opens on it.
+      const classDayKey = cls ? calendarDayKeyInZone(cls.startsAt, timeZone) : undefined;
       primaryCTA = {
         label: 'Ver membresías',
-        onPress: () => router.push('/(app)/(tabs)/membership'),
+        onPress: () =>
+          router.push(
+            classDayKey
+              ? { pathname: '/(app)/(tabs)/membership', params: { dayPassDate: classDayKey } }
+              : '/(app)/(tabs)/membership',
+          ),
       };
     } else if (isPlanRestricted) {
       primaryCTA = {

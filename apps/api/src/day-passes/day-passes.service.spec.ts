@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { DayPassStatus, Prisma } from '@prisma/client';
-import { getStudioLocalDateKey, studioLocalDateKeyToUtcAnchor } from '../common/date/studio-local-date';
+import { addDaysToDateKey, getStudioLocalDateKey, studioLocalDateKeyToUtcAnchor } from '../common/date/studio-local-date';
 import { MEMBER_ERRORS } from '../member-facing/member-errors';
 import { DayPassesService, IN_FLIGHT_GRACE_MS } from './day-passes.service';
 
@@ -154,6 +154,7 @@ describe('DayPassesService — purchase lifecycle', () => {
     });
     expect(res).toEqual({
       dayPassId: 'dp_1',
+      validForDate: todayKey(),
       paymentIntentClientSecret: 'pi_new_1_secret',
       customerId: CUSTOMER,
       ephemeralKeySecret: 'ek_secret',
@@ -205,7 +206,7 @@ describe('DayPassesService — purchase lifecycle', () => {
       .mockResolvedValueOnce(slot()) // slot lookup
       .mockResolvedValueOnce({
         id: 'dp_1', studioId: STUDIO, userId: USER, status: DayPassStatus.PENDING, priceCents: PRICE, currency: 'mxn',
-        stripePaymentIntentId: 'pi_old', previousStripePaymentIntentIds: [], validForDate: studioLocalDateKeyToUtcAnchor(todayKey(), TZ),
+        stripePaymentIntentId: 'pi_old', previousStripePaymentIntentIds: [], studio: { timezone: 'America/Mexico_City' }, validForDate: studioLocalDateKeyToUtcAnchor(todayKey(), TZ),
       });
     stripe.retrievePaymentIntent
       .mockResolvedValueOnce(representablePi({ status: 'requires_action' }))
@@ -383,7 +384,7 @@ describe('DayPassesService — purchase lifecycle', () => {
         priceCents: PRICE,
         currency: 'mxn',
         stripePaymentIntentId: 'pi_old',
-        previousStripePaymentIntentIds: [],
+        previousStripePaymentIntentIds: [], studio: { timezone: 'America/Mexico_City' },
         validForDate: studioLocalDateKeyToUtcAnchor(todayKey(), TZ),
       });
     stripe.retrievePaymentIntent.mockResolvedValue(representablePi({ status: 'succeeded' }));
@@ -493,15 +494,30 @@ describe('DayPassesService — purchase lifecycle', () => {
     expect(params.metadata.validForDate).toBe(todayKey());
   });
 
-  it('T11c a non-canonical or far-future date is refused (no silent normalisation, no arbitrary future pass)', async () => {
+  it('T11c a non-canonical or far-future date is refused in Spanish (no silent normalisation, no arbitrary future pass)', async () => {
     await expect(
       service.createDayPassPaymentSheet({ studioId: STUDIO, userId: USER, validForDate: '2099-13-01' }),
-    ).rejects.toMatchObject({ constructor: BadRequestException });
+    ).rejects.toMatchObject({ constructor: BadRequestException, message: MEMBER_ERRORS.dayPassDateInvalid });
     await expect(
       service.createDayPassPaymentSheet({ studioId: STUDIO, userId: USER, validForDate: '2099-01-01' }),
-    ).rejects.toMatchObject({ constructor: BadRequestException, message: expect.stringContaining('within') });
+    ).rejects.toMatchObject({ constructor: BadRequestException, message: MEMBER_ERRORS.dayPassDateBeyondHorizon });
     expect(prisma.dayPass.findUnique).not.toHaveBeenCalled();
     expect(stripe.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it('T11e the member CHOOSES a future day: it becomes the slot, the intent metadata and the response', async () => {
+    prisma.dayPass.findUnique.mockResolvedValue(null);
+    const chosen = addDaysToDateKey(todayKey(), 7);
+
+    const res = await service.createDayPassPaymentSheet({ studioId: STUDIO, userId: USER, validForDate: chosen });
+
+    expect(prisma.dayPass.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { studioId_userId_validForDate: { studioId: STUDIO, userId: USER, validForDate: studioLocalDateKeyToUtcAnchor(chosen, TZ) } } }),
+    );
+    const [params, options] = stripe.createPaymentIntent.mock.calls[0] as [{ metadata: Record<string, string> }, { idempotencyKey: string }];
+    expect(params.metadata.validForDate).toBe(chosen);
+    expect(options.idempotencyKey).toBe(`day_pass:dp_1:a1:${PRICE}:mxn`); // slot id is date-scoped, so the key is too
+    expect(res.validForDate).toBe(chosen);
   });
 
   it('T11d a REFUNDED slot is never re-opened automatically (a late event could re-activate refunded money) → 409 needs support', async () => {
@@ -552,11 +568,49 @@ describe('DayPassesService — purchase lifecycle', () => {
     expect(prisma.dayPass.updateMany).not.toHaveBeenCalled();
   });
 
-  it('T16 listMyDayPasses exposes purchased passes only — never open attempts', async () => {
+  it('T16 listMyDayPasses exposes purchased passes only — never open attempts; legacy default keeps newest-first order', async () => {
     prisma.dayPass.findMany.mockResolvedValue([]);
     await service.listMyDayPasses(STUDIO, USER);
     expect(prisma.dayPass.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { studioId: STUDIO, userId: USER, status: DayPassStatus.ACTIVE } }),
+      expect.objectContaining({ where: { studioId: STUDIO, userId: USER, status: DayPassStatus.ACTIVE }, orderBy: { validForDate: 'desc' } }),
+    );
+  });
+
+  it('T16b listMyDayPasses(upcoming) returns today+future soonest first, each row carrying its studio-local day and today/upcoming', async () => {
+    const t = todayKey();
+    const rows = [t, addDaysToDateKey(t, 3), addDaysToDateKey(t, 6)].map((k, i) => ({
+      id: `dp_${i}`, validForDate: studioLocalDateKeyToUtcAnchor(k, TZ), status: DayPassStatus.ACTIVE, priceCents: PRICE, currency: 'mxn', createdAt: new Date(),
+    }));
+    prisma.dayPass.findMany.mockResolvedValue(rows);
+
+    const out = await service.listMyDayPasses(STUDIO, USER, 'upcoming');
+
+    expect(prisma.dayPass.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: DayPassStatus.ACTIVE, validForDate: { gte: studioLocalDateKeyToUtcAnchor(t, TZ) } }),
+        orderBy: { validForDate: 'asc' },
+      }),
+    );
+    expect(out.map((p) => [p.validForDateKey, p.relativeDay])).toEqual([[t, 'today'], [addDaysToDateKey(t, 3), 'upcoming'], [addDaysToDateKey(t, 6), 'upcoming']]);
+  });
+
+  it('T16c listMyDayPasses(history) returns only past days, most recent first, classified as past', async () => {
+    const t = todayKey();
+    prisma.dayPass.findMany.mockResolvedValue([{ id: 'dp_old', validForDate: studioLocalDateKeyToUtcAnchor(addDaysToDateKey(t, -2), TZ), status: DayPassStatus.ACTIVE, priceCents: PRICE, currency: 'mxn', createdAt: new Date() }]);
+    const out = await service.listMyDayPasses(STUDIO, USER, 'history');
+    expect(prisma.dayPass.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ validForDate: { lt: studioLocalDateKeyToUtcAnchor(t, TZ) } }), orderBy: { validForDate: 'desc' } }),
+    );
+    expect(out[0]?.relativeDay).toBe('past');
+  });
+
+  it('T16d getPurchaseWindow returns studio-local today, the horizon and the owned days inside it', async () => {
+    const t = todayKey();
+    prisma.dayPass.findMany.mockResolvedValue([{ validForDate: studioLocalDateKeyToUtcAnchor(addDaysToDateKey(t, 1), TZ) }]);
+    const w = await service.getPurchaseWindow(STUDIO, USER);
+    expect(w).toEqual({ timezone: TZ, todayKey: t, maxDateKey: addDaysToDateKey(t, 30), horizonDays: 30, ownedDateKeys: [addDaysToDateKey(t, 1)] });
+    expect(prisma.dayPass.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: DayPassStatus.ACTIVE, validForDate: { gte: studioLocalDateKeyToUtcAnchor(t, TZ), lte: studioLocalDateKeyToUtcAnchor(addDaysToDateKey(t, 30), TZ) } }) }),
     );
   });
 });
@@ -576,6 +630,7 @@ describe('DayPassesService — post-payment sync (server-verified, client never 
     currency: 'mxn',
     createdAt: new Date(),
     stripePaymentIntentId: 'pi_1',
+    studio: { timezone: TZ },
   };
 
   beforeEach(() => {
@@ -593,13 +648,14 @@ describe('DayPassesService — post-payment sync (server-verified, client never 
       ...row,
       studioId: STUDIO,
       userId: USER,
-      previousStripePaymentIntentIds: [],
+      previousStripePaymentIntentIds: [], studio: { timezone: 'America/Mexico_City' },
     });
     prisma.dayPass.findUniqueOrThrow.mockResolvedValue({ ...row, status: DayPassStatus.ACTIVE });
 
     const dto = await service.syncDayPassFromStripe({ studioId: STUDIO, userId: USER, dayPassId: 'dp_1' });
 
     expect(dto.status).toBe(DayPassStatus.ACTIVE);
+    expect(dto.validForDateKey).toBe('2026-09-23'); // the purchased day, on the studio clock
     expect(prisma.dayPass.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'dp_1', status: DayPassStatus.PENDING, stripePaymentIntentId: 'pi_1' },

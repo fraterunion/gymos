@@ -73,6 +73,21 @@ describe('userFacingApiMessage', () => {
     );
   });
 
+  it('maps every date rejection (current Spanish and legacy English) to Spanish', () => {
+    expect(userFacingApiMessage(new ApiError('validForDate must be within 30 days', 400))).toBe(
+      'Solo puedes comprar un pase diario hasta 30 días por adelantado. Elige una fecha más cercana.',
+    );
+    expect(
+      userFacingApiMessage(new ApiError('Solo puedes comprar un pase diario hasta 30 días por adelantado. Elige una fecha más cercana.', 400)),
+    ).toBe('Solo puedes comprar un pase diario hasta 30 días por adelantado. Elige una fecha más cercana.');
+    expect(userFacingApiMessage(new ApiError('validForDate must be a valid calendar date', 400))).toBe(
+      'La fecha del pase diario no es válida. Elige un día del calendario.',
+    );
+    expect(userFacingApiMessage(new ApiError('validForDate must be a date in YYYY-MM-DD format', 400))).toBe(
+      'La fecha del pase diario no es válida. Elige un día del calendario.',
+    );
+  });
+
   it('keeps unexpected 500s generic while remaining observable as status 500', () => {
     const error = new ApiError('TypeError: Cannot read properties of undefined', 500);
     expect(error.status).toBe(500);

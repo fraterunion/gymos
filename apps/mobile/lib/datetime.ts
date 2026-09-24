@@ -91,7 +91,7 @@ const WEEKDAY_INDEX: Record<string, number> = {
   Sun: 6,
 };
 
-function shiftDayKey(dayKey: string, deltaDays: number): string {
+export function shiftDayKey(dayKey: string, deltaDays: number): string {
   const [y, m, d] = dayKey.split('-').map(Number);
   const dt = new Date(Date.UTC(y!, m! - 1, d!));
   dt.setUTCDate(dt.getUTCDate() + deltaDays);

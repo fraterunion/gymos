@@ -19,7 +19,7 @@ function pendingRow(overrides: Record<string, unknown> = {}) {
     priceCents: 25000,
     currency: 'mxn',
     stripePaymentIntentId: 'pi_1',
-    previousStripePaymentIntentIds: [],
+    previousStripePaymentIntentIds: [], studio: { timezone: 'America/Mexico_City' },
     validForDate: new Date('2026-09-23T06:00:00.000Z'),
     ...overrides,
   };

@@ -27,6 +27,9 @@ export const MEMBER_ERRORS = {
   dayPassAttemptInProgress:
     'Ya hay un intento de compra en curso para esta fecha. Espera unos segundos e inténtalo de nuevo.',
   dayPassDateInPast: 'Solo puedes comprar un pase diario para hoy o una fecha próxima.',
+  dayPassDateInvalid: 'La fecha del pase diario no es válida. Elige un día del calendario.',
+  dayPassDateBeyondHorizon:
+    'Solo puedes comprar un pase diario hasta 30 días por adelantado. Elige una fecha más cercana.',
   dayPassUnavailable: 'Day Pass no está disponible en este momento.',
   dayPassNeedsSupport:
     'No pudimos confirmar el estado de tu pase diario para esta fecha. Contacta a tu estudio.',

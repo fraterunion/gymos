@@ -1,6 +1,7 @@
 import type { Logger } from '@nestjs/common';
 import { DayPassStatus, PaymentStatus, type Prisma, type PrismaClient } from '@prisma/client';
 import type Stripe from 'stripe';
+import { getStudioLocalDateKey } from '../common/date/studio-local-date';
 import { logDayPassEvent } from './day-pass-events';
 
 /**
@@ -122,6 +123,7 @@ export async function activateDayPassFromSucceededPaymentIntent(
         stripePaymentIntentId: true,
         previousStripePaymentIntentIds: true,
         validForDate: true,
+        studio: { select: { timezone: true } },
       },
     });
     if (!dayPass) {
@@ -147,7 +149,7 @@ export async function activateDayPassFromSucceededPaymentIntent(
       dayPassId,
       studioId,
       userId,
-      validForDate: dayPass.validForDate.toISOString().slice(0, 10),
+      validForDate: getStudioLocalDateKey(dayPass.validForDate, dayPass.studio.timezone),
       priceCents: pi.amount,
       currency: pi.currency,
     };

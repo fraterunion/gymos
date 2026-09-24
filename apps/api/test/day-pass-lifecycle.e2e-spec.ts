@@ -412,11 +412,9 @@ describe('Day Pass purchase lifecycle (e2e)', () => {
     const legacy = await prisma.dayPass.findUniqueOrThrow({ where: { id: 'legacy_active_e12' } });
     expect(legacy).toMatchObject({ status: DayPassStatus.ACTIVE, attemptCount: 1, previousStripePaymentIntentIds: [], activatedAt: null });
 
-    if (classDay === todayKey()) {
-      const again = await purchase(studio.id, token).expect(409);
-      expect((again.body as { message: string }).message).toBe(MEMBER_ERRORS.dayPassAlreadyOwned);
-      expect(stripe.createPaymentIntent).not.toHaveBeenCalled();
-    }
+    const again = await purchase(studio.id, token, classDay).expect(409);
+    expect((again.body as { message: string }).message).toBe(MEMBER_ERRORS.dayPassAlreadyOwned);
+    expect(stripe.createPaymentIntent).not.toHaveBeenCalled();
     const unchanged = await prisma.dayPass.findUniqueOrThrow({ where: { id: 'legacy_active_e12' } });
     expect(unchanged.updatedAt.toISOString()).toBe(legacy.updatedAt.toISOString());
   });

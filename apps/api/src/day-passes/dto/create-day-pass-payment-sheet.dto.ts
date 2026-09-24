@@ -1,16 +1,15 @@
 import { IsOptional, IsString, Matches } from 'class-validator';
+import { MEMBER_ERRORS } from '../../member-facing/member-errors';
 
 export class CreateDayPassPaymentSheetDto {
   /**
-   * Local calendar date for which the pass is valid, YYYY-MM-DD in the studio timezone.
-   * Optional: when omitted the server uses TODAY in the studio timezone, which is the only
-   * product currently sold and removes any dependence on the device clock or timezone.
-   * When sent it must be canonical, today or later, and within the purchase horizon.
+   * The studio-local calendar day the member wants the pass for, 'YYYY-MM-DD'.
+   * A REQUEST, never authority: the server canonicalises it on the studio clock and rejects
+   * past days, non-calendar keys and days beyond DAY_PASS_PURCHASE_HORIZON_DAYS.
+   * Optional for older app builds: omitted means studio-local today.
    */
   @IsOptional()
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
-    message: 'validForDate must be a date in YYYY-MM-DD format',
-  })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: MEMBER_ERRORS.dayPassDateInvalid })
   validForDate?: string;
 }

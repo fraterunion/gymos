@@ -1,6 +1,6 @@
 import { initStripe, useStripe } from '@/lib/stripe';
 import { createURL } from 'expo-linking';
-import { useFocusEffect, useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -56,13 +56,29 @@ import {
 import {
   createDayPassPaymentSheet,
   fetchDayPassCatalog,
+  fetchDayPassPurchaseWindow,
   fetchMyDayPasses,
   fetchPublicDayPassCatalog,
   syncDayPass,
   type DayPassCatalogDto,
   type DayPassDto,
+  type DayPassPurchaseWindowDto,
   type DayPassStatus,
 } from '@/lib/api/dayPassesApi';
+import { DayPassDateSheet } from '@/components/membership/DayPassDateSheet';
+import {
+  DAY_PASS_DATE_COPY,
+  activatedCopy,
+  confirmingCopy,
+  fallbackPurchaseWindow,
+  formatPassHeading,
+  groupMyDayPasses,
+  ownedDateLine,
+  relativeDayLabel,
+  relativeLabelForPass,
+} from '@/lib/dayPassDates';
+import { ApiError } from '@/lib/api/errors';
+import { todayKeyInZone } from '@/lib/datetime';
 import {
   DAY_PASS_COPY,
   canStartDayPassPurchase,
@@ -141,7 +157,7 @@ const AUTH_MODAL_COPY: Record<AuthModalKind, { title: string; description: strin
   },
   'day-pass': {
     title: 'Regístrate y compra tu pase diario',
-    description: 'Compra un pase diario para acceder al gimnasio y reservar clases hoy.',
+    description: 'Compra un pase diario para reservar clases el día que elijas.',
   },
 };
 
@@ -821,49 +837,44 @@ function NoMembershipPrompt({
 }
 
 // ---------------------------------------------------------------------------
-// Day Pass status config
+// Day Pass row — one purchased day. The pass's day comes from the server key; the pill says
+// whether that day is today, scheduled ahead, or already used.
 // ---------------------------------------------------------------------------
 
-function dayPassStatusConfig(status: DayPassStatus): {
+function dayPassRowConfig(relative: ReturnType<typeof relativeDayLabel>): {
   label: string;
+  eyebrow: string;
   dotColor: string;
   bg: string;
   textColor: string;
 } {
   const C = getColors();
-  switch (status) {
-    case 'ACTIVE':
-      return { label: 'Activo', dotColor: C.positive, bg: 'rgba(52,211,153,0.12)', textColor: C.positive };
-    case 'PENDING':
-      return { label: 'Pendiente', dotColor: C.caution, bg: 'rgba(251,191,36,0.12)', textColor: C.caution };
-    case 'EXPIRED':
-      return { label: 'Vencido', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
-    case 'REFUNDED':
-      return { label: 'Reembolsado', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
+  switch (relative) {
+    case 'Hoy':
+      return { label: 'Activo hoy', eyebrow: 'Hoy', dotColor: C.positive, bg: 'rgba(52,211,153,0.12)', textColor: C.positive };
+    case 'Mañana':
+    case 'Próximo':
+      return { label: 'Programado', eyebrow: 'Próximo', dotColor: '#FFFFFF', bg: 'rgba(255,255,255,0.08)', textColor: C.text };
+    case 'Anterior':
+      return { label: 'Usado', eyebrow: 'Anterior', dotColor: C.textMute, bg: 'rgba(255,255,255,0.06)', textColor: C.textMute };
   }
 }
 
-// ---------------------------------------------------------------------------
-// Day Pass row — date on left, status pill on right
-// ---------------------------------------------------------------------------
-
 function DayPassRow({
   dayPass,
+  todayKey,
   timeZone,
   isLast = false,
 }: {
   dayPass: DayPassDto;
+  todayKey: string;
   timeZone: string;
   isLast?: boolean;
 }) {
   const C = getColors();
-  const cfg = dayPassStatusConfig(dayPass.status);
-  const dateLabel = new Intl.DateTimeFormat(undefined, {
-    timeZone,
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  }).format(new Date(dayPass.validForDate));
+  const relative = relativeLabelForPass(dayPass, todayKey, timeZone);
+  const cfg = dayPassRowConfig(relative);
+  const heading = formatPassHeading(dayPass, todayKey, timeZone);
 
   return (
     <View
@@ -871,15 +882,21 @@ function DayPassRow({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingVertical: 16,
+        paddingVertical: 14,
         paddingHorizontal: 4,
         borderBottomWidth: isLast ? 0 : 1,
         borderBottomColor: C.separator,
       }}
     >
-      <Text style={{ fontSize: 15, color: C.text, fontWeight: '500', letterSpacing: -0.2 }}>
-        {dateLabel}
-      </Text>
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text style={{ fontSize: 10, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', color: C.textMute }}>
+          {cfg.eyebrow}
+        </Text>
+        <Text style={{ fontSize: 15, color: C.text, fontWeight: '600', letterSpacing: -0.2, marginTop: 2 }} numberOfLines={1}>
+          {heading}
+        </Text>
+        <Text style={{ fontSize: 13, color: C.textSub, marginTop: 2 }}>Pase diario</Text>
+      </View>
       <View
         style={{
           flexDirection: 'row',
@@ -1333,8 +1350,17 @@ export default function MembershipScreen() {
   const [dayPassLoadError, setDayPassLoadError] = useState<string | null>(null);
   const [dayPassSuccess, setDayPassSuccess] = useState(false);
   const [dayPassNotice, setDayPassNotice] = useState<string | null>(null);
+  const [dayPassSuccessCopy, setDayPassSuccessCopy] = useState<{ title: string; body: string } | null>(null);
+  // Date step: the server's purchase window (studio-local today, horizon, owned days) and the
+  // open sheet. Nothing is created on the server until the member confirms a reviewed day.
+  const [dayPassWindow, setDayPassWindow] = useState<DayPassPurchaseWindowDto | null>(null);
+  const [dayPassSheet, setDayPassSheet] = useState<{ initialDayKey: string | null } | null>(null);
+  const [dayPassHistory, setDayPassHistory] = useState<DayPassDto[] | null>(null);
+  const [dayPassHistoryBusy, setDayPassHistoryBusy] = useState(false);
   // Flips synchronously at the start of a purchase so a second tap in the same frame is ignored.
   const dayPassInFlight = useRef(false);
+  const consumedDayPassParam = useRef<string | null>(null);
+  const routeParams = useLocalSearchParams<{ dayPassDate?: string }>();
   const [authModalVisible, setAuthModalVisible] = useState(false);
   const [authModalKind, setAuthModalKind] = useState<AuthModalKind>('membership');
   const expectReturnFromBrowser = useRef(false);
@@ -1376,7 +1402,9 @@ export default function MembershipScreen() {
   const loadDayPasses = useCallback(async () => {
     if (!studioId) return;
     try {
-      const dp = await fetchMyDayPasses(studioId);
+      // Today + future passes, soonest first. An older API build ignores the scope and returns
+      // every pass; groupMyDayPasses sorts either shape identically.
+      const dp = await fetchMyDayPasses(studioId, 'upcoming');
       setDayPasses(dp);
       setDayPassLoadError(null);
     } catch (e) {
@@ -1551,20 +1579,61 @@ export default function MembershipScreen() {
     }
   }
 
-  async function buyDayPass() {
+  /** Studio-local today for grouping and copy: the server's word when we have it, else the STUDIO timezone. */
+  const dayPassTodayKey = dayPassWindow?.todayKey ?? todayKeyInZone(timeZone);
+
+  /**
+   * Step 1: open the date step. Fetches the server's purchase window (studio-local today,
+   * horizon, already-owned days) so the picker never depends on the device clock; falls back to
+   * the studio timezone if the window call fails. Creates nothing on the server.
+   */
+  async function openDayPassPicker(initialDayKey: string | null = null) {
     if (isGuest) { openAuthModal('day-pass'); return; }
     if (!studioId) return;
+    if (!dayPassCatalog?.active || dayPassCatalogError) return; // same gate as the button
+    if (!canStartDayPassPurchase(dayPassBusy, dayPassInFlight.current)) return;
+    setDayPassError(null);
+    setDayPassNotice(null);
+    setDayPassBusy(true);
+    try {
+      let window: DayPassPurchaseWindowDto;
+      try {
+        window = await fetchDayPassPurchaseWindow(studioId);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          // Older API build without the window route: derive it from the STUDIO timezone.
+          window = fallbackPurchaseWindow(timeZone, dayPasses);
+        } else {
+          // Anything else is transient: never open a picker built from the device clock.
+          if (__DEV__) console.warn('[DayPass] purchase-window failed:', e);
+          setDayPassError(DAY_PASS_DATE_COPY.windowUnavailable);
+          return;
+        }
+      }
+      setDayPassWindow(window);
+      setDayPassSheet({ initialDayKey });
+    } finally {
+      setDayPassBusy(false);
+    }
+  }
+
+  /** Step 2: the member confirmed a reviewed day → checkout for exactly that day. */
+  async function startDayPassCheckout(dayKey: string, todayKeyAtConfirm: string) {
+    if (isGuest || !studioId) return;
     if (!canStartDayPassPurchase(dayPassBusy, dayPassInFlight.current)) return;
     dayPassInFlight.current = true;
     setDayPassBusy(true);
     setDayPassError(null);
     setDayPassNotice(null);
     setDayPassSuccess(false);
+    setDayPassSuccessCopy(null);
     if (dayPassNoticeTimer.current) clearTimeout(dayPassNoticeTimer.current);
     try {
-      // The server decides which day "today" is (studio timezone). A retry after an abandoned
-      // or declined sheet resumes the same attempt: it is never a second purchase.
-      const data = await createDayPassPaymentSheet(studioId);
+      // The chosen day is a request; the server canonicalises it on the studio clock. A retry
+      // after an abandoned or declined sheet for the SAME day resumes the same attempt; another
+      // day is its own attempt. It is never a second purchase.
+      const data = await createDayPassPaymentSheet(studioId, dayKey);
+      const purchasedKey = data.validForDate ?? dayKey;
 
       // Set the Stripe key returned from the server before initializing the sheet.
       await initStripe({ publishableKey: data.publishableKey });
@@ -1595,18 +1664,20 @@ export default function MembershipScreen() {
       // Card step finished. Only the server, after asking Stripe, can say the pass is ours.
       let status: DayPassStatus | null = null;
       try {
-        status = (await syncDayPass(studioId, data.dayPassId)).status;
+        const synced = await syncDayPass(studioId, data.dayPassId);
+        status = synced.status;
       } catch (e) {
         if (__DEV__) console.warn('[DayPass] sync failed; webhook will activate:', e);
       }
       const next = describePostPaymentStatus(status);
       if (next.kind === 'activated') {
+        setDayPassSuccessCopy(activatedCopy(purchasedKey, todayKeyAtConfirm, timeZone));
         setDayPassSuccess(true);
         if (successTimer.current) clearTimeout(successTimer.current);
-        successTimer.current = setTimeout(() => setDayPassSuccess(false), 4000);
+        successTimer.current = setTimeout(() => setDayPassSuccess(false), 6000);
       } else {
         // Webhook or a later sync will land; never tell the member it failed.
-        setDayPassNotice(next.message);
+        setDayPassNotice(confirmingCopy(purchasedKey, timeZone));
         dayPassNoticeTimer.current = setTimeout(() => {
           void loadDayPasses();
           setDayPassNotice(null);
@@ -1616,9 +1687,8 @@ export default function MembershipScreen() {
     } catch (e) {
       if (isAlreadyOwnedConflict(e)) {
         // Good news, not an error (e.g. the server just confirmed a late payment): show it
-        // neutrally and reload so the pass appears in "Tus pases". Cleared after a few seconds
-        // so it can never linger into another day.
-        setDayPassNotice((e as Error).message);
+        // neutrally with the day, and reload so the pass appears in the list.
+        setDayPassNotice(`${DAY_PASS_DATE_COPY.ownedTitle} ${ownedDateLine(dayKey, todayKeyAtConfirm, timeZone)}`);
         void loadDayPasses();
         dayPassNoticeTimer.current = setTimeout(() => setDayPassNotice(null), 6000);
       } else {
@@ -1629,6 +1699,31 @@ export default function MembershipScreen() {
       setDayPassBusy(false);
     }
   }
+
+  async function toggleDayPassHistory() {
+    if (!studioId) return;
+    if (dayPassHistory !== null) { setDayPassHistory(null); return; }
+    setDayPassHistoryBusy(true);
+    try {
+      const history = await fetchMyDayPasses(studioId, 'history');
+      // An older API build ignores the scope; whatever comes back is grouped again on display.
+      setDayPassHistory(history);
+    } catch {
+      setDayPassHistory([]);
+    } finally {
+      setDayPassHistoryBusy(false);
+    }
+  }
+
+  // Arriving from a class ("buy a pass for this day"): open the picker pre-selected once.
+  useEffect(() => {
+    const wanted = routeParams.dayPassDate;
+    if (!wanted || isGuest || !studioId || loading) return;
+    if (!dayPassCatalog?.active || dayPassCatalogError) return; // wait for / respect the catalog gate
+    if (consumedDayPassParam.current === wanted) return;
+    consumedDayPassParam.current = wanted;
+    void openDayPassPicker(wanted);
+  }, [routeParams.dayPassDate, isGuest, studioId, loading, dayPassCatalog, dayPassCatalogError]);
 
   const refresh = isGuest ? () => loadGuest('refresh') : () => { void load('refresh'); void refreshStudioActivity(); };
 
@@ -1904,7 +1999,7 @@ export default function MembershipScreen() {
                     marginBottom: 20,
                   }}
                 >
-                  Entrena hoy. Sin membresía.
+                  Entrena el día que elijas. Sin membresía.
                 </Text>
 
                 {/* Price hero */}
@@ -1949,7 +2044,7 @@ export default function MembershipScreen() {
 
                 {/* Benefits */}
                 <View style={{ gap: 10, marginBottom: 24 }}>
-                  {['Acceso todo el día', 'Reserva clases elegibles', 'Ideal para tu primera visita'].map(
+                  {['Válido el día que elijas', 'Reserva clases elegibles', 'Ideal para tu primera visita'].map(
                     (benefit) => (
                       <View key={benefit} style={{ flexDirection: 'row', alignItems: 'center' }}>
                         <View
@@ -1975,18 +2070,15 @@ export default function MembershipScreen() {
                   )}
                 </View>
 
-                {!isGuest && dayPassSuccess ? (
-                  <Text
-                    style={{
-                      fontSize: 14,
-                      color: C.positive,
-                      fontWeight: '600',
-                      marginBottom: 12,
-                      letterSpacing: -0.1,
-                    }}
-                  >
-                    Pase diario activado.
-                  </Text>
+                {!isGuest && dayPassSuccess && dayPassSuccessCopy ? (
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ fontSize: 14, color: C.positive, fontWeight: '700', letterSpacing: -0.1 }}>
+                      {dayPassSuccessCopy.title}
+                    </Text>
+                    <Text style={{ fontSize: 13, color: C.textSub, marginTop: 2, lineHeight: 19 }}>
+                      {dayPassSuccessCopy.body}
+                    </Text>
+                  </View>
                 ) : null}
 
                 {!isGuest && dayPassNotice ? (
@@ -2012,7 +2104,7 @@ export default function MembershipScreen() {
                     (!isGuest && !dayPassCatalog?.active) ||
                     (isGuest && (!dayPassCatalog || !dayPassCatalog.active))
                   }
-                  onPress={() => void (isGuest ? openAuthModal('day-pass') : buyDayPass())}
+                  onPress={() => void (isGuest ? openAuthModal('day-pass') : openDayPassPicker())}
                 />
                 {isGuest ? (
                   <InlineAuthLink
@@ -2031,30 +2123,96 @@ export default function MembershipScreen() {
             </Text>
           ) : null}
 
-          {/* Active / pending day passes */}
-          {!isGuest && dayPasses.length > 0 ? (
-            <Animated.View entering={FadeInDown.duration(380)}>
-              <SectionLabel>Tus pases</SectionLabel>
-              <View
-                style={{
-                  ...premiumCardStyle(C),
-                  paddingHorizontal: 20,
-                  overflow: 'hidden',
-                }}
-              >
-                {dayPasses.map((dp, i) => (
-                  <DayPassRow
-                    key={dp.id}
-                    dayPass={dp}
-                    timeZone={timeZone}
-                    isLast={i === dayPasses.length - 1}
-                  />
-                ))}
-              </View>
-            </Animated.View>
-          ) : null}
+          {/* Mis pases diarios — today first, then upcoming; history on demand */}
+          {!isGuest && (() => {
+            const grouped = groupMyDayPasses(dayPasses, dayPassTodayKey, timeZone);
+            const current = [...grouped.today, ...grouped.upcoming];
+            // Older API builds return every pass in the main list; their past rows are history.
+            const historyRows = dayPassHistory
+              ? groupMyDayPasses(dayPassHistory, dayPassTodayKey, timeZone).past
+              : grouped.past;
+            const historyAvailable = dayPassHistory !== null || grouped.past.length > 0 || current.length > 0;
+            if (current.length === 0 && !historyAvailable) return null;
+            return (
+              <Animated.View entering={FadeInDown.duration(380)}>
+                <SectionLabel>{DAY_PASS_DATE_COPY.sectionTitle}</SectionLabel>
+                <View
+                  style={{
+                    ...premiumCardStyle(C),
+                    paddingHorizontal: 20,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {current.length === 0 ? (
+                    <Text style={{ fontSize: 13, color: C.textMute, lineHeight: 19, paddingVertical: 14 }}>
+                      {DAY_PASS_DATE_COPY.noPasses}
+                    </Text>
+                  ) : (
+                    current.map((dp, i) => (
+                      <DayPassRow
+                        key={dp.id}
+                        dayPass={dp}
+                        todayKey={dayPassTodayKey}
+                        timeZone={timeZone}
+                        isLast={i === current.length - 1 && dayPassHistory === null}
+                      />
+                    ))
+                  )}
+                  {dayPassHistory !== null
+                    ? historyRows.map((dp, i) => (
+                        <DayPassRow
+                          key={dp.id}
+                          dayPass={dp}
+                          todayKey={dayPassTodayKey}
+                          timeZone={timeZone}
+                          isLast={i === historyRows.length - 1}
+                        />
+                      ))
+                    : null}
+                  {dayPassHistory !== null && historyRows.length === 0 ? (
+                    <Text style={{ fontSize: 13, color: C.textMute, lineHeight: 19, paddingVertical: 12 }}>
+                      Sin pases anteriores.
+                    </Text>
+                  ) : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void toggleDayPassHistory()}
+                    disabled={dayPassHistoryBusy}
+                    hitSlop={8}
+                    style={{ paddingVertical: 12, alignItems: 'center' }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: C.textSub }}>
+                      {dayPassHistoryBusy ? 'Cargando…' : dayPassHistory !== null ? DAY_PASS_DATE_COPY.hideHistory : DAY_PASS_DATE_COPY.viewHistory}
+                    </Text>
+                  </Pressable>
+                </View>
+              </Animated.View>
+            );
+          })()}
         </View>
       </ScrollView>
+
+      {dayPassSheet && dayPassWindow && dayPassCatalog?.active ? (
+        <DayPassDateSheet
+          visible
+          window={dayPassWindow}
+          priceCents={dayPassCatalog.priceCents}
+          currency={dayPassCatalog.currency}
+          initialDayKey={dayPassSheet.initialDayKey}
+          primaryColor={primaryColor}
+          confirmBusy={dayPassBusy}
+          onConfirm={(dayKey) => {
+            const todayKeyAtConfirm = dayPassWindow.todayKey;
+            setDayPassSheet(null);
+            setDayPassWindow(null); // never let a stale "today" outlive the sheet
+            void startDayPassCheckout(dayKey, todayKeyAtConfirm);
+          }}
+          onCancel={() => {
+            setDayPassSheet(null);
+            setDayPassWindow(null);
+          }}
+        />
+      ) : null}
 
       {confirmPurchase ? (
         <PurchaseConfirmSheet

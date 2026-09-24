@@ -285,3 +285,42 @@ Classification: **API deploy + additive migration (auto) + mobile OTA (JS-only, 
 5. Tap "Comprar pase diario" again. Expect: "Ya tienes un pase diario activo para esta fecha."
 6. Book a Day-Pass-eligible class today. Expect: booking succeeds.
 7. Next day: previous slot untouched (ACTIVE); a new purchase creates a new slot. Yesterday's abandoned attempts (if any) show EXPIRED after the :20 sweep.
+
+---
+
+## Addendum (2026-09-23): member-chosen calendar day
+
+The product changed after the lifecycle fix shipped: a Day Pass is no longer implicitly "for
+today". The member chooses the calendar day; the server validates and canonicalises it.
+
+**Domain model (unchanged in shape, widened in meaning).** The `(studio, member, valid_for_date)`
+slot row already keys on a calendar day, so multiple ACTIVE passes on different days coexist and
+only ACTIVE is ownership. No schema change. `valid_for_date` remains the UTC instant of studio-local
+midnight; the wire value is the canonical `YYYY-MM-DD` key in the studio timezone.
+
+**Date rules (`day-pass-dates.ts`, pure).** `resolveRequestedDayPassDate(requested, timezone)`:
+omitted → studio-local today (legacy clients); non-canonical key → `dayPassDateInvalid`; before
+studio-local today → `dayPassDateInPast`; after today + `DAY_PASS_PURCHASE_HORIZON_DAYS` (30) →
+`dayPassDateBeyondHorizon`. Keys are compared lexically, so DST zones cannot shift the boundary.
+The device timezone can never name a day the studio clock rejects.
+
+**API contract.** `GET /day-passes/purchase-window` → `{ timezone, todayKey, maxDateKey, horizonDays,
+ownedDateKeys }`; `POST /payment-sheet` body `{ validForDate }` (optional for older builds) and the
+response echoes the resolved `validForDate`; `GET /me?scope=all|upcoming|history` rows carry
+`validForDateKey` and `relativeDay`. See `docs/API_CONTRACTS.md`.
+
+**Attempt isolation per day.** Every slot is per day, so PaymentIntent metadata, idempotency keys
+(`day_pass:<slotId>:a<n>:…`), retry lookup, replacement and activation are per day by
+construction. Abandoning Sep 24 and buying Sep 25 creates a second slot with its own intent; the
+Sep 24 attempt stays reusable for Sep 24 and can only ever activate Sep 24.
+
+**Mobile.** Comprar pase diario → date sheet (Hoy / Mañana / calendar over the server window;
+owned days marked and not sellable) → review (day + price) → "Continuar al pago" → PaymentSheet.
+Success copy names the day. "Mis pases diarios" lists today first, then upcoming; "Ver historial"
+loads past days. The picker never uses the device clock: it uses the server window, or the studio
+timezone if that call fails.
+
+**Compatibility.** Old app (omits the date) → new API: today, as before. New app → old API: the
+purchase-window call falls back to the studio-timezone window, `scope` is ignored and the list is
+grouped client-side, and the payment-sheet response without `validForDate` falls back to the
+chosen day. Deploy order remains API first, then OTA.

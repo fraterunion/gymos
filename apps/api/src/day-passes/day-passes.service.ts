@@ -10,6 +10,12 @@ import { DayPassStatus, Prisma } from '@prisma/client';
 import type Stripe from 'stripe';
 import { getStudioLocalDateKey, studioLocalDateKeyToUtcAnchor } from '../common/date/studio-local-date';
 import { MEMBER_ERRORS } from '../member-facing/member-errors';
+import {
+  DAY_PASS_PURCHASE_HORIZON_DAYS,
+  classifyDayPassDate,
+  dayPassDateWindow,
+  resolveRequestedDayPassDate,
+} from './day-pass-dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { WaiverService } from '../waiver/waiver.service';
@@ -20,7 +26,8 @@ import {
 } from './day-pass-activation';
 import { logDayPassEvent } from './day-pass-events';
 import { DayPassSettingsService } from './day-pass-settings.service';
-import type { DayPassResponseDto } from './dto/day-pass-response.dto';
+import type { DayPassPurchaseWindowDto, DayPassResponseDto } from './dto/day-pass-response.dto';
+import type { DayPassListScope } from './dto/list-my-day-passes.query.dto';
 
 // Must match the Stripe SDK version used by the mobile React Native client.
 // Update this if the mobile Stripe SDK is upgraded.
@@ -34,12 +41,8 @@ const STRIPE_MOBILE_API_VERSION = '2025-08-27.basil';
  */
 export const IN_FLIGHT_GRACE_MS = 60_000;
 
-/**
- * Furthest date a member may buy a pass for, in studio-local days from today. Today is the
- * only product the apps sell; the horizon exists so a skewed device clock or a malformed key
- * can never mint a pass for an arbitrary future day.
- */
-export const MAX_DAYS_AHEAD = 30;
+/** @deprecated use DAY_PASS_PURCHASE_HORIZON_DAYS (kept for existing imports). */
+export const MAX_DAYS_AHEAD = DAY_PASS_PURCHASE_HORIZON_DAYS;
 
 /**
  * PaymentIntent statuses in which PaymentSheet can still confirm with the ORIGINAL
@@ -55,6 +58,8 @@ const REPRESENTABLE_PI_STATUSES: ReadonlySet<string> = new Set([
 
 export type DayPassPaymentSheetResponse = {
   dayPassId: string;
+  /** The studio-local day this checkout is for ('YYYY-MM-DD'), as the server resolved it. */
+  validForDate: string;
   paymentIntentClientSecret: string;
   customerId: string;
   ephemeralKeySecret: string;
@@ -126,13 +131,70 @@ export class DayPassesService {
     private readonly dayPassSettings: DayPassSettingsService,
   ) {}
 
-  /** Purchased passes only. Open attempts are never shown as if they were passes. */
-  async listMyDayPasses(studioId: string, userId: string): Promise<DayPassResponseDto[]> {
-    return this.prisma.dayPass.findMany({
-      where: { studioId, userId, status: DayPassStatus.ACTIVE },
+  /**
+   * Purchased passes only. Open attempts are never shown as if they were passes.
+   * `all` (default) keeps the legacy order (newest day first) for older app builds;
+   * `upcoming` is today + future, soonest first; `history` is past days, most recent first.
+   * Every row carries its studio-local day key and today/upcoming/past classification, so no
+   * client has to derive a calendar day from the device clock.
+   */
+  async listMyDayPasses(
+    studioId: string,
+    userId: string,
+    scope: DayPassListScope = 'all',
+  ): Promise<DayPassResponseDto[]> {
+    const timezone = await this.studioTimezone(studioId);
+    const window = dayPassDateWindow(timezone);
+    const todayAnchor = studioLocalDateKeyToUtcAnchor(window.todayKey, timezone);
+    const rows = await this.prisma.dayPass.findMany({
+      where: {
+        studioId,
+        userId,
+        status: DayPassStatus.ACTIVE,
+        ...(scope === 'upcoming' ? { validForDate: { gte: todayAnchor } } : {}),
+        ...(scope === 'history' ? { validForDate: { lt: todayAnchor } } : {}),
+      },
       select: DAY_PASS_DTO_SELECT,
-      orderBy: { validForDate: 'desc' },
+      orderBy: { validForDate: scope === 'upcoming' ? 'asc' : 'desc' },
     });
+    return rows.map((r) => toDto(r, timezone, window.todayKey));
+  }
+
+  /** The picker's contract: studio-local today, the horizon, and the days already owned. */
+  async getPurchaseWindow(studioId: string, userId: string): Promise<DayPassPurchaseWindowDto> {
+    const timezone = await this.studioTimezone(studioId);
+    const window = dayPassDateWindow(timezone);
+    const owned = await this.prisma.dayPass.findMany({
+      where: {
+        studioId,
+        userId,
+        status: DayPassStatus.ACTIVE,
+        validForDate: {
+          gte: studioLocalDateKeyToUtcAnchor(window.todayKey, timezone),
+          lte: studioLocalDateKeyToUtcAnchor(window.maxDateKey, timezone),
+        },
+      },
+      select: { validForDate: true },
+      orderBy: { validForDate: 'asc' },
+    });
+    return {
+      timezone,
+      todayKey: window.todayKey,
+      maxDateKey: window.maxDateKey,
+      horizonDays: window.horizonDays,
+      ownedDateKeys: owned.map((o) => getStudioLocalDateKey(o.validForDate, timezone)),
+    };
+  }
+
+  private async studioTimezone(studioId: string): Promise<string> {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: { timezone: true },
+    });
+    if (!studio) {
+      throw new NotFoundException('Studio not found');
+    }
+    return studio.timezone;
   }
 
   async createDayPassPaymentSheet(params: {
@@ -155,22 +217,29 @@ export class DayPassesService {
       throw new NotFoundException('Studio not found');
     }
 
-    const todayKey = getStudioLocalDateKey(new Date(), studio.timezone);
-    const validForDate = params.validForDate ?? todayKey;
-    if (validForDate < todayKey) {
-      throw new BadRequestException(MEMBER_ERRORS.dayPassDateInPast);
+    // The member's requested day is a wish, validated and canonicalised on the studio clock.
+    // Omitted (legacy clients) means studio-local today.
+    const resolved = resolveRequestedDayPassDate(params.validForDate, studio.timezone);
+    if (!resolved.ok) {
+      logDayPassEvent(this.logger, 'DAY_PASS_CONFLICT', {
+        studioId,
+        userId,
+        reason: `date_${resolved.reason}`,
+        requestedDate: params.validForDate ?? null,
+        todayKey: resolved.window.todayKey,
+        maxDateKey: resolved.window.maxDateKey,
+        source: 'api',
+      });
+      throw new BadRequestException(
+        resolved.reason === 'past'
+          ? MEMBER_ERRORS.dayPassDateInPast
+          : resolved.reason === 'beyond_horizon'
+            ? MEMBER_ERRORS.dayPassDateBeyondHorizon
+            : MEMBER_ERRORS.dayPassDateInvalid,
+      );
     }
-    const validForDateUtc = studioLocalDateKeyToUtcAnchor(validForDate, studio.timezone);
-    // Canonical-form guard: '2026-13-01' matches the DTO regex and would silently normalise
-    // to 2027-01-01; the round trip must reproduce the key exactly.
-    if (getStudioLocalDateKey(validForDateUtc, studio.timezone) !== validForDate) {
-      throw new BadRequestException('validForDate must be a valid calendar date');
-    }
-    const horizonUtc = studioLocalDateKeyToUtcAnchor(todayKey, studio.timezone);
-    horizonUtc.setUTCDate(horizonUtc.getUTCDate() + MAX_DAYS_AHEAD);
-    if (validForDateUtc.getTime() > horizonUtc.getTime()) {
-      throw new BadRequestException(`validForDate must be within ${MAX_DAYS_AHEAD} days`);
-    }
+    const validForDate = resolved.key;
+    const validForDateUtc = resolved.anchorUtc;
 
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
@@ -226,13 +295,15 @@ export class DayPassesService {
     const { studioId, userId, dayPassId } = params;
     const row = await this.prisma.dayPass.findFirst({
       where: { id: dayPassId, studioId, userId },
-      select: { ...DAY_PASS_DTO_SELECT, stripePaymentIntentId: true },
+      select: { ...DAY_PASS_DTO_SELECT, stripePaymentIntentId: true, studio: { select: { timezone: true } } },
     });
     if (!row) {
       throw new NotFoundException('Day Pass not found');
     }
+    const timezone = row.studio.timezone;
+    const todayKey = getStudioLocalDateKey(new Date(), timezone);
     if (row.status === DayPassStatus.ACTIVE || !row.stripePaymentIntentId) {
-      return toDto(row);
+      return toDto(row, timezone, todayKey);
     }
 
     const pi = await this.stripe.retrievePaymentIntent(row.stripePaymentIntentId);
@@ -253,7 +324,7 @@ export class DayPassesService {
       where: { id: dayPassId },
       select: DAY_PASS_DTO_SELECT,
     });
-    return toDto(fresh);
+    return toDto(fresh, timezone, todayKey);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -614,6 +685,7 @@ export class DayPassesService {
     const publishableKey = this.config.getOrThrow<string>('STRIPE_PUBLISHABLE_KEY');
     return {
       dayPassId,
+      validForDate: ctx.validForDate,
       paymentIntentClientSecret: clientSecret,
       customerId: ctx.customerId,
       ephemeralKeySecret,
@@ -706,17 +778,24 @@ export class DayPassesService {
   }
 }
 
-function toDto(row: {
-  id: string;
-  validForDate: Date;
-  status: DayPassStatus;
-  priceCents: number;
-  currency: string;
-  createdAt: Date;
-}): DayPassResponseDto {
+function toDto(
+  row: {
+    id: string;
+    validForDate: Date;
+    status: DayPassStatus;
+    priceCents: number;
+    currency: string;
+    createdAt: Date;
+  },
+  timezone: string,
+  todayKey: string,
+): DayPassResponseDto {
+  const validForDateKey = getStudioLocalDateKey(row.validForDate, timezone);
   return {
     id: row.id,
     validForDate: row.validForDate,
+    validForDateKey,
+    relativeDay: classifyDayPassDate(validForDateKey, todayKey),
     status: row.status,
     priceCents: row.priceCents,
     currency: row.currency,

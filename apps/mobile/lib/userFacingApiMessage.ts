@@ -86,6 +86,12 @@ export function userFacingApiMessage(error: unknown, fallback = GENERIC): string
   if (/validForDate must be today or a future date|hoy o una fecha pr/i.test(m)) {
     return 'Solo puedes comprar un pase diario para hoy o una fecha próxima.';
   }
+  if (/validForDate must be within|hasta 30 días por adelantado/i.test(m)) {
+    return 'Solo puedes comprar un pase diario hasta 30 días por adelantado. Elige una fecha más cercana.';
+  }
+  if (/valid calendar date|YYYY-MM-DD format|fecha del pase diario no es v/i.test(m)) {
+    return 'La fecha del pase diario no es válida. Elige un día del calendario.';
+  }
   if (/No pudimos confirmar el estado de tu pase diario/i.test(m)) {
     return 'No pudimos confirmar el estado de tu pase diario para esta fecha. Contacta a tu estudio.';
   }

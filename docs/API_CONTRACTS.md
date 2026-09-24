@@ -450,6 +450,44 @@ No payments, waitlists, notifications, or UI. **`studioId`**, **`bookingId`**, a
 
 ---
 
+## Day Pass — member-chosen calendar day
+
+A Day Pass is a one-day class-access entitlement for ONE studio-local calendar day. The wire and
+business value is a canonical `YYYY-MM-DD` key in the **studio timezone**; the DB stores the UTC
+instant of that day's local midnight. One row per `(studio, member, day)` is the purchase SLOT;
+only `status = ACTIVE` is ownership, and only a Stripe-confirmed success sets it (see
+`docs/DAY_PASS_PURCHASE_LIFECYCLE.md`). A member may own several ACTIVE passes on different days;
+never two for the same day.
+
+All routes: **Auth:** JWT + `StudioMemberGuard`, prefix `/studios/:studioId/day-passes`.
+
+### `GET /purchase-window`
+
+The date picker's contract, computed on the studio clock.
+
+- **Response `200`:** `{ timezone, todayKey, maxDateKey, horizonDays: 30, ownedDateKeys: string[] }` — `ownedDateKeys` are the ACTIVE days inside `[todayKey, maxDateKey]`.
+
+### `POST /payment-sheet`
+
+- **Body:** `{ validForDate?: 'YYYY-MM-DD' }` — the member's REQUESTED day. Omitted = studio-local today (legacy clients). The server canonicalises it and rejects, all in Spanish (`400`): a past day, a non-calendar key (e.g. `2026-13-01`), or a day beyond today + 30.
+- **Rules:** slot row per day; an open attempt is re-presented or replaced (never blocks); an ACTIVE day → `409` `Ya tienes un pase diario activo para esta fecha.`; a paying-in-progress intent → `409` `Tu pago está en proceso…`; a concurrent creation → `409` `Ya hay un intento de compra en curso…`; a REFUNDED slot (operator action) is never re-opened automatically → `409` `No pudimos confirmar el estado de tu pase diario…`. A key that is not even `YYYY-MM-DD`-shaped is rejected by validation with the same Spanish `dayPassDateInvalid` message.
+- **Response `201`:** `{ dayPassId, validForDate, paymentIntentClientSecret, customerId, ephemeralKeySecret, publishableKey }` — `validForDate` echoes the day the server resolved.
+
+### `POST /:dayPassId/sync`
+
+Server-verified refresh after PaymentSheet reports success (asks Stripe; the client is never the authority). **Response `200`:** a Day Pass row (below).
+
+### `GET /me?scope=all|upcoming|history`
+
+Purchased (ACTIVE) passes only. `all` (default, legacy) = every pass newest day first; `upcoming` = today + future, soonest first; `history` = past days, most recent first. Each row:
+`{ id, validForDate (ISO instant, legacy), validForDateKey: 'YYYY-MM-DD', relativeDay: 'today'|'upcoming'|'past', status, priceCents, currency, createdAt }`.
+
+### Entitlement
+
+Booking access for a class requires an ACTIVE pass whose day equals the **class start day** in the studio timezone and a template in the Day Pass allowlist. A pass for a future day grants nothing before that day, and nothing after it.
+
+---
+
 ## Phase 1 — Studio access smoke (internal / legacy)
 
 | Method | Path | Auth |
