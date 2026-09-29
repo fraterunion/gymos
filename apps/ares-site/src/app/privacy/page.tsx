@@ -9,21 +9,24 @@ export const metadata: Metadata = {
   },
 };
 
-const CONTACT_EMAIL = 'support@fraterunion.com';
+const CONTACT_EMAIL = 'support@arestrainingclub.com';
 
 export default function PrivacyPage() {
   return (
     <>
       <header className="page-header">
         <h1>Privacy Policy</h1>
-        <p>Last updated: June 12, 2026</p>
+        <p>Last updated: September 29, 2026</p>
       </header>
 
       <article className="content-card">
         <p>
-          This Privacy Policy describes how ARES Training Club (&quot;ARES,&quot; &quot;we,&quot;
-          &quot;us,&quot; or &quot;our&quot;) collects, uses, and protects information when you use
-          the ARES mobile application and related services operated for Ares Training Club.
+          This Privacy Policy describes information handled through the ARES Training Club
+          mobile application and related services. ARES Training Club operates the gym and
+          determines how its members&apos; information is used for gym operations. FraterUnion is
+          a separate organization that develops, publishes, and operates the GymOS technology
+          platform on ARES&apos;s behalf and processes ARES member information under ARES&apos;s
+          instructions. In this policy, &quot;we&quot; refers to each in its respective role.
         </p>
 
         <h2>Information We Collect</h2>
@@ -35,6 +38,10 @@ export default function PrivacyPage() {
           <li>
             <strong>Membership and booking data:</strong> We store membership status, class
             bookings, attendance history, and related studio activity connected to your account.
+          </li>
+          <li>
+            <strong>Studio operations:</strong> Authorized staff may add contact details and
+            internal operational notes to support member service.
           </li>
           <li>
             <strong>Payment information:</strong> Membership and billing payments are processed by
@@ -67,11 +74,15 @@ export default function PrivacyPage() {
           <li>Communicate with you about your account, bookings, or support requests.</li>
         </ul>
 
-        <h2>How We Share Information</h2>
-        <p>We do not sell your personal information. We may share data only:</p>
+        <h2>Who Can Access Information</h2>
+        <p>We do not sell your personal information. Information is accessed or disclosed:</p>
         <ul>
-          <li>With service providers that help us operate the app (such as Stripe for payments).</li>
-          <li>With the studio operating Ares Training Club for legitimate business operations.</li>
+          <li>
+            By authorized ARES Training Club personnel for member, membership, booking,
+            attendance, payment, and studio operations.
+          </li>
+          <li>By FraterUnion to operate and support the GymOS technology platform.</li>
+          <li>By service providers that help operate the app, such as Stripe for payments.</li>
           <li>When required by law or to protect the rights, safety, and security of users.</li>
         </ul>
 
@@ -104,6 +115,10 @@ export default function PrivacyPage() {
         <p className="contact-line">
           Questions about this Privacy Policy or your data? Email{' '}
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
+        </p>
+        <p>
+          To request account deletion, email{' '}
+          <a href="mailto:support@arestrainingclub.com">support@arestrainingclub.com</a>.
         </p>
       </article>
     </>
