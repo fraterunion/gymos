@@ -106,7 +106,98 @@ export type TimelineEventType =
   | "NOTE_CREATED"
   | "STRIPE_RENEWAL_DISABLED"
   | "STRIPE_RENEWAL_REACTIVATED"
-  | "STRIPE_RENEWAL_EXTERNAL_CHANGE";
+  | "STRIPE_RENEWAL_EXTERNAL_CHANGE"
+  | "STRIPE_TO_CASH_IMMEDIATE"
+  | "STRIPE_TO_CASH_PERIOD_END_SCHEDULED"
+  | "STRIPE_SUBSCRIPTION_ENDED";
+
+// ── Staff billing explanations (GET :userId/billing-status) ───────────────────
+
+export type BillingStateCode =
+  | "AUTO_RENEW_OK"
+  | "RENEWAL_DISABLED"
+  | "PAYMENT_FAILED"
+  | "PAYMENT_FAILED_RETRYING"
+  | "PAYMENT_FAILED_FINAL"
+  | "PAYMENT_ACTION_REQUIRED"
+  | "PAYMENT_PENDING"
+  | "INVOICE_PAID_IN_STRIPE"
+  | "STATUS_MISMATCH"
+  | "CANCELED_PAYMENT_FAILED"
+  | "CANCELED"
+  | "ENDED_NOT_RENEWED"
+  | "EXPIRED_UNPAID"
+  | "PAID_WITHOUT_ENTITLEMENT"
+  | "MANUAL_ACTIVE"
+  | "MANUAL_EXPIRED"
+  | "REPLACED"
+  | "SCHEDULED"
+  | "PAUSED"
+  | "UNKNOWN";
+
+export type PaymentFailureReason =
+  | "INSUFFICIENT_FUNDS"
+  | "EXPIRED_CARD"
+  | "INCORRECT_CVC"
+  | "AUTHENTICATION_REQUIRED"
+  | "BLOCKED_BY_STRIPE"
+  | "CARD_NOT_SUPPORTED"
+  | "PROCESSING_ERROR"
+  | "CARD_DECLINED"
+  | "NO_PAYMENT_METHOD"
+  | "OTHER"
+  | "UNKNOWN";
+
+export type RenewalChangeOrigin = "GYMOS_STAFF" | "GYMOS" | "STRIPE_TO_CASH" | "CUSTOMER_PORTAL" | "STRIPE_NO_REQUEST" | "STRIPE_API" | "UNKNOWN";
+export type SubscriptionEndOrigin = RenewalChangeOrigin | "STRIPE_AUTOMATIC" | "PERIOD_END";
+export type BillingAction = "UPDATE_PAYMENT_METHOD" | "COMPLETE_AUTHENTICATION" | "RENEW_MANUALLY" | "REVIEW_BILLING" | "RECONCILE";
+
+export type PaymentFailureView = {
+  paymentId: string;
+  invoiceId: string;
+  amountCents: number;
+  currency: string;
+  firstFailedAt: string;
+  lastAttemptAt: string | null;
+  attemptCount: number | null;
+  nextAttemptAt: string | null;
+  invoiceStatus: string | null;
+  /** Stripe billing_reason: subscription_cycle (renewal), subscription_create, subscription_update… */
+  billingReason: string | null;
+  reason: PaymentFailureReason;
+  /** Raw Stripe code worth showing to staff (never for lost/stolen/fraud codes). */
+  code: string | null;
+  detailSource: "stripe_live" | "webhook_history" | "local";
+  liveLookup: "ok" | "unavailable" | "skipped";
+};
+
+export type MembershipBillingStatus = {
+  subscriptionId: string;
+  planName: string;
+  source: "STRIPE" | "CASH" | "MANUAL";
+  state: BillingStateCode;
+  severity: "ok" | "info" | "warning" | "critical";
+  certainty: "confirmed" | "inferred";
+  isEntitled: boolean;
+  lifecycleStatus: string;
+  effectiveEnd: string | null;
+  renewal: {
+    mode: "AUTOMATIC" | "DISABLED" | "MANUAL" | "ENDED" | "NONE";
+    endsAt: string | null;
+    nextChargeAt: string | null;
+    change: { disabled: boolean; at: string; origin: RenewalChangeOrigin; actorName: string | null; feedback: string | null; certainty: "confirmed" | "inferred" } | null;
+  };
+  paymentFailure: PaymentFailureView | null;
+  stripe: { status: string; cancellationReason: string | null; canceledAt: string | null; endedAt: string | null; cancelAt: string | null; observedAt: string } | null;
+  statusMismatch: { local: string; stripe: string } | null;
+  action: BillingAction | null;
+};
+
+export type MemberBillingStatus = {
+  generatedAt: string;
+  memberships: MembershipBillingStatus[];
+  failedPayments: PaymentFailureView[];
+};
 
 export type TimelineEvent = {
   type: TimelineEventType;
@@ -277,6 +368,8 @@ export type MembershipSummary = {
   source: PaymentSource;
   accessState: "ENTITLED" | "NOT_STARTED" | "EXPIRED" | "INACTIVE";
   lifecycleStatus: LifecycleStatus;
+  /** Operational status (same rule as currentMembership.primaryStatus). Absent on older APIs. */
+  primaryStatus?: PrimaryLifecycleStatus;
   isEntitled: boolean;
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;
@@ -568,6 +661,17 @@ export async function fetchMemberTimeline(
 ): Promise<TimelineEvent[]> {
   return apiRequest<TimelineEvent[]>(
     `/studios/${studioId}/members/${userId}/timeline`,
+    { method: "GET" },
+  );
+}
+
+/** Staff-only: why each membership's payment is pending, failed or not renewing. */
+export async function fetchMemberBillingStatus(
+  studioId: string,
+  userId: string,
+): Promise<MemberBillingStatus> {
+  return apiRequest<MemberBillingStatus>(
+    `/studios/${studioId}/members/${userId}/billing-status`,
     { method: "GET" },
   );
 }

@@ -7,6 +7,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { WaitlistModule } from '../waitlist/waitlist.module';
 import { MembersController } from './members.controller';
+import { MemberBillingStatusService } from './member-billing-status.service';
 import { MemberOperationalNotesService } from './member-operational-notes.service';
 import { MembersService } from './members.service';
 import { ProgressService } from './progress.service';
@@ -22,6 +23,6 @@ import { ProgressService } from './progress.service';
     CheckInsModule,
   ],
   controllers: [MembersController],
-  providers: [MembersService, MemberOperationalNotesService, ProgressService],
+  providers: [MembersService, MemberBillingStatusService, MemberOperationalNotesService, ProgressService],
 })
 export class MembersModule {}

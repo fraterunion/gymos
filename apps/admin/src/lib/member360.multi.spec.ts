@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   attentionItemTitle,
   currentMembershipRows,
-  extraMembershipsChip,
   membershipRowRenewalActions,
   membershipUsageLine,
 } from "./member360.ts";
@@ -89,14 +88,10 @@ test("renewal actions: cash rows, replaced rows and non-managers get none", () =
   );
 });
 
-test("header chip appears only for >1 current membership; SCHEDULED rows do not count", () => {
-  assert.equal(extraMembershipsChip([row({})]), null);
-  assert.equal(extraMembershipsChip([row({}), bootyRow]), "+1 membresía");
-  assert.equal(
-    extraMembershipsChip([row({}), bootyRow, row({ subscriptionId: "s3", status: "SCHEDULED" })]),
-    "+1 membresía",
-  );
+test("current membership rows: SCHEDULED successors do not count", () => {
+  assert.equal(currentMembershipRows([row({})]).length, 1);
   assert.equal(currentMembershipRows([row({}), bootyRow]).length, 2);
+  assert.equal(currentMembershipRows([row({}), bootyRow, row({ subscriptionId: "s3", status: "SCHEDULED" })]).length, 2);
 });
 
 test("usage line is per-membership — Full unlimited and Booty 1/4 stay independent", () => {

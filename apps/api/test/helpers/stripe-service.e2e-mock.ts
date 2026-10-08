@@ -132,6 +132,8 @@ export function createE2eStripeServiceMock(config: {
 
     // Read-only lookups (no Stripe network in e2e).
     findPaidInvoicePaymentIntentId: jest.fn().mockResolvedValue(null),
+    // Staff billing explanations: no decline data unless a test provides it.
+    getInvoicePaymentFailureSnapshot: jest.fn().mockRejectedValue(new Error('no Stripe network in e2e')),
     listSubscriptionsForCustomer: jest.fn().mockResolvedValue([]),
   } as unknown as StripeService;
 }

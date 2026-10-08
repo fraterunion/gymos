@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import {
   fetchMemberAttendanceLog,
   createMemberOperationalNote,
+  fetchMemberBillingStatus,
   fetchMemberBookings,
   fetchMemberCrmProfile,
   fetchMemberPayments,
@@ -22,6 +23,7 @@ import {
   updateMemberCrmProfile,
   updateSubscriptionStatus,
   type AttendanceLogEntry,
+  type MemberBillingStatus,
   type MemberBooking,
   type MemberCrmProfile,
   type MemberPayment,
@@ -39,7 +41,8 @@ import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/
 import { ApiError } from "@/lib/api/errors";
 import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
 import { subscriptionTransitionPresentation } from "@/lib/membershipPlanSummary";
-import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, nextChargePresentation, paymentSourceLabel, renewalBehavior, usagePresentation , membershipRowRenewalActions, extraMembershipsChip, currentMembershipRows, membershipUsageLine, attentionItemTitle } from "@/lib/member360";
+import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, nextChargePresentation, paymentSourceLabel, renewalBehavior, usagePresentation , membershipRowRenewalActions, currentMembershipRows, membershipUsageLine, attentionItemTitle } from "@/lib/member360";
+import { buildMembershipCards, lastPaymentLine, membershipCardRows, pageAttentionItems, paymentsKpi, timelineDetail, timelineTitle, type MembershipCard, type Tone } from "@/lib/membershipBilling";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -538,6 +541,9 @@ const TIMELINE_CONFIG: Record<string, { dot: string; label?: string }> = {
   STRIPE_RENEWAL_DISABLED: { dot: "bg-amber-500" },
   STRIPE_RENEWAL_REACTIVATED: { dot: "bg-emerald-500" },
   STRIPE_RENEWAL_EXTERNAL_CHANGE: { dot: "bg-orange-500" },
+  STRIPE_SUBSCRIPTION_ENDED: { dot: "bg-red-500" },
+  STRIPE_TO_CASH_IMMEDIATE: { dot: "bg-sky-500" },
+  STRIPE_TO_CASH_PERIOD_END_SCHEDULED: { dot: "bg-sky-500" },
 };
 const TIMELINE_TITLES: Record<string, string> = {
   MEMBER_CREATED: "Miembro creado",
@@ -555,6 +561,9 @@ const TIMELINE_TITLES: Record<string, string> = {
   STRIPE_RENEWAL_DISABLED: "Renovación automática desactivada",
   STRIPE_RENEWAL_REACTIVATED: "Renovación automática reactivada",
   STRIPE_RENEWAL_EXTERNAL_CHANGE: "Renovación modificada desde Stripe",
+  STRIPE_SUBSCRIPTION_ENDED: "Suscripción cancelada en Stripe",
+  STRIPE_TO_CASH_IMMEDIATE: "Cambio a pago en recepción",
+  STRIPE_TO_CASH_PERIOD_END_SCHEDULED: "Cambio a pago en recepción",
 };
 
 function TimelineTab({ studioId, userId }: { studioId: string; userId: string }) {
@@ -623,14 +632,16 @@ function TimelineTab({ studioId, userId }: { studioId: string; userId: string })
               {dayEvents.map((ev, i) => {
                 const cfg = TIMELINE_CONFIG[ev.type] ?? { dot: "bg-zinc-400" };
                 const time = new Date(ev.occurredAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                // Billing events explain what happened and why (plan, amount, reason, origin).
+                const detail = timelineDetail(ev);
                 return (
                   <div key={i} className="relative">
                     <span className={`absolute -left-[1.6rem] top-[5px] h-3 w-3 rounded-full border-2 border-white ${cfg.dot}`} />
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-medium text-zinc-900">{TIMELINE_TITLES[ev.type] ?? ev.title}</p>
-                        {ev.description && (
-                          <p className="mt-0.5 text-sm text-zinc-500">{ev.description}</p>
+                        <p className="text-sm font-medium text-zinc-900">{timelineTitle(ev) ?? TIMELINE_TITLES[ev.type] ?? ev.title}</p>
+                        {(detail ?? ev.description) && (
+                          <p className="mt-0.5 text-sm text-zinc-500">{detail ?? ev.description}</p>
                         )}
                         {ev.actor ? (
                           <p className="mt-0.5 text-xs text-zinc-400">
@@ -638,7 +649,7 @@ function TimelineTab({ studioId, userId }: { studioId: string; userId: string })
                               ? ev.actor
                               : `Por ${ev.actor}`}
                           </p>
-                        ) : ev.type === "STRIPE_RENEWAL_EXTERNAL_CHANGE" ? (
+                        ) : ev.type === "STRIPE_RENEWAL_EXTERNAL_CHANGE" && !detail ? (
                           <p className="mt-0.5 text-xs text-zinc-400">Origen externo · actor no identificado</p>
                         ) : null}
                       </div>
@@ -657,7 +668,7 @@ function TimelineTab({ studioId, userId }: { studioId: string; userId: string })
 
 // ── Billing tab ───────────────────────────────────────────────────────────────
 
-function BillingTab({ studioId, userId, profile }: { studioId: string; userId: string; profile: MemberProfile }) {
+function BillingTab({ studioId, userId, profile, paymentsSummary, primaryCard }: { studioId: string; userId: string; profile: MemberProfile; paymentsSummary: { value: string; sub: string } | null; primaryCard: MembershipCard | null }) {
   const [payments, setPayments] = useState<MemberPayment[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -665,9 +676,11 @@ function BillingTab({ studioId, userId, profile }: { studioId: string; userId: s
   const [error, setError] = useState<string | null>(null);
   const limit = 20;
   const membership = profile.currentMembership;
-  const billingState = billingOperationalState(profile);
-  const renewal = membership ? renewalBehavior(membership) : "No aplica";
-  const nextCharge = nextChargePresentation(membership);
+  // Same per-membership explanation as the cards at the top of the page.
+  const billingState = paymentsSummary?.value ?? billingOperationalState(profile);
+  const renewal = primaryCard?.facts.find((f) => f.label === "Renovación")?.value ?? (membership ? renewalBehavior(membership) : "No aplica");
+  const nextCharge = primaryCard ? null : nextChargePresentation(membership);
+  const lastPayment = profile.operations.lastPayment;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -691,10 +704,10 @@ function BillingTab({ studioId, userId, profile }: { studioId: string; userId: s
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
       <div className="grid gap-3 sm:grid-cols-4">
-        <StatCard label="Estado de pagos" value={billingState} />
+        <StatCard label="Estado de pagos" value={billingState} sub={paymentsSummary && paymentsSummary.value !== "Al corriente" && paymentsSummary.value !== "No aplica" ? paymentsSummary.sub : undefined} />
         <StatCard label="Método de pago" value={paymentSourceLabel(membership?.source)} />
-        <StatCard label="Último pago" value={profile.operations.lastPayment ? fmtMoney(profile.operations.lastPayment.amountCents, profile.operations.lastPayment.currency) : "—"} sub={fmtDate(profile.operations.lastPayment?.paidAt ?? profile.operations.lastPayment?.createdAt)} />
-        <StatCard label="Renovación" value={renewal} sub={nextCharge ? `${nextCharge.label} ${fmtDate(nextCharge.date)}` : membership?.source === "STRIPE" && ["ACTIVE", "TRIALING", "PAST_DUE"].includes(membership.status) ? "Próximo cobro: confirmar en Stripe" : undefined} />
+        <StatCard label={lastPayment?.status === "FAILED" ? "Último intento fallido" : lastPayment?.status === "REFUNDED" || lastPayment?.status === "PARTIALLY_REFUNDED" ? "Último reembolso" : lastPayment?.status === "PENDING" ? "Pago pendiente" : "Último pago"} value={lastPayment ? fmtMoney(lastPayment.amountCents, lastPayment.currency) : "—"} sub={fmtDate(lastPayment?.paidAt ?? lastPayment?.createdAt)} />
+        <StatCard label="Renovación" value={renewal} sub={primaryCard ? undefined : nextCharge ? `${nextCharge.label} ${fmtDate(nextCharge.date)}` : membership?.source === "STRIPE" && ["ACTIVE", "TRIALING", "PAST_DUE"].includes(membership.status) ? "Próximo cobro: confirmar en Stripe" : undefined} />
       </div>
       <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <table className="min-w-full divide-y divide-zinc-100">
@@ -1657,6 +1670,65 @@ function WaiverStatusCard({
   );
 }
 
+// ── Membership cards (top of Member 360) ──────────────────────────────────────
+
+const TONE_PILL: Record<Tone, string> = {
+  ok: "bg-emerald-50 text-emerald-700 ring-emerald-600/15",
+  info: "bg-sky-50 text-sky-700 ring-sky-600/15",
+  warning: "bg-amber-50 text-amber-800 ring-amber-600/20",
+  critical: "bg-rose-50 text-rose-700 ring-rose-600/15",
+  neutral: "bg-zinc-100 text-zinc-600 ring-zinc-500/15",
+};
+
+const CARD_SURFACE: Record<MembershipCard["severity"], string> = {
+  critical: "border-rose-200 bg-rose-50/40",
+  warning: "border-amber-200 bg-amber-50/40",
+  info: "border-zinc-200 bg-white",
+  ok: "border-zinc-200 bg-white",
+};
+
+/** One card per membership: its own status, payment state, facts, the reason and the next step. */
+function MembershipCards({ cards, fallbackName, onAction }: { cards: MembershipCard[]; fallbackName: string; onAction: (tab: Tab) => void }) {
+  if (cards.length === 0) return <p className="mt-1 text-sm font-semibold text-zinc-900">{fallbackName}</p>;
+  return (
+    <div className={`mt-3 grid gap-3 ${cards.length > 1 ? "lg:grid-cols-2" : ""}`}>
+      {cards.map((card) => (
+        <article key={card.subscriptionId} className={`rounded-lg border p-4 ${CARD_SURFACE[card.severity]}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-zinc-900">{card.planName}</h3>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${TONE_PILL[card.status.tone]}`}>{card.status.label}</span>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${TONE_PILL[card.payment.tone]}`}>{card.payment.label}</span>
+          </div>
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+            {card.facts.map((fact) => (
+              <div key={fact.label}>
+                <dt className="text-[11px] uppercase tracking-wide text-zinc-400">{fact.label}</dt>
+                <dd className="text-xs font-medium text-zinc-800">{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+          {card.explanation.length > 0 ? (
+            <div className="mt-3 space-y-1 text-sm text-zinc-700">
+              {card.explanation.map((line) => <p key={line}>{line}</p>)}
+            </div>
+          ) : null}
+          {card.caution ? <p className="mt-2 rounded-md bg-amber-100/70 px-2 py-1 text-xs font-medium text-amber-900">{card.caution}</p> : null}
+          {card.action ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200/70 pt-3">
+              <p className="text-xs text-zinc-600"><span className="font-semibold text-zinc-900">Acción: </span>{card.action.detail}</p>
+              {card.action.href ? (
+                <Link href={card.action.href} className="shrink-0 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700">{card.action.label}</Link>
+              ) : (
+                <button type="button" onClick={() => onAction(card.action!.tab ?? "billing")} className="shrink-0 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700">{card.action.label}</button>
+              )}
+            </div>
+          ) : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MemberProfilePage() {
@@ -1665,14 +1737,24 @@ export default function MemberProfilePage() {
 
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [crm, setCrm] = useState<MemberCrmProfile | null>(null);
+  const [billing, setBilling] = useState<MemberBillingStatus | null>(null);
+  const [billingLoad, setBillingLoad] = useState<"loading" | "ready" | "error">("loading");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const billingRequest = useRef(0);
 
   const load = useCallback(async () => {
     if (!selectedStudioId || !userId) return;
     setLoading(true);
     setError(null);
+    // Staff billing explanation (may query Stripe): never blocks or breaks the profile. Only the
+    // newest request may update the state (studio switch / reload).
+    const request = ++billingRequest.current;
+    setBillingLoad("loading");
+    void fetchMemberBillingStatus(selectedStudioId, userId)
+      .then((b) => { if (request === billingRequest.current) { setBilling(b); setBillingLoad("ready"); } })
+      .catch(() => { if (request === billingRequest.current) { setBilling(null); setBillingLoad("error"); } });
     try {
       const [p, c] = await Promise.all([
         fetchMemberProfile(selectedStudioId, userId),
@@ -1698,6 +1780,11 @@ export default function MemberProfilePage() {
   const usageKpi = profile ? usagePresentation(profile) : null;
   const allowedClasses = profile?.currentMembership ? allowedClassPresentation(profile.currentMembership) : [];
   const billingState = profile ? billingOperationalState(profile) : "—";
+  const membershipCards = profile ? buildMembershipCards({ rows: membershipCardRows(profile), billing, billingState: billingLoad }) : [];
+  const paymentsSummary = profile ? paymentsKpi({ cards: membershipCards, lastPayment: profile.operations.lastPayment }) : null;
+  const attentionItems = profile ? pageAttentionItems(profile, membershipCards) : [];
+  const primaryCard = profile?.currentMembership ? membershipCards.find((c) => c.subscriptionId === profile.currentMembership!.id) ?? null : null;
+  const usageKpiPlan = profile && currentMembershipRows(profile.memberships).length > 1 && profile.currentMembership ? ` · ${profile.currentMembership.plan.name}` : "";
 
   return (
     <div className="space-y-6">
@@ -1735,8 +1822,6 @@ export default function MemberProfilePage() {
                   <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
                     {MEMBER_ROLE_LABELS[profile.role] ?? profile.role}
                   </span>
-                  {profile.currentMembership ? <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${PRIMARY_STATUS_COLORS[profile.currentMembership.primaryStatus]}`}>{PRIMARY_STATUS_LABELS[profile.currentMembership.primaryStatus]}</span> : <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-500">Sin membresía</span>}
-                  {extraMembershipsChip(profile.memberships) ? <span className="rounded-full bg-zinc-900 px-2.5 py-0.5 text-xs font-medium text-white">{extraMembershipsChip(profile.memberships)}</span> : null}
                   {badges.map((b) => (
                     <span key={b.label} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${b.color}`}>
                       {b.label}
@@ -1745,34 +1830,34 @@ export default function MemberProfilePage() {
                 </div>
               </div>
             </div>
-            <div className="mt-6 grid gap-x-6 gap-y-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-              <div><p className="text-xs uppercase tracking-wide text-zinc-400">{currentMembershipRows(profile.memberships).length > 1 ? "Membresías" : "Membresía actual"}</p>{currentMembershipRows(profile.memberships).length > 0 ? currentMembershipRows(profile.memberships).map((m) => <p key={m.subscriptionId} className="mt-1 text-sm font-semibold text-zinc-900">{m.plan.name}</p>) : <p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership?.plan.name ?? "Sin membresía"}</p>}</div>
-              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Uso</p>{currentMembershipRows(profile.memberships).length > 0 ? currentMembershipRows(profile.memberships).map((m) => <p key={m.subscriptionId} className="mt-1 text-sm font-semibold text-zinc-900">{currentMembershipRows(profile.memberships).length > 1 ? `${m.plan.name}: ` : ""}{membershipUsageLine(m)}</p>) : <p className="mt-1 text-sm font-semibold text-zinc-900">—</p>}</div>
-              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Vigencia</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profile.currentMembership ? `${studioDate(profile.currentMembership.currentPeriodStart)} → ${studioDate(profile.currentMembership.effectiveEnd)}` : "—"}</p><p className="text-xs text-zinc-500">{profileRenewal?.detail}</p></div>
-              <div><p className="text-xs uppercase tracking-wide text-zinc-400">Método de pago</p><p className="mt-1 text-sm font-semibold text-zinc-900">{paymentSourceLabel(profile.currentMembership?.source)}</p><p className="text-xs text-zinc-500">{profile.currentMembership ? `Renovación: ${renewalBehavior(profile.currentMembership)}` : null}</p></div>
+            <section className="mt-6 border-t border-zinc-100 pt-5">
+              <p className="text-xs uppercase tracking-wide text-zinc-400">{membershipCards.length > 1 ? `Membresías (${membershipCards.length})` : "Membresía"}</p>
+              <MembershipCards cards={membershipCards} fallbackName={profile.currentMembership?.plan.name ?? "Sin membresía"} onAction={setActiveTab} />
+            </section>
+            <div className="mt-5 grid gap-x-6 gap-y-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 lg:grid-cols-3">
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profileVisit.title}</p><p className="text-xs text-zinc-500">{profileVisit.detail}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Próxima clase</p><p className="mt-1 truncate text-sm font-semibold text-zinc-900">{profile.operations.nextBooking?.scheduledClass.classTemplate.name ?? "—"}</p><p className="text-xs text-zinc-500">{nextClassPresentation(profile.operations.nextBooking?.scheduledClass.startsAt)}</p></div>
-              <div className="flex flex-wrap items-end gap-2 xl:justify-end">{profileActions.map((action) => <button key={action.id} type="button" onClick={() => setActiveTab(action.id)} className={action.emphasis === "primary" ? "rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700" : "rounded-lg border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"}>{action.label}</button>)}</div>
+              <div className="flex flex-wrap items-end gap-2 lg:justify-end">{profileActions.map((action) => <button key={action.id} type="button" onClick={() => setActiveTab(action.id)} className={action.emphasis === "primary" ? "rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700" : "rounded-lg border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"}>{action.label}</button>)}</div>
             </div>
           </div>
 
           <WaiverStatusCard studioId={selectedStudioId} userId={userId!} />
 
           {/* ── KPI stats ── */}
-          {profile.operations.attentionItems.length > 0 ? (
+          {attentionItems.length > 0 ? (
             <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-amber-900">Atención requerida</h2>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{attentionItemTitle(item.code === "PAID_WITHOUT_ENTITLEMENT" ? "Pago sin acceso" : item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado", ["INACTIVE", "NO_SHOWS", "PAID_WITHOUT_ENTITLEMENT"].includes(item.code) ? null : profile.currentMembership?.plan.name ?? null, currentMembershipRows(profile.memberships).length)}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining && !profile.currentMembership.paidWithoutEntitlement ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
+                {attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{attentionItemTitle(item.code === "PAID_WITHOUT_ENTITLEMENT" ? "Pago sin acceso" : item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado", ["INACTIVE", "NO_SHOWS", "PAID_WITHOUT_ENTITLEMENT"].includes(item.code) ? null : profile.currentMembership?.plan.name ?? null, currentMembershipRows(profile.memberships).length)}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining && !profile.currentMembership.paidWithoutEntitlement ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
               </div>
             </section>
           ) : null}
 
           <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 shadow-sm lg:grid-cols-4">
-            <StatCard label={usageKpi?.label ?? "Uso"} value={usageKpi?.value ?? "—"} sub={usageKpi?.detail} />
+            <StatCard label={`${usageKpi?.label ?? "Uso"}${usageKpiPlan}`} value={usageKpi?.value ?? "—"} sub={usageKpi?.detail} />
             <StatCard label={profile.currentMembership?.plan.classCredits === null ? "Visitas totales" : "Visitas"} value={profile.currentMembership?.plan.classCredits === null ? profile.attendances.totalInStudio : profile.engagement.visitsCurrentPeriod} sub={profile.currentMembership?.plan.classCredits === null ? "histórico" : `${profile.attendances.totalInStudio} total`} />
             <StatCard label="Asistencia · 30 días" value={profile.operations.attendanceRate == null ? "—" : `${profile.operations.attendanceRate}%`} sub={`${profile.operations.recentNoShows} no-show${profile.operations.recentNoShows === 1 ? "" : "s"}`} />
-            <StatCard label="Pagos" value={billingState} sub={profile.operations.lastPayment ? `Último pago ${fmtMoney(profile.operations.lastPayment.amountCents, profile.operations.lastPayment.currency)}` : "Sin pago registrado"} />
+            <StatCard label="Pagos" value={paymentsSummary?.value ?? billingState} sub={paymentsSummary?.sub ?? "Sin pago registrado"} />
           </div>
 
           {/* ── Tabs ── */}
@@ -1816,9 +1901,9 @@ export default function MemberProfilePage() {
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-zinc-900">Facturación</h2>
-                  <p className="mt-3 text-lg font-semibold text-zinc-900">{billingState}</p>
-                  <p className="text-sm text-zinc-500">{paymentSourceLabel(profile.currentMembership?.source)}</p>
-                  {profile.operations.lastPayment ? <p className="mt-3 text-sm text-zinc-700">Último pago: {fmtMoney(profile.operations.lastPayment.amountCents, profile.operations.lastPayment.currency)} · {fmtDate(profile.operations.lastPayment.paidAt ?? profile.operations.lastPayment.createdAt)}</p> : <p className="mt-3 text-sm text-zinc-500">Sin pagos registrados.</p>}
+                  <p className="mt-3 text-lg font-semibold text-zinc-900">{paymentsSummary?.value ?? billingState}</p>
+                  <p className="text-sm text-zinc-500">{paymentsSummary && paymentsSummary.value !== "Al corriente" && paymentsSummary.value !== "No aplica" ? paymentsSummary.sub : paymentSourceLabel(profile.currentMembership?.source)}</p>
+                  {profile.operations.lastPayment ? <p className="mt-3 text-sm text-zinc-700">{lastPaymentLine(profile.operations.lastPayment)} · {fmtDate(profile.operations.lastPayment.paidAt ?? profile.operations.lastPayment.createdAt)}</p> : <p className="mt-3 text-sm text-zinc-500">Sin pagos registrados.</p>}
                   <button type="button" onClick={() => setActiveTab("billing")} className="mt-3 text-xs font-semibold text-zinc-900 underline">Ver historial</button>
                 </section>
                 <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
@@ -1907,7 +1992,7 @@ export default function MemberProfilePage() {
             {activeTab === "bookings" && <BookingsTab studioId={selectedStudioId} userId={userId} studioRole={studioRole} />}
             {activeTab === "attendance" && <AttendanceTab studioId={selectedStudioId} userId={userId} studioRole={studioRole} profile={profile} />}
             {activeTab === "timeline" && <TimelineTab studioId={selectedStudioId} userId={userId} />}
-            {activeTab === "billing" && <BillingTab studioId={selectedStudioId} userId={userId} profile={profile} />}
+            {activeTab === "billing" && <BillingTab studioId={selectedStudioId} userId={userId} profile={profile} paymentsSummary={paymentsSummary} primaryCard={primaryCard} />}
             {activeTab === "notes" && <NotesTab studioId={selectedStudioId} userId={userId} readOnly={studioRole === "FRONT_DESK"} canAddOperationalNote={studioRole === "OWNER" || studioRole === "ADMIN" || studioRole === "FRONT_DESK"} />}
           </div>
         </>

@@ -2,6 +2,23 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 
+/** Read-only view of a failed invoice and its newest payment attempt (no PII, no card data). */
+export type InvoicePaymentFailureSnapshot = {
+  invoiceStatus: string | null;
+  billingReason: string | null;
+  attemptCount: number | null;
+  nextPaymentAttemptAt: Date | null;
+  amountRemaining: number | null;
+  paymentIntentStatus: string | null;
+  errorType: string | null;
+  errorCode: string | null;
+  declineCode: string | null;
+  outcomeType: string | null;
+  outcomeReason: string | null;
+  lastAttemptAt: Date | null;
+  hasPaymentMethod: boolean | null;
+};
+
 @Injectable()
 export class StripeService {
   private client: Stripe | null = null;
@@ -91,6 +108,46 @@ export class StripeService {
       if (id) ids.add(id);
     }
     return ids.size === 1 ? [...ids][0] : null;
+  }
+
+  /**
+   * READ-ONLY. Collection state of an invoice and the error of its most recent payment attempt,
+   * for staff-facing explanations ("why did this renewal fail?"). Dahlia webhook payloads carry
+   * no decline data, so this is the only source of it. Three GETs, short timeout, no retries:
+   * callers treat any failure as "reason unavailable".
+   */
+  async getInvoicePaymentFailureSnapshot(invoiceId: string): Promise<InvoicePaymentFailureSnapshot> {
+    const client = this.getClient();
+    const options = { timeout: 2_500, maxNetworkRetries: 0 };
+    const [invoice, payments] = await Promise.all([
+      client.invoices.retrieve(invoiceId, {}, options),
+      client.invoicePayments.list({ invoice: invoiceId, limit: 10 }, options),
+    ]);
+    const newestAttempt = [...payments.data]
+      .filter((p) => p.payment.type === 'payment_intent')
+      .sort((a, b) => b.created - a.created)[0];
+    const ref = newestAttempt?.payment.payment_intent;
+    const paymentIntentId = typeof ref === 'string' ? ref : ref?.id;
+    const intent = paymentIntentId
+      ? await client.paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] }, options)
+      : null;
+    const charge = intent?.latest_charge && typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
+    const error = intent?.last_payment_error ?? null;
+    return {
+      invoiceStatus: invoice.status ?? null,
+      billingReason: invoice.billing_reason ?? null,
+      attemptCount: invoice.attempt_count ?? null,
+      nextPaymentAttemptAt: invoice.next_payment_attempt ? new Date(invoice.next_payment_attempt * 1000) : null,
+      amountRemaining: invoice.amount_remaining ?? null,
+      paymentIntentStatus: intent?.status ?? null,
+      errorType: error?.type ?? null,
+      errorCode: error?.code ?? null,
+      declineCode: error?.decline_code ?? null,
+      outcomeType: charge?.outcome?.type ?? null,
+      outcomeReason: charge?.outcome?.reason ?? null,
+      lastAttemptAt: charge ? new Date(charge.created * 1000) : null,
+      hasPaymentMethod: intent ? Boolean(intent.payment_method ?? error?.payment_method) : invoice.default_payment_method ? true : null,
+    };
   }
 
   async createProductForPlan(

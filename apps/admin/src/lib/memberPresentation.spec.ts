@@ -177,11 +177,20 @@ test("Member 360 uses Spanish navigation and hides raw provider status from memb
   assert.match(source, /renewalBehavior\(s\)/);
 });
 
-test("header keeps one lifecycle badge and does not append status to plan name", () => {
+test("header shows one card per membership with the API status, never a '+N membresía' chip", () => {
   const source = readFileSync(new URL("../app/members/[userId]/page.tsx", import.meta.url), "utf8");
+  const billing = readFileSync(new URL("./membershipBilling.ts", import.meta.url), "utf8");
+  assert.match(source, /buildMembershipCards\(\{ rows: membershipCardRows\(profile\)/);
+  assert.match(source, /<MembershipCards cards=\{membershipCards\}/);
+  assert.doesNotMatch(source, /extraMembershipsChip|membresía\$\{extra/);
+  // Card status comes from the API's operational status, not a client re-derivation.
+  assert.match(billing, /primaryStatus: m\.primaryStatus/);
+  // Empty state and per-plan alerts keep their wording; status is never glued to the plan name.
   assert.match(source, /currentMembership\?\.plan\.name \?\? "Sin membresía"/);
   assert.doesNotMatch(source, /plan\.name\} · \$\{PRIMARY_STATUS_LABELS/);
   assert.match(source, /Membresía vencida/);
+  // The attention list only drops what the primary membership's card explains.
+  assert.match(source, /pageAttentionItems\(profile, membershipCards\)/);
 });
 
 // ── 2026-10 Booty Lab incident: paid card renewal with no entitlement cycle ──────────

@@ -154,12 +154,6 @@ export function currentMembershipRows(memberships: readonly MembershipSummary[] 
 }
 
 /** Header chip text when the member holds more than one membership, else null. */
-export function extraMembershipsChip(memberships: readonly MembershipSummary[] | undefined): string | null {
-  const extra = currentMembershipRows(memberships).length - 1;
-  if (extra <= 0) return null;
-  return `+${extra} membresía${extra > 1 ? "s" : ""}`;
-}
-
 /** Compact "Uso" line for one membership (credits are never aggregated across rows). */
 export function membershipUsageLine(row: Pick<MembershipSummary, "plan" | "creditsUsed" | "creditsRemaining">): string {
   if (row.plan.classCredits === null) return "Ilimitado";

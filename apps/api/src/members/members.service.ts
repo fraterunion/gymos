@@ -40,8 +40,17 @@ import {
 } from '../billing/stripe-renewal-audit.utils';
 import {
   STRIPE_RENEWAL_AUDIT_ACTIONS,
+  STRIPE_TO_CASH_IMMEDIATE,
+  STRIPE_TO_CASH_PERIOD_END_SCHEDULED,
   type StripeRenewalSourceSurface,
 } from '../billing/stripe-renewal-audit.constants';
+import { MemberBillingStatusService, type MemberBillingContext } from './member-billing-status.service';
+import {
+  readCancellationFeedbackNear,
+  renewalAuditOrigin,
+  storedEventId,
+  storedEventTime,
+} from './membership-billing-status';
 import {
   currentlyEntitledSubscriptionWhere,
   deriveMembershipLifecycle,
@@ -88,6 +97,7 @@ export class MembersService {
     private readonly subscriptionLifecycle: SubscriptionLifecycleService,
     private readonly checkInsService: CheckInsService,
     private readonly stripeRenewalAudit: StripeRenewalAuditService,
+    private readonly memberBillingStatus: MemberBillingStatusService,
   ) {}
 
   // ── Simple list (legacy — kept for compatibility) ──────────────────────────
@@ -660,6 +670,8 @@ export class MembersService {
           source: s.source,
           accessState: lc.accessState,
           lifecycleStatus: lc.lifecycleStatus,
+          // Same operational status the currentMembership badge uses (a paid trial bridge is ACTIVE).
+          primaryStatus: toPrimaryMembershipStatus(lc.lifecycleStatus, { isEntitled: lc.isEntitled, hasCurrentPaidEntitlementCycle: s.entitlementCycles.length > 0 }),
           isEntitled: lc.isEntitled,
           currentPeriodStart: s.currentPeriodStart,
           currentPeriodEnd: s.currentPeriodEnd,
@@ -1405,6 +1417,13 @@ export class MembersService {
   async getMemberTimeline(studioId: string, userId: string) {
     await this.assertMembership(studioId, userId);
 
+    // Billing explanations (decline reasons, Stripe-side cancellations), loaded alongside the
+    // timeline queries. Best-effort: the timeline must render even when this fails.
+    const billingPromise: Promise<MemberBillingContext | null> = this.memberBillingStatus.loadBillingContext(studioId, userId).catch((err) => {
+      this.logger.warn({ event: 'member_timeline_billing_context_failed', studioId, userId, error: err instanceof Error ? err.message : String(err) });
+      return null;
+    });
+
     const [membership, bookings, attendances, subscriptions, payments, crmProfile, operationalNotes, entitlementCycles, waiverAcceptances, renewalAudits] =
       await Promise.all([
         this.prisma.studioMembership.findFirst({
@@ -1456,7 +1475,7 @@ export class MembersService {
           where: {
             studioId,
             targetUserId: userId,
-            action: { in: [...STRIPE_RENEWAL_AUDIT_ACTIONS] },
+            action: { in: [...STRIPE_RENEWAL_AUDIT_ACTIONS, STRIPE_TO_CASH_PERIOD_END_SCHEDULED, STRIPE_TO_CASH_IMMEDIATE] },
           },
           include: {
             actor: { select: { firstName: true, lastName: true } },
@@ -1476,6 +1495,9 @@ export class MembersService {
     };
 
     const events: TimelineEvent[] = [];
+
+    const billing = await billingPromise;
+    const planBySubscription = new Map(subscriptions.map((s) => [s.id, s.membershipPlan.name]));
 
     if (membership) {
       events.push({ type: 'MEMBER_CREATED', title: 'Joined the studio', occurredAt: membership.createdAt });
@@ -1507,7 +1529,21 @@ export class MembersService {
         const amount = `${p.currency.toUpperCase()} ${(p.amountCents / 100).toFixed(2)}`;
         events.push({ type: 'PAYMENT_SUCCEEDED', title: p.paymentMethod === 'CASH' ? 'Cash payment recorded' : 'Payment succeeded', description: `${amount}${p.membershipPlan ? ` · ${p.membershipPlan.name}` : ''}`, actor: p.recordedBy ? `${p.recordedBy.firstName} ${p.recordedBy.lastName}` : null, occurredAt: p.paidAt ?? p.createdAt });
       } else if (p.status === PaymentStatus.FAILED) {
-        events.push({ type: 'PAYMENT_FAILED', title: 'Payment failed', occurredAt: p.createdAt });
+        const amount = `${p.currency.toUpperCase()} ${(p.amountCents / 100).toFixed(2)}`;
+        events.push({
+          type: 'PAYMENT_FAILED',
+          title: 'Payment failed',
+          description: `${amount}${p.membershipPlan ? ` · ${p.membershipPlan.name}` : ''}`,
+          occurredAt: p.createdAt,
+          metadata: {
+            subscriptionId: p.subscriptionId,
+            planName: p.membershipPlan?.name ?? null,
+            amountCents: p.amountCents,
+            currency: p.currency,
+            stripeInvoiceId: p.stripeInvoiceId,
+            failure: billing?.failedPayments.find((f) => f.paymentId === p.id) ?? null,
+          },
+        });
       }
     }
 
@@ -1532,6 +1568,25 @@ export class MembersService {
       const actorName = audit.actor
         ? `${audit.actor.firstName} ${audit.actor.lastName}${roleSuffix}`
         : null;
+      const subscriptionId =
+        typeof md['subscriptionId'] === 'string' ? md['subscriptionId'] : typeof md['oldSubscriptionId'] === 'string' ? md['oldSubscriptionId'] : null;
+      const planName = (subscriptionId ? planBySubscription.get(subscriptionId) : undefined) ?? (typeof md['planName'] === 'string' ? md['planName'] : null);
+
+      if (audit.action === STRIPE_TO_CASH_IMMEDIATE || audit.action === STRIPE_TO_CASH_PERIOD_END_SCHEDULED) {
+        events.push({ type: audit.action, title: 'Payment method changed to cash', description: planName, actor: actorName, occurredAt: audit.createdAt, metadata: { ...md, planName, renewalOrigin: 'STRIPE_TO_CASH' } });
+        continue;
+      }
+
+      // Stripe reports the cancellation-survey answer in a separate update a moment later. Anchor
+      // on the Stripe event that caused this audit (webhooks can be processed late).
+      const stripeSubscriptionId = typeof md['stripeSubscriptionId'] === 'string' ? md['stripeSubscriptionId'] : null;
+      const sourceEvent = billing && typeof md['stripeEventId'] === 'string' ? billing.subscriptionEvents.find((e) => storedEventId(e) === md['stripeEventId']) : undefined;
+      const feedbackAnchor = sourceEvent ? storedEventTime(sourceEvent) : new Date(audit.createdAt.getTime() - 10 * 60_000);
+      const feedbackNear =
+        billing && stripeSubscriptionId && md['newCancelAtPeriodEnd'] === true
+          ? readCancellationFeedbackNear(billing.subscriptionEvents, stripeSubscriptionId, feedbackAnchor)
+          : null;
+      const recordedFeedback = typeof md['cancellationFeedback'] === 'string' && md['cancellationFeedback'] ? md['cancellationFeedback'] : null;
       const described = this.stripeRenewalAudit.describeTimelineEvent(
         audit.action,
         md,
@@ -1543,7 +1598,32 @@ export class MembersService {
         description: described.description,
         actor: described.actor,
         occurredAt: audit.createdAt,
-        metadata: md,
+        metadata: {
+          ...md,
+          planName,
+          renewalOrigin: renewalAuditOrigin(audit.action, md, feedbackNear),
+          cancellationFeedback: recordedFeedback ?? feedbackNear,
+        },
+      });
+    }
+
+    // Subscriptions Stripe itself ended: non-payment, a dispute, a scheduled end of period, the
+    // customer, or a GymOS payment-method change.
+    for (const ending of billing?.subscriptionEndings ?? []) {
+      events.push({
+        type: 'STRIPE_SUBSCRIPTION_ENDED',
+        title: 'Subscription ended in Stripe',
+        description: ending.planName,
+        occurredAt: ending.at,
+        metadata: {
+          subscriptionId: ending.subscriptionId,
+          planName: ending.planName,
+          cancellationReason: ending.cancellationReason,
+          cancellationFeedback: ending.feedback,
+          endOrigin: ending.origin,
+          scheduledBy: ending.scheduledBy,
+          failure: ending.failure,
+        },
       });
     }
 

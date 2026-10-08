@@ -27,6 +27,7 @@ import { StaffBookingDto } from './dto/staff-booking.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { UpdateSubscriptionStatusDto } from './dto/update-subscription-status.dto';
 import { UpsertMemberCrmProfileDto } from './dto/upsert-member-crm-profile.dto';
+import { MemberBillingStatusService } from './member-billing-status.service';
 import { MembersService } from './members.service';
 import { MemberOperationalNotesService } from './member-operational-notes.service';
 import { ProgressService } from './progress.service';
@@ -55,6 +56,7 @@ export class MembersController {
     private readonly operationalNotesService: MemberOperationalNotesService,
     private readonly progressService: ProgressService,
     private readonly subscriptionLifecycle: SubscriptionLifecycleService,
+    private readonly memberBillingStatus: MemberBillingStatusService,
   ) {}
 
   // ── Directory ──────────────────────────────────────────────────────────────
@@ -327,6 +329,20 @@ export class MembersController {
       studioId,
       targetPlanId: planId,
     });
+  }
+
+  /**
+   * Staff-only billing explanation per membership (why a payment is pending or failed, who
+   * switched renewal off). Never part of the member-facing profile: it carries decline codes.
+   */
+  @Get(':userId/billing-status')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN, Role.STAFF, Role.FRONT_DESK)
+  getMemberBillingStatus(
+    @Param('studioId') studioId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.memberBillingStatus.getMemberBillingStatus(studioId, userId);
   }
 
   // ── Timeline ──────────────────────────────────────────────────────────────
