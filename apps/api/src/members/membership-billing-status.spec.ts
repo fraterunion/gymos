@@ -38,11 +38,11 @@ function local(overrides: Partial<LocalMembershipFacts> = {}): LocalMembershipFa
     source: 'STRIPE',
     status: 'ACTIVE',
     cancelAtPeriodEnd: false,
-    currentPeriodEnd: new Date('2026-10-26T15:01:45.000Z'),
+    currentPeriodEnd: new Date('2026-10-26T15:00:00.000Z'),
     endReason: null,
     isEntitled: true,
     lifecycleStatus: 'ACTIVE',
-    effectiveEnd: new Date('2026-10-26T15:01:45.000Z'),
+    effectiveEnd: new Date('2026-10-26T15:00:00.000Z'),
     fixedTerm: false,
     paidWithoutEntitlement: false,
     ...overrides,
@@ -58,7 +58,7 @@ function liveFailure(overrides: Partial<LiveInvoiceFailure> = {}): LiveInvoiceFa
     invoiceStatus: 'open',
     billingReason: 'subscription_cycle',
     attemptCount: 7,
-    nextPaymentAttemptAt: new Date('2026-10-09T21:03:57.000Z'),
+    nextPaymentAttemptAt: new Date('2026-10-09T21:00:00.000Z'),
     amountRemaining: 60000,
     paymentIntentStatus: 'requires_payment_method',
     errorType: 'card_error',
@@ -66,7 +66,7 @@ function liveFailure(overrides: Partial<LiveInvoiceFailure> = {}): LiveInvoiceFa
     declineCode: 'do_not_honor',
     outcomeType: 'issuer_declined',
     outcomeReason: 'do_not_honor',
-    lastAttemptAt: new Date('2026-10-08T06:03:56.000Z'),
+    lastAttemptAt: new Date('2026-10-08T06:00:00.000Z'),
     hasPaymentMethod: true,
     ...overrides,
   };
@@ -78,8 +78,8 @@ function failed(overrides: Partial<FailedInvoiceFacts> = {}): FailedInvoiceFacts
     invoiceId: 'in_pro_renewal',
     amountCents: 60000,
     currency: 'mxn',
-    firstFailedAt: new Date('2026-09-26T16:03:50.386Z'),
-    stored: { attemptCount: 7, nextAttemptAt: new Date('2026-10-09T21:03:57.000Z'), invoiceStatus: 'open', billingReason: 'subscription_cycle', at: new Date('2026-10-08T06:04:03.000Z') },
+    firstFailedAt: new Date('2026-09-26T16:00:00.000Z'),
+    stored: { attemptCount: 7, nextAttemptAt: new Date('2026-10-09T21:00:00.000Z'), invoiceStatus: 'open', billingReason: 'subscription_cycle', at: new Date('2026-10-08T06:00:07.000Z') },
     live: liveFailure(),
     liveLookup: 'ok',
     ...overrides,
@@ -101,7 +101,7 @@ function renewalFlipEvent(opts: { subId: string; created: number; disabled: bool
         object: 'subscription',
         status: opts.status ?? 'past_due',
         cancel_at_period_end: opts.disabled,
-        cancel_at: opts.disabled ? 1792940505 : null,
+        cancel_at: opts.disabled ? 1793026800 : null,
         canceled_at: opts.disabled ? opts.created - 1 : null,
         ended_at: null,
         cancellation_details: { reason: opts.disabled ? 'cancellation_requested' : null, feedback: opts.feedback ?? null, comment: null },
@@ -139,13 +139,13 @@ function deletedEvent(opts: { subId: string; endedAt: string; canceledAt: string
 
 describe('classifyPaymentFailure — Stripe decline data to a canonical reason', () => {
   it.each([
-    ['issuer do_not_honor (production: card renewal)', liveFailure(), 'CARD_DECLINED', 'do_not_honor'],
-    ['insufficient funds (production)', liveFailure({ declineCode: 'insufficient_funds', outcomeReason: 'insufficient_funds' }), 'INSUFFICIENT_FUNDS', 'insufficient_funds'],
+    ['issuer do_not_honor', liveFailure(), 'CARD_DECLINED', 'do_not_honor'],
+    ['insufficient funds', liveFailure({ declineCode: 'insufficient_funds', outcomeReason: 'insufficient_funds' }), 'INSUFFICIENT_FUNDS', 'insufficient_funds'],
     ['expired card', liveFailure({ declineCode: null, errorCode: 'expired_card' }), 'EXPIRED_CARD', 'expired_card'],
     ['incorrect CVC', liveFailure({ declineCode: null, errorCode: 'incorrect_cvc' }), 'INCORRECT_CVC', 'incorrect_cvc'],
     ['authentication required decline', liveFailure({ declineCode: 'authentication_required' }), 'AUTHENTICATION_REQUIRED', 'authentication_required'],
     ['intent waiting for 3D Secure', liveFailure({ paymentIntentStatus: 'requires_action', errorType: null, errorCode: null, declineCode: null, outcomeType: null }), 'AUTHENTICATION_REQUIRED', null],
-    ['Stripe Radar block (production: generic_decline + highest_risk_level)', liveFailure({ declineCode: 'generic_decline', outcomeType: 'blocked', outcomeReason: 'highest_risk_level' }), 'BLOCKED_BY_STRIPE', null],
+    ['Stripe Radar block (generic_decline + highest_risk_level)', liveFailure({ declineCode: 'generic_decline', outcomeType: 'blocked', outcomeReason: 'highest_risk_level' }), 'BLOCKED_BY_STRIPE', null],
     ['processing error', liveFailure({ declineCode: 'processing_error' }), 'PROCESSING_ERROR', 'processing_error'],
     ['card not supported', liveFailure({ declineCode: 'card_not_supported' }), 'CARD_NOT_SUPPORTED', 'card_not_supported'],
   ])('%s', (_label, live, reason, code) => {
@@ -198,11 +198,11 @@ describe('stored webhook payload readers (real dahlia payloads)', () => {
 
   it('finds the renewal switch-off and the survey answer Stripe sends one second later', () => {
     const events = [
-      renewalFlipEvent({ subId: 'sub_pro', created: 1790547279, disabled: true }),
-      renewalFlipEvent({ subId: 'sub_pro', created: 1790547280, disabled: true, feedback: 'unused', previousOnlyFeedback: true }),
+      renewalFlipEvent({ subId: 'sub_pro', created: 1790546401, disabled: true }),
+      renewalFlipEvent({ subId: 'sub_pro', created: 1790546402, disabled: true, feedback: 'unused', previousOnlyFeedback: true }),
     ];
     const flip = readStripeRenewalFlip(events, 'sub_pro');
-    expect(flip).toEqual({ disabled: true, at: new Date(1790547279 * 1000), requestId: null, idempotencyKey: null });
+    expect(flip).toEqual({ disabled: true, at: new Date(1790546401 * 1000), requestId: null, idempotencyKey: null });
     expect(readCancellationFeedbackNear(events, 'sub_pro', flip!.at)).toBe('unused');
   });
 
@@ -215,7 +215,7 @@ describe('stored webhook payload readers (real dahlia payloads)', () => {
 });
 
 describe('resolveRenewalChange — who switched auto-renewal off', () => {
-  const at = new Date('2026-09-27T22:14:39.000Z');
+  const at = new Date('2026-09-27T22:00:01.000Z');
 
   it('customer portal: no API request and a survey answer', () => {
     expect(resolveRenewalChange({ flip: { disabled: true, at, requestId: null, idempotencyKey: null }, feedback: 'unused', audits: [] }))
@@ -277,9 +277,9 @@ describe('readStripeSubscriptionEndings — why and by whom a subscription ended
 
   it('an end of period after the customer switched renewal off in the portal (old survey answer still on the object)', () => {
     const subId = 'sub_portal_end';
-    const flip = renewalFlipEvent({ subId, created: unix('2026-10-02T18:30:23Z'), disabled: true, status: 'active' });
-    const survey = renewalFlipEvent({ subId, created: unix('2026-10-02T18:30:24Z'), disabled: true, feedback: 'unused', previousOnlyFeedback: true, status: 'active' });
-    const end = deletedEvent({ subId, endedAt: '2026-11-16T17:24:56Z', canceledAt: '2026-10-02T18:30:23Z', cancelAtPeriodEnd: true, reason: 'cancellation_requested', feedback: 'unused' });
+    const flip = renewalFlipEvent({ subId, created: unix('2026-10-02T18:00:00Z'), disabled: true, status: 'active' });
+    const survey = renewalFlipEvent({ subId, created: unix('2026-10-02T18:00:01Z'), disabled: true, feedback: 'unused', previousOnlyFeedback: true, status: 'active' });
+    const end = deletedEvent({ subId, endedAt: '2026-11-16T17:24:56Z', canceledAt: '2026-10-02T18:00:00Z', cancelAtPeriodEnd: true, reason: 'cancellation_requested', feedback: 'unused' });
     expect(readStripeSubscriptionEndings([flip, survey, end])[0]).toMatchObject({ origin: 'PERIOD_END', scheduledBy: 'CUSTOMER_PORTAL', feedback: 'unused' });
   });
 
@@ -291,7 +291,7 @@ describe('readStripeSubscriptionEndings — why and by whom a subscription ended
   });
 
   it('immediate cancellations: GymOS payment-method change, Dashboard/API, portal, dispute, incomplete first payment', () => {
-    const at = '2026-10-01T14:39:40Z';
+    const at = '2026-10-01T14:00:00Z';
     const make = (o: Partial<Parameters<typeof deletedEvent>[0]>) => readStripeSubscriptionEndings([deletedEvent({ subId: 's', endedAt: at, canceledAt: at, cancelAtPeriodEnd: false, reason: 'cancellation_requested', ...o })])[0];
     expect(make({ requestId: 'req_1', idempotencyKey: 'gymos_stripe_to_cash_s_cancel_immediate' }).origin).toBe('STRIPE_TO_CASH');
     expect(make({ requestId: 'req_2', idempotencyKey: 'dash' }).origin).toBe('STRIPE_API');
@@ -305,14 +305,14 @@ describe('readStripeSubscriptionEndings — why and by whom a subscription ended
 describe('explainMembershipBilling — canonical state per membership', () => {
   it('1. one active card membership that renews automatically', () => {
     const r = explainMembershipBilling({ local: local(), stripe: null, renewalChange: null, failure: null, now: NOW });
-    expect(r).toMatchObject({ state: 'AUTO_RENEW_OK', severity: 'ok', action: null, renewal: { mode: 'AUTOMATIC', nextChargeAt: '2026-10-26T15:01:45.000Z' } });
+    expect(r).toMatchObject({ state: 'AUTO_RENEW_OK', severity: 'ok', action: null, renewal: { mode: 'AUTOMATIC', nextChargeAt: '2026-10-26T15:00:00.000Z' } });
   });
 
-  it('4. cancel_at_period_end: still active, will not be charged again, origin explained (production: renewal off in the portal)', () => {
-    const change = { disabled: true, at: new Date('2026-10-02T18:30:23.000Z'), origin: 'CUSTOMER_PORTAL' as const, actorName: null, feedback: 'unused', certainty: 'inferred' as const };
+  it('4. cancel_at_period_end: still active, will not be charged again, origin explained (renewal off in the portal)', () => {
+    const change = { disabled: true, at: new Date('2026-10-02T18:00:00.000Z'), origin: 'CUSTOMER_PORTAL' as const, actorName: null, feedback: 'unused', certainty: 'inferred' as const };
     const r = explainMembershipBilling({
       local: local({ planName: 'Booty Lab by Etzia', cancelAtPeriodEnd: true, lifecycleStatus: 'ENDING', fixedTerm: true, effectiveEnd: new Date('2026-11-16T17:24:56.000Z') }),
-      stripe: stripeFacts({ cancelAtPeriodEnd: true, cancelAt: new Date('2026-11-16T17:24:56.000Z'), canceledAt: new Date('2026-10-02T18:30:23.000Z'), cancellationReason: 'cancellation_requested', cancellationFeedback: 'unused' }),
+      stripe: stripeFacts({ cancelAtPeriodEnd: true, cancelAt: new Date('2026-11-16T17:24:56.000Z'), canceledAt: new Date('2026-10-02T18:00:00.000Z'), cancellationReason: 'cancellation_requested', cancellationFeedback: 'unused' }),
       renewalChange: change,
       failure: null,
       now: NOW,
@@ -320,11 +320,11 @@ describe('explainMembershipBilling — canonical state per membership', () => {
     expect(r).toMatchObject({ state: 'RENEWAL_DISABLED', severity: 'info', action: null, effectiveEnd: '2026-11-16T17:24:56.000Z', renewal: { mode: 'DISABLED', endsAt: '2026-11-16T17:24:56.000Z', nextChargeAt: null, change: { origin: 'CUSTOMER_PORTAL', feedback: 'unused' } } });
   });
 
-  it('5. failed renewal, card declined, Stripe retrying, renewal later switched off (production case)', () => {
+  it('5. failed renewal, card declined, Stripe retrying, renewal later switched off', () => {
     const r = explainMembershipBilling({
       local: pastDue({ cancelAtPeriodEnd: true }),
-      stripe: stripeFacts({ status: 'past_due', cancelAtPeriodEnd: true, cancelAt: new Date('2026-10-26T15:01:45.000Z'), canceledAt: new Date('2026-09-27T22:14:38.000Z'), cancellationReason: 'cancellation_requested', cancellationFeedback: 'unused' }),
-      renewalChange: { disabled: true, at: new Date('2026-09-27T22:14:39.000Z'), origin: 'CUSTOMER_PORTAL', actorName: null, feedback: 'unused', certainty: 'inferred' },
+      stripe: stripeFacts({ status: 'past_due', cancelAtPeriodEnd: true, cancelAt: new Date('2026-10-26T15:00:00.000Z'), canceledAt: new Date('2026-09-27T22:00:00.000Z'), cancellationReason: 'cancellation_requested', cancellationFeedback: 'unused' }),
+      renewalChange: { disabled: true, at: new Date('2026-09-27T22:00:01.000Z'), origin: 'CUSTOMER_PORTAL', actorName: null, feedback: 'unused', certainty: 'inferred' },
       failure: failed(),
       now: NOW,
     });
@@ -334,8 +334,8 @@ describe('explainMembershipBilling — canonical state per membership', () => {
       certainty: 'confirmed',
       action: 'UPDATE_PAYMENT_METHOD',
       isEntitled: false,
-      renewal: { mode: 'DISABLED', endsAt: '2026-10-26T15:01:45.000Z' },
-      paymentFailure: { reason: 'CARD_DECLINED', code: 'do_not_honor', attemptCount: 7, nextAttemptAt: '2026-10-09T21:03:57.000Z', firstFailedAt: '2026-09-26T16:03:50.386Z', billingReason: 'subscription_cycle', detailSource: 'stripe_live' },
+      renewal: { mode: 'DISABLED', endsAt: '2026-10-26T15:00:00.000Z' },
+      paymentFailure: { reason: 'CARD_DECLINED', code: 'do_not_honor', attemptCount: 7, nextAttemptAt: '2026-10-09T21:00:00.000Z', firstFailedAt: '2026-09-26T16:00:00.000Z', billingReason: 'subscription_cycle', detailSource: 'stripe_live' },
       statusMismatch: null,
     });
   });
@@ -392,14 +392,14 @@ describe('explainMembershipBilling — canonical state per membership', () => {
     expect(explainMembershipBilling({ local: { ...cash, status: 'PAUSED', isEntitled: false, lifecycleStatus: 'PAUSED' }, stripe: null, renewalChange: null, failure: null, now: NOW }).state).toBe('PAUSED');
   });
 
-  it('8. mixed states on one member are explained separately (production: card Pro failed + cash Booty Lab expired)', () => {
+  it('8. mixed states on one member are explained separately (card Pro failed + cash Booty Lab expired)', () => {
     const pro = explainMembershipBilling({ local: pastDue({ cancelAtPeriodEnd: true }), stripe: null, renewalChange: null, failure: failed(), now: NOW });
     const booty = explainMembershipBilling({ local: local({ subscriptionId: 'sub_local_booty', planName: 'Booty Lab by Etzia', source: 'CASH', cancelAtPeriodEnd: true, isEntitled: false, lifecycleStatus: 'EXPIRED', effectiveEnd: new Date('2026-10-02T18:00:00.000Z') }), stripe: null, renewalChange: null, failure: null, now: NOW });
     expect([pro.planName, pro.state, pro.action]).toEqual(['Pro', 'PAYMENT_FAILED_RETRYING', 'UPDATE_PAYMENT_METHOD']);
     expect([booty.planName, booty.state, booty.action, booty.paymentFailure]).toEqual(['Booty Lab by Etzia', 'MANUAL_EXPIRED', 'RENEW_MANUALLY', null]);
   });
 
-  it('Stripe cancelled for non-payment while GymOS still says PAST_DUE (production race, real payloads)', () => {
+  it('Stripe cancelled for non-payment while GymOS still says PAST_DUE (pre-fix race, sanitized fixtures)', () => {
     const events = [stored('dahlia-subscription-deleted-payment-failed'), stored('dahlia-invoice-payment-failed-after-delete')];
     const r = explainMembershipBilling({
       local: pastDue({ planName: 'Full Access', endReason: 'MEMBER_CANCELLED' }),
@@ -477,6 +477,11 @@ describe('explainMembershipBilling — canonical state per membership', () => {
   it('a cancellation scheduled with cancel_at (not cancel_at_period_end) still counts as renewal off', () => {
     const r = explainMembershipBilling({ local: local(), stripe: stripeFacts({ cancelAt: new Date('2026-10-20T00:00:00.000Z'), cancellationReason: 'cancellation_requested' }), renewalChange: null, failure: null, now: NOW });
     expect(r).toMatchObject({ state: 'RENEWAL_DISABLED', renewal: { endsAt: '2026-10-20T00:00:00.000Z' } });
+  });
+
+  it('unknown payment status: a card row GymOS cannot place is reported as unknown, never as paid or failed', () => {
+    const r = explainMembershipBilling({ local: local({ isEntitled: false, lifecycleStatus: 'ACTIVE', effectiveEnd: null, currentPeriodEnd: null }), stripe: null, renewalChange: null, failure: null, now: NOW });
+    expect(r).toMatchObject({ state: 'UNKNOWN', severity: 'info', certainty: 'inferred', paymentFailure: null, action: null });
   });
 
   it('scheduled successor', () => {

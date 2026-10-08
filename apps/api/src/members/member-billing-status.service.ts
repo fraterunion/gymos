@@ -136,7 +136,7 @@ export class MemberBillingStatusService {
     const failedRows = payments.filter((p) => p.status === PaymentStatus.FAILED && p.stripeInvoiceId);
 
     // Live lookups for the newest failures (bounded); runs alongside the stored-event reads.
-    const livePromise = this.lookupLive(failedRows.slice(0, MAX_LIVE_LOOKUPS).map((p) => p.stripeInvoiceId as string));
+    const livePromise = this.lookupLive(`${studioId}:${userId}`, failedRows.slice(0, MAX_LIVE_LOOKUPS).map((p) => p.stripeInvoiceId as string));
     const [subscriptionEvents, invoiceEvents, paidWithoutEntitlement, liveResults] = await Promise.all([
       this.loadStoredEvents('customer.subscription.', [...stripeSubscriptionIds.values()]),
       this.loadStoredEvents('invoice.payment_failed', failedRows.map((p) => p.stripeInvoiceId as string)),
@@ -274,21 +274,26 @@ export class MemberBillingStatusService {
     return rows.map((r) => ({ eventType: r.eventType, createdAt: r.createdAt, payload: r.payload }));
   }
 
-  private async lookupLive(invoiceIds: readonly string[]): Promise<Map<string, LiveLookupResult>> {
+  /**
+   * `scope` is "studioId:userId". Invoice ids reach this method only from the member's own
+   * studio-scoped rows, and cache entries are keyed by that scope too, so an entry can never be
+   * served to another studio or member (defence in depth: invoice ids are also globally unique).
+   */
+  private async lookupLive(scope: string, invoiceIds: readonly string[]): Promise<Map<string, LiveLookupResult>> {
     const results = new Map<string, LiveLookupResult>();
     await Promise.all(
       [...new Set(invoiceIds)].map(async (invoiceId) => {
-        results.set(invoiceId, await this.lookupOne(invoiceId));
+        results.set(invoiceId, await this.lookupOne(`${scope}:${invoiceId}`, invoiceId));
       }),
     );
     return results;
   }
 
   /** Cached, de-duplicated (concurrent requests share one Stripe call), deadline-bounded lookup. */
-  private lookupOne(invoiceId: string): Promise<LiveLookupResult> {
-    const cached = this.liveCache.get(invoiceId);
+  private lookupOne(cacheKey: string, invoiceId: string): Promise<LiveLookupResult> {
+    const cached = this.liveCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.result);
-    const pending = this.inFlight.get(invoiceId);
+    const pending = this.inFlight.get(cacheKey);
     if (pending) return pending;
 
     const run = (async (): Promise<LiveLookupResult> => {
@@ -312,11 +317,11 @@ export class MemberBillingStatusService {
         const oldest = this.liveCache.keys().next().value;
         if (oldest !== undefined) this.liveCache.delete(oldest);
       }
-      this.liveCache.set(invoiceId, { expiresAt: Date.now() + (result.ok ? LIVE_CACHE_TTL_MS : LIVE_CACHE_ERROR_TTL_MS), result });
+      this.liveCache.set(cacheKey, { expiresAt: Date.now() + (result.ok ? LIVE_CACHE_TTL_MS : LIVE_CACHE_ERROR_TTL_MS), result });
       return result;
     })();
-    this.inFlight.set(invoiceId, run);
-    void run.finally(() => this.inFlight.delete(invoiceId));
+    this.inFlight.set(cacheKey, run);
+    void run.finally(() => this.inFlight.delete(cacheKey));
     return run;
   }
 }

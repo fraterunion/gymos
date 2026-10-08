@@ -39,8 +39,8 @@ Sources, in order of authority:
    subscription they stopped.
 4. Live, read-only Stripe lookup (`invoices.retrieve`, `invoicePayments.list`,
    `paymentIntents.retrieve`) for failed invoices: decline code, outcome, invoice status. Bounded:
-   5 lookups per request, 2.5 s per call, no retries, 4 s deadline, 2 min cache (30 s for errors),
-   concurrent requests share one call. On failure the reason is reported as unknown, never guessed.
+   5 lookups per request, 2.5 s per call, no retries, 4 s deadline, 2 min cache (30 s for errors)
+   keyed by studio + member + invoice, concurrent requests share one call. On failure the reason is reported as unknown, never guessed.
 
 A failure is current while Stripe shows its invoice open (a later paid invoice does not resolve
 it); without Stripe data, a later paid or refunded payment on the subscription does.

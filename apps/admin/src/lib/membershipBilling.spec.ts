@@ -30,10 +30,10 @@ function failure(overrides: Partial<PaymentFailureView> = {}): PaymentFailureVie
     invoiceId: "in_pro_renewal",
     amountCents: 60000,
     currency: "mxn",
-    firstFailedAt: "2026-09-26T16:03:50.386Z",
-    lastAttemptAt: "2026-10-08T06:03:56.000Z",
+    firstFailedAt: "2026-09-26T16:00:00.000Z",
+    lastAttemptAt: "2026-10-08T06:00:00.000Z",
     attemptCount: 7,
-    nextAttemptAt: "2026-10-09T21:03:57.000Z",
+    nextAttemptAt: "2026-10-09T21:00:00.000Z",
     invoiceStatus: "open",
     billingReason: "subscription_cycle",
     reason: "CARD_DECLINED",
@@ -54,8 +54,8 @@ function status(overrides: Partial<MembershipBillingStatus> = {}): MembershipBil
     certainty: "confirmed",
     isEntitled: true,
     lifecycleStatus: "ACTIVE",
-    effectiveEnd: "2026-10-26T15:01:45.000Z",
-    renewal: { mode: "AUTOMATIC", endsAt: "2026-10-26T15:01:45.000Z", nextChargeAt: "2026-10-26T15:01:45.000Z", change: null },
+    effectiveEnd: "2026-10-26T15:00:00.000Z",
+    renewal: { mode: "AUTOMATIC", endsAt: "2026-10-26T15:00:00.000Z", nextChargeAt: "2026-10-26T15:00:00.000Z", change: null },
     paymentFailure: null,
     stripe: null,
     statusMismatch: null,
@@ -64,17 +64,17 @@ function status(overrides: Partial<MembershipBillingStatus> = {}): MembershipBil
   };
 }
 
-const PORTAL_OFF = { disabled: true, at: "2026-09-27T22:14:39.000Z", origin: "CUSTOMER_PORTAL" as const, actorName: null, feedback: "unused", certainty: "inferred" as const };
+const PORTAL_OFF = { disabled: true, at: "2026-09-27T22:00:01.000Z", origin: "CUSTOMER_PORTAL" as const, actorName: null, feedback: "unused", certainty: "inferred" as const };
 
-/** Production shape of the motivating case (2026-10-08): card Pro declined, renewal later switched off in the portal; cash Booty Lab expired. */
+/** Example member: card Pro renewal declined, renewal later switched off in the portal; cash Booty Lab expired (synthetic times). */
 const PRO_FAILED = status({
   state: "PAYMENT_FAILED_RETRYING",
   severity: "critical",
   isEntitled: false,
   lifecycleStatus: "PAST_DUE",
-  renewal: { mode: "DISABLED", endsAt: "2026-10-26T15:01:45.000Z", nextChargeAt: null, change: PORTAL_OFF },
+  renewal: { mode: "DISABLED", endsAt: "2026-10-26T15:00:00.000Z", nextChargeAt: null, change: PORTAL_OFF },
   paymentFailure: failure(),
-  stripe: { status: "past_due", cancellationReason: "cancellation_requested", canceledAt: "2026-09-27T22:14:38.000Z", endedAt: null, cancelAt: "2026-10-26T15:01:45.000Z", observedAt: "2026-09-27T22:14:40.000Z" },
+  stripe: { status: "past_due", cancellationReason: "cancellation_requested", canceledAt: "2026-09-27T22:00:00.000Z", endedAt: null, cancelAt: "2026-10-26T15:00:00.000Z", observedAt: "2026-09-27T22:00:02.000Z" },
   action: "UPDATE_PAYMENT_METHOD",
 });
 const BOOTY_CASH_EXPIRED = status({
@@ -99,8 +99,8 @@ function row(overrides: Partial<MembershipCardInput> = {}): MembershipCardInput 
     lifecycleStatus: "ACTIVE",
     primaryStatus: "ACTIVE",
     isEntitled: true,
-    currentPeriodStart: "2026-09-26T15:01:45.000Z",
-    effectiveEnd: "2026-10-26T15:01:45.000Z",
+    currentPeriodStart: "2026-09-26T15:00:00.000Z",
+    effectiveEnd: "2026-10-26T15:00:00.000Z",
     cancelAtPeriodEnd: false,
     classCredits: null,
     creditsUsed: null,
@@ -150,7 +150,7 @@ test("2/3/8/9. card + cash memberships get one explicit card each, worst first �
     { label: "Método de pago", value: "Efectivo / transferencia" },
   ]);
   assert.deepEqual(booty.explanation, ["Esta membresía se paga en recepción y venció el 2 oct. Requiere renovación manual."]);
-  assert.deepEqual(booty.action, { label: "Ir a Ventas", detail: "Si el cliente quiere continuar, registra la renovación en Ventas.", href: "/sales" });
+  assert.deepEqual(booty.action, { label: "Ir a Ventas", detail: "Si el miembro quiere continuar, registra la renovación en Ventas.", href: "/sales" });
 });
 
 test("5. card decline: what was charged, why, retries, the renewal switch-off and the access consequence", () => {
@@ -160,11 +160,11 @@ test("5. card decline: what was charged, why, retries, the renewal switch-off an
     "Stripe intentó cobrar la renovación de Pro ($600.00 MXN), pero el banco emisor rechazó la tarjeta (código do_not_honor).",
     "7 intentos fallidos desde el 26 sep; el último, el 8 oct.",
     "Stripe volverá a intentarlo el 9 oct.",
-    "La renovación automática de Pro se desactivó desde el portal de clientes de Stripe el 27 sep (el cliente respondió: «no la usa lo suficiente»). Aunque se recupere este pago, la membresía termina el 26 oct.",
+    "La renovación automática de Pro se desactivó desde el portal de pagos de Stripe el 27 sep (el miembro respondió: «no la usa lo suficiente»). Aunque se recupere este pago, la membresía termina el 26 oct.",
     "Sin acceso a Pro mientras el pago esté pendiente.",
   ]);
   assert.equal(copy.caution, DOUBLE_CHARGE);
-  assert.deepEqual(copy.action, { label: "Ver facturación", detail: "Pide al cliente que actualice su tarjeta desde la app (portal de pagos de Stripe) para que Stripe pueda cobrar la factura.", tab: "billing" });
+  assert.deepEqual(copy.action, { label: "Ver facturación", detail: "Pide al miembro que actualice su tarjeta desde la app (portal de pagos de Stripe) para que Stripe pueda cobrar la factura.", tab: "billing" });
 });
 
 test("5b. retry states never over-claim: due, unknown, no more retries, closed invoice", () => {
@@ -198,7 +198,7 @@ test("every decline reason has a truthful phrase; unknown is never dressed up", 
   assert.equal(phrase("INSUFFICIENT_FUNDS"), "la tarjeta fue rechazada por fondos insuficientes");
   assert.equal(phrase("EXPIRED_CARD"), "la tarjeta está vencida");
   assert.equal(phrase("INCORRECT_CVC"), "el código de seguridad (CVC) no coincide");
-  assert.equal(phrase("AUTHENTICATION_REQUIRED"), "la tarjeta requiere autenticación del cliente (3D Secure)");
+  assert.equal(phrase("AUTHENTICATION_REQUIRED"), "la tarjeta requiere que el miembro autentique el pago con su banco (3D Secure)");
   assert.equal(phrase("BLOCKED_BY_STRIPE"), "Stripe bloqueó el cargo con su sistema antifraude");
   assert.equal(phrase("CARD_NOT_SUPPORTED"), "la tarjeta no acepta este tipo de cargo");
   assert.equal(phrase("PROCESSING_ERROR"), "hubo un error de procesamiento con la tarjeta");
@@ -211,13 +211,13 @@ test("every decline reason has a truthful phrase; unknown is never dressed up", 
 });
 
 test("authentication required asks the customer to pay the pending invoice, not to call the bank", () => {
-  const copy = billingCopy(status({ ...PRO_FAILED, state: "PAYMENT_ACTION_REQUIRED", renewal: { mode: "AUTOMATIC", endsAt: "2026-10-26T15:01:45.000Z", nextChargeAt: null, change: null }, paymentFailure: failure({ reason: "AUTHENTICATION_REQUIRED", code: null, billingReason: "subscription_create" }), action: "COMPLETE_AUTHENTICATION" }));
+  const copy = billingCopy(status({ ...PRO_FAILED, state: "PAYMENT_ACTION_REQUIRED", renewal: { mode: "AUTOMATIC", endsAt: "2026-10-26T15:00:00.000Z", nextChargeAt: null, change: null }, paymentFailure: failure({ reason: "AUTHENTICATION_REQUIRED", code: null, billingReason: "subscription_create" }), action: "COMPLETE_AUTHENTICATION" }));
   assert.equal(copy.paymentLabel, "Requiere autenticación");
-  assert.equal(copy.explanation[0], "Stripe intentó cobrar el primer pago de Pro ($600.00 MXN), pero la tarjeta requiere autenticación del cliente (3D Secure).");
-  assert.equal(copy.action?.detail, "Pide al cliente que pague la factura pendiente desde la app para completar la autenticación de su banco (3D Secure).");
+  assert.equal(copy.explanation[0], "Stripe intentó cobrar el primer pago de Pro ($600.00 MXN), pero la tarjeta requiere que el miembro autentique el pago con su banco (3D Secure).");
+  assert.equal(copy.action?.detail, "Pide al miembro que pague la factura pendiente desde la app para completar la autenticación de su banco (3D Secure).");
 });
 
-test("4. cancel_at_period_end: still active until the entitlement end, will not be charged again (production: portal switch-off)", () => {
+test("4. cancel_at_period_end: still active until the entitlement end, will not be charged again (portal switch-off)", () => {
   const offInPortal = status({
     subscriptionId: "sub_booty_card",
     planName: "Booty Lab by Etzia",
@@ -225,12 +225,12 @@ test("4. cancel_at_period_end: still active until the entitlement end, will not 
     severity: "info",
     lifecycleStatus: "ENDING",
     effectiveEnd: "2026-11-16T17:24:56.000Z",
-    renewal: { mode: "DISABLED", endsAt: "2026-11-16T17:24:56.000Z", nextChargeAt: null, change: { ...PORTAL_OFF, at: "2026-10-02T18:30:23.000Z" } },
+    renewal: { mode: "DISABLED", endsAt: "2026-11-16T17:24:56.000Z", nextChargeAt: null, change: { ...PORTAL_OFF, at: "2026-10-02T18:00:00.000Z" } },
   });
   const [card] = buildMembershipCards({ rows: [row({ subscriptionId: "sub_booty_card", planName: "Booty Lab by Etzia", cancelAtPeriodEnd: true, lifecycleStatus: "ENDING", currentPeriodStart: "2026-10-02T17:24:56.000Z", effectiveEnd: "2026-11-16T17:24:56.000Z", classCredits: 4, creditsUsed: 0, creditsRemaining: 4 })], billing: billing([offInPortal]), billingState: "ready", now: NOW });
   assert.deepEqual([card.status.label, card.payment.label, card.paymentProblem], ["Activa", "Al corriente", false]);
   assert.deepEqual(card.explanation, [
-    "La renovación automática de Booty Lab by Etzia se desactivó desde el portal de clientes de Stripe el 2 oct (el cliente respondió: «no la usa lo suficiente»).",
+    "La renovación automática de Booty Lab by Etzia se desactivó desde el portal de pagos de Stripe el 2 oct (el miembro respondió: «no la usa lo suficiente»).",
     "La membresía sigue activa hasta el 16 nov y no volverá a cobrarse automáticamente.",
   ]);
   assert.equal(card.facts[2].value, "No renovará · termina el 16 nov");
@@ -239,9 +239,9 @@ test("4. cancel_at_period_end: still active until the entitlement end, will not 
 });
 
 test("renewal origin wording matches the certainty of each source", () => {
-  const at = "2026-09-27T22:14:39.000Z";
+  const at = "2026-09-27T22:00:01.000Z";
   const say = (origin: NonNullable<MembershipBillingStatus["renewal"]["change"]>["origin"], extra: Partial<NonNullable<MembershipBillingStatus["renewal"]["change"]>> = {}) => renewalChangeSentence({ disabled: true, at, origin, actorName: null, feedback: null, certainty: "inferred", ...extra }, "Pro");
-  assert.equal(say("STRIPE_NO_REQUEST"), "La renovación automática de Pro se desactivó en Stripe el 27 sep, fuera de GymOS (probablemente desde el portal de clientes).");
+  assert.equal(say("STRIPE_NO_REQUEST"), "La renovación automática de Pro se desactivó en Stripe el 27 sep, fuera de GymOS (probablemente desde el portal de pagos).");
   assert.equal(say("STRIPE_API"), "La renovación automática de Pro se desactivó el 27 sep desde el panel de Stripe u otra integración (no desde GymOS).");
   assert.equal(say("GYMOS_STAFF", { actorName: "Ana López · ADMIN" }), "La renovación automática de Pro se desactivó desde GymOS el 27 sep (Ana López · Administración).");
   assert.equal(say("GYMOS"), "La renovación automática de Pro se desactivó desde GymOS el 27 sep.");
@@ -270,7 +270,7 @@ test("GymOS and Stripe disagree: cancelled/paused in GymOS but alive in Stripe; 
   assert.deepEqual([overdue.paymentLabel, overdue.explanation[0]], ["Pago vencido en Stripe", "Stripe registra la suscripción de Pro como con pago vencido (último dato de Stripe: 5 oct), pero GymOS la muestra al corriente."]);
 });
 
-test("Stripe cancelled for non-payment while GymOS still shows it pending (production race)", () => {
+test("Stripe cancelled for non-payment while GymOS still shows it pending (pre-fix race)", () => {
   const copy = billingCopy(status({
     planName: "Full Access",
     state: "CANCELED_PAYMENT_FAILED",
@@ -322,7 +322,7 @@ test("7. manual memberships are worded by how they are paid: front desk vs assig
   assert.deepEqual(unknownCash.explanation, ["No hay información suficiente para explicar el estado de esta membresía."]);
 });
 
-test("dates outside the current year carry the year (production: a cash membership valid until 2027)", () => {
+test("dates outside the current year carry the year (a cash membership valid until next year)", () => {
   const copy = billingCopy(status({ planName: "Pro", source: "CASH", state: "MANUAL_ACTIVE", effectiveEnd: "2027-09-02T18:00:00.000Z", renewal: { mode: "MANUAL", endsAt: "2027-09-02T18:00:00.000Z", nextChargeAt: null, change: null } }));
   assert.deepEqual(copy.explanation, ["Se paga en recepción: no se cobra automáticamente. Vence el 2 sep 2027."]);
   const [card] = buildMembershipCards({ rows: [row({ source: "CASH", currentPeriodStart: "2026-09-02T18:00:00.000Z", effectiveEnd: "2027-09-02T18:00:00.000Z" })], billing: null, billingState: "loading", now: NOW });
@@ -367,7 +367,7 @@ test("card rows: current memberships (scheduled excluded) with the API status, o
 
   const ended = {
     memberships: [],
-    currentMembership: { id: "s9", status: "CANCELED", source: "STRIPE", lifecycleStatus: "CANCELED", primaryStatus: "CANCELED", isEntitled: false, currentPeriodStart: null, effectiveEnd: "2026-10-03T13:06:31.000Z", cancelAtPeriodEnd: false, plan: { name: "Full Access", classCredits: null }, creditsUsed: null, creditsRemaining: null },
+    currentMembership: { id: "s9", status: "CANCELED", source: "STRIPE", lifecycleStatus: "CANCELED", primaryStatus: "CANCELED", isEntitled: false, currentPeriodStart: null, effectiveEnd: "2026-10-03T13:00:00.000Z", cancelAtPeriodEnd: false, plan: { name: "Full Access", classCredits: null }, creditsUsed: null, creditsRemaining: null },
   } as unknown as Parameters<typeof membershipCardRows>[0];
   assert.deepEqual(membershipCardRows(ended).map((r) => [r.subscriptionId, r.planName, r.primaryStatus]), [["s9", "Full Access", "CANCELED"]]);
   assert.deepEqual(membershipCardRows({ memberships: [], currentMembership: null }), []);
@@ -399,7 +399,7 @@ test("Pagos KPI names the plan with a payment problem and never calls a failed c
 type Ev = Pick<TimelineEvent, "type" | "metadata" | "occurredAt">;
 
 test("10. timeline: a failed payment says what, how much and why, with running totals", () => {
-  const ev: Ev = { type: "PAYMENT_FAILED", occurredAt: "2026-09-26T16:03:50.386Z", metadata: { planName: "Pro", amountCents: 60000, currency: "mxn", failure: failure() } };
+  const ev: Ev = { type: "PAYMENT_FAILED", occurredAt: "2026-09-26T16:00:00.000Z", metadata: { planName: "Pro", amountCents: 60000, currency: "mxn", failure: failure() } };
   assert.equal(timelineDetail(ev), "Stripe intentó cobrar la renovación de Pro ($600.00 MXN), pero el banco emisor rechazó la tarjeta (código do_not_honor). Intentos hasta ahora: 7. Próximo intento: 9 oct.");
   // A retry date already in the past is not presented as upcoming.
   assert.equal(timelineDetail({ ...ev, metadata: { ...ev.metadata, failure: failure({ nextAttemptAt: "2026-10-01T00:00:00.000Z" }) } }), "Stripe intentó cobrar la renovación de Pro ($600.00 MXN), pero el banco emisor rechazó la tarjeta (código do_not_honor). Intentos hasta ahora: 7.");
@@ -407,11 +407,11 @@ test("10. timeline: a failed payment says what, how much and why, with running t
 });
 
 test("10b. timeline: a renewal change says who and when, never a consequence that may no longer hold", () => {
-  const ev: Ev = { type: "STRIPE_RENEWAL_EXTERNAL_CHANGE", occurredAt: "2026-09-27T22:14:42.159Z", metadata: { planName: "Pro", renewalOrigin: "CUSTOMER_PORTAL", cancellationFeedback: "unused", newCancelAtPeriodEnd: true, currentPeriodEnd: "2026-10-26T15:01:45.000Z" } };
+  const ev: Ev = { type: "STRIPE_RENEWAL_EXTERNAL_CHANGE", occurredAt: "2026-09-27T22:00:04.000Z", metadata: { planName: "Pro", renewalOrigin: "CUSTOMER_PORTAL", cancellationFeedback: "unused", newCancelAtPeriodEnd: true, currentPeriodEnd: "2026-10-26T15:00:00.000Z" } };
   assert.equal(timelineTitle(ev), "Renovación desactivada en Stripe");
-  assert.equal(timelineDetail(ev), "La renovación automática de Pro se desactivó desde el portal de clientes de Stripe el 27 sep (el cliente respondió: «no la usa lo suficiente»).");
+  assert.equal(timelineDetail(ev), "La renovación automática de Pro se desactivó desde el portal de pagos de Stripe el 27 sep (el miembro respondió: «no la usa lo suficiente»).");
   assert.equal(/nuevo cobro|acceso hasta/.test(timelineDetail(ev) ?? ""), false);
-  const gymos: Ev = { type: "STRIPE_RENEWAL_REACTIVATED", occurredAt: "2026-09-27T22:14:42.159Z", metadata: { planName: "Pro", renewalOrigin: "GYMOS_STAFF", newCancelAtPeriodEnd: false } };
+  const gymos: Ev = { type: "STRIPE_RENEWAL_REACTIVATED", occurredAt: "2026-09-27T22:00:04.000Z", metadata: { planName: "Pro", renewalOrigin: "GYMOS_STAFF", newCancelAtPeriodEnd: false } };
   assert.equal(timelineDetail(gymos), "La renovación automática de Pro se reactivó desde GymOS el 27 sep.");
 });
 
@@ -424,10 +424,10 @@ test("10c. timeline: why and by whom a subscription ended in Stripe", () => {
   assert.equal(timelineDetail(end({ endOrigin: "STRIPE_AUTOMATIC", cancellationReason: "incomplete_expired" })), "Stripe canceló la suscripción de Full Access porque el primer pago no se completó a tiempo.");
   assert.equal(timelineTitle(end({ endOrigin: "PERIOD_END", scheduledBy: "GYMOS" })), "Suscripción terminada al final del periodo");
   assert.equal(timelineDetail(end({ endOrigin: "PERIOD_END", scheduledBy: "GYMOS" })), "La suscripción de Full Access terminó al final del periodo porque la renovación automática estaba desactivada (se desactivó desde GymOS).");
-  assert.equal(timelineDetail(end({ endOrigin: "PERIOD_END", scheduledBy: "CUSTOMER_PORTAL" })), "La suscripción de Full Access terminó al final del periodo porque la renovación automática estaba desactivada (la desactivó el cliente desde el portal de Stripe).");
+  assert.equal(timelineDetail(end({ endOrigin: "PERIOD_END", scheduledBy: "CUSTOMER_PORTAL" })), "La suscripción de Full Access terminó al final del periodo porque la renovación automática estaba desactivada (la desactivó el miembro desde el portal de pagos de Stripe).");
   assert.equal(timelineDetail(end({ endOrigin: "PERIOD_END", scheduledBy: "STRIPE_TO_CASH" })), "La suscripción de Full Access con tarjeta terminó al final del periodo por el cambio programado a pago en recepción.");
   assert.equal(timelineDetail(end({ endOrigin: "PERIOD_END", scheduledBy: null })), "La suscripción de Full Access terminó al final del periodo porque la renovación automática estaba desactivada.");
-  assert.equal(timelineDetail(end({ endOrigin: "CUSTOMER_PORTAL", cancellationFeedback: "too_expensive" })), "La suscripción de Full Access se canceló desde el portal de clientes de Stripe (el cliente respondió: «le parece caro»).");
+  assert.equal(timelineDetail(end({ endOrigin: "CUSTOMER_PORTAL", cancellationFeedback: "too_expensive" })), "La suscripción de Full Access se canceló desde el portal de pagos de Stripe (el miembro respondió: «le parece caro»).");
   assert.equal(timelineDetail(end({ endOrigin: "STRIPE_TO_CASH" })), "La suscripción de Full Access con tarjeta terminó por el cambio a pago en recepción.");
   assert.equal(timelineDetail(end({ endOrigin: "STRIPE_API" })), "La suscripción de Full Access se canceló desde el panel de Stripe u otra integración (no desde GymOS).");
   assert.equal(timelineDetail(end({ endOrigin: "STRIPE_NO_REQUEST" })), "La suscripción de Full Access se canceló en Stripe, fuera de GymOS.");
@@ -435,8 +435,8 @@ test("10c. timeline: why and by whom a subscription ended in Stripe", () => {
 
 test("10d. timeline: Stripe→cash, done vs scheduled", () => {
   assert.equal(timelineTitle({ type: "STRIPE_TO_CASH_IMMEDIATE", metadata: {} }), "Cambio a pago en recepción");
-  assert.equal(timelineDetail({ type: "STRIPE_TO_CASH_IMMEDIATE", occurredAt: "2026-10-01T14:39:41.808Z", metadata: { planName: "Basic Access" } }), "El cobro con tarjeta de Basic Access se detuvo para cobrar en recepción.");
+  assert.equal(timelineDetail({ type: "STRIPE_TO_CASH_IMMEDIATE", occurredAt: "2026-10-01T14:00:01.000Z", metadata: { planName: "Basic Access" } }), "El cobro con tarjeta de Basic Access se detuvo para cobrar en recepción.");
   assert.equal(timelineTitle({ type: "STRIPE_TO_CASH_PERIOD_END_SCHEDULED", metadata: {} }), "Cambio a pago en recepción programado");
-  assert.equal(timelineDetail({ type: "STRIPE_TO_CASH_PERIOD_END_SCHEDULED", occurredAt: "2026-10-01T14:39:41.808Z", metadata: { planName: "Basic Access" } }), "Se programó el cambio a pago en recepción: el cobro con tarjeta de Basic Access se detendrá al terminar el periodo pagado.");
+  assert.equal(timelineDetail({ type: "STRIPE_TO_CASH_PERIOD_END_SCHEDULED", occurredAt: "2026-10-01T14:00:01.000Z", metadata: { planName: "Basic Access" } }), "Se programó el cambio a pago en recepción: el cobro con tarjeta de Basic Access se detendrá al terminar el periodo pagado.");
   assert.equal(timelineDetail({ type: "BOOKING_CREATED", occurredAt: "2026-10-01T00:00:00.000Z", metadata: null }), null);
 });

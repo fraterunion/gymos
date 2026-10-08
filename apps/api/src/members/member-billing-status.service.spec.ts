@@ -8,18 +8,18 @@ const unix = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
 
 type Row = Record<string, unknown>;
 
-/** Production shape of the motivating case (ids replaced): card Pro declined + cash Booty Lab expired. */
+/** Example member: card Pro renewal declined, renewal later switched off; cash Booty Lab expired (synthetic ids and times). */
 const PRO = {
   id: 'sub_local_pro',
   status: 'PAST_DUE',
   source: 'STRIPE',
   stripeSubscriptionId: 'sub_stripe_pro',
   cancelAtPeriodEnd: true,
-  currentPeriodStart: new Date('2026-09-26T15:01:45.000Z'),
-  currentPeriodEnd: new Date('2026-10-26T15:01:45.000Z'),
+  currentPeriodStart: new Date('2026-09-26T15:00:00.000Z'),
+  currentPeriodEnd: new Date('2026-10-26T15:00:00.000Z'),
   entitlementEndsAt: null,
   endReason: null,
-  createdAt: new Date('2026-08-26T15:01:45.000Z'),
+  createdAt: new Date('2026-08-26T15:00:00.000Z'),
   membershipPlan: { name: 'Pro', entitlementDays: null },
 };
 const BOOTY_CASH = {
@@ -29,10 +29,10 @@ const BOOTY_CASH = {
   stripeSubscriptionId: null,
   cancelAtPeriodEnd: true,
   currentPeriodStart: new Date('2026-08-18T18:00:00.000Z'),
-  currentPeriodEnd: new Date('2026-09-19T05:59:59.000Z'),
+  currentPeriodEnd: new Date('2026-09-19T05:00:00.000Z'),
   entitlementEndsAt: new Date('2026-10-02T18:00:00.000Z'),
   endReason: null,
-  createdAt: new Date('2026-08-18T23:55:38.000Z'),
+  createdAt: new Date('2026-08-18T23:00:00.000Z'),
   membershipPlan: { name: 'Booty Lab by Etzia', entitlementDays: null },
 };
 
@@ -48,15 +48,15 @@ function storedEvent(type: string, created: string, object: Row, previous: Row |
   };
 }
 
-const PRO_FLIP = storedEvent('customer.subscription.updated', '2026-09-27T22:14:39.000Z', { id: 'sub_stripe_pro', status: 'past_due', cancel_at_period_end: true, cancel_at: unix('2026-10-26T15:01:45.000Z'), canceled_at: unix('2026-09-27T22:14:38.000Z'), cancellation_details: { reason: 'cancellation_requested', feedback: null } }, { cancel_at_period_end: false, cancellation_details: { reason: null } });
-const PRO_SURVEY = storedEvent('customer.subscription.updated', '2026-09-27T22:14:40.000Z', { id: 'sub_stripe_pro', status: 'past_due', cancel_at_period_end: true, cancel_at: unix('2026-10-26T15:01:45.000Z'), canceled_at: unix('2026-09-27T22:14:38.000Z'), cancellation_details: { reason: 'cancellation_requested', feedback: 'unused' } }, { cancellation_details: { feedback: null } });
-const PRO_FAILED_EVENT = storedEvent('invoice.payment_failed', '2026-10-08T06:04:03.000Z', { id: 'in_pro_renewal', status: 'open', attempt_count: 7, next_payment_attempt: unix('2026-10-09T21:03:57.000Z'), billing_reason: 'subscription_cycle' });
+const PRO_FLIP = storedEvent('customer.subscription.updated', '2026-09-27T22:00:01.000Z', { id: 'sub_stripe_pro', status: 'past_due', cancel_at_period_end: true, cancel_at: unix('2026-10-26T15:00:00.000Z'), canceled_at: unix('2026-09-27T22:00:00.000Z'), cancellation_details: { reason: 'cancellation_requested', feedback: null } }, { cancel_at_period_end: false, cancellation_details: { reason: null } });
+const PRO_SURVEY = storedEvent('customer.subscription.updated', '2026-09-27T22:00:02.000Z', { id: 'sub_stripe_pro', status: 'past_due', cancel_at_period_end: true, cancel_at: unix('2026-10-26T15:00:00.000Z'), canceled_at: unix('2026-09-27T22:00:00.000Z'), cancellation_details: { reason: 'cancellation_requested', feedback: 'unused' } }, { cancellation_details: { feedback: null } });
+const PRO_FAILED_EVENT = storedEvent('invoice.payment_failed', '2026-10-08T06:00:07.000Z', { id: 'in_pro_renewal', status: 'open', attempt_count: 7, next_payment_attempt: unix('2026-10-09T21:00:00.000Z'), billing_reason: 'subscription_cycle' });
 
 const DECLINED: InvoicePaymentFailureSnapshot = {
   invoiceStatus: 'open',
   billingReason: 'subscription_cycle',
   attemptCount: 7,
-  nextPaymentAttemptAt: new Date('2026-10-09T21:03:57.000Z'),
+  nextPaymentAttemptAt: new Date('2026-10-09T21:00:00.000Z'),
   amountRemaining: 60000,
   paymentIntentStatus: 'requires_payment_method',
   errorType: 'card_error',
@@ -64,7 +64,7 @@ const DECLINED: InvoicePaymentFailureSnapshot = {
   declineCode: 'do_not_honor',
   outcomeType: 'issuer_declined',
   outcomeReason: 'do_not_honor',
-  lastAttemptAt: new Date('2026-10-08T06:03:56.000Z'),
+  lastAttemptAt: new Date('2026-10-08T06:00:00.000Z'),
   hasPaymentMethod: true,
 };
 
@@ -101,16 +101,16 @@ function build(opts: {
     payment: {
       findMany: jest.fn().mockResolvedValue(
         opts.payments ?? [
-          payment({ id: 'pay_failed', status: 'FAILED', stripeInvoiceId: 'in_pro_renewal', createdAt: new Date('2026-09-26T16:03:50.386Z') }),
-          payment({ id: 'pay_first', stripeInvoiceId: 'in_pro_first', createdAt: new Date('2026-08-26T15:01:52.335Z'), paidAt: new Date('2026-08-26T15:01:46.000Z') }),
-          payment({ id: 'pay_cash', subscriptionId: BOOTY_CASH.id, amountCents: 80000, createdAt: new Date('2026-08-18T23:55:39.219Z'), paidAt: new Date('2026-08-18T23:55:39.218Z') }),
+          payment({ id: 'pay_failed', status: 'FAILED', stripeInvoiceId: 'in_pro_renewal', createdAt: new Date('2026-09-26T16:00:00.000Z') }),
+          payment({ id: 'pay_first', stripeInvoiceId: 'in_pro_first', createdAt: new Date('2026-08-26T15:00:07.000Z'), paidAt: new Date('2026-08-26T15:00:01.000Z') }),
+          payment({ id: 'pay_cash', subscriptionId: BOOTY_CASH.id, amountCents: 80000, createdAt: new Date('2026-08-18T23:00:02.000Z'), paidAt: new Date('2026-08-18T23:00:01.000Z') }),
         ],
       ),
     },
     auditLog: {
       findMany: jest.fn().mockResolvedValue(
         opts.audits ?? [
-          { action: 'STRIPE_RENEWAL_EXTERNAL_CHANGE', createdAt: new Date('2026-09-27T22:14:42.159Z'), entityId: PRO.id, actor: null, metadata: { subscriptionId: PRO.id, stripeSubscriptionId: 'sub_stripe_pro', stripeRequestId: null, newCancelAtPeriodEnd: true, cancellationReason: 'cancellation_requested', cancellationFeedback: null } },
+          { action: 'STRIPE_RENEWAL_EXTERNAL_CHANGE', createdAt: new Date('2026-09-27T22:00:04.000Z'), entityId: PRO.id, actor: null, metadata: { subscriptionId: PRO.id, stripeSubscriptionId: 'sub_stripe_pro', stripeRequestId: null, newCancelAtPeriodEnd: true, cancellationReason: 'cancellation_requested', cancellationFeedback: null } },
         ],
       ),
     },
@@ -123,7 +123,7 @@ function build(opts: {
 }
 
 describe('MemberBillingStatusService', () => {
-  it('explains each membership of a mixed member separately (production case: card Pro failed + cash Booty Lab expired)', async () => {
+  it('explains each membership of a mixed member separately (card Pro failed + cash Booty Lab expired)', async () => {
     const { service, getInvoicePaymentFailureSnapshot } = build();
     const res = await service.getMemberBillingStatus('studio_1', 'user_1', NOW);
 
@@ -135,8 +135,8 @@ describe('MemberBillingStatusService', () => {
     ]);
     expect(res.memberships[0]).toMatchObject({
       isEntitled: false,
-      renewal: { mode: 'DISABLED', endsAt: '2026-10-26T15:01:45.000Z', change: { origin: 'CUSTOMER_PORTAL', feedback: 'unused', at: '2026-09-27T22:14:39.000Z' } },
-      paymentFailure: { reason: 'CARD_DECLINED', code: 'do_not_honor', attemptCount: 7, nextAttemptAt: '2026-10-09T21:03:57.000Z', billingReason: 'subscription_cycle', detailSource: 'stripe_live' },
+      renewal: { mode: 'DISABLED', endsAt: '2026-10-26T15:00:00.000Z', change: { origin: 'CUSTOMER_PORTAL', feedback: 'unused', at: '2026-09-27T22:00:01.000Z' } },
+      paymentFailure: { reason: 'CARD_DECLINED', code: 'do_not_honor', attemptCount: 7, nextAttemptAt: '2026-10-09T21:00:00.000Z', billingReason: 'subscription_cycle', detailSource: 'stripe_live' },
       stripe: { status: 'past_due', cancellationReason: 'cancellation_requested' },
     });
     expect(res.failedPayments).toEqual([expect.objectContaining({ paymentId: 'pay_failed', reason: 'CARD_DECLINED', liveLookup: 'ok' })]);
@@ -167,6 +167,27 @@ describe('MemberBillingStatusService', () => {
     await Promise.all([a, b]);
     await service.getMemberBillingStatus('studio_1', 'user_1', NOW);
     expect(getInvoicePaymentFailureSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes cached Stripe results by studio and member: another tenant never reuses an entry', async () => {
+    const { service, getInvoicePaymentFailureSnapshot } = build();
+    await service.getMemberBillingStatus('studio_1', 'user_1', NOW);
+    await service.getMemberBillingStatus('studio_2', 'user_2', NOW);
+    await service.getMemberBillingStatus('studio_1', 'user_1', NOW);
+    expect(getInvoicePaymentFailureSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it('degrades safely when Stripe rate-limits (429): reason unknown, stored attempts kept', async () => {
+    const rateLimited = Object.assign(new Error('Too many requests hit the API too quickly.'), { type: 'StripeRateLimitError', statusCode: 429 });
+    const { service } = build({ snapshot: async () => { throw rateLimited; } });
+    const res = await service.getMemberBillingStatus('studio_1', 'user_1', NOW);
+    expect(res.memberships[0]).toMatchObject({ state: 'PAYMENT_FAILED_RETRYING', paymentFailure: { reason: 'UNKNOWN', liveLookup: 'unavailable', attemptCount: 7, detailSource: 'webhook_history' } });
+  });
+
+  it('reports "no reason given" when Stripe answers without a decline code', async () => {
+    const { service } = build({ snapshot: async () => ({ ...DECLINED, errorType: null, errorCode: null, declineCode: null, outcomeType: null, outcomeReason: null }) });
+    const res = await service.getMemberBillingStatus('studio_1', 'user_1', NOW);
+    expect(res.memberships[0].paymentFailure).toMatchObject({ reason: 'UNKNOWN', code: null, liveLookup: 'ok', detailSource: 'stripe_live' });
   });
 
   it('falls back to stored attempts and an "unknown" reason when Stripe errors', async () => {
@@ -202,9 +223,9 @@ describe('MemberBillingStatusService', () => {
   });
 
   describe('is a failure still current?', () => {
-    const active = { ...PRO, status: 'ACTIVE', cancelAtPeriodEnd: false, currentPeriodEnd: new Date('2026-11-26T15:01:45.000Z') };
+    const active = { ...PRO, status: 'ACTIVE', cancelAtPeriodEnd: false, currentPeriodEnd: new Date('2026-11-26T15:00:00.000Z') };
     const laterPaidOtherInvoice = payment({ id: 'p_paid_next', stripeInvoiceId: 'in_next', createdAt: new Date('2026-10-01T00:00:00.000Z'), paidAt: new Date('2026-10-01T00:00:00.000Z') });
-    const oldFailure = payment({ id: 'p_old_fail', status: 'FAILED', stripeInvoiceId: 'in_pro_renewal', createdAt: new Date('2026-09-26T16:03:50.386Z') });
+    const oldFailure = payment({ id: 'p_old_fail', status: 'FAILED', stripeInvoiceId: 'in_pro_renewal', createdAt: new Date('2026-09-26T16:00:00.000Z') });
 
     it('yes, when Stripe still has its invoice open — even if a later invoice was paid', async () => {
       const { service } = build({ subscriptions: [active], audits: [], events: [PRO_FAILED_EVENT], payments: [laterPaidOtherInvoice, oldFailure] });
@@ -245,7 +266,7 @@ describe('MemberBillingStatusService', () => {
       subscriptions: [cash, card],
       payments: [],
       events: [],
-      audits: [{ action: 'STRIPE_TO_CASH_IMMEDIATE', createdAt: new Date('2026-10-01T14:39:41.808Z'), entityId: 'sub_cash_new', actor: { firstName: 'Ana', lastName: 'López' }, metadata: { oldSubscriptionId: card.id, stripeSubscriptionId: 'sub_stripe_pro' } }],
+      audits: [{ action: 'STRIPE_TO_CASH_IMMEDIATE', createdAt: new Date('2026-10-01T14:00:01.000Z'), entityId: 'sub_cash_new', actor: { firstName: 'Ana', lastName: 'López' }, metadata: { oldSubscriptionId: card.id, stripeSubscriptionId: 'sub_stripe_pro' } }],
     });
     const res = await service.getMemberBillingStatus('studio_1', 'user_1', NOW);
     const cashStatus = res.memberships.find((m) => m.subscriptionId === 'sub_cash_new');

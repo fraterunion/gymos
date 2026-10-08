@@ -68,7 +68,7 @@ describe('Member 360 billing explanations (e2e)', () => {
     stripe.getInvoicePaymentFailureSnapshot.mockRejectedValue(new Error('no Stripe network in e2e'));
   });
 
-  /** Production shape of the motivating case: Pro charge declined + Booty Lab cash expired. */
+  /** Example member: Pro charge declined + Booty Lab cash expired (synthetic data). */
   async function seed() {
     const now = Date.now();
     // Unique Stripe ids per test: the service caches live Stripe lookups per invoice.
@@ -168,6 +168,34 @@ describe('Member 360 billing explanations (e2e)', () => {
     const s = await seed();
     await billingStatus(s.studio.id, s.member.id, s.frontDeskToken).expect(200);
     await billingStatus(s.studio.id, s.member.id, s.memberToken).expect(403);
+  });
+
+  it('enforces authentication, role and studio isolation (no diagnostics for instructors or other studios)', async () => {
+    const s = await seed();
+    stripe.getInvoicePaymentFailureSnapshot.mockResolvedValue(declined());
+
+    // No token.
+    await request(app.getHttpServer()).get(`/api/v1/studios/${s.studio.id}/members/${s.member.id}/billing-status`).expect(401);
+
+    // Staff role without billing access in the same studio.
+    const instructor = await createUserWithPassword(prisma);
+    await createMembership(prisma, instructor.id, s.studio.id, Role.INSTRUCTOR);
+    await billingStatus(s.studio.id, s.member.id, await login(app, instructor.email, instructor.password)).expect(403);
+
+    // Owner of another studio: not a member of this one.
+    const other = await createStudio(prisma);
+    const otherOwner = await createUserWithPassword(prisma);
+    await createMembership(prisma, otherOwner.id, other.id, Role.OWNER);
+    const otherToken = await login(app, otherOwner.email, otherOwner.password);
+    await billingStatus(s.studio.id, s.member.id, otherToken).expect(403);
+
+    // Through their own studio they cannot reach a member of this studio, and Stripe is never asked.
+    stripe.getInvoicePaymentFailureSnapshot.mockClear();
+    await billingStatus(other.id, s.member.id, otherToken).expect(404);
+    expect(stripe.getInvoicePaymentFailureSnapshot).not.toHaveBeenCalled();
+
+    // The timeline carries the same diagnostics: members cannot read it either.
+    await request(app.getHttpServer()).get(`/api/v1/studios/${s.studio.id}/members/${s.member.id}/timeline`).set('Authorization', `Bearer ${s.memberToken}`).expect(403);
   });
 
   it('writes nothing', async () => {

@@ -193,6 +193,16 @@ test("header shows one card per membership with the API status, never a '+N memb
   assert.match(source, /pageAttentionItems\(profile, membershipCards\)/);
 });
 
+test("Member 360 stays usable when the billing-status endpoint is unavailable", () => {
+  const source = readFileSync(new URL("../app/members/[userId]/page.tsx", import.meta.url), "utf8");
+  // Fetched on its own (never inside the profile Promise.all), failures fall back to local facts,
+  // and only the newest response may update the page.
+  assert.match(source, /void fetchMemberBillingStatus\(selectedStudioId, userId\)/);
+  assert.doesNotMatch(source, /Promise\.all\(\[[^\]]*fetchMemberBillingStatus/);
+  assert.match(source, /\.catch\(\(\) => \{ if \(request === billingRequest\.current\) \{ setBilling\(null\); setBillingLoad\("error"\); \} \}\)/);
+  assert.match(source, /if \(request === billingRequest\.current\) \{ setBilling\(b\); setBillingLoad\("ready"\); \}/);
+});
+
 // ── 2026-10 Booty Lab incident: paid card renewal with no entitlement cycle ──────────
 
 const paidButExpired = {

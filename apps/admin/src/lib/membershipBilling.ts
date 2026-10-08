@@ -74,7 +74,7 @@ export function failureReasonPhrase(failure: Pick<PaymentFailureView, "reason" |
     case "INCORRECT_CVC":
       return "el código de seguridad (CVC) no coincide";
     case "AUTHENTICATION_REQUIRED":
-      return "la tarjeta requiere autenticación del cliente (3D Secure)";
+      return "la tarjeta requiere que el miembro autentique el pago con su banco (3D Secure)";
     case "BLOCKED_BY_STRIPE":
       return "Stripe bloqueó el cargo con su sistema antifraude";
     case "CARD_NOT_SUPPORTED":
@@ -128,13 +128,13 @@ export function renewalChangeSentence(change: NonNullable<MembershipBillingStatu
   const what = planName ? `la renovación automática de ${planName}` : "la renovación automática";
   const reflexive = change.disabled ? "se desactivó" : "se reactivó";
   const motive = feedbackLabel(change.feedback);
-  const answered = motive ? ` (el cliente respondió: «${motive}»)` : "";
+  const answered = motive ? ` (el miembro respondió: «${motive}»)` : "";
   const at = day(change.at);
   switch (change.origin) {
     case "CUSTOMER_PORTAL":
-      return `${capitalize(what)} ${reflexive} desde el portal de clientes de Stripe el ${at}${answered}.`;
+      return `${capitalize(what)} ${reflexive} desde el portal de pagos de Stripe el ${at}${answered}.`;
     case "STRIPE_NO_REQUEST":
-      return `${capitalize(what)} ${reflexive} en Stripe el ${at}, fuera de GymOS (probablemente desde el portal de clientes)${answered}.`;
+      return `${capitalize(what)} ${reflexive} en Stripe el ${at}, fuera de GymOS (probablemente desde el portal de pagos)${answered}.`;
     case "STRIPE_API":
       return `${capitalize(what)} ${reflexive} el ${at} desde el panel de Stripe u otra integración (no desde GymOS).`;
     case "GYMOS_STAFF": {
@@ -185,9 +185,9 @@ export type BillingCopy = {
 const TONE_BY_SEVERITY: Record<MembershipBillingStatus["severity"], Tone> = { ok: "ok", info: "info", warning: "warning", critical: "critical" };
 
 const ACTIONS: Record<NonNullable<MembershipBillingStatus["action"]>, CardAction> = {
-  UPDATE_PAYMENT_METHOD: { label: "Ver facturación", detail: "Pide al cliente que actualice su tarjeta desde la app (portal de pagos de Stripe) para que Stripe pueda cobrar la factura.", tab: "billing" },
-  COMPLETE_AUTHENTICATION: { label: "Ver facturación", detail: "Pide al cliente que pague la factura pendiente desde la app para completar la autenticación de su banco (3D Secure).", tab: "billing" },
-  RENEW_MANUALLY: { label: "Ir a Ventas", detail: "Si el cliente quiere continuar, registra la renovación en Ventas.", href: "/sales" },
+  UPDATE_PAYMENT_METHOD: { label: "Ver facturación", detail: "Pide al miembro que actualice su tarjeta desde la app (portal de pagos de Stripe) para que Stripe pueda cobrar la factura.", tab: "billing" },
+  COMPLETE_AUTHENTICATION: { label: "Ver facturación", detail: "Pide al miembro que pague la factura pendiente desde la app para completar la autenticación de su banco (3D Secure).", tab: "billing" },
+  RENEW_MANUALLY: { label: "Ir a Ventas", detail: "Si el miembro quiere continuar, registra la renovación en Ventas.", href: "/sales" },
   REVIEW_BILLING: { label: "Ver facturación", detail: "Revisa el cobro en Stripe antes de renovar o cobrar de nuevo.", tab: "billing" },
   RECONCILE: { label: "Ver facturación", detail: "Avisa a un administrador: GymOS y Stripe no coinciden. No cobres ni cambies el estado de la membresía hasta conciliarlo.", tab: "billing" },
 };
@@ -691,7 +691,7 @@ export function timelineDetail(ev: Pick<TimelineEvent, "type" | "metadata" | "oc
         const by = mdStr(md, "scheduledBy") as RenewalChangeOrigin | null;
         if (by === "STRIPE_TO_CASH") return `${capitalize(what)} con tarjeta terminó al final del periodo por el cambio programado a pago en recepción.`;
         const who =
-          by === "CUSTOMER_PORTAL" ? " (la desactivó el cliente desde el portal de Stripe)"
+          by === "CUSTOMER_PORTAL" ? " (la desactivó el miembro desde el portal de pagos de Stripe)"
             : by === "GYMOS_STAFF" || by === "GYMOS" ? " (se desactivó desde GymOS)"
               : by === "STRIPE_API" ? " (se desactivó desde el panel de Stripe u otra integración)"
                 : by === "STRIPE_NO_REQUEST" ? " (se desactivó en Stripe, fuera de GymOS)"
@@ -700,7 +700,7 @@ export function timelineDetail(ev: Pick<TimelineEvent, "type" | "metadata" | "oc
       }
       if (origin === "CUSTOMER_PORTAL") {
         const motive = feedbackLabel(mdStr(md, "cancellationFeedback"));
-        return `${capitalize(what)} se canceló desde el portal de clientes de Stripe${motive ? ` (el cliente respondió: «${motive}»)` : ""}.`;
+        return `${capitalize(what)} se canceló desde el portal de pagos de Stripe${motive ? ` (el miembro respondió: «${motive}»)` : ""}.`;
       }
       if (origin === "STRIPE_TO_CASH") return `${capitalize(what)} con tarjeta terminó por el cambio a pago en recepción.`;
       if (origin === "GYMOS_STAFF" || origin === "GYMOS") return `${capitalize(what)} se canceló desde GymOS.`;
