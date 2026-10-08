@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
+import { loadPaidWithoutEntitlement } from './paid-without-entitlement';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
@@ -543,6 +544,25 @@ export class SubscriptionReconciliationService {
       }
     }
 
+    // Studio-wide and read-only: a paid fixed-duration invoice whose entitlement cycle was never
+    // granted (the 2026-10-02 Booty Lab incident class). Always critical and manual — a member who
+    // paid has no access, and nothing here may repair it automatically.
+    const entitlementGaps = await loadPaidWithoutEntitlement(this.prisma, { studioId });
+    if (entitlementGaps.length > 0) {
+      const names = new Map(
+        membersWithStripe.map((m) => [m.id, [m.firstName, m.lastName].filter(Boolean).join(' ') || m.email]),
+      );
+      for (const gap of entitlementGaps) {
+        findings.push({
+          userId: gap.userId,
+          memberName: names.get(gap.userId) ?? gap.userId,
+          issue: 'paid_without_entitlement',
+          severity: 'critical',
+          requiresManualResolution: true,
+        });
+      }
+    }
+
     const actionable = findings.filter((f) => f.requiresManualResolution);
     return {
       status: actionable.length > 0 ? 'attention_required' : 'healthy',
@@ -555,7 +575,7 @@ export class SubscriptionReconciliationService {
 export type StudioReconciliationFinding = {
   userId: string;
   memberName: string;
-  issue: ReconciliationIssue['kind'];
+  issue: ReconciliationIssue['kind'] | 'paid_without_entitlement';
   severity: 'critical' | 'warning' | 'info';
   requiresManualResolution: boolean;
 };

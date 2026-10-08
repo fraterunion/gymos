@@ -39,7 +39,7 @@ import { createStaffCheckoutSession, type StaffCheckoutResult } from "@/lib/api/
 import { ApiError } from "@/lib/api/errors";
 import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, renewalPresentation, studioDate, visitPresentation } from "@/lib/memberPresentation";
 import { subscriptionTransitionPresentation } from "@/lib/membershipPlanSummary";
-import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, paymentSourceLabel, renewalBehavior, usagePresentation , membershipRowRenewalActions, extraMembershipsChip, currentMembershipRows, membershipUsageLine, attentionItemTitle } from "@/lib/member360";
+import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, nextChargePresentation, paymentSourceLabel, renewalBehavior, usagePresentation , membershipRowRenewalActions, extraMembershipsChip, currentMembershipRows, membershipUsageLine, attentionItemTitle } from "@/lib/member360";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -667,6 +667,7 @@ function BillingTab({ studioId, userId, profile }: { studioId: string; userId: s
   const membership = profile.currentMembership;
   const billingState = billingOperationalState(profile);
   const renewal = membership ? renewalBehavior(membership) : "No aplica";
+  const nextCharge = nextChargePresentation(membership);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -693,7 +694,7 @@ function BillingTab({ studioId, userId, profile }: { studioId: string; userId: s
         <StatCard label="Estado de pagos" value={billingState} />
         <StatCard label="Método de pago" value={paymentSourceLabel(membership?.source)} />
         <StatCard label="Último pago" value={profile.operations.lastPayment ? fmtMoney(profile.operations.lastPayment.amountCents, profile.operations.lastPayment.currency) : "—"} sub={fmtDate(profile.operations.lastPayment?.paidAt ?? profile.operations.lastPayment?.createdAt)} />
-        <StatCard label="Renovación" value={renewal} sub={membership?.source === "STRIPE" ? `${membership.cancelAtPeriodEnd ? "Vence" : "Próximo cobro"} ${fmtDate(membership.effectiveEnd)}` : undefined} />
+        <StatCard label="Renovación" value={renewal} sub={nextCharge ? `${nextCharge.label} ${fmtDate(nextCharge.date)}` : membership?.source === "STRIPE" && ["ACTIVE", "TRIALING", "PAST_DUE"].includes(membership.status) ? "Próximo cobro: confirmar en Stripe" : undefined} />
       </div>
       <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <table className="min-w-full divide-y divide-zinc-100">
@@ -1762,7 +1763,7 @@ export default function MemberProfilePage() {
             <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-amber-900">Atención requerida</h2>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{attentionItemTitle(item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado", ["INACTIVE", "NO_SHOWS"].includes(item.code) ? null : profile.currentMembership?.plan.name ?? null, currentMembershipRows(profile.memberships).length)}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
+                {profile.operations.attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{attentionItemTitle(item.code === "PAID_WITHOUT_ENTITLEMENT" ? "Pago sin acceso" : item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado", ["INACTIVE", "NO_SHOWS", "PAID_WITHOUT_ENTITLEMENT"].includes(item.code) ? null : profile.currentMembership?.plan.name ?? null, currentMembershipRows(profile.memberships).length)}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining && !profile.currentMembership.paidWithoutEntitlement ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
               </div>
             </section>
           ) : null}

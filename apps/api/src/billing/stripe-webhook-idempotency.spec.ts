@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma/prisma.service';
 import { markStripeWebhookEventProcessed, tryClaimStripeWebhookEvent } from './stripe-webhook-idempotency';
 
-type Row = { stripeEventId: string; processed: boolean; payload: unknown };
+type Row = { stripeEventId: string; processed: boolean; payload: unknown; resolvedAt?: Date | null };
 
 function asPrismaService(mock: ReturnType<typeof createMockPrisma>): PrismaService {
   return mock as unknown as PrismaService;
@@ -96,5 +96,14 @@ describe('tryClaimStripeWebhookEvent', () => {
       payload: {},
     });
     expect(ok).toBe(true);
+  });
+
+  it('returns false for an unprocessed event an operator resolved (acknowledged: replay not required)', async () => {
+    const store = new Map<string, Row>();
+    const prisma = createMockPrisma(store);
+    await tryClaimStripeWebhookEvent(asPrismaService(prisma), { id: 'evt_refunded', type: 'invoice.paid', payload: {} });
+    store.get('evt_refunded')!.resolvedAt = new Date('2026-10-10T00:00:00Z');
+    const ok = await tryClaimStripeWebhookEvent(asPrismaService(prisma), { id: 'evt_refunded', type: 'invoice.paid', payload: {} });
+    expect(ok).toBe(false);
   });
 });

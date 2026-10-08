@@ -1,0 +1,185 @@
+{
+  "id": "evt_fx0015",
+  "data": {
+    "object": {
+      "id": "in_fx0016",
+      "lines": {
+        "url": "/v1/invoices/in_fx0016/lines",
+        "data": [
+          {
+            "id": "il_fx0017",
+            "taxes": [],
+            "amount": 195000,
+            "object": "line_item",
+            "parent": {
+              "type": "subscription_item_details",
+              "invoice_item_details": null,
+              "subscription_item_details": {
+                "proration": false,
+                "invoice_item": null,
+                "subscription": "sub_fx0018",
+                "proration_details": {
+                  "credited_items": null
+                },
+                "subscription_item": "si_fx0019"
+              },
+              "license_fee_subscription_details": null
+            },
+            "period": {
+              "end": 1783973042,
+              "start": 1781381042
+            },
+            "invoice": "in_fx0016",
+            "pricing": {
+              "type": "price_details",
+              "price_details": {
+                "price": "price_fx0020",
+                "product": "prod_fx0021"
+              },
+              "unit_amount_decimal": "195000"
+            },
+            "currency": "mxn",
+            "livemode": false,
+            "metadata": {
+              "planId": "fx_fx0022",
+              "userId": "fx_fx0023",
+              "studioId": "fx_studio_ares"
+            },
+            "quantity": 1,
+            "subtotal": 195000,
+            "discounts": [],
+            "description": "1 × Full Access (at $1,950.00 / month)",
+            "discountable": true,
+            "discount_amounts": [],
+            "quantity_decimal": "1",
+            "pretax_credit_amounts": []
+          }
+        ],
+        "object": "list",
+        "has_more": false,
+        "total_count": 1
+      },
+      "total": 195000,
+      "footer": null,
+      "issuer": {
+        "type": "self"
+      },
+      "number": "[redacted]",
+      "object": "invoice",
+      "parent": {
+        "type": "subscription_details",
+        "quote_details": null,
+        "subscription_details": {
+          "metadata": {
+            "planId": "fx_fx0022",
+            "userId": "fx_fx0023",
+            "studioId": "fx_studio_ares"
+          },
+          "subscription": "sub_fx0018"
+        }
+      },
+      "status": "paid",
+      "created": 1781381042,
+      "currency": "mxn",
+      "customer": "cus_fx0024",
+      "due_date": null,
+      "livemode": false,
+      "metadata": {},
+      "subtotal": 195000,
+      "attempted": true,
+      "discounts": [],
+      "rendering": null,
+      "amount_due": 195000,
+      "period_end": 1781381042,
+      "test_clock": null,
+      "amount_paid": 195000,
+      "application": null,
+      "description": null,
+      "invoice_pdf": "[redacted]",
+      "total_taxes": [],
+      "account_name": "[redacted]",
+      "auto_advance": false,
+      "effective_at": 1781381042,
+      "from_invoice": null,
+      "on_behalf_of": null,
+      "period_start": 1781381042,
+      "attempt_count": 0,
+      "automatic_tax": {
+        "status": null,
+        "enabled": false,
+        "provider": null,
+        "liability": null,
+        "disabled_reason": null
+      },
+      "custom_fields": null,
+      "customer_name": "[redacted]",
+      "shipping_cost": null,
+      "billing_reason": "subscription_create",
+      "customer_email": "[redacted]",
+      "customer_phone": null,
+      "default_source": null,
+      "ending_balance": 0,
+      "receipt_number": null,
+      "account_country": "MX",
+      "account_tax_ids": null,
+      "amount_overpaid": 0,
+      "amount_shipping": 0,
+      "latest_revision": null,
+      "amount_remaining": 0,
+      "customer_account": null,
+      "customer_address": null,
+      "customer_tax_ids": [],
+      "payment_settings": {
+        "default_mandate": null,
+        "payment_method_types": null,
+        "payment_method_options": {
+          "pix": null,
+          "upi": null,
+          "card": null,
+          "payto": null,
+          "konbini": null,
+          "acss_debit": null,
+          "bancontact": null,
+          "sepa_debit": null,
+          "us_bank_account": null,
+          "customer_balance": null
+        }
+      },
+      "shipping_details": null,
+      "starting_balance": 0,
+      "collection_method": "charge_automatically",
+      "customer_shipping": null,
+      "default_tax_rates": [],
+      "hosted_invoice_url": "[redacted]",
+      "status_transitions": {
+        "paid_at": 1781381042,
+        "voided_at": null,
+        "finalized_at": 1781381042,
+        "marked_uncollectible_at": null
+      },
+      "customer_tax_exempt": "none",
+      "total_excluding_tax": 195000,
+      "next_payment_attempt": null,
+      "statement_descriptor": null,
+      "webhooks_delivered_at": 1781381042,
+      "default_payment_method": null,
+      "subtotal_excluding_tax": 195000,
+      "total_discount_amounts": [],
+      "last_finalization_error": null,
+      "automatically_finalizes_at": null,
+      "total_pretax_credit_amounts": [],
+      "pre_payment_credit_notes_amount": 0,
+      "post_payment_credit_notes_amount": 0
+    }
+  },
+  "type": "invoice.paid",
+  "object": "event",
+  "created": 1781381044,
+  "request": {
+    "id": null,
+    "idempotency_key": "686a2f2d-383b-4fa6-a076-43116ef69693"
+  },
+  "livemode": false,
+  "api_version": "2026-02-25.clover",
+  "pending_webhooks": 1
+}

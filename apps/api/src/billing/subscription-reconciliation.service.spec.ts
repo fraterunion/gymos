@@ -71,6 +71,11 @@ function buildService(overrides: {
   planByPrice?: Record<string, { id: string } | null>;
   planById?: Record<string, { id: string; exclusiveGroup: string | null } | null>;
   deadLetters?: Array<{ stripeEventId: string; eventType: string; createdAt: Date }>;
+  /** Fixed-duration (entitlementDays) plans, paid payments and cycles for the paid-without-entitlement check. */
+  fixedPlans?: Array<{ id: string }>;
+  fixedSubscriptions?: Array<{ id: string; userId: string; membershipPlanId: string }>;
+  paidPayments?: Array<Record<string, unknown>>;
+  cycles?: Array<Record<string, unknown>>;
 }) {
   const prisma = {
     user: {
@@ -80,10 +85,16 @@ function buildService(overrides: {
       findMany: jest.fn().mockResolvedValue(overrides.studioMembers ?? []),
     },
     subscription: {
-      findMany: jest.fn().mockResolvedValue(overrides.localSubs ?? []),
+      findMany: jest.fn().mockImplementation(async (args: { where: { source?: string } }) =>
+        args.where.source === 'STRIPE' && 'membershipPlanId' in args.where
+          ? overrides.fixedSubscriptions ?? []
+          : overrides.localSubs ?? []),
       update: jest.fn().mockResolvedValue({}),
     },
+    payment: { findMany: jest.fn().mockResolvedValue(overrides.paidPayments ?? []) },
+    membershipEntitlementCycle: { findMany: jest.fn().mockResolvedValue(overrides.cycles ?? []) },
     membershipPlan: {
+      findMany: jest.fn().mockResolvedValue(overrides.fixedPlans ?? []),
       findFirst: jest.fn().mockImplementation(async (args: { where: { stripePriceId?: string; id?: string } }) => {
         if (args.where.id) {
           return (overrides.planById ?? {})[args.where.id] ?? null;
@@ -95,6 +106,7 @@ function buildService(overrides: {
     },
     stripeWebhookEvent: {
       findMany: jest.fn().mockResolvedValue(overrides.deadLetters ?? []),
+      findFirst: jest.fn().mockResolvedValue(null),
     },
   };
 
@@ -721,6 +733,26 @@ describe('SubscriptionReconciliationService — dead-letter resolution model', (
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('SubscriptionReconciliationService — auditStudio', () => {
+  it('flags a paid fixed-duration invoice without its entitlement cycle as critical and attention_required', async () => {
+    const { service, prisma } = buildService({
+      fixedPlans: [{ id: 'plan-booty' }],
+      fixedSubscriptions: [{ id: 'local-booty', userId: 'user-1', membershipPlanId: 'plan-booty' }],
+      paidPayments: [{
+        id: 'pay-oct2', userId: 'user-1', subscriptionId: 'local-booty', membershipPlanId: 'plan-booty',
+        stripeInvoiceId: 'in_oct2', amountCents: 80000, currency: 'mxn',
+        paidAt: new Date('2026-10-02T17:55:59Z'), createdAt: new Date('2026-10-02T17:56:06Z'),
+      }],
+      cycles: [{ id: 'backfill_local-booty', subscriptionId: 'local-booty', startsAt: new Date('2026-08-18T16:54:40Z'), stripeInvoiceId: 'in_aug18' }],
+    });
+    const result = await service.auditStudio('studio-1');
+    expect(result.status).toBe('attention_required');
+    expect(result.findings).toEqual([
+      expect.objectContaining({ userId: 'user-1', issue: 'paid_without_entitlement', severity: 'critical', requiresManualResolution: true }),
+    ]);
+    // Detection is read-only.
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
   // Test 8: healthy case — no members with stripeCustomerId
   it('returns healthy with checkedMembers=0 when no studio members have a Stripe customer', async () => {
     const { service } = buildService({ studioMembers: [] });

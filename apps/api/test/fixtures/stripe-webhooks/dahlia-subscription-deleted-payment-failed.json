@@ -1,0 +1,203 @@
+{
+  "id": "evt_fx0025",
+  "data": {
+    "object": {
+      "id": "sub_fx0026",
+      "plan": {
+        "id": "price_fx0027",
+        "meter": null,
+        "active": true,
+        "amount": 150000,
+        "object": "plan",
+        "created": 1785247255,
+        "product": "prod_fx0028",
+        "currency": "mxn",
+        "interval": "month",
+        "livemode": true,
+        "metadata": {},
+        "nickname": null,
+        "tiers_mode": null,
+        "usage_type": "licensed",
+        "amount_decimal": "150000",
+        "billing_scheme": "per_unit",
+        "interval_count": 1,
+        "transform_usage": null,
+        "trial_period_days": null
+      },
+      "items": {
+        "url": "/v1/subscription_items?subscription=sub_fx0026",
+        "data": [
+          {
+            "id": "si_fx0029",
+            "plan": {
+              "id": "price_fx0027",
+              "meter": null,
+              "active": true,
+              "amount": 150000,
+              "object": "plan",
+              "created": 1785247255,
+              "product": "prod_fx0028",
+              "currency": "mxn",
+              "interval": "month",
+              "livemode": true,
+              "metadata": {},
+              "nickname": null,
+              "tiers_mode": null,
+              "usage_type": "licensed",
+              "amount_decimal": "150000",
+              "billing_scheme": "per_unit",
+              "interval_count": 1,
+              "transform_usage": null,
+              "trial_period_days": null
+            },
+            "price": {
+              "id": "price_fx0027",
+              "type": "recurring",
+              "active": true,
+              "object": "price",
+              "created": 1785247255,
+              "product": "prod_fx0028",
+              "currency": "mxn",
+              "livemode": true,
+              "metadata": {},
+              "nickname": null,
+              "recurring": {
+                "meter": null,
+                "interval": "month",
+                "usage_type": "licensed",
+                "interval_count": 1,
+                "trial_period_days": null
+              },
+              "lookup_key": null,
+              "tiers_mode": null,
+              "unit_amount": 150000,
+              "tax_behavior": "unspecified",
+              "billing_scheme": "per_unit",
+              "custom_unit_amount": null,
+              "transform_quantity": null,
+              "unit_amount_decimal": "150000"
+            },
+            "object": "subscription_item",
+            "created": 1786669948,
+            "metadata": {},
+            "quantity": 1,
+            "discounts": [],
+            "tax_rates": [],
+            "subscription": "sub_fx0026",
+            "current_trial": null,
+            "billing_thresholds": null,
+            "current_period_end": 1791940347,
+            "current_period_start": 1789348347
+          }
+        ],
+        "object": "list",
+        "has_more": false,
+        "total_count": 1
+      },
+      "object": "subscription",
+      "status": "canceled",
+      "created": 1786669947,
+      "currency": "mxn",
+      "customer": "cus_fx0030",
+      "ended_at": 1790561641,
+      "livemode": true,
+      "metadata": {
+        "planId": "fx_fx0022",
+        "userId": "fx_fx0031",
+        "studioId": "fx_studio_ares"
+      },
+      "quantity": 1,
+      "schedule": null,
+      "cancel_at": null,
+      "discounts": [],
+      "trial_end": null,
+      "start_date": 1786669947,
+      "test_clock": null,
+      "application": null,
+      "canceled_at": 1790561641,
+      "description": null,
+      "trial_start": null,
+      "billing_mode": {
+        "type": "classic",
+        "flexible": null
+      },
+      "on_behalf_of": null,
+      "automatic_tax": {
+        "enabled": false,
+        "liability": null,
+        "disabled_reason": null
+      },
+      "transfer_data": null,
+      "days_until_due": null,
+      "default_source": null,
+      "latest_invoice": "in_fx0032",
+      "pending_update": null,
+      "trial_settings": {
+        "end_behavior": {
+          "billing_cycle_anchor": null,
+          "missing_payment_method": "create_invoice"
+        }
+      },
+      "customer_account": null,
+      "invoice_settings": {
+        "footer": null,
+        "issuer": {
+          "type": "self"
+        },
+        "description": null,
+        "custom_fields": null,
+        "account_tax_ids": null
+      },
+      "managed_payments": {
+        "enabled": false
+      },
+      "pause_collection": null,
+      "payment_settings": {
+        "payment_method_types": null,
+        "payment_method_options": {
+          "pix": null,
+          "upi": null,
+          "blik": null,
+          "card": null,
+          "payto": null,
+          "billie": null,
+          "konbini": null,
+          "acss_debit": null,
+          "bancontact": null,
+          "sepa_debit": null,
+          "us_bank_account": null,
+          "customer_balance": null
+        },
+        "save_default_payment_method": "off"
+      },
+      "billing_schedules": [],
+      "collection_method": "charge_automatically",
+      "default_tax_rates": [],
+      "billing_thresholds": null,
+      "billing_cycle_anchor": 1786669947,
+      "cancel_at_period_end": false,
+      "cancellation_details": {
+        "reason": "payment_failed",
+        "comment": null,
+        "feedback": null,
+        "feedback_option": null
+      },
+      "pending_setup_intent": null,
+      "default_payment_method": "pm_fx0033",
+      "application_fee_percent": null,
+      "billing_cycle_anchor_config": null,
+      "pending_invoice_item_interval": null,
+      "next_pending_invoice_item_invoice": null
+    }
+  },
+  "type": "customer.subscription.deleted",
+  "object": "event",
+  "created": 1790561644,
+  "request": {
+    "id": null,
+    "idempotency_key": null
+  },
+  "livemode": true,
+  "api_version": "2026-05-27.dahlia",
+  "pending_webhooks": 1
+}

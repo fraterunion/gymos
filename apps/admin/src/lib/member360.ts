@@ -2,15 +2,40 @@ import type { MemberProfile, MemberRole, MembershipSummary, PaymentSource, Prima
 
 export type Member360Action = { id: "membership" | "billing" | "notes"; label: string; emphasis: "primary" | "secondary" };
 
+/**
+ * True when staff must NOT take a renewal/cash-sale action: the card subscription is still being
+ * renewed by Stripe, or a card payment is recorded without its entitlement. Renewing there
+ * collects a second payment for a period the member already paid (2026-10 Booty Lab incident).
+ */
+export function renewalRequiresBillingReview(
+  membership: { source: Exclude<PaymentSource, "NONE">; status?: string; paidWithoutEntitlement?: unknown } | null,
+): boolean {
+  if (!membership) return false;
+  if (membership.paidWithoutEntitlement) return true;
+  return membership.source === "STRIPE" && (membership.status === "ACTIVE" || membership.status === "TRIALING");
+}
+
 export function member360Actions(
   studioRole: MemberRole | string | null,
-  membership: { primaryStatus: PrimaryLifecycleStatus; source: Exclude<PaymentSource, "NONE">; cancelAtPeriodEnd: boolean } | null,
+  membership: {
+    primaryStatus: PrimaryLifecycleStatus;
+    source: Exclude<PaymentSource, "NONE">;
+    cancelAtPeriodEnd: boolean;
+    status?: string;
+    paidWithoutEntitlement?: unknown;
+  } | null,
 ): Member360Action[] {
   const canManage = studioRole === "OWNER" || studioRole === "ADMIN";
   const canReadOperations = canManage || studioRole === "STAFF" || studioRole === "FRONT_DESK";
   if (!canReadOperations) return [];
   if (!membership) return canManage ? [{ id: "membership", label: "Asignar membresía", emphasis: "primary" }] : [];
   const actions: Member360Action[] = [];
+  if (membership.primaryStatus === "EXPIRED" && renewalRequiresBillingReview(membership)) {
+    actions.push({ id: "billing", label: "Revisar cobro antes de renovar", emphasis: "primary" });
+    if (canManage) actions.push({ id: "membership", label: "Gestionar membresía", emphasis: "secondary" });
+    actions.push({ id: "notes", label: studioRole === "FRONT_DESK" ? "Ver notas" : "Notas y CRM", emphasis: "secondary" });
+    return actions;
+  }
   if (canManage) {
     actions.push({
       id: "membership",
@@ -26,8 +51,27 @@ export function member360Actions(
 export function billingOperationalState(profile: Pick<MemberProfile, "currentMembership" | "operations">): string {
   const membership = profile.currentMembership;
   if (!membership) return "No aplica";
+  // Payment state and entitlement state are different facts: a recorded card payment with no
+  // entitlement cycle is NOT "al corriente".
+  if (membership.paidWithoutEntitlement || profile.operations?.attentionItems?.some((item) => item.code === "PAID_WITHOUT_ENTITLEMENT")) {
+    return "Pagado sin acceso";
+  }
   if (membership.lifecycleStatus === "PAST_DUE") return "Pago pendiente";
   return "Al corriente";
+}
+
+/**
+ * Billing-tab renewal sub-line. GymOS only knows the next charge while the card membership is
+ * entitled and its end is still ahead; a past entitlement end is never presented as "next charge"
+ * (Stripe may already have charged it). Returns null when the date must not be shown.
+ */
+export function nextChargePresentation(
+  membership: Pick<NonNullable<MemberProfile["currentMembership"]>, "source" | "cancelAtPeriodEnd" | "effectiveEnd" | "isEntitled"> | null,
+  now: Date = new Date(),
+): { label: "Próximo cobro" | "Vence"; date: string } | null {
+  if (!membership || membership.source !== "STRIPE" || !membership.effectiveEnd || !membership.isEntitled) return null;
+  if (new Date(membership.effectiveEnd).getTime() <= now.getTime()) return null;
+  return { label: membership.cancelAtPeriodEnd ? "Vence" : "Próximo cobro", date: membership.effectiveEnd };
 }
 
 export function renewalBehavior(membership: Pick<NonNullable<MemberProfile["currentMembership"]>, "source" | "cancelAtPeriodEnd" | "primaryStatus">) {

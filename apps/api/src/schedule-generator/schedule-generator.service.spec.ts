@@ -217,6 +217,10 @@ describe('ScheduleGeneratorService', () => {
           dayOfWeek: 1,
           startTime: '06:00',
           capacity: 20,
+          // Explicit open-ended series. An omitted startsAt is read as "starts today", which made
+          // this fixed FROM window (2026-10-06) generate nothing once that date passed.
+          startsAt: null,
+          endsAt: null,
           classTemplate: { id: 'ct-1', name: 'Upper Push', durationMinutes: 60, defaultCapacity: 15 },
         },
       ]);

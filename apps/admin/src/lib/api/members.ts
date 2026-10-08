@@ -185,6 +185,17 @@ export type PlanChangePreview = {
   message: string;
 };
 
+/**
+ * A fixed-duration card payment whose invoice never produced its entitlement cycle (the member
+ * paid but has no access). Server-detected; staff must reconcile, never charge again.
+ */
+export type PaidWithoutEntitlement = {
+  stripeInvoiceId: string;
+  amountCents: number;
+  currency: string;
+  paidAt: string;
+};
+
 export type MemberProfile = {
   user: {
     id: string;
@@ -234,6 +245,8 @@ export type MemberProfile = {
     pendingPlan: Pick<MemberPlan, "id" | "name" | "billingInterval" | "priceCents" | "currency"> | null;
     creditsUsed: number | null;
     creditsRemaining: number | null;
+    /** Absent on API versions that predate the 2026-10 incident guard. */
+    paidWithoutEntitlement?: PaidWithoutEntitlement | null;
   }) | null;
   operations: {
     lastVisit: { checkedInAt: string; method: string; type: CheckInType; scheduledClass: { id: string; startsAt: string; classTemplate: { name: string } } | null } | null;
@@ -241,7 +254,7 @@ export type MemberProfile = {
     lastPayment: (MemberPayment & { paymentMethod: string; membershipPlan: { id: string; name: string } | null }) | null;
     recentNoShows: number;
     attendanceRate: number | null;
-    attentionItems: Array<{ code: "PAST_DUE" | "EXPIRED" | "CANCELLATION_SCHEDULED" | "ZERO_CREDITS" | "ENDING" | "NO_SHOWS" | "INACTIVE"; priority: "critical" | "warning" | "informational"; message: string; action: "REVIEW_BILLING" | "RENEW" | null }>;
+    attentionItems: Array<{ code: "PAID_WITHOUT_ENTITLEMENT" | "PAST_DUE" | "EXPIRED" | "CANCELLATION_SCHEDULED" | "ZERO_CREDITS" | "ENDING" | "NO_SHOWS" | "INACTIVE"; priority: "critical" | "warning" | "informational"; message: string; action: "REVIEW_BILLING" | "RENEW" | null }>;
     segments: string[];
     recentActivity: Array<{ type: "BOOKING_CREATED" | "BOOKING_CANCELLED" | "BOOKING_NO_SHOW"; title: string; description: string; occurredAt: string; classStartsAt: string }>;
   };
@@ -280,6 +293,7 @@ export type MembershipSummary = {
   pendingPlan: Pick<MemberPlan, "id" | "name"> | null;
   creditsUsed: number | null;
   creditsRemaining: number | null;
+  paidWithoutEntitlement?: PaidWithoutEntitlement | null;
 };
 
 /** MM-5: server-computed sale relationship for a target member (never derived client-side). */

@@ -21,6 +21,7 @@ import {
 } from '@prisma/client';
 import { SubscriptionLifecycleService } from '../billing/subscription-lifecycle.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
+import { loadPaidWithoutEntitlement } from '../billing/paid-without-entitlement';
 import { acquireSubscriptionWriteAdvisoryLock } from '../billing/subscription-write-advisory-lock';
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { CheckInsService } from '../check-ins/check-ins.service';
@@ -533,6 +534,27 @@ export class MembersService {
       }
     }
 
+    // Incident guard (2026-10-02 Booty Lab renewals): a fixed-duration card payment whose invoice
+    // never produced its entitlement cycle must never render as healthy, and must never invite
+    // staff to collect a second payment. Read-only; queried only for members who hold a
+    // fixed-duration Stripe membership.
+    const holdsFixedDurationStripeMembership = allSubscriptions.some(
+      (s) => s.source === SubscriptionSource.STRIPE && s.membershipPlan.entitlementDays != null,
+    );
+    const entitlementGaps = holdsFixedDurationStripeMembership
+      ? await loadPaidWithoutEntitlement(this.prisma, { studioId, userId })
+      : [];
+    const paidWithoutEntitlementFor = (subscriptionId: string) => {
+      const gap = entitlementGaps.filter((g) => g.subscriptionId === subscriptionId).at(-1);
+      return gap
+        ? { stripeInvoiceId: gap.stripeInvoiceId, amountCents: gap.amountCents, currency: gap.currency, paidAt: gap.paidAt }
+        : null;
+    };
+    // A card subscription Stripe still renews must be reviewed, never "renewed" again by staff.
+    const liveStripeRenewal =
+      latestSubscription?.source === SubscriptionSource.STRIPE &&
+      (latestSubscription.status === SubscriptionStatus.ACTIVE || latestSubscription.status === SubscriptionStatus.TRIALING);
+
     const currentMembership = latestSubscription
       ? {
           id: latestSubscription.id,
@@ -569,12 +591,14 @@ export class MembersService {
           pendingPlan: latestSubscription.pendingMembershipPlan,
           creditsUsed,
           creditsRemaining,
+          paidWithoutEntitlement: paidWithoutEntitlementFor(latestSubscription.id),
         }
       : null;
     const daysSinceVisit = lastAttendance ? Math.floor((profileNow.getTime() - lastAttendance.checkedInAt.getTime()) / 86_400_000) : null;
     const attentionItems = [];
+    if (entitlementGaps.length > 0) attentionItems.push({ code: 'PAID_WITHOUT_ENTITLEMENT', priority: 'critical', message: 'Pago con tarjeta recibido sin ciclo de acceso. No cobrar de nuevo: requiere conciliación', action: 'REVIEW_BILLING' });
     if (latestLifecycle?.lifecycleStatus === 'PAST_DUE') attentionItems.push({ code: 'PAST_DUE', priority: 'critical', message: 'Pago pendiente', action: 'REVIEW_BILLING' });
-    if (latestLifecycle?.lifecycleStatus === 'EXPIRED') attentionItems.push({ code: 'EXPIRED', priority: 'critical', message: `Membresía vencida hace ${Math.max(0, Math.floor((profileNow.getTime() - latestLifecycle.effectiveEnd!.getTime()) / 86_400_000))} días`, action: 'RENEW' });
+    if (latestLifecycle?.lifecycleStatus === 'EXPIRED') attentionItems.push({ code: 'EXPIRED', priority: 'critical', message: `Membresía vencida hace ${Math.max(0, Math.floor((profileNow.getTime() - latestLifecycle.effectiveEnd!.getTime()) / 86_400_000))} días`, action: liveStripeRenewal || entitlementGaps.length > 0 ? 'REVIEW_BILLING' : 'RENEW' });
     if (latestLifecycle?.isEntitled && latestSubscription?.source === SubscriptionSource.STRIPE && latestSubscription.cancelAtPeriodEnd) attentionItems.push({ code: 'CANCELLATION_SCHEDULED', priority: 'warning', message: 'No renovará automáticamente al terminar el periodo', action: 'REVIEW_BILLING' });
     if (creditsRemaining === 0) attentionItems.push({ code: 'ZERO_CREDITS', priority: 'warning', message: 'Sin créditos restantes', action: 'RENEW' });
     if (latestLifecycle?.lifecycleStatus === 'ENDING' && latestLifecycle.effectiveEnd && latestLifecycle.effectiveEnd.getTime() - profileNow.getTime() <= 7 * 86_400_000) attentionItems.push({ code: 'ENDING', priority: 'warning', message: `Termina en ${Math.max(0, Math.ceil((latestLifecycle.effectiveEnd.getTime() - profileNow.getTime()) / 86_400_000))} días`, action: 'RENEW' });
@@ -669,6 +693,7 @@ export class MembersService {
             : null,
           creditsUsed: subCreditsUsed,
           creditsRemaining: subCreditsRemaining,
+          paidWithoutEntitlement: paidWithoutEntitlementFor(s.id),
         };
       }),
     );

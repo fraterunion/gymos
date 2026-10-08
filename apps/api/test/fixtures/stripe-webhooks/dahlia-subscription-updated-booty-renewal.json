@@ -1,0 +1,273 @@
+{
+  "id": "evt_fx_booty_renewal_sub_updated",
+  "data": {
+    "object": {
+      "id": "sub_fx_booty_member",
+      "plan": {
+        "id": "price_fx_booty_45d",
+        "meter": null,
+        "active": true,
+        "amount": 80000,
+        "object": "plan",
+        "created": 1787194469,
+        "product": "prod_fx_booty",
+        "currency": "mxn",
+        "interval": "day",
+        "livemode": true,
+        "metadata": {},
+        "nickname": null,
+        "tiers_mode": null,
+        "usage_type": "licensed",
+        "amount_decimal": "80000",
+        "billing_scheme": "per_unit",
+        "interval_count": 45,
+        "transform_usage": null,
+        "trial_period_days": null
+      },
+      "items": {
+        "url": "/v1/subscription_items?subscription=sub_fx_booty_member",
+        "data": [
+          {
+            "id": "si_fx_booty_member",
+            "plan": {
+              "id": "price_fx_booty_45d",
+              "meter": null,
+              "active": true,
+              "amount": 80000,
+              "object": "plan",
+              "created": 1787194469,
+              "product": "prod_fx_booty",
+              "currency": "mxn",
+              "interval": "day",
+              "livemode": true,
+              "metadata": {},
+              "nickname": null,
+              "tiers_mode": null,
+              "usage_type": "licensed",
+              "amount_decimal": "80000",
+              "billing_scheme": "per_unit",
+              "interval_count": 45,
+              "transform_usage": null,
+              "trial_period_days": null
+            },
+            "price": {
+              "id": "price_fx_booty_45d",
+              "type": "recurring",
+              "active": true,
+              "object": "price",
+              "created": 1787194469,
+              "product": "prod_fx_booty",
+              "currency": "mxn",
+              "livemode": true,
+              "metadata": {},
+              "nickname": null,
+              "recurring": {
+                "meter": null,
+                "interval": "day",
+                "usage_type": "licensed",
+                "interval_count": 45,
+                "trial_period_days": null
+              },
+              "lookup_key": null,
+              "tiers_mode": null,
+              "unit_amount": 80000,
+              "tax_behavior": "unspecified",
+              "billing_scheme": "per_unit",
+              "custom_unit_amount": null,
+              "transform_quantity": null,
+              "unit_amount_decimal": "80000"
+            },
+            "object": "subscription_item",
+            "created": 1787072080,
+            "metadata": {},
+            "quantity": 1,
+            "discounts": [],
+            "tax_rates": [],
+            "subscription": "sub_fx_booty_member",
+            "current_trial": null,
+            "billing_thresholds": null,
+            "current_period_end": 1794848080,
+            "current_period_start": 1790960080
+          }
+        ],
+        "object": "list",
+        "has_more": false,
+        "total_count": 1
+      },
+      "object": "subscription",
+      "status": "active",
+      "created": 1787072080,
+      "currency": "mxn",
+      "customer": "cus_fx_booty_member",
+      "ended_at": null,
+      "livemode": true,
+      "metadata": {
+        "planId": "fx_plan_booty",
+        "userId": "fx_user_booty_member",
+        "studioId": "fx_studio_ares"
+      },
+      "quantity": 1,
+      "schedule": null,
+      "cancel_at": null,
+      "discounts": [],
+      "trial_end": 1790960080,
+      "start_date": 1787072080,
+      "test_clock": null,
+      "application": null,
+      "canceled_at": null,
+      "description": null,
+      "trial_start": 1787194500,
+      "billing_mode": {
+        "type": "classic",
+        "flexible": null
+      },
+      "on_behalf_of": null,
+      "automatic_tax": {
+        "enabled": false,
+        "liability": null,
+        "disabled_reason": null
+      },
+      "transfer_data": null,
+      "days_until_due": null,
+      "default_source": null,
+      "latest_invoice": "in_fx_booty_renewal",
+      "pending_update": null,
+      "trial_settings": {
+        "end_behavior": {
+          "billing_cycle_anchor": "now",
+          "missing_payment_method": "create_invoice"
+        }
+      },
+      "customer_account": null,
+      "invoice_settings": {
+        "footer": null,
+        "issuer": {
+          "type": "self"
+        },
+        "description": null,
+        "custom_fields": null,
+        "account_tax_ids": null
+      },
+      "managed_payments": {
+        "enabled": false
+      },
+      "pause_collection": null,
+      "payment_settings": {
+        "payment_method_types": null,
+        "payment_method_options": {
+          "pix": null,
+          "upi": null,
+          "blik": null,
+          "card": null,
+          "payto": null,
+          "billie": null,
+          "konbini": null,
+          "acss_debit": null,
+          "bancontact": null,
+          "sepa_debit": null,
+          "us_bank_account": null,
+          "customer_balance": null
+        },
+        "save_default_payment_method": "off"
+      },
+      "billing_schedules": [],
+      "collection_method": "charge_automatically",
+      "default_tax_rates": [],
+      "billing_thresholds": null,
+      "billing_cycle_anchor": 1790960080,
+      "cancel_at_period_end": false,
+      "cancellation_details": {
+        "reason": null,
+        "comment": null,
+        "feedback": null,
+        "feedback_option": null
+      },
+      "pending_setup_intent": null,
+      "default_payment_method": "pm_fx0004",
+      "application_fee_percent": null,
+      "billing_cycle_anchor_config": null,
+      "pending_invoice_item_interval": null,
+      "next_pending_invoice_item_invoice": null
+    },
+    "previous_attributes": {
+      "items": {
+        "data": [
+          {
+            "id": "si_fx_booty_member",
+            "plan": {
+              "id": "price_fx_booty_45d",
+              "meter": null,
+              "active": true,
+              "amount": 80000,
+              "object": "plan",
+              "created": 1787194469,
+              "product": "prod_fx_booty",
+              "currency": "mxn",
+              "interval": "day",
+              "livemode": true,
+              "metadata": {},
+              "nickname": null,
+              "tiers_mode": null,
+              "usage_type": "licensed",
+              "amount_decimal": "80000",
+              "billing_scheme": "per_unit",
+              "interval_count": 45,
+              "transform_usage": null,
+              "trial_period_days": null
+            },
+            "price": {
+              "id": "price_fx_booty_45d",
+              "type": "recurring",
+              "active": true,
+              "object": "price",
+              "created": 1787194469,
+              "product": "prod_fx_booty",
+              "currency": "mxn",
+              "livemode": true,
+              "metadata": {},
+              "nickname": null,
+              "recurring": {
+                "meter": null,
+                "interval": "day",
+                "usage_type": "licensed",
+                "interval_count": 45,
+                "trial_period_days": null
+              },
+              "lookup_key": null,
+              "tiers_mode": null,
+              "unit_amount": 80000,
+              "tax_behavior": "unspecified",
+              "billing_scheme": "per_unit",
+              "custom_unit_amount": null,
+              "transform_quantity": null,
+              "unit_amount_decimal": "80000"
+            },
+            "object": "subscription_item",
+            "created": 1787072080,
+            "metadata": {},
+            "quantity": 1,
+            "discounts": [],
+            "tax_rates": [],
+            "subscription": "sub_fx_booty_member",
+            "current_trial": null,
+            "billing_thresholds": null,
+            "current_period_end": 1790960080,
+            "current_period_start": 1787194500
+          }
+        ]
+      },
+      "status": "trialing",
+      "latest_invoice": "in_fx_booty_trial_bridge"
+    }
+  },
+  "type": "customer.subscription.updated",
+  "object": "event",
+  "created": 1790960138,
+  "request": {
+    "id": null,
+    "idempotency_key": null
+  },
+  "livemode": true,
+  "api_version": "2026-05-27.dahlia",
+  "pending_webhooks": 1
+}

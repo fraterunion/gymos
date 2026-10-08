@@ -38,21 +38,24 @@ export type WebhookInvoicePayload = {
   customer: string | { id: string } | null;
   // Present in pre-basil API (before 2025-08-27.basil); absent in basil invoices.
   // Use readInvoiceSubscriptionId() to resolve from either shape.
-  subscription: string | { id: string } | null;
+  subscription?: string | { id: string } | null;
   // Absent in basil API invoices — payment intent is no longer embedded on the invoice.
-  payment_intent: string | { id: string } | null;
+  payment_intent?: string | { id: string } | null;
   currency: string | null;
   amount_paid: number | null;
   amount_due: number | null;
   total: number | null;
   billing_reason?: string | null;
   status_transitions: { paid_at: number | null } | null;
+  /**
+   * Line items are deliberately `unknown`: their shape depends on the webhook endpoint's API
+   * version (live endpoint: 2026-05-27.dahlia, where the Price is at pricing.price_details.price
+   * and there is no top-level `price`/`proration`). Read them ONLY through parseInvoiceLines()
+   * in stripe-invoice-lines.ts, which validates every field at runtime.
+   */
   lines: {
-    data: Array<{
-      price: { id: string } | null;
-      period?: { start: number | null; end: number | null } | null;
-      proration?: boolean | null;
-    }>;
+    data: unknown[];
+    has_more?: boolean | null;
   } | null;
   // Invoice collection-window timestamps — NOT the subscription billing period.
   // Do NOT use these for currentPeriodStart/currentPeriodEnd.

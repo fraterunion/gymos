@@ -786,7 +786,9 @@ describe('SalesService', () => {
     });
 
     it('queues a cash renewal after the current 45-day cycle without overlap', async () => {
-      const currentEnd = new Date('2026-10-02T18:00:00.000Z');
+      // Must still be running when the test executes; a hardcoded date (2026-10-02) expired and
+      // turned this into the late-renewal path.
+      const currentEnd = new Date(Date.now() + 10 * 86_400_000);
       prisma.subscription.findFirst.mockResolvedValue({
         id: 'sub-current-booty',
         currentPeriodStart: periodStart,

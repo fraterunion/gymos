@@ -129,5 +129,9 @@ export function createE2eStripeServiceMock(config: {
       object: 'price',
       active: false,
     } as Stripe.Price),
+
+    // Read-only lookups (no Stripe network in e2e).
+    findPaidInvoicePaymentIntentId: jest.fn().mockResolvedValue(null),
+    listSubscriptionsForCustomer: jest.fn().mockResolvedValue([]),
   } as unknown as StripeService;
 }

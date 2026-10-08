@@ -33,7 +33,9 @@ export async function tryClaimStripeWebhookEvent(
       const row = await prisma.stripeWebhookEvent.findUnique({
         where: { stripeEventId: event.id },
       });
-      if (row?.processed) {
+      // processed = handled; resolvedAt = an operator acknowledged it ("replay is not required",
+      // e.g. a refunded paid invoice). Either way a later delivery or resend is a no-op.
+      if (row?.processed || row?.resolvedAt) {
         return false;
       }
       // Increment attempt count on Stripe retry

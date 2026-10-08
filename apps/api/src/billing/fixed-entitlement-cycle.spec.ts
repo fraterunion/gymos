@@ -1,4 +1,4 @@
-import { buildPaidFixedEntitlementCycle, cycleContains, DAY_MS } from './fixed-entitlement-cycle';
+import { buildPaidFixedEntitlementCycle, cycleContains, DAY_MS, planPaidCycleInsertion, type ExistingEntitlementCycle } from './fixed-entitlement-cycle';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -55,5 +55,58 @@ describe('fixed-duration renewable entitlement cycles', () => {
     expect(sql).not.toMatch(/UPDATE\s+"bookings"/i);
     expect(sql).not.toMatch(/UPDATE\s+"payments"/i);
     expect(sql).not.toMatch(/UPDATE\s+"attendances"/i);
+  });
+});
+
+describe('planPaidCycleInsertion — exactly-once, gap-safe cycle placement', () => {
+  const at = (iso: string) => new Date(iso);
+  const backfill: ExistingEntitlementCycle = {
+    id: 'backfill_sub_booty', subscriptionId: 'sub_booty', stripeInvoiceId: 'in_aug18',
+    startsAt: at('2026-08-18T16:54:40.000Z'), endsAt: at('2026-10-02T16:54:40.000Z'),
+  };
+  const oct2 = buildPaidFixedEntitlementCycle({
+    periodStart: at('2026-10-02T16:54:40.000Z'), periodEnd: at('2026-11-16T16:54:40.000Z'), entitlementDays: 45, creditLimit: 4,
+  });
+  const nov16: ExistingEntitlementCycle = {
+    id: 'cycle_nov16', subscriptionId: 'sub_booty', stripeInvoiceId: 'in_nov16',
+    startsAt: at('2026-11-16T16:54:40.000Z'), endsAt: at('2026-12-31T16:54:40.000Z'),
+  };
+  const plan = (existingForSubscription: ExistingEntitlementCycle[], existingForInvoice: ExistingEntitlementCycle | null = null) =>
+    planPaidCycleInsertion({ subscriptionId: 'sub_booty', candidate: oct2, existingForInvoice, existingForSubscription });
+
+  it('inserts the first renewal after a backfilled cycle as the live period (adjacent windows do not overlap)', () => {
+    expect(plan([backfill])).toEqual({ action: 'insert', mode: 'live', cycle: oct2 });
+  });
+
+  it('inserts a first purchase as live', () => {
+    expect(plan([])).toMatchObject({ action: 'insert', mode: 'live' });
+  });
+
+  it('recognises a replay of an already granted invoice', () => {
+    const granted = { id: 'cycle_oct2', subscriptionId: 'sub_booty', stripeInvoiceId: 'in_oct2', ...oct2 };
+    expect(plan([backfill, granted], granted)).toEqual({ action: 'already_granted', existing: granted });
+  });
+
+  it('refuses an invoice whose existing cycle has a different window or subscription', () => {
+    const other = { ...backfill, stripeInvoiceId: 'in_oct2' };
+    expect(plan([backfill], other)).toMatchObject({ action: 'reject', code: 'EXISTING_CYCLE_MISMATCH' });
+    const foreign = { id: 'c', subscriptionId: 'sub_other', stripeInvoiceId: 'in_oct2', ...oct2 };
+    expect(plan([backfill], foreign)).toMatchObject({ action: 'reject', code: 'EXISTING_CYCLE_MISMATCH' });
+  });
+
+  it('fills a historical gap BEFORE a newer cycle without becoming the live period', () => {
+    expect(plan([backfill, nov16])).toEqual({ action: 'insert', mode: 'historical_gap_fill', cycle: oct2 });
+  });
+
+  it('treats an identical window backfilled without an invoice link as already covered', () => {
+    const unlinked = { id: 'backfill_x', subscriptionId: 'sub_booty', stripeInvoiceId: null, ...oct2 };
+    expect(plan([backfill, unlinked])).toEqual({ action: 'already_covered', existing: unlinked });
+  });
+
+  it('rejects any real overlap with a different cycle', () => {
+    const overlapping = { ...nov16, id: 'cycle_overlap', startsAt: at('2026-11-15T00:00:00.000Z') };
+    expect(plan([backfill, overlapping])).toMatchObject({ action: 'reject', code: 'OVERLAPS_EXISTING_CYCLE', conflicting: overlapping });
+    const backfillEndingLate = { ...backfill, endsAt: at('2026-10-02T17:54:40.000Z') };
+    expect(plan([backfillEndingLate])).toMatchObject({ action: 'reject', code: 'OVERLAPS_EXISTING_CYCLE' });
   });
 });

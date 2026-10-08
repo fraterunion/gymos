@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { PAYMENT_SOURCE_PRESENTATION, PRIMARY_STATUS_LABELS, primaryStatus, renewalPresentation } from "./memberPresentation.ts";
-import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, paymentSourceLabel, renewalBehavior, usagePresentation } from "./member360.ts";
+import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, nextChargePresentation, paymentSourceLabel, renewalBehavior, renewalRequiresBillingReview, usagePresentation } from "./member360.ts";
 
 const base = {
   lifecycleStatus: "ACTIVE" as const,
@@ -182,4 +182,51 @@ test("header keeps one lifecycle badge and does not append status to plan name",
   assert.match(source, /currentMembership\?\.plan\.name \?\? "Sin membresía"/);
   assert.doesNotMatch(source, /plan\.name\} · \$\{PRIMARY_STATUS_LABELS/);
   assert.match(source, /Membresía vencida/);
+});
+
+// ── 2026-10 Booty Lab incident: paid card renewal with no entitlement cycle ──────────
+
+const paidButExpired = {
+  lifecycleStatus: "EXPIRED", primaryStatus: "EXPIRED", status: "ACTIVE", source: "STRIPE", cancelAtPeriodEnd: false,
+  isEntitled: false, effectiveEnd: "2026-10-02T16:54:40.000Z",
+  paidWithoutEntitlement: { stripeInvoiceId: "in_fx", amountCents: 80000, currency: "mxn", paidAt: "2026-10-02T17:55:59.000Z" },
+} as const;
+
+test("a paid card renewal without its entitlement is never presented as healthy billing", () => {
+  assert.equal(billingOperationalState({ currentMembership: paidButExpired, operations: { attentionItems: [] } } as never), "Pagado sin acceso");
+  const flaggedOnlyByAttention = { ...paidButExpired, paidWithoutEntitlement: null };
+  assert.equal(
+    billingOperationalState({ currentMembership: flaggedOnlyByAttention, operations: { attentionItems: [{ code: "PAID_WITHOUT_ENTITLEMENT" }] } } as never),
+    "Pagado sin acceso",
+  );
+});
+
+test("a past entitlement end is never shown as the next card charge", () => {
+  const now = new Date("2026-10-07T18:00:00.000Z");
+  assert.equal(nextChargePresentation(paidButExpired, now), null);
+  assert.equal(nextChargePresentation({ ...paidButExpired, isEntitled: true }, now), null); // date already passed
+  assert.deepEqual(
+    nextChargePresentation({ source: "STRIPE", cancelAtPeriodEnd: false, isEntitled: true, effectiveEnd: "2026-11-16T16:54:40.000Z" }, now),
+    { label: "Próximo cobro", date: "2026-11-16T16:54:40.000Z" },
+  );
+  assert.deepEqual(
+    nextChargePresentation({ source: "STRIPE", cancelAtPeriodEnd: true, isEntitled: true, effectiveEnd: "2026-11-16T16:54:40.000Z" }, now),
+    { label: "Vence", date: "2026-11-16T16:54:40.000Z" },
+  );
+  assert.equal(nextChargePresentation({ source: "CASH", cancelAtPeriodEnd: true, isEntitled: true, effectiveEnd: "2026-11-16T16:54:40.000Z" }, now), null);
+});
+
+test("an expired membership that Stripe still renews never offers Renovar — billing review comes first", () => {
+  const labels = (m: unknown) => member360Actions("OWNER", m as never).map((a) => [a.id, a.label]);
+  assert.deepEqual(labels(paidButExpired), [
+    ["billing", "Revisar cobro antes de renovar"],
+    ["membership", "Gestionar membresía"],
+    ["notes", "Notas y CRM"],
+  ]);
+  assert.deepEqual(labels({ ...paidButExpired, paidWithoutEntitlement: null }).at(0), ["billing", "Revisar cobro antes de renovar"]);
+  // Expired CASH, or a Stripe subscription that really ended, may still be renewed.
+  assert.equal(member360Actions("OWNER", { primaryStatus: "EXPIRED", source: "CASH", status: "ACTIVE", cancelAtPeriodEnd: true }).at(0)?.label, "Renovar membresía");
+  assert.equal(member360Actions("OWNER", { primaryStatus: "EXPIRED", source: "STRIPE", status: "CANCELED", cancelAtPeriodEnd: true }).at(0)?.label, "Renovar membresía");
+  assert.equal(renewalRequiresBillingReview({ source: "STRIPE", status: "TRIALING" }), true);
+  assert.equal(renewalRequiresBillingReview(null), false);
 });

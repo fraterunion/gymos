@@ -73,6 +73,26 @@ export class StripeService {
     return this.getClient().prices.retrieve(priceId);
   }
 
+  /**
+   * READ-ONLY. The single PaymentIntent that paid `invoiceId`, or null when there is none or more
+   * than one. Basil-and-later invoices no longer embed `payment_intent`; the InvoicePayment list
+   * is the supported way to resolve it. Short timeout: callers treat this as best-effort.
+   */
+  async findPaidInvoicePaymentIntentId(invoiceId: string): Promise<string | null> {
+    const payments = await this.getClient().invoicePayments.list(
+      { invoice: invoiceId, status: 'paid', limit: 5 },
+      { timeout: 3_000, maxNetworkRetries: 0 },
+    );
+    const ids = new Set<string>();
+    for (const invoicePayment of payments.data) {
+      if (invoicePayment.payment.type !== 'payment_intent') continue;
+      const ref = invoicePayment.payment.payment_intent;
+      const id = typeof ref === 'string' ? ref : ref?.id;
+      if (id) ids.add(id);
+    }
+    return ids.size === 1 ? [...ids][0] : null;
+  }
+
   async createProductForPlan(
     params: {
       name: string;

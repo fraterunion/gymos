@@ -1,12 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DayPassStatus, PaymentMethod, PaymentStatus, Prisma, Subscription, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
+import { DayPassStatus, MembershipPlan, PaymentMethod, PaymentStatus, Prisma, Subscription, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { SubscriptionLifecycleService } from './subscription-lifecycle.service';
 import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
 import { StripeRenewalAuditService } from './stripe-renewal-audit.service';
-import { buildPaidFixedEntitlementCycle } from './fixed-entitlement-cycle';
+import { buildPaidFixedEntitlementCycle, planPaidCycleInsertion } from './fixed-entitlement-cycle';
+import {
+  classifyFixedDurationInvoice,
+  FixedDurationEntitlementError,
+  type FixedDurationDecision,
+  type InvoiceLineDiagnostic,
+} from './fixed-duration-invoice';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
 import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 import {
@@ -26,6 +32,7 @@ import {
   findCreationConflicts,
 } from '../memberships/membership-compatibility';
 import { readInvoiceSubscriptionId } from './stripe-invoice.utils';
+import { parseInvoiceLines } from './stripe-invoice-lines';
 import { readCancellationDetails } from './stripe-renewal-audit.utils';
 import { activateDayPassFromSucceededPaymentIntent } from '../day-passes/day-pass-activation';
 import { logDayPassEvent } from '../day-passes/day-pass-events';
@@ -45,6 +52,23 @@ type SubscriptionEventContext = {
   idempotencyKey: string | null;
   receivedAt: Date;
 };
+
+type InvoiceContext = {
+  userId: string;
+  studioId: string;
+  dbSubscriptionId: string | null;
+  membershipPlanId: string | null;
+};
+
+type FixedDurationSubscription = Subscription & { membershipPlan: MembershipPlan };
+
+const CYCLE_SELECT = {
+  id: true,
+  subscriptionId: true,
+  startsAt: true,
+  endsAt: true,
+  stripeInvoiceId: true,
+} as const;
 
 function eventToJsonPayload(event: VerifiedStripeEvent): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(event)) as Prisma.InputJsonValue;
@@ -761,8 +785,20 @@ export class StripeWebhookService {
 
     const amountCents = invoice.amount_paid ?? 0;
     if (amountCents <= 0) {
-      const entitlementBearing = await this.hasExactFixedDurationServiceLine(ctx, invoice);
-      if (!entitlementBearing) {
+      // Discounts and customer balance can settle a real fixed-duration period without a
+      // positive Stripe payment: grant that exact period, but never write a zero-value
+      // financial Payment row. Trials and bridges are recognised and skipped.
+      const fixed = await this.loadFixedDurationSubscription(ctx.dbSubscriptionId);
+      if (!fixed && !ctx.dbSubscriptionId && (await this.isFixedDurationPlan(ctx.membershipPlanId))) {
+        // A zero-value fixed-duration invoice (e.g. 100% coupon) that raced ahead of its local
+        // subscription row must be retried, not silently skipped: the grant path throws a
+        // retryable SUBSCRIPTION_NOT_LOCAL error.
+        await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice, stripeEventId);
+        return;
+      }
+      if (!fixed) await this.assertNoUnsyncedFixedDurationSwitch(ctx, invoice, stripeEventId);
+      const decision = fixed ? this.classifyForSubscription(invoice, fixed) : null;
+      if (!decision || decision.kind === 'skip') {
         this.logger.log(
           JSON.stringify({
             event: 'stripe_invoice_paid_non_entitlement',
@@ -772,29 +808,28 @@ export class StripeWebhookService {
             amountDue: invoice.amount_due ?? 0,
             amountPaid: amountCents,
             billingReason: invoice.billing_reason ?? null,
-            reasonSkipped: 'no_positive_payment_and_no_exact_fixed_duration_service_line',
+            reasonSkipped: decision ? decision.reason : 'not_fixed_duration_membership',
           }),
         );
         return;
       }
-
-      // Discounts and customer balance can satisfy a real fixed-duration invoice
-      // without a positive Stripe payment. Grant the exact service line, but do not
-      // create a zero-value financial Payment row.
-      await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice);
+      await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice, stripeEventId);
       return;
     }
+    // Pre-basil payloads embed the PaymentIntent; basil-and-later (the live dahlia endpoint) do
+    // not — those are enriched best-effort AFTER the entitlement grant (see below).
     const piId =
       typeof invoice.payment_intent === 'string'
         ? invoice.payment_intent
-        : invoice.payment_intent && typeof invoice.payment_intent !== 'string'
-          ? invoice.payment_intent.id
-          : null;
+        : invoice.payment_intent?.id ?? null;
     const paidAt = invoice.status_transitions?.paid_at
       ? new Date(invoice.status_transitions.paid_at * 1000)
       : new Date();
 
-    // Keyed by stripeInvoiceId — idempotent on Stripe retries
+    // Keyed by stripeInvoiceId — idempotent on Stripe retries. Recorded BEFORE the entitlement
+    // grant on purpose: the financial fact must never be lost, even when the grant below needs
+    // review. A stored Payment never short-circuits the grant, so a retry/replay still repairs a
+    // missing cycle.
     await this.prisma.payment.upsert({
       where: { stripeInvoiceId: invoice.id },
       create: {
@@ -822,82 +857,320 @@ export class StripeWebhookService {
       },
     });
 
-    await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice);
+    await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice, stripeEventId);
+
+    if (!piId) await this.enrichPaymentIntentReference(invoice.id);
   }
 
-  private async hasExactFixedDurationServiceLine(
-    ctx: { dbSubscriptionId: string | null },
+  /**
+   * Basil-and-later invoice payloads (the live endpoint is dahlia) no longer embed the
+   * PaymentIntent. Best-effort, READ-ONLY Stripe lookup of the invoice's single paid
+   * PaymentIntent so Payment rows stay traceable. Runs only after the Payment and entitlement
+   * writes, fills the reference only when it is empty, and swallows every error: it can never
+   * delay, fail or alter the payment/entitlement outcome.
+   */
+  private async enrichPaymentIntentReference(stripeInvoiceId: string): Promise<void> {
+    try {
+      const paymentIntentId = await this.stripe.findPaidInvoicePaymentIntentId(stripeInvoiceId);
+      if (!paymentIntentId) return;
+      // Payment.stripePaymentIntentId is unique: never move a reference held by another row.
+      const holder = await this.prisma.payment.findUnique({
+        where: { stripePaymentIntentId: paymentIntentId },
+        select: { stripeInvoiceId: true },
+      });
+      if (holder) {
+        if (holder.stripeInvoiceId !== stripeInvoiceId) {
+          this.logger.warn(
+            JSON.stringify({ event: 'invoice_payment_intent_already_linked', stripeInvoiceId, stripePaymentIntentId: paymentIntentId }),
+          );
+        }
+        return;
+      }
+      await this.prisma.payment.updateMany({
+        where: { stripeInvoiceId, stripePaymentIntentId: null },
+        data: { stripePaymentIntentId: paymentIntentId },
+      });
+    } catch (err) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'invoice_payment_intent_enrichment_skipped',
+          stripeInvoiceId,
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
+        }),
+      );
+    }
+  }
+
+  /**
+   * A plan change from a non-fixed plan INTO a fixed-duration plan updates Stripe (invoice paid,
+   * webhooks sent) before the local row switches plans. If invoice.paid wins that race, the local
+   * row still looks non-fixed and the paid period would be skipped for good. When a linked,
+   * non-proration line is billed at a Price/Product of one of the studio's fixed-duration plans,
+   * fail retryably so Stripe re-delivers after customer.subscription.updated syncs the plan.
+   */
+  private async assertNoUnsyncedFixedDurationSwitch(
+    ctx: InvoiceContext,
     invoice: WebhookInvoicePayload,
-  ): Promise<boolean> {
-    if (!ctx.dbSubscriptionId) return false;
+    stripeEventId?: string,
+  ): Promise<void> {
+    const invoiceSubscriptionId = readInvoiceSubscriptionId(invoice);
+    if (!ctx.dbSubscriptionId || !invoiceSubscriptionId) return;
+    const { lines } = parseInvoiceLines(invoice.lines);
+    const serviceLines = lines.filter(
+      (line) =>
+        line.kind === 'subscription_item' &&
+        !line.proration &&
+        (line.subscriptionId ?? invoiceSubscriptionId) === invoiceSubscriptionId,
+    );
+    if (serviceLines.length === 0) return;
+    const priceIds = serviceLines.map((l) => l.priceId).filter((id): id is string => !!id);
+    const productIds = serviceLines.map((l) => l.productId).filter((id): id is string => !!id);
+    const fixedPlans = await this.prisma.membershipPlan.findMany({
+      where: {
+        studioId: ctx.studioId,
+        deletedAt: null,
+        entitlementDays: { not: null },
+        OR: [
+          ...(priceIds.length ? [{ stripePriceId: { in: priceIds } }] : []),
+          ...(productIds.length ? [{ stripeProductId: { in: productIds } }] : []),
+        ],
+      },
+      select: { id: true, entitlementDays: true, stripePriceId: true, stripeProductId: true },
+    });
+    // Only a line billed like that fixed plan — its Price/Product AND its exact duration — counts.
+    // A monthly line on a Product shared with a fixed plan never matches a 45-day period.
+    const fixedPlan = fixedPlans.find((plan) =>
+      serviceLines.some(
+        (line) =>
+          (line.priceId === plan.stripePriceId || (!!line.productId && line.productId === plan.stripeProductId)) &&
+          Math.abs(line.periodEnd - line.periodStart - (plan.entitlementDays as number) * 86_400) <= 1,
+      ),
+    );
+    if (!fixedPlan) return;
+    throw this.entitlementFailure(
+      new FixedDurationEntitlementError(
+        'SUBSCRIPTION_PLAN_NOT_SYNCED',
+        invoice.id,
+        `Stripe bills fixed-duration plan ${fixedPlan.id} but local subscription ${ctx.dbSubscriptionId} has not switched yet; Stripe will retry`,
+      ),
+      { stripeEventId, invoice },
+    );
+  }
+
+  private async isFixedDurationPlan(membershipPlanId: string | null): Promise<boolean> {
+    if (!membershipPlanId) return false;
+    const plan = await this.prisma.membershipPlan.findUnique({
+      where: { id: membershipPlanId },
+      select: { entitlementDays: true },
+    });
+    return plan?.entitlementDays != null;
+  }
+
+  private async loadFixedDurationSubscription(
+    dbSubscriptionId: string | null,
+  ): Promise<FixedDurationSubscription | null> {
+    if (!dbSubscriptionId) return null;
     const subscription = await this.prisma.subscription.findUnique({
-      where: { id: ctx.dbSubscriptionId },
+      where: { id: dbSubscriptionId },
       include: { membershipPlan: true },
     });
-    const plan = subscription?.membershipPlan;
-    if (!plan?.entitlementDays || !plan.stripePriceId) return false;
-    const expectedSeconds = plan.entitlementDays * 86_400;
-    return invoice.lines?.data.some((line) => {
-      if (line.price?.id !== plan.stripePriceId || line.proration === true) return false;
-      const start = line.period?.start;
-      const end = line.period?.end;
-      return start != null && end != null && Math.abs(end - start - expectedSeconds) <= 1;
-    }) ?? false;
+    if (!subscription?.membershipPlan || subscription.membershipPlan.entitlementDays == null) return null;
+    return subscription;
   }
 
-  private async grantFixedDurationCycleForPaidInvoice(
-    ctx: { userId: string; studioId: string; dbSubscriptionId: string | null; membershipPlanId: string | null },
+  private classifyForSubscription(
     invoice: WebhookInvoicePayload,
+    subscription: FixedDurationSubscription,
+  ): FixedDurationDecision {
+    const plan = subscription.membershipPlan;
+    return classifyFixedDurationInvoice(
+      {
+        invoiceId: invoice.id,
+        status: invoice.status,
+        billingReason: invoice.billing_reason ?? null,
+        amountPaid: invoice.amount_paid ?? 0,
+        invoiceSubscriptionId: readInvoiceSubscriptionId(invoice),
+        invoiceSubscriptionPlanId: invoice.parent?.subscription_details?.metadata?.['planId'] ?? null,
+        lines: invoice.lines,
+      },
+      {
+        stripeSubscriptionId: subscription.stripeSubscriptionId ?? null,
+        planId: subscription.membershipPlanId,
+        hasPendingPlanChange: subscription.pendingMembershipPlanId != null,
+        plan: {
+          entitlementDays: plan.entitlementDays as number,
+          classCredits: plan.classCredits ?? null,
+          stripePriceId: plan.stripePriceId ?? null,
+          stripeProductId: plan.stripeProductId ?? null,
+        },
+      },
+    );
+  }
+
+  /** Structured, PII-free record of a paid invoice that could not become an entitlement. */
+  private entitlementFailure(
+    error: FixedDurationEntitlementError,
+    context: {
+      stripeEventId?: string;
+      invoice: WebhookInvoicePayload;
+      subscription?: FixedDurationSubscription | null;
+      lines?: InvoiceLineDiagnostic[];
+    },
+  ): FixedDurationEntitlementError {
+    this.logger.error(
+      JSON.stringify({
+        event: 'fixed_duration_entitlement_grant_failed',
+        code: error.code,
+        stripeEventId: context.stripeEventId ?? null,
+        stripeInvoiceId: context.invoice.id,
+        stripeSubscriptionId: readInvoiceSubscriptionId(context.invoice),
+        localSubscriptionId: context.subscription?.id ?? null,
+        membershipPlanId: context.subscription?.membershipPlanId ?? null,
+        billingReason: context.invoice.billing_reason ?? null,
+        amountPaid: context.invoice.amount_paid ?? null,
+        currency: context.invoice.currency ?? null,
+        detail: error.message,
+        lines: context.lines ?? [],
+        action: 'payment_recorded_entitlement_requires_recovery',
+      }),
+    );
+    return error;
+  }
+
+  /**
+   * Grants the single paid fixed-duration service period on `invoice` as one immutable
+   * MembershipEntitlementCycle. Idempotent per Stripe invoice; never touches Stripe.
+   * Throws FixedDurationEntitlementError (→ HTTP 500 → Stripe retry → visible dead letter) when
+   * a paid invoice cannot be turned into an entitlement, so it can never look silently healthy.
+   */
+  private async grantFixedDurationCycleForPaidInvoice(
+    ctx: InvoiceContext,
+    invoice: WebhookInvoicePayload,
+    stripeEventId?: string,
   ): Promise<void> {
     if (!ctx.dbSubscriptionId) {
       const plan = ctx.membershipPlanId
         ? await this.prisma.membershipPlan.findUnique({ where: { id: ctx.membershipPlanId } })
         : null;
       if (plan?.entitlementDays) {
-        throw new Error(`Paid fixed-duration invoice ${invoice.id} arrived before its local subscription`);
+        // Retryable: invoice.paid can race ahead of customer.subscription.created.
+        throw this.entitlementFailure(
+          new FixedDurationEntitlementError(
+            'SUBSCRIPTION_NOT_LOCAL',
+            invoice.id,
+            'paid fixed-duration invoice arrived before its local subscription; Stripe will retry',
+          ),
+          { stripeEventId, invoice },
+        );
       }
       return;
     }
 
-    const subscription = await this.prisma.subscription.findUnique({
-      where: { id: ctx.dbSubscriptionId },
-      include: { membershipPlan: true },
+    const subscription = await this.loadFixedDurationSubscription(ctx.dbSubscriptionId);
+    if (!subscription) {
+      // Not a fixed-duration membership locally — unless a plan change INTO one has not synced yet.
+      await this.assertNoUnsyncedFixedDurationSwitch(ctx, invoice, stripeEventId);
+      return;
+    }
+
+    const decision = this.classifyForSubscription(invoice, subscription);
+    if (decision.kind === 'skip') {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'fixed_duration_entitlement_not_granted',
+          reason: decision.reason,
+          detail: decision.detail,
+          stripeEventId: stripeEventId ?? null,
+          stripeInvoiceId: invoice.id,
+          localSubscriptionId: subscription.id,
+          billingReason: invoice.billing_reason ?? null,
+          amountPaid: invoice.amount_paid ?? null,
+        }),
+      );
+      return;
+    }
+    if (decision.kind === 'review') {
+      throw this.entitlementFailure(
+        new FixedDurationEntitlementError(decision.code, invoice.id, decision.detail),
+        { stripeEventId, invoice, subscription, lines: decision.lines },
+      );
+    }
+
+    if (decision.priceMatch === 'subscription_metadata') {
+      // Matched only through checkout metadata: make sure the billed Price/Product is not another
+      // plan's (a plan switch whose customer.subscription.updated has not landed yet).
+      const otherPlan = await this.prisma.membershipPlan.findFirst({
+        where: {
+          studioId: subscription.studioId,
+          id: { not: subscription.membershipPlanId },
+          deletedAt: null,
+          OR: [
+            ...(decision.line.priceId ? [{ stripePriceId: decision.line.priceId }] : []),
+            ...(decision.line.productId ? [{ stripeProductId: decision.line.productId }] : []),
+          ],
+        },
+        select: { id: true },
+      });
+      if (otherPlan) {
+        throw this.entitlementFailure(
+          new FixedDurationEntitlementError(
+            'SUBSCRIPTION_PLAN_NOT_SYNCED',
+            invoice.id,
+            `billed Price ${decision.line.priceId ?? 'none'} belongs to plan ${otherPlan.id}, not local plan ${subscription.membershipPlanId}; Stripe will retry`,
+          ),
+          { stripeEventId, invoice, subscription, lines: decision.lines },
+        );
+      }
+    }
+
+    const candidate = buildPaidFixedEntitlementCycle({
+      periodStart: decision.periodStart,
+      periodEnd: decision.periodEnd,
+      entitlementDays: subscription.membershipPlan.entitlementDays as number,
+      creditLimit: decision.creditLimit,
     });
-    if (!subscription?.membershipPlan.entitlementDays) return;
 
-    const line = invoice.lines?.data.find((candidate) =>
-      candidate.price?.id === subscription.membershipPlan.stripePriceId,
-    );
-    if (!line) {
-      throw new Error(`Paid invoice ${invoice.id} has no service line for the membership plan Price`);
-    }
-    const startsAt = line?.period?.start ? new Date(line.period.start * 1000) : null;
-    const endsAt = line?.period?.end ? new Date(line.period.end * 1000) : null;
-    if (!startsAt || !endsAt) {
-      throw new Error(`Paid invoice ${invoice.id} is missing subscription line period bounds`);
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      // Serialize every grant for this subscription, including different invoice
-      // events delivered concurrently. The database trigger independently enforces
-      // the same immutable, non-overlapping ledger invariant.
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      // The member-scoped lock every subscription writer takes (webhook upserts, cash sales):
+      // a concurrent customer.subscription.* event can no longer re-pin the period to the
+      // previous cycle after this grant commits. The subscription-scoped lock serialises cycle
+      // grants exactly like the ledger trigger does.
+      await acquireSubscriptionWriteAdvisoryLock(tx, subscription.studioId, subscription.userId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${subscription.id}))`;
-      const existingCycle = await tx.membershipEntitlementCycle.findUnique({
-        where: { stripeInvoiceId: invoice.id },
-      });
-      if (existingCycle) return;
 
-      const previousCycle = await tx.membershipEntitlementCycle.findFirst({
+      // Re-read under the locks: the classification above used a pre-lock snapshot.
+      const current = await tx.subscription.findUnique({
+        where: { id: subscription.id },
+        select: { status: true, membershipPlanId: true, supersededBySubscriptionId: true, endReason: true },
+      });
+      if (!current || current.membershipPlanId !== subscription.membershipPlanId) {
+        return { action: 'plan_changed' as const };
+      }
+      // A row already replaced by another subscription (e.g. a Stripe→cash transition) must not
+      // silently gain a second paid entitlement next to its successor: a human decides.
+      const superseded =
+        current.supersededBySubscriptionId !== null ||
+        current.endReason === SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD ||
+        current.endReason === SubscriptionEndReason.SUPERSEDED_RENEWAL ||
+        current.endReason === SubscriptionEndReason.SUPERSEDED_PLAN_CHANGE;
+      if (superseded) return { action: 'superseded' as const };
+
+      const existingForInvoice = await tx.membershipEntitlementCycle.findUnique({
+        where: { stripeInvoiceId: invoice.id },
+        select: CYCLE_SELECT,
+      });
+      const existingForSubscription = await tx.membershipEntitlementCycle.findMany({
         where: { subscriptionId: subscription.id },
-        orderBy: { endsAt: 'desc' },
+        select: CYCLE_SELECT,
+        orderBy: { startsAt: 'asc' },
       });
-      const cycle = buildPaidFixedEntitlementCycle({
-        periodStart: startsAt,
-        periodEnd: endsAt,
-        entitlementDays: subscription.membershipPlan.entitlementDays!,
-        creditLimit: subscription.membershipPlan.classCredits,
-        previousCycleEnd: previousCycle?.endsAt,
+      const plan = planPaidCycleInsertion({
+        subscriptionId: subscription.id,
+        candidate,
+        existingForInvoice,
+        existingForSubscription,
       });
+      if (plan.action !== 'insert') return plan;
 
       await tx.membershipEntitlementCycle.create({
         data: {
@@ -905,23 +1178,75 @@ export class StripeWebhookService {
           userId: subscription.userId,
           subscriptionId: subscription.id,
           membershipPlanId: subscription.membershipPlanId,
-          startsAt: cycle.startsAt,
-          endsAt: cycle.endsAt,
-          creditLimit: cycle.creditLimit,
+          startsAt: plan.cycle.startsAt,
+          endsAt: plan.cycle.endsAt,
+          creditLimit: plan.cycle.creditLimit,
           source: subscription.source,
           stripeInvoiceId: invoice.id,
         },
       });
-      await tx.subscription.update({
-        where: { id: subscription.id },
-        data: {
-          status: SubscriptionStatus.ACTIVE,
-          currentPeriodStart: cycle.startsAt,
-          currentPeriodEnd: cycle.endsAt,
-          entitlementEndsAt: cycle.endsAt,
-        },
-      });
+      if (plan.mode === 'live') {
+        // A paid period re-activates a renewable row but never resurrects a CANCELED one
+        // (CANCELED + entitlementEndsAt still grants access until the paid period ends). A
+        // historical gap fill never moves the current period.
+        const reactivate = RENEWABLE_SUBSCRIPTION_STATUSES.includes(current.status);
+        await tx.subscription.update({
+          where: { id: subscription.id },
+          data: {
+            ...(reactivate ? { status: SubscriptionStatus.ACTIVE } : {}),
+            currentPeriodStart: plan.cycle.startsAt,
+            currentPeriodEnd: plan.cycle.endsAt,
+            entitlementEndsAt: plan.cycle.endsAt,
+          },
+        });
+      }
+      return plan;
     });
+
+    if (outcome.action === 'plan_changed') {
+      throw this.entitlementFailure(
+        new FixedDurationEntitlementError(
+          'SUBSCRIPTION_PLAN_NOT_SYNCED',
+          invoice.id,
+          `local subscription ${subscription.id} changed plan while the grant was being prepared; Stripe will retry`,
+        ),
+        { stripeEventId, invoice, subscription, lines: decision.lines },
+      );
+    }
+    if (outcome.action === 'superseded') {
+      throw this.entitlementFailure(
+        new FixedDurationEntitlementError(
+          'SUBSCRIPTION_SUPERSEDED',
+          invoice.id,
+          `local subscription ${subscription.id} was already superseded; refusing to add a paid period next to its successor`,
+        ),
+        { stripeEventId, invoice, subscription, lines: decision.lines },
+      );
+    }
+    if (outcome.action === 'reject') {
+      throw this.entitlementFailure(
+        new FixedDurationEntitlementError(
+          outcome.code,
+          invoice.id,
+          `paid period ${candidate.startsAt.toISOString()}..${candidate.endsAt.toISOString()} collides with cycle ${outcome.conflicting.id} (${outcome.conflicting.startsAt.toISOString()}..${outcome.conflicting.endsAt.toISOString()}, invoice ${outcome.conflicting.stripeInvoiceId ?? 'none'})`,
+        ),
+        { stripeEventId, invoice, subscription, lines: decision.lines },
+      );
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'fixed_duration_entitlement_granted',
+        outcome: outcome.action === 'insert' ? outcome.mode : outcome.action,
+        stripeEventId: stripeEventId ?? null,
+        stripeInvoiceId: invoice.id,
+        localSubscriptionId: subscription.id,
+        startsAt: candidate.startsAt.toISOString(),
+        endsAt: candidate.endsAt.toISOString(),
+        creditLimit: candidate.creditLimit,
+        priceMatch: decision.priceMatch,
+      }),
+    );
   }
 
   private async onInvoicePaymentFailed(invoice: WebhookInvoicePayload): Promise<void> {
@@ -931,6 +1256,9 @@ export class StripeWebhookService {
       return;
     }
 
+    // Out-of-order / concurrent delivery: a failure must never overwrite a payment Stripe has
+    // settled (nor demote the membership it paid for). The FAILED write is conditional at the
+    // database level, so a SUCCEEDED row committed concurrently always wins.
     const amountCents = invoice.amount_due ?? invoice.total ?? 0;
     const piId =
       typeof invoice.payment_intent === 'string'
@@ -938,37 +1266,84 @@ export class StripeWebhookService {
         : invoice.payment_intent && typeof invoice.payment_intent !== 'string'
           ? invoice.payment_intent.id
           : null;
+    const currency = (invoice.currency ?? 'usd').toLowerCase();
 
-    await this.prisma.payment.upsert({
-      where: { stripeInvoiceId: invoice.id },
-      create: {
-        studioId: ctx.studioId,
-        userId: ctx.userId,
-        subscriptionId: ctx.dbSubscriptionId,
-        membershipPlanId: ctx.membershipPlanId,
-        amountCents,
-        currency: (invoice.currency ?? 'usd').toLowerCase(),
-        status: PaymentStatus.FAILED,
-        paymentMethod: PaymentMethod.STRIPE,
-        stripeInvoiceId: invoice.id,
-        stripePaymentIntentId: piId,
-      },
-      update: {
+    let failureRecorded = false;
+    const updated = await this.prisma.payment.updateMany({
+      where: { stripeInvoiceId: invoice.id, status: { not: PaymentStatus.SUCCEEDED } },
+      data: {
         status: PaymentStatus.FAILED,
         paymentMethod: PaymentMethod.STRIPE,
         amountCents,
-        currency: (invoice.currency ?? 'usd').toLowerCase(),
+        currency,
         stripePaymentIntentId: piId ?? undefined,
         subscriptionId: ctx.dbSubscriptionId ?? undefined,
         membershipPlanId: ctx.membershipPlanId ?? undefined,
       },
     });
+    if (updated.count > 0) {
+      failureRecorded = true;
+    } else {
+      const existing = await this.prisma.payment.findUnique({
+        where: { stripeInvoiceId: invoice.id },
+        select: { status: true },
+      });
+      if (!existing) {
+        try {
+          await this.prisma.payment.create({
+            data: {
+              studioId: ctx.studioId,
+              userId: ctx.userId,
+              subscriptionId: ctx.dbSubscriptionId,
+              membershipPlanId: ctx.membershipPlanId,
+              amountCents,
+              currency,
+              status: PaymentStatus.FAILED,
+              paymentMethod: PaymentMethod.STRIPE,
+              stripeInvoiceId: invoice.id,
+              stripePaymentIntentId: piId,
+            },
+          });
+          failureRecorded = true;
+        } catch (err) {
+          // A concurrent writer (typically invoice.paid) created the row first: it wins.
+          if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+        }
+      }
+    }
+    if (!failureRecorded) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'invoice_payment_failed_ignored_already_paid',
+          stripeInvoiceId: invoice.id,
+          localSubscriptionId: ctx.dbSubscriptionId,
+        }),
+      );
+      return;
+    }
 
     if (ctx.dbSubscriptionId) {
-      await this.prisma.subscription.update({
-        where: { id: ctx.dbSubscriptionId },
+      // Only a renewable row can become PAST_DUE. customer.subscription.* events carry the
+      // authoritative lifecycle; a failure delivered after Stripe cancelled the subscription
+      // (seen in production 2026-09-28) must not resurrect it. One conditional statement, so a
+      // concurrent invoice.paid that already settled this invoice always wins.
+      const demoted = await this.prisma.subscription.updateMany({
+        where: {
+          id: ctx.dbSubscriptionId,
+          status: { in: RENEWABLE_SUBSCRIPTION_STATUSES },
+          payments: { none: { stripeInvoiceId: invoice.id, status: PaymentStatus.SUCCEEDED } },
+        },
         data: { status: SubscriptionStatus.PAST_DUE },
       });
+      if (demoted.count === 0) {
+        this.logger.log(
+          JSON.stringify({
+            event: 'invoice_payment_failed_status_preserved',
+            stripeInvoiceId: invoice.id,
+            localSubscriptionId: ctx.dbSubscriptionId,
+          }),
+        );
+      }
     }
   }
 

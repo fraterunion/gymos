@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
-import { PaymentMethod, PaymentStatus, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
+import { PaymentMethod, PaymentStatus, Prisma, SubscriptionEndReason, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import { StripeWebhookService } from './stripe-webhook.service';
 import type { WebhookInvoicePayload } from './stripe-webhook-payloads';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -78,13 +80,6 @@ type ServiceUnderTest = {
   onInvoicePaid: (invoice: WebhookInvoicePayload) => Promise<void>;
 };
 
-type FixedDurationGrantTarget = {
-  grantFixedDurationCycleForPaidInvoice: (
-    context: unknown,
-    invoice: WebhookInvoicePayload,
-  ) => Promise<void>;
-};
-
 type DispatchTarget = {
   dispatch: (event: unknown) => Promise<void>;
 };
@@ -124,6 +119,7 @@ function makeMocks() {
       findFirst: jest.fn().mockResolvedValue(membership),
     },
     payment: {
+      findUnique: jest.fn().mockResolvedValue(null),
       upsert: jest.fn().mockImplementation(
         async ({ where, create }: { where: { stripeInvoiceId?: string | null }; create: PaymentRow }) => {
           const key = where.stripeInvoiceId ?? '';
@@ -146,6 +142,7 @@ function makeMocks() {
     // Default: no studioId in metadata → Stripe path also fails gracefully
     retrieveSubscription: jest.fn().mockResolvedValue(stripeSubscriptionWithNoMetadata),
     constructWebhookEvent: jest.fn(),
+    findPaidInvoicePaymentIntentId: jest.fn().mockResolvedValue(null),
   };
 
   const enrollment = {} as unknown as EnrollmentService;
@@ -266,241 +263,593 @@ describe('StripeWebhookService — context resolution via onInvoicePaid', () => 
   });
 });
 
-describe('StripeWebhookService — fixed entitlement cycle grants', () => {
-  it('duplicate paid invoice creates exactly one 45-day cycle', async () => {
-    const cycles = new Map<string, { endsAt: Date }>();
-    const subscription = {
-      id: 'db_booty', studioId: 'studio_1', userId: 'user_1', membershipPlanId: 'plan_booty',
-      source: SubscriptionSource.STRIPE,
-      membershipPlan: { entitlementDays: 45, classCredits: 4, stripePriceId: 'price_booty_45d' },
-    };
-    const prisma = {
-      subscription: {
-        findUnique: jest.fn().mockResolvedValue(subscription),
-        update: jest.fn(),
-      },
-      membershipEntitlementCycle: {
-        findUnique: jest.fn(async ({ where }: { where: { stripeInvoiceId: string } }) => cycles.get(where.stripeInvoiceId) ?? null),
-        findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn(async ({ data }: { data: { stripeInvoiceId: string; endsAt: Date } }) => {
-          cycles.set(data.stripeInvoiceId, { endsAt: data.endsAt });
-          return data;
-        }),
-      },
-      $executeRaw: jest.fn(),
-      $transaction: jest.fn(),
-    };
-    prisma.$transaction.mockImplementation(
-      async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
-    );
-    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never, { maybeLogExternalRenewalChange: jest.fn() } as never);
-    const grant = (service as unknown as {
-      grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
-    }).grantFixedDurationCycleForPaidInvoice.bind(service);
-    const periodStart = Math.floor(new Date('2026-10-02T18:00:00.000Z').getTime() / 1000);
-    const invoice = basilInvoice({
-      id: 'in_booty_renewal',
-      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: periodStart, end: periodStart + 45 * 86400 } }] },
-    });
-    const ctx = { userId: 'user_1', studioId: 'studio_1', dbSubscriptionId: 'db_booty', membershipPlanId: 'plan_booty' };
+// ── Fixed-duration (Booty Lab) entitlement grants — REAL dahlia payloads ───────
+//
+// These tests drive the real service with the sanitized production payloads in
+// test/fixtures/stripe-webhooks (Price at pricing.price_details.price, no top-level price).
+// The in-memory store enforces what Postgres enforces — one Payment per invoice, one cycle
+// per invoice, and the non-overlap ledger trigger — so a test cannot pass by mocking the
+// defect away.
 
-    await grant(ctx, invoice);
-    await grant(ctx, invoice);
+type StoredEvent = { processed: boolean; attemptCount: number; lastError: string | null };
+type StoredCycle = {
+  id: string; subscriptionId: string; startsAt: Date; endsAt: Date;
+  stripeInvoiceId: string | null; creditLimit: number | null; membershipPlanId?: string;
+};
+type StoredPayment = PaymentRow & { id: string };
+type WebhookEvent = { id: string; type: string; created: number; data: { object: Record<string, unknown> } };
 
-    expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
-    expect(prisma.membershipEntitlementCycle.create).toHaveBeenCalledTimes(1);
-    expect(prisma.subscription.update).toHaveBeenCalledTimes(1);
+function stripeFixture(name: string): WebhookEvent {
+  return JSON.parse(readFileSync(join(__dirname, '../../test/fixtures/stripe-webhooks', `${name}.json`), 'utf8'));
+}
+
+const OCT_2 = new Date('2026-10-02T16:54:40.000Z');
+const NOV_16 = new Date('2026-11-16T16:54:40.000Z');
+const AUG_18 = new Date('2026-08-18T16:54:40.000Z');
+const BACKFILL_CYCLE: StoredCycle = {
+  id: 'backfill_local_sub_booty', subscriptionId: 'local_sub_booty', startsAt: AUG_18, endsAt: OCT_2,
+  stripeInvoiceId: 'in_fx_booty_initial', creditLimit: 4,
+};
+
+function uniqueViolation(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' });
+}
+
+function makeBootyHarness(options: {
+  plan?: Partial<{ stripePriceId: string | null; stripeProductId: string | null; entitlementDays: number; classCredits: number | null }>;
+  subscription?: Partial<{
+    status: SubscriptionStatus; entitlementEndsAt: Date; currentPeriodStart: Date; currentPeriodEnd: Date;
+    supersededBySubscriptionId: string | null; endReason: SubscriptionEndReason | null;
+  }>;
+  cycles?: StoredCycle[];
+  paymentIntentLookup?: () => Promise<string | null>;
+  /** What a "which fixed-duration plans bill this Price/Product?" lookup returns (plan-switch race). */
+  fixedPlanBillingLine?: { id: string; entitlementDays: number; stripePriceId: string | null; stripeProductId: string | null } | null;
+  /** Another studio plan owning the billed Price/Product (checkout-metadata match guard). */
+  otherPlanOwningLine?: { id: string } | null;
+} = {}) {
+  const events = new Map<string, StoredEvent>();
+  const payments = new Map<string, StoredPayment>();
+  const cycles: StoredCycle[] = (options.cycles ?? [BACKFILL_CYCLE]).map((c) => ({ ...c }));
+  const plan = {
+    id: 'fx_plan_booty', studioId: 'fx_studio_ares', deletedAt: null, name: 'Booty Lab by Etzia',
+    entitlementDays: 45, classCredits: 4, stripePriceId: 'price_fx_booty_45d', stripeProductId: 'prod_fx_booty',
+    ...options.plan,
+  };
+  const subscription = {
+    id: 'local_sub_booty', studioId: 'fx_studio_ares', userId: 'fx_user_booty_member', membershipPlanId: plan.id,
+    stripeSubscriptionId: 'sub_fx_booty_member', source: SubscriptionSource.STRIPE, status: SubscriptionStatus.ACTIVE as SubscriptionStatus,
+    currentPeriodStart: AUG_18, currentPeriodEnd: OCT_2, entitlementEndsAt: OCT_2,
+    supersededBySubscriptionId: null as string | null, endReason: null as SubscriptionEndReason | null,
+    ...options.subscription,
+  };
+  const subscriptionWrites: Array<Record<string, unknown>> = [];
+  const state = { localSubscriptionExists: true };
+
+  let tail = Promise.resolve<unknown>(undefined);
+  const prisma = {
+    stripeWebhookEvent: {
+      create: jest.fn(async ({ data }: { data: { stripeEventId: string } }) => {
+        if (events.has(data.stripeEventId)) throw uniqueViolation();
+        events.set(data.stripeEventId, { processed: false, attemptCount: 1, lastError: null });
+        return data;
+      }),
+      findUnique: jest.fn(async ({ where }: { where: { stripeEventId: string } }) => events.get(where.stripeEventId) ?? null),
+      update: jest.fn(async ({ where }: { where: { stripeEventId: string } }) => {
+        events.get(where.stripeEventId)!.attemptCount += 1;
+        return {};
+      }),
+      updateMany: jest.fn(async ({ where, data }: { where: { stripeEventId: string; processed: boolean }; data: Partial<StoredEvent> }) => {
+        const row = events.get(where.stripeEventId);
+        if (!row || row.processed !== where.processed) return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      }),
+    },
+    user: { findFirst: jest.fn(async () => ({ id: subscription.userId, deletedAt: null })) },
+    subscription: {
+      findUnique: jest.fn(async ({ where }: { where: { id?: string; stripeSubscriptionId?: string } }) =>
+        state.localSubscriptionExists &&
+        (where.id === subscription.id || where.stripeSubscriptionId === subscription.stripeSubscriptionId)
+          ? { ...subscription, membershipPlan: plan }
+          : null),
+      update: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        subscriptionWrites.push(data);
+        Object.assign(subscription, data);
+        return subscription;
+      }),
+      updateMany: jest.fn(async ({ where, data }: {
+        where: { id: string; status: { in: SubscriptionStatus[] }; payments?: { none: { stripeInvoiceId: string; status: PaymentStatus } } };
+        data: Record<string, unknown>;
+      }) => {
+        if (where.id !== subscription.id || !where.status.in.includes(subscription.status)) return { count: 0 };
+        const settled = where.payments?.none;
+        if (settled && payments.get(settled.stripeInvoiceId)?.status === settled.status) return { count: 0 };
+        subscriptionWrites.push(data);
+        Object.assign(subscription, data);
+        return { count: 1 };
+      }),
+    },
+    membershipPlan: {
+      // `id: { not }` = "does another plan own this billed Price/Product?" (metadata-match guard).
+      findFirst: jest.fn(async ({ where }: { where: { id?: { not: string } } }) =>
+        where.id?.not ? options.otherPlanOwningLine ?? null : plan),
+      // "Which fixed-duration plans bill this Price/Product?" (plan-switch race check).
+      findMany: jest.fn(async () => (options.fixedPlanBillingLine ? [options.fixedPlanBillingLine] : [])),
+      findUnique: jest.fn(async () => plan),
+    },
+    studioMembership: { findFirst: jest.fn(async () => ({ id: 'membership' })) },
+    payment: {
+      upsert: jest.fn(async ({ where, create, update }: { where: { stripeInvoiceId: string }; create: PaymentRow; update: Partial<PaymentRow> }) => {
+        const existing = payments.get(where.stripeInvoiceId);
+        if (!existing) {
+          payments.set(where.stripeInvoiceId, { id: `pay_${payments.size + 1}`, ...create });
+        } else {
+          for (const [k, v] of Object.entries(update)) if (v !== undefined) (existing as Record<string, unknown>)[k] = v;
+        }
+        return payments.get(where.stripeInvoiceId);
+      }),
+      findUnique: jest.fn(async ({ where }: { where: { stripeInvoiceId?: string; stripePaymentIntentId?: string } }) => {
+        if (where.stripeInvoiceId) return payments.get(where.stripeInvoiceId) ?? null;
+        return [...payments.values()].find((p) => p.stripePaymentIntentId === where.stripePaymentIntentId) ?? null;
+      }),
+      // Conditional writes exactly like Postgres: only rows matching every condition change.
+      updateMany: jest.fn(async ({ where, data }: {
+        where: { stripeInvoiceId: string; stripePaymentIntentId?: null; status?: { not: PaymentStatus } };
+        data: Partial<PaymentRow>;
+      }) => {
+        const row = payments.get(where.stripeInvoiceId);
+        if (!row) return { count: 0 };
+        if (where.stripePaymentIntentId === null && row.stripePaymentIntentId !== null) return { count: 0 };
+        if (where.status && row.status === where.status.not) return { count: 0 };
+        for (const [k, v] of Object.entries(data)) if (v !== undefined) (row as Record<string, unknown>)[k] = v;
+        return { count: 1 };
+      }),
+      create: jest.fn(async ({ data }: { data: PaymentRow }) => {
+        if (data.stripeInvoiceId && payments.has(data.stripeInvoiceId)) throw uniqueViolation();
+        const row = { id: `pay_${payments.size + 1}`, ...data };
+        payments.set(data.stripeInvoiceId!, row);
+        return row;
+      }),
+    },
+    membershipEntitlementCycle: {
+      findUnique: jest.fn(async ({ where }: { where: { stripeInvoiceId: string } }) =>
+        cycles.find((c) => c.stripeInvoiceId === where.stripeInvoiceId) ?? null),
+      findMany: jest.fn(async ({ where }: { where: { subscriptionId: string } }) =>
+        cycles.filter((c) => c.subscriptionId === where.subscriptionId).sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())),
+      create: jest.fn(async ({ data }: { data: StoredCycle }) => {
+        // Mirrors the unique index and the enforce_membership_entitlement_cycle_ledger trigger.
+        if (data.stripeInvoiceId && cycles.some((c) => c.stripeInvoiceId === data.stripeInvoiceId)) throw uniqueViolation();
+        if (cycles.some((c) => c.subscriptionId === data.subscriptionId && c.startsAt < data.endsAt && c.endsAt > data.startsAt)) {
+          throw new Error('membership entitlement cycle overlaps an existing cycle');
+        }
+        const row = { ...data, id: `cycle_${cycles.length + 1}` };
+        cycles.push(row);
+        return row;
+      }),
+    },
+    $executeRaw: jest.fn(async () => 1),
+    $transaction: jest.fn(),
+  };
+  // Serialised like advisory-locked transactions.
+  prisma.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) => {
+    const run: Promise<unknown> = tail.then(() => fn(prisma));
+    tail = run.catch(() => undefined);
+    return run;
   });
 
-  it('concurrent delivery of the same paid invoice creates one cycle', async () => {
-    const cycles = new Map<string, { endsAt: Date }>();
-    const subscription = {
-      id: 'db_booty', studioId: 'studio_1', userId: 'user_1', membershipPlanId: 'plan_booty',
-      source: SubscriptionSource.STRIPE,
-      membershipPlan: { entitlementDays: 45, classCredits: 4, stripePriceId: 'price_booty_45d' },
-    };
-    let transactionTail = Promise.resolve<unknown>(undefined);
-    const prisma = {
-      subscription: { findUnique: jest.fn().mockResolvedValue(subscription), update: jest.fn() },
-      membershipEntitlementCycle: {
-        findUnique: jest.fn(async ({ where }: { where: { stripeInvoiceId: string } }) => cycles.get(where.stripeInvoiceId) ?? null),
-        findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn(async ({ data }: { data: { stripeInvoiceId: string; endsAt: Date } }) => {
-          cycles.set(data.stripeInvoiceId, { endsAt: data.endsAt });
-          return data;
-        }),
-      },
-      $executeRaw: jest.fn(),
-      $transaction: jest.fn(),
-    };
-    prisma.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) => {
-      const run: Promise<unknown> = transactionTail.then(() => fn(prisma));
-      transactionTail = run.catch(() => undefined);
-      return run;
-    });
-    const service = new StripeWebhookService(prisma as never, {} as never, {} as never, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never, { maybeLogExternalRenewalChange: jest.fn() } as never);
-    const grant = (service as unknown as {
-      grantFixedDurationCycleForPaidInvoice: (ctx: unknown, invoice: WebhookInvoicePayload) => Promise<void>;
-    }).grantFixedDurationCycleForPaidInvoice.bind(service);
-    const periodStart = Math.floor(new Date('2026-10-02T18:00:00.000Z').getTime() / 1000);
-    const invoice = basilInvoice({
-      id: 'in_booty_concurrent',
-      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: periodStart, end: periodStart + 45 * 86400 } }] },
-    });
-    const ctx = { userId: 'user_1', studioId: 'studio_1', dbSubscriptionId: 'db_booty', membershipPlanId: 'plan_booty' };
+  const stripe = {
+    constructWebhookEvent: jest.fn(),
+    retrieveSubscription: jest.fn(),
+    findPaidInvoicePaymentIntentId: jest.fn(options.paymentIntentLookup ?? (async () => 'pi_fx_booty_renewal')),
+    // Mutating Stripe calls — must never be used by entitlement processing.
+    updateSubscription: jest.fn(),
+    cancelSubscription: jest.fn(),
+    scheduleSubscriptionPriceChangeAtPeriodEnd: jest.fn(),
+    createRecurringPrice: jest.fn(),
+    deactivatePrice: jest.fn(),
+  };
 
-    await Promise.all([grant(ctx, invoice), grant(ctx, invoice)]);
+  const service = new StripeWebhookService(
+    prisma as unknown as PrismaService,
+    stripe as unknown as StripeService,
+    {} as EnrollmentService,
+    { auditDuplicateRenewableSubscriptions: jest.fn(), reconcileSubscriptionPlansFromStripe: jest.fn() } as never,
+    { activateScheduledCashIfDue: jest.fn() } as never,
+    { maybeLogExternalRenewalChange: jest.fn() } as never,
+  );
+  jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+  const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    expect(prisma.membershipEntitlementCycle.create).toHaveBeenCalledTimes(1);
-    expect(prisma.subscription.update).toHaveBeenCalledTimes(1);
+  const deliver = async (event: WebhookEvent) => {
+    stripe.constructWebhookEvent.mockReturnValueOnce(event);
+    await service.handleIncomingWebhook(Buffer.from('{}'), 'sig');
+  };
+  const stripeWasMutated = () =>
+    [stripe.updateSubscription, stripe.cancelSubscription, stripe.scheduleSubscriptionPriceChangeAtPeriodEnd, stripe.createRecurringPrice, stripe.deactivatePrice]
+      .some((fn) => fn.mock.calls.length > 0);
+
+  return { service, prisma, stripe, events, payments, cycles, plan, subscription, subscriptionWrites, state, deliver, errorLog, stripeWasMutated };
+}
+
+describe('StripeWebhookService — Booty Lab renewal on the real dahlia payload', () => {
+  const RENEWAL = () => stripeFixture('dahlia-invoice-paid-booty-renewal');
+
+  it('grants Oct 2 to Nov 16 with exactly 4 credits, records one Payment and marks the event processed', async () => {
+    const h = makeBootyHarness();
+    await h.deliver(RENEWAL());
+
+    expect(h.payments.size).toBe(1);
+    expect(h.payments.get('in_fx_booty_renewal')).toMatchObject({
+      amountCents: 80000, currency: 'mxn', status: PaymentStatus.SUCCEEDED, paymentMethod: PaymentMethod.STRIPE,
+      subscriptionId: 'local_sub_booty', stripePaymentIntentId: 'pi_fx_booty_renewal',
+    });
+    expect(h.cycles).toHaveLength(2);
+    expect(h.cycles[1]).toMatchObject({
+      subscriptionId: 'local_sub_booty', startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4,
+      stripeInvoiceId: 'in_fx_booty_renewal', membershipPlanId: 'fx_plan_booty',
+    });
+    expect(h.cycles[0]).toEqual(BACKFILL_CYCLE); // prior cycle untouched
+    expect(h.subscription).toMatchObject({
+      status: SubscriptionStatus.ACTIVE, currentPeriodStart: OCT_2, currentPeriodEnd: NOV_16, entitlementEndsAt: NOV_16,
+    });
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toEqual({ processed: true, attemptCount: 1, lastError: null, processedAt: expect.any(Date) });
+    expect(h.stripeWasMutated()).toBe(false);
+  });
+
+  it('records the Payment before a failed grant, dead-letters loudly, and a later delivery repairs it once', async () => {
+    // Simulate a paid period the plan cannot accept (plan duration edited to 30 days).
+    const h = makeBootyHarness({ plan: { entitlementDays: 30 } });
+
+    await expect(h.deliver(RENEWAL())).rejects.toThrow(
+      '[fixed-duration-entitlement:PERIOD_MISMATCH] invoice in_fx_booty_renewal',
+    );
+    expect(h.payments.size).toBe(1);
+    expect(h.cycles).toHaveLength(1);
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toMatchObject({
+      processed: false, lastError: expect.stringContaining('PERIOD_MISMATCH'),
+    });
+    const failureLog = h.errorLog.mock.calls.map((c) => String(c[0])).find((m) => m.includes('fixed_duration_entitlement_grant_failed'));
+    expect(failureLog).toBeDefined();
+    const parsed = JSON.parse(failureLog!) as Record<string, unknown>;
+    expect(parsed).toMatchObject({
+      code: 'PERIOD_MISMATCH', stripeEventId: 'evt_fx_booty_renewal_paid', stripeInvoiceId: 'in_fx_booty_renewal',
+      stripeSubscriptionId: 'sub_fx_booty_member', localSubscriptionId: 'local_sub_booty', amountPaid: 80000,
+    });
+    expect(failureLog).not.toMatch(/@|redacted/); // ids only — no customer data
+
+    // The plan is corrected; Stripe (or an approved operator resend) delivers the same event again.
+    Object.assign(h.plan, { entitlementDays: 45 });
+    await h.deliver(RENEWAL());
+
+    expect(h.payments.size).toBe(1); // the stored Payment did not block the grant
+    expect(h.cycles).toHaveLength(2);
+    expect(h.cycles[1]).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4 });
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toMatchObject({ processed: true, attemptCount: 2 });
+  });
+
+  it('is idempotent across seven sequential deliveries and repeated direct handling', async () => {
+    const h = makeBootyHarness();
+    for (let i = 0; i < 7; i += 1) await h.deliver(RENEWAL());
+    // Even if the processed flag were lost, the handler itself must not double-grant.
+    const invoice = RENEWAL().data.object as unknown as WebhookInvoicePayload;
+    await (h.service as unknown as ServiceUnderTest).onInvoicePaid(invoice);
+    await (h.service as unknown as ServiceUnderTest).onInvoicePaid(invoice);
+
+    expect(h.payments.size).toBe(1);
+    expect(h.cycles.filter((c) => c.stripeInvoiceId === 'in_fx_booty_renewal')).toHaveLength(1);
+    expect(h.cycles).toHaveLength(2);
+    expect(h.subscriptionWrites).toHaveLength(1);
+  });
+
+  it('creates one cycle when the same event is delivered concurrently', async () => {
+    const h = makeBootyHarness();
+    await Promise.all(Array.from({ length: 5 }, () => h.deliver(RENEWAL())));
+    expect(h.payments.size).toBe(1);
+    expect(h.cycles).toHaveLength(2);
+    expect(h.subscription.entitlementEndsAt).toEqual(NOV_16);
+  });
+
+  it('renews a grandfathered subscriber whose Price is no longer the catalog Price — without touching Stripe', async () => {
+    const h = makeBootyHarness({ plan: { stripePriceId: 'price_fx_booty_45d_v2' } }); // owner changed the catalog price
+    await h.deliver(RENEWAL());
+
+    expect(h.cycles[1]).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4 });
+    expect(h.payments.get('in_fx_booty_renewal')!.amountCents).toBe(80000); // what Stripe collected
+    expect(h.plan.stripePriceId).toBe('price_fx_booty_45d_v2'); // catalog untouched
+    expect(h.stripeWasMutated()).toBe(false); // no subscription price update, no migration
+  });
+
+  it('fills a historical gap behind a newer cycle without moving the live period', async () => {
+    const dec31 = new Date('2026-12-31T16:54:40.000Z');
+    const newer: StoredCycle = { id: 'cycle_nov16', subscriptionId: 'local_sub_booty', startsAt: NOV_16, endsAt: dec31, stripeInvoiceId: 'in_fx_next', creditLimit: 4 };
+    const h = makeBootyHarness({
+      cycles: [BACKFILL_CYCLE, newer],
+      subscription: { currentPeriodStart: NOV_16, currentPeriodEnd: dec31, entitlementEndsAt: dec31 },
+    });
+    await h.deliver(RENEWAL());
+
+    expect(h.cycles).toHaveLength(3);
+    expect(h.cycles.find((c) => c.stripeInvoiceId === 'in_fx_booty_renewal')).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16 });
+    expect(h.subscriptionWrites).toHaveLength(0);
+    expect(h.subscription.entitlementEndsAt).toEqual(dec31);
+    expect(h.cycles.find((c) => c.id === 'cycle_nov16')).toEqual(newer);
+  });
+
+  it('refuses a paid period that overlaps a different cycle and keeps the Payment', async () => {
+    const lateBackfill = { ...BACKFILL_CYCLE, endsAt: new Date('2026-10-02T17:54:40.000Z') };
+    const h = makeBootyHarness({ cycles: [lateBackfill] });
+    await expect(h.deliver(RENEWAL())).rejects.toThrow('[fixed-duration-entitlement:OVERLAPS_EXISTING_CYCLE]');
+    expect(h.payments.size).toBe(1);
+    expect(h.cycles).toEqual([lateBackfill]);
+  });
+
+  it('never resurrects a CANCELED subscription while still granting the paid period', async () => {
+    const h = makeBootyHarness({ subscription: { status: SubscriptionStatus.CANCELED } });
+    await h.deliver(RENEWAL());
+    expect(h.subscription.status).toBe(SubscriptionStatus.CANCELED);
+    expect(h.subscription.entitlementEndsAt).toEqual(NOV_16);
+  });
+
+  it('a second 45-day renewal adds exactly one more 4-credit cycle', async () => {
+    const h = makeBootyHarness();
+    await h.deliver(RENEWAL());
+    const next = RENEWAL();
+    const invoice = next.data.object as { id: string; lines: { data: Array<{ period: { start: number; end: number } }> } };
+    next.id = 'evt_fx_booty_second_renewal';
+    invoice.id = 'in_fx_booty_second_renewal';
+    invoice.lines.data[0].period = { start: invoice.lines.data[0].period.end, end: invoice.lines.data[0].period.end + 45 * 86400 };
+    await h.deliver(next);
+
+    expect(h.cycles.map((c) => [c.startsAt.toISOString(), c.endsAt.toISOString(), c.creditLimit])).toEqual([
+      ['2026-08-18T16:54:40.000Z', '2026-10-02T16:54:40.000Z', 4],
+      ['2026-10-02T16:54:40.000Z', '2026-11-16T16:54:40.000Z', 4],
+      ['2026-11-16T16:54:40.000Z', '2026-12-31T16:54:40.000Z', 4],
+    ]);
+    expect(h.subscription.entitlementEndsAt).toEqual(new Date('2026-12-31T16:54:40.000Z'));
+  });
+
+  it('grants the renewal when a zero-length one-off fee rides on the same invoice (Stripe-documented shape)', async () => {
+    const h = makeBootyHarness();
+    const event = RENEWAL();
+    const invoice = event.data.object as { amount_paid: number; lines: { data: unknown[] } };
+    invoice.amount_paid += 20000;
+    invoice.lines.data.push({
+      id: 'il_fee', object: 'line_item', amount: 20000, subtotal: 20000, currency: 'mxn', period: { start: 1790960080, end: 1790960080 },
+      parent: { type: 'invoice_item_details', invoice_item_details: { invoice_item: 'ii_fee', proration: false, proration_details: { credited_items: null }, subscription: null }, subscription_item_details: null },
+      pricing: { type: 'price_details', price_details: { price: 'price_fee', product: 'prod_fee' }, unit_amount_decimal: '20000' },
+    });
+    await h.deliver(event);
+    expect(h.cycles[1]).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4 });
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toMatchObject({ processed: true });
+  });
+
+  it('retries a plan change INTO Booty Lab whose invoice.paid beats the local plan switch', async () => {
+    // Local row still on a monthly plan, but Stripe already bills the Booty 45-day Price.
+    const h = makeBootyHarness({
+      plan: { entitlementDays: null as unknown as number },
+      fixedPlanBillingLine: { id: 'fx_plan_booty', entitlementDays: 45, stripePriceId: 'price_fx_booty_45d', stripeProductId: 'prod_fx_booty' },
+    });
+    await expect(h.deliver(RENEWAL())).rejects.toThrow('[fixed-duration-entitlement:SUBSCRIPTION_PLAN_NOT_SYNCED]');
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toMatchObject({ processed: false });
+    expect(h.payments.size).toBe(1);
+
+    Object.assign(h.plan, { entitlementDays: 45 }); // customer.subscription.updated switched the plan
+    await h.deliver(RENEWAL());
+    expect(h.cycles[1]).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4 });
+  });
+
+  it('does not mistake a monthly renewal on a Product shared with a fixed plan for a plan switch', async () => {
+    const h = makeBootyHarness({
+      plan: { entitlementDays: null as unknown as number },
+      fixedPlanBillingLine: { id: 'fx_plan_booty', entitlementDays: 45, stripePriceId: 'price_fx_booty_45d', stripeProductId: 'prod_fx_booty' },
+    });
+    const monthly = RENEWAL();
+    const line = (monthly.data.object as { lines: { data: Array<{ period: { start: number; end: number }; pricing: { price_details: { price: string } } }> } }).lines.data[0];
+    line.period = { start: line.period.start, end: line.period.start + 31 * 86400 }; // a monthly period
+    line.pricing.price_details.price = 'price_fx_monthly_same_product';
+    await h.deliver(monthly);
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toMatchObject({ processed: true, lastError: null });
+    expect(h.payments.size).toBe(1);
+  });
+
+    it('grants a catalog-drifted renewal through checkout metadata, but retries when the billed Price is another plan’s', async () => {
+    // Catalog drift: plan Price/Product no longer match the line, checkout metadata names this plan.
+    const drifted = makeBootyHarness({ plan: { stripePriceId: 'price_new', stripeProductId: 'prod_new' } });
+    await drifted.deliver(RENEWAL());
+    expect(drifted.cycles[1]).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4 });
+
+    const switching = makeBootyHarness({ plan: { stripePriceId: 'price_new', stripeProductId: 'prod_new' }, otherPlanOwningLine: { id: 'fx_plan_other_45d' } });
+    await expect(switching.deliver(RENEWAL())).rejects.toThrow('[fixed-duration-entitlement:SUBSCRIPTION_PLAN_NOT_SYNCED]');
+    expect(switching.cycles).toHaveLength(1);
+  });
+
+    it('never adds a paid period to a row already superseded by a successor', async () => {
+    const h = makeBootyHarness({
+      subscription: { status: SubscriptionStatus.CANCELED, supersededBySubscriptionId: 'cash_successor', endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD },
+    });
+    await expect(h.deliver(RENEWAL())).rejects.toThrow('[fixed-duration-entitlement:SUBSCRIPTION_SUPERSEDED]');
+    expect(h.payments.size).toBe(1); // the money is still recorded
+    expect(h.cycles).toHaveLength(1);
+    expect(h.subscription.entitlementEndsAt).toEqual(OCT_2);
+  });
+
+  it('re-checks the plan under the lock and retries if it changed meanwhile', async () => {
+    const h = makeBootyHarness();
+    h.prisma.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => {
+      h.subscription.membershipPlanId = 'fx_plan_other'; // a concurrent plan change committed first
+      return fn(h.prisma);
+    });
+    await expect(h.deliver(RENEWAL())).rejects.toThrow('[fixed-duration-entitlement:SUBSCRIPTION_PLAN_NOT_SYNCED]');
+    expect(h.cycles).toHaveLength(1);
+  });
+
+    it('replays the member timeline: trial bridge grants nothing, the paid Oct 2 renewal grants once', async () => {
+    const h = makeBootyHarness();
+    await h.deliver(stripeFixture('dahlia-invoice-paid-booty-trial-bridge'));
+    expect(h.payments.size).toBe(0);
+    expect(h.cycles).toHaveLength(1);
+    await h.deliver(RENEWAL());
+    expect(h.payments.size).toBe(1);
+    expect(h.cycles.map((c) => c.stripeInvoiceId)).toEqual(['in_fx_booty_initial', 'in_fx_booty_renewal']);
+  });
+
+  it('acknowledges the real Aug 20 trial bridge without Payment, cycle, exception or dead letter', async () => {
+    const h = makeBootyHarness({ cycles: [] });
+    await h.deliver(stripeFixture('dahlia-invoice-paid-booty-trial-bridge'));
+    expect(h.payments.size).toBe(0);
+    expect(h.cycles).toHaveLength(0);
+    expect(h.events.get('evt_fx_booty_trial_bridge_paid')).toMatchObject({ processed: true, lastError: null });
+  });
+
+  it('grants a fully discounted exact period but writes no zero-value Payment', async () => {
+    const h = makeBootyHarness();
+    const event = RENEWAL();
+    Object.assign(event.data.object, { amount_paid: 0, amount_due: 0, total: 0 });
+    await h.deliver(event);
+    expect(h.payments.size).toBe(0);
+    expect(h.cycles[1]).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4 });
+  });
+
+  it('retries (never skips) a zero-value fixed-duration invoice that arrives before its subscription row', async () => {
+    const h = makeBootyHarness();
+    h.state.localSubscriptionExists = false;
+    const event = RENEWAL();
+    Object.assign(event.data.object, { amount_paid: 0, amount_due: 0, total: 0 }); // e.g. a 100% coupon
+    await expect(h.deliver(event)).rejects.toThrow('[fixed-duration-entitlement:SUBSCRIPTION_NOT_LOCAL]');
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toMatchObject({ processed: false });
+
+    h.state.localSubscriptionExists = true; // customer.subscription.created landed
+    await h.deliver(event);
+    expect(h.payments.size).toBe(0);
+    expect(h.cycles[1]).toMatchObject({ startsAt: OCT_2, endsAt: NOV_16, creditLimit: 4 });
+    expect(h.events.get('evt_fx_booty_renewal_paid')).toMatchObject({ processed: true, attemptCount: 2 });
+  });
+
+  it('grants nothing for an unpaid invoice', async () => {
+    const h = makeBootyHarness();
+    const event = RENEWAL();
+    Object.assign(event.data.object, { status: 'open' });
+    await h.deliver(event);
+    expect(h.payments.size).toBe(0);
+    expect(h.cycles).toHaveLength(1);
+  });
+
+  it('refuses a paid invoice whose only line belongs to another subscription', async () => {
+    const h = makeBootyHarness();
+    const event = RENEWAL();
+    const line = (event.data.object as { lines: { data: Array<{ parent: { subscription_item_details: { subscription: string } } }> } }).lines.data[0];
+    line.parent.subscription_item_details.subscription = 'sub_fx_other_membership';
+    await expect(h.deliver(event)).rejects.toThrow('[fixed-duration-entitlement:NO_SERVICE_LINE]');
+    expect(h.cycles).toHaveLength(1);
   });
 });
 
-describe('StripeWebhookService — zero-value paid invoice classification', () => {
-  const cycleStart = Math.floor(new Date('2026-10-02T16:54:40.000Z').getTime() / 1000);
-  const fixedSubscription = {
-    id: 'db_sub_1', studioId: 'studio_1', userId: 'user_1', membershipPlanId: 'plan_1',
-    source: SubscriptionSource.STRIPE,
-    membershipPlan: { entitlementDays: 45, classCredits: 4, stripePriceId: 'price_booty_45d' },
-  };
+describe('StripeWebhookService — monthly plans are unchanged', () => {
+  it('records a monthly renewal Payment and grants no cycle', async () => {
+    const h = makeBootyHarness({ plan: { entitlementDays: null as unknown as number } });
+    const monthly = stripeFixture('dahlia-invoice-paid-monthly-renewal');
+    // Route the monthly invoice to the harness subscription.
+    const invoice = monthly.data.object as { parent: { subscription_details: { subscription: string } } };
+    invoice.parent.subscription_details.subscription = 'sub_fx_booty_member';
+    await h.deliver(monthly);
+    expect(h.payments.size).toBe(1);
+    expect([...h.payments.values()][0].amountCents).toBe(60000);
+    expect(h.cycles).toHaveLength(1);
+    expect(h.subscriptionWrites).toHaveLength(0);
+  });
 
-  function configureFixedSubscription(prisma: unknown) {
-    const findUnique = (prisma as { subscription: { findUnique: jest.Mock } }).subscription.findUnique;
-    findUnique.mockImplementation(async (args: { where: { id?: string; stripeSubscriptionId?: string } }) =>
-      args.where.id ? fixedSubscription : {
-        id: 'db_sub_1', studioId: 'studio_1', membershipPlanId: 'plan_1', stripeSubscriptionId: 'sub_basil',
-      });
+  it('acknowledges a zero-value monthly invoice without Payment or grant', async () => {
+    const h = makeBootyHarness({ plan: { entitlementDays: null as unknown as number } });
+    const monthly = stripeFixture('dahlia-invoice-paid-monthly-renewal');
+    const invoice = monthly.data.object as { parent: { subscription_details: { subscription: string } } };
+    invoice.parent.subscription_details.subscription = 'sub_fx_booty_member';
+    Object.assign(monthly.data.object, { amount_paid: 0, amount_due: 0, total: 0 });
+    await h.deliver(monthly);
+    expect(h.payments.size).toBe(0);
+    expect(h.cycles).toHaveLength(1);
+    expect(h.events.get(monthly.id)).toMatchObject({ processed: true, lastError: null });
+  });
+});
+
+describe('StripeWebhookService — PaymentIntent enrichment for basil+ invoices', () => {
+  it('stores the PaymentIntent resolved from Stripe for a new dahlia Payment', async () => {
+    const h = makeBootyHarness();
+    await h.deliver(stripeFixture('dahlia-invoice-paid-booty-renewal'));
+    expect(h.stripe.findPaidInvoicePaymentIntentId).toHaveBeenCalledWith('in_fx_booty_renewal');
+    expect(h.payments.get('in_fx_booty_renewal')!.stripePaymentIntentId).toBe('pi_fx_booty_renewal');
+  });
+
+  it('looks the PaymentIntent up only after the Payment and the entitlement are written', async () => {
+    const h = makeBootyHarness();
+    await h.deliver(stripeFixture('dahlia-invoice-paid-booty-renewal'));
+    const lookupOrder = h.stripe.findPaidInvoicePaymentIntentId.mock.invocationCallOrder[0];
+    expect(h.prisma.payment.upsert.mock.invocationCallOrder[0]).toBeLessThan(lookupOrder);
+    expect(h.prisma.membershipEntitlementCycle.create.mock.invocationCallOrder[0]).toBeLessThan(lookupOrder);
+  });
+
+  it('never blocks the Payment or the grant when the lookup fails', async () => {
+    const h = makeBootyHarness({ paymentIntentLookup: async () => { throw new Error('stripe timeout'); } });
+    await h.deliver(stripeFixture('dahlia-invoice-paid-booty-renewal'));
+    expect(h.payments.get('in_fx_booty_renewal')!.stripePaymentIntentId).toBeNull();
+    expect(h.cycles).toHaveLength(2);
+  });
+
+  it('never steals a PaymentIntent already linked to another Payment row', async () => {
+    const h = makeBootyHarness({ paymentIntentLookup: async () => 'pi_already_used' });
+    h.payments.set('in_other', { id: 'pay_other', stripeInvoiceId: 'in_other', stripePaymentIntentId: 'pi_already_used' } as StoredPayment);
+    await h.deliver(stripeFixture('dahlia-invoice-paid-booty-renewal'));
+    expect(h.payments.get('in_fx_booty_renewal')!.stripePaymentIntentId).toBeNull();
+  });
+});
+
+describe('StripeWebhookService — invoice.payment_failed ordering', () => {
+  const FAILED = () => stripeFixture('dahlia-invoice-payment-failed-after-delete');
+  function routeToHarness(event: WebhookEvent): WebhookEvent {
+    const invoice = event.data.object as { parent: { subscription_details: { subscription: string } } };
+    invoice.parent.subscription_details.subscription = 'sub_fx_booty_member';
+    return event;
   }
 
-  it('acknowledges a trial bridge invoice without Payment, cycle, exception, or dead letter', async () => {
-    const { service, prisma, stripe, payments } = makeMocks();
-    configureFixedSubscription(prisma);
-    const grantSpy = jest.spyOn(
-      service as unknown as FixedDurationGrantTarget,
-      'grantFixedDurationCycleForPaidInvoice',
-    );
-    const trialInvoice = basilInvoice({
-      id: 'in_trial_bridge', amount_paid: 0, amount_due: 0, total: 0,
-      billing_reason: 'subscription_update',
-      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: cycleStart - 43 * 86400, end: cycleStart }, proration: false }] },
-    });
-    stripe.constructWebhookEvent.mockReturnValue({
-      id: 'evt_trial_bridge', type: 'invoice.paid', data: { object: trialInvoice },
-    });
-    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-
-    await (service as unknown as StripeWebhookService).handleIncomingWebhook(Buffer.from('{}'), 'sig');
-
-    expect(payments.size).toBe(0);
-    expect(grantSpy).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('stripe_invoice_paid_non_entitlement'));
-    expect(prisma.stripeWebhookEvent.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { stripeEventId: 'evt_trial_bridge', processed: false },
-      data: expect.objectContaining({ processed: true }),
-    }));
-    expect(prisma.stripeWebhookEvent.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ lastError: expect.anything() }),
+  it('a failure delivered after Stripe cancelled the subscription does not resurrect it', async () => {
+    const h = makeBootyHarness({ subscription: { status: SubscriptionStatus.CANCELED } });
+    await h.deliver(routeToHarness(FAILED()));
+    expect(h.subscription.status).toBe(SubscriptionStatus.CANCELED);
+    expect(h.prisma.subscription.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE, SubscriptionStatus.PAUSED] } }),
     }));
   });
 
-  it.each([
-    ['fully discounted', 'subscription_cycle'],
-    ['customer-balance-covered', 'subscription_cycle'],
-  ])('grants an exact fixed-duration cycle for a %s invoice but creates no zero-value Payment', async (_label, billingReason) => {
-    const { service, prisma, payments } = makeMocks();
-    configureFixedSubscription(prisma);
-    const grantSpy = jest.spyOn(
-      service as unknown as FixedDurationGrantTarget,
-      'grantFixedDurationCycleForPaidInvoice',
-    ).mockResolvedValue(undefined);
-    const invoice = basilInvoice({
-      id: `in_${_label}`, amount_paid: 0, amount_due: 0, total: 0, billing_reason: billingReason,
-      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: cycleStart, end: cycleStart + 45 * 86400 }, proration: false }] },
-    });
-
-    await service.onInvoicePaid(invoice);
-
-    expect(payments.size).toBe(0);
-    expect(grantSpy).toHaveBeenCalledTimes(1);
+  it('a legitimate failure on an active subscription still marks it PAST_DUE', async () => {
+    const h = makeBootyHarness();
+    await h.deliver(routeToHarness(FAILED()));
+    expect(h.subscription.status).toBe(SubscriptionStatus.PAST_DUE);
+    expect([...h.payments.values()][0]).toMatchObject({ status: PaymentStatus.FAILED });
   });
 
-  it('skips a zero-value unrelated non-fixed-duration invoice without breaking its subscription', async () => {
-    const { service, payments } = makeMocks();
-    const grantSpy = jest.spyOn(service as never, 'grantFixedDurationCycleForPaidInvoice');
-    await service.onInvoicePaid(basilInvoice({
-      id: 'in_free_non_fixed', amount_paid: 0, amount_due: 0, total: 0,
-      lines: { data: [{ price: { id: 'price_full_monthly' }, period: { start: cycleStart, end: cycleStart + 31 * 86400 } }] },
-    }));
-    expect(payments.size).toBe(0);
-    expect(grantSpy).not.toHaveBeenCalled();
+  it('a failure racing the payment that creates the row first never overwrites it nor demotes', async () => {
+    const h = makeBootyHarness();
+    const failed = routeToHarness(FAILED());
+    const invoiceId = (failed.data.object as { id: string }).id;
+    // invoice.paid commits SUCCEEDED between the failure's conditional update and its insert.
+    h.prisma.payment.create.mockImplementationOnce(async () => {
+      h.payments.set(invoiceId, { id: 'pay_paid', stripeInvoiceId: invoiceId, status: PaymentStatus.SUCCEEDED, amountCents: 150000 } as StoredPayment);
+      throw uniqueViolation();
+    });
+    await h.deliver(failed);
+    expect(h.payments.get(invoiceId)).toMatchObject({ status: PaymentStatus.SUCCEEDED });
+    expect(h.subscription.status).toBe(SubscriptionStatus.ACTIVE);
   });
 
-  it('requires the mapped Price and exact fixed-duration period for zero-paid entitlement', async () => {
-    const { service, prisma } = makeMocks();
-    configureFixedSubscription(prisma);
-    const grantSpy = jest.spyOn(service as never, 'grantFixedDurationCycleForPaidInvoice');
-    await service.onInvoicePaid(basilInvoice({
-      id: 'in_wrong_period', amount_paid: 0, amount_due: 0,
-      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: cycleStart, end: cycleStart + 44 * 86400 } }] },
-    }));
-    await service.onInvoicePaid(basilInvoice({
-      id: 'in_wrong_price', amount_paid: 0, amount_due: 0,
-      lines: { data: [{ price: { id: 'price_other' }, period: { start: cycleStart, end: cycleStart + 45 * 86400 } }] },
-    }));
-    expect(grantSpy).not.toHaveBeenCalled();
-  });
-
-  it('re-simulates the Maky bridge then grants exactly one fresh Oct 2–Nov 16 cycle on the paid renewal', async () => {
-    const { service, prisma, payments } = makeMocks();
-    configureFixedSubscription(prisma);
-    const createdCycles: Array<Record<string, unknown>> = [];
-    const subscriptionUpdates: Array<Record<string, unknown>> = [];
-    Object.assign(prisma, {
-      membershipEntitlementCycle: {
-        findUnique: jest.fn(async ({ where }: { where: { stripeInvoiceId: string } }) =>
-          createdCycles.find((cycle) => cycle['stripeInvoiceId'] === where.stripeInvoiceId) ?? null),
-        findFirst: jest.fn().mockResolvedValue({ endsAt: new Date(cycleStart * 1000) }),
-        create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
-          createdCycles.push(data);
-          return data;
-        }),
-      },
-      $executeRaw: jest.fn(),
-      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
-    });
-    (prisma.subscription as unknown as { update: jest.Mock }).update = jest.fn(async ({ data }) => {
-      subscriptionUpdates.push(data);
-      return data;
-    });
-
-    const trialInvoice = basilInvoice({
-      id: 'in_maky_trial', amount_paid: 0, amount_due: 0, total: 0,
-      billing_reason: 'subscription_update',
-      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: cycleStart - 43 * 86400, end: cycleStart } }] },
-    });
-    await service.onInvoicePaid(trialInvoice);
-    expect(payments.size).toBe(0);
-    expect(createdCycles).toHaveLength(0);
-    expect(subscriptionUpdates).toHaveLength(0);
-
-    const renewalInvoice = basilInvoice({
-      id: 'in_maky_oct_2', amount_paid: 80000, amount_due: 80000, total: 80000,
-      billing_reason: 'subscription_cycle',
-      lines: { data: [{ price: { id: 'price_booty_45d' }, period: { start: cycleStart, end: cycleStart + 45 * 86400 }, proration: false }] },
-    });
-    await service.onInvoicePaid(renewalInvoice);
-    await service.onInvoicePaid(renewalInvoice);
-
-    expect(payments.size).toBe(1);
-    expect(payments.get('in_maky_oct_2')!.amountCents).toBe(80000);
-    expect(createdCycles).toHaveLength(1);
-    expect(createdCycles[0]).toMatchObject({
-      stripeInvoiceId: 'in_maky_oct_2',
-      startsAt: new Date('2026-10-02T16:54:40.000Z'),
-      endsAt: new Date('2026-11-16T16:54:40.000Z'),
-      creditLimit: 4,
-    });
-    expect(subscriptionUpdates).toHaveLength(1);
+    it('a stale failure for an invoice that was already paid changes nothing', async () => {
+    const h = makeBootyHarness();
+    const failed = routeToHarness(FAILED());
+    const invoiceId = (failed.data.object as { id: string }).id;
+    h.payments.set(invoiceId, { id: 'pay_paid', stripeInvoiceId: invoiceId, status: PaymentStatus.SUCCEEDED, amountCents: 150000 } as StoredPayment);
+    await h.deliver(failed);
+    expect(h.payments.get(invoiceId)).toMatchObject({ status: PaymentStatus.SUCCEEDED, amountCents: 150000 });
+    expect(h.subscription.status).toBe(SubscriptionStatus.ACTIVE);
   });
 });
 
@@ -945,11 +1294,13 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
   };
 
   // Still-active CASH row: period ends in the future
+  // Still-active relative to the real clock: a hardcoded "future" date (2026-09-14) silently
+  // became the past and flipped this case into the expired-cash supersede path.
   const activeCashRow = {
     ...expiredCashRow,
     id: 'local-cash-active',
-    currentPeriodEnd: new Date('2026-09-14T00:00:00Z'),  // future
-    currentPeriodStart: new Date('2026-08-14T00:00:00Z'),
+    currentPeriodEnd: new Date(Date.now() + 30 * 86_400_000),  // future
+    currentPeriodStart: new Date(Date.now() - 86_400_000),
   };
 
   // Stripe-backed row pointing to a DIFFERENT Stripe subscription
