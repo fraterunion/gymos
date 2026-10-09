@@ -34,6 +34,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { StripeRenewalAuditService } from '../billing/stripe-renewal-audit.service';
+import { BillingCaseService } from '../billing/reconciliation/billing-case.service';
 import {
   buildGymosRenewalIdempotencyKey,
   readJsonMetadata,
@@ -98,6 +99,7 @@ export class MembersService {
     private readonly checkInsService: CheckInsService,
     private readonly stripeRenewalAudit: StripeRenewalAuditService,
     private readonly memberBillingStatus: MemberBillingStatusService,
+    private readonly billingCases: BillingCaseService,
   ) {}
 
   // ── Simple list (legacy — kept for compatibility) ──────────────────────────
@@ -1288,26 +1290,104 @@ export class MembersService {
     });
   }
 
+  /**
+   * Staff status override (Admin "Cancelar / Pausar / Reactivar"). Local-only: it never calls
+   * Stripe. A cancellation here is therefore recorded as STAFF_CANCELLED (the actor is known —
+   * never as a member request), audited, and — when Stripe still bills the subscription — made
+   * visible immediately as a reconciliation case instead of silently diverging.
+   */
   async updateMemberSubscription(
     studioId: string,
     userId: string,
     subscriptionId: string,
     dto: UpdateSubscriptionStatusDto,
+    actorUserId: string | null = null,
   ) {
     const sub = await this.prisma.subscription.findFirst({
       where: { id: subscriptionId, studioId, userId },
     });
     if (!sub) throw new NotFoundException('Subscription not found');
     const data: { status: typeof dto.status; endReason?: SubscriptionEndReason } = { status: dto.status };
-    if (dto.status === SubscriptionStatus.CANCELED) {
-      data.endReason = SubscriptionEndReason.MEMBER_CANCELLED;
+    // A reason already recorded (e.g. PAYMENT_FAILED from Stripe) is never overwritten by re-saving
+    // an already-canceled row; only a real transition into CANCELED records the staff reason.
+    if (dto.status === SubscriptionStatus.CANCELED && (sub.status !== SubscriptionStatus.CANCELED || sub.endReason == null)) {
+      data.endReason = actorUserId ? SubscriptionEndReason.STAFF_CANCELLED : SubscriptionEndReason.MEMBER_CANCELLED;
     }
-    return this.prisma.subscription.update({
+    const updated = await this.prisma.subscription.update({
       where: { id: subscriptionId },
       data,
       include: {
         membershipPlan: { select: { id: true, name: true } },
       },
+    });
+
+    if (sub.status !== dto.status) {
+      await this.prisma.auditLog.create({
+        data: {
+          studioId,
+          actorUserId,
+          action: 'SUBSCRIPTION_STATUS_OVERRIDDEN',
+          targetUserId: userId,
+          entityType: 'Subscription',
+          entityId: subscriptionId,
+          metadata: {
+            from: sub.status,
+            to: dto.status,
+            endReason: data.endReason ?? sub.endReason ?? null,
+            stripeSubscriptionId: sub.stripeSubscriptionId,
+            source: sub.source,
+          },
+        },
+      });
+    }
+
+    if (
+      dto.status === SubscriptionStatus.CANCELED &&
+      sub.status !== SubscriptionStatus.CANCELED &&
+      sub.source === 'STRIPE' &&
+      sub.stripeSubscriptionId
+    ) {
+      await this.flagLocalCancelOfLiveStripeSubscription(studioId, userId, updated, actorUserId);
+    }
+    return updated;
+  }
+
+  /**
+   * Read-only Stripe check after a local cancellation of a Stripe-backed row: if Stripe still
+   * considers the subscription alive, the member keeps being charged for a membership GymOS no
+   * longer honours — a HIGH case, auto-resolved by the nightly run once Stripe agrees.
+   */
+  private async flagLocalCancelOfLiveStripeSubscription(
+    studioId: string,
+    userId: string,
+    row: { id: string; stripeSubscriptionId: string | null; endReason: SubscriptionEndReason | null; membershipPlan: { name: string } },
+    actorUserId: string | null,
+  ): Promise<void> {
+    if (!row.stripeSubscriptionId) return;
+    let liveStatus: string;
+    try {
+      const live = await this.stripeService.retrieveSubscription(row.stripeSubscriptionId, { timeoutMs: 4_000 });
+      liveStatus = live.status;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const code = (err as { code?: string } | null)?.code;
+      if (code === 'resource_missing' || /No such subscription/i.test(message)) return;
+      liveStatus = 'unavailable';
+    }
+    if (liveStatus === 'canceled' || liveStatus === 'incomplete_expired') return;
+    await this.billingCases.observe(this.prisma, {
+      studioId,
+      category: 'LOCAL_CANCELED_STRIPE_ALIVE',
+      severity: 'HIGH',
+      reasonCode: 'STAFF_LOCAL_CANCEL',
+      issueRef: row.id,
+      userId,
+      subscriptionId: row.id,
+      stripeSubscriptionId: row.stripeSubscriptionId,
+      title: `Membresía cancelada en GymOS, pero Stripe mantiene vigente ${row.membershipPlan.name}`,
+      summary: `El staff canceló la membresía solo en GymOS. Stripe reporta la suscripción como «${liveStatus}»; mientras siga vigente ahí puede seguir cobrando al miembro.`,
+      suggestedAction: 'Cancela la suscripción en Stripe (o desactiva la renovación automática desde GymOS) si la membresía ya no aplica. No cobres manualmente.',
+      evidence: { localStatus: 'CANCELED', localEndReason: row.endReason, stripeStatus: liveStatus, actorUserId },
     });
   }
 

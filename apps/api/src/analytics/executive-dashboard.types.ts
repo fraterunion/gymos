@@ -130,6 +130,11 @@ export type ExecutiveMembershipHealthDto = {
   byPlanCategory: { label: string; count: number }[];
   newMembersThisMonth: number;
   cancelledThisMonth: number;
+  /**
+   * Attribution of `cancelledThisMonth` by recorded end reason. `superseded` rows are
+   * administrative replacements (renewal / plan / payment-method change), not churn.
+   */
+  cancellationsBreakdown: { voluntary: number; involuntary: number; superseded: number; unknown: number };
   netGrowth: number;
   trialConversionRatePercent: number | null;
   statusBreakdown: { status: string; count: number }[];

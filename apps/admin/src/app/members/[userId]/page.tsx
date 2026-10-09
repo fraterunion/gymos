@@ -43,6 +43,7 @@ import { nextClassPresentation, PRIMARY_STATUS_COLORS, PRIMARY_STATUS_LABELS, re
 import { subscriptionTransitionPresentation } from "@/lib/membershipPlanSummary";
 import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, nextChargePresentation, paymentSourceLabel, renewalBehavior, usagePresentation , membershipRowRenewalActions, currentMembershipRows, membershipUsageLine, attentionItemTitle } from "@/lib/member360";
 import { buildMembershipCards, lastPaymentLine, membershipCardRows, pageAttentionItems, paymentsKpi, timelineDetail, timelineTitle, type MembershipCard, type Tone } from "@/lib/membershipBilling";
+import { OpenBillingCasesBanner } from "@/components/OpenBillingCasesBanner";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -1842,6 +1843,8 @@ export default function MemberProfilePage() {
           </div>
 
           <WaiverStatusCard studioId={selectedStudioId} userId={userId!} />
+
+          {billing?.openCases?.length ? <OpenBillingCasesBanner cases={billing.openCases} onReview={() => setActiveTab("billing")} /> : null}
 
           {/* ── KPI stats ── */}
           {attentionItems.length > 0 ? (

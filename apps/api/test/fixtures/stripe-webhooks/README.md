@@ -31,3 +31,15 @@ Sanitization (done before the files left the capture script):
 
 Never replace these with hand-written "legacy" shapes: a hand-written `price: { id }` line is what
 let the original defect pass every test.
+
+## Billing reliability suites (2026-10-08)
+
+`test/helpers/billing-reliability.ts` re-points these same payloads at each suite's rows:
+`dahlia-subscription-deleted-payment-failed.json` doubles as the base for
+`customer.subscription.updated` / `.created` scenarios (status, `cancel_at_period_end`,
+`cancellation_details.reason` and item periods are the only fields edited), and
+`dahlia-invoice-paid-monthly-renewal.json` is the monthly late-payment invoice. There is no
+production capture of `charge.refunded` / `charge.dispute.created` yet (the live endpoint does not
+subscribe to them); the helper builds those two payloads synthetically with the dahlia field names
+the handlers read (`invoice`, `payment_intent`, `amount_refunded`, `refunded`, `charge`, `reason`,
+`status`). Replace them with sanitized captures once the endpoint delivers them.

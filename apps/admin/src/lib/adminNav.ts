@@ -62,6 +62,7 @@ export function getAdminNavStructure(ctx: AdminNavContext): AdminNavStructure {
 
   const more: AdminNavItem[] = [
     { href: "/classes", label: "Clases" },
+    ...(canManage ? [{ href: "/billing/exceptions", label: "Facturación" }] : []),
     ...(canManage ? [{ href: "/schedule-generator", label: "Generador" }] : []),
     ...(canManage ? [{ href: "/builds", label: "Builds" }] : []),
     ...(canManage ? [{ href: "/settings", label: "Configuración" }] : []),

@@ -193,10 +193,28 @@ export type MembershipBillingStatus = {
   action: BillingAction | null;
 };
 
+export type MemberBillingCaseView = {
+  id: string;
+  category: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  status: "OPEN" | "ACKNOWLEDGED";
+  reasonCode: string | null;
+  title: string;
+  summary: string;
+  suggestedAction: string;
+  subscriptionId: string | null;
+  stripeInvoiceId: string | null;
+  firstDetectedAt: string;
+  lastObservedAt: string;
+  acknowledgedAt: string | null;
+};
+
 export type MemberBillingStatus = {
   generatedAt: string;
   memberships: MembershipBillingStatus[];
   failedPayments: PaymentFailureView[];
+  /** Open/acknowledged reconciliation cases for this member (absent on older API builds). */
+  openCases?: MemberBillingCaseView[];
 };
 
 export type TimelineEvent = {

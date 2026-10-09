@@ -271,6 +271,9 @@ export class ExecutiveDashboardService {
     const newMembers30d = Number(stats?.new_members_30d ?? 0n);
     const prevNewMembers30d = Number(stats?.prev_new_members_30d ?? 0n);
     const cancellations30d = Number(stats?.cancellations_30d ?? 0n);
+    const voluntaryCancellations30d = Number(stats?.voluntary_cancellations_30d ?? 0n);
+    const involuntaryCancellations30d = Number(stats?.involuntary_cancellations_30d ?? 0n);
+    const supersededCancellations30d = Number(stats?.superseded_cancellations_30d ?? 0n);
     const inactive21d = Number(stats?.inactive_21d ?? 0n);
     const netGrowth = newMembers30d - cancellations30d;
     const membershipGrowthPercent = pctChange(newMembers30d, prevNewMembers30d);
@@ -463,6 +466,12 @@ export class ExecutiveDashboardService {
         byPlanCategory: planCategoryRows,
         newMembersThisMonth: newMembers30d,
         cancelledThisMonth: cancellations30d,
+        cancellationsBreakdown: {
+          voluntary: voluntaryCancellations30d,
+          involuntary: involuntaryCancellations30d,
+          superseded: supersededCancellations30d,
+          unknown: Math.max(0, cancellations30d - voluntaryCancellations30d - involuntaryCancellations30d - supersededCancellations30d),
+        },
         netGrowth,
         trialConversionRatePercent: null,
         statusBreakdown: (

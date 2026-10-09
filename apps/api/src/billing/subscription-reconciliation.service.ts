@@ -4,6 +4,7 @@ import type Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
+import { mapStripeSubscriptionStatus } from './stripe-subscription-status';
 import { StripeToCashTransitionService } from './stripe-to-cash-transition.service';
 import { loadPaidWithoutEntitlement } from './paid-without-entitlement';
 
@@ -96,21 +97,9 @@ export type ReconciliationResult = {
 
 const RENEWABLE_STRIPE_STATUSES = new Set(['active', 'trialing', 'past_due', 'paused']);
 
+/** One mapping for the whole platform (webhooks, reconciliation, plan changes). */
 function mapStripeStatusToLocal(stripeStatus: string): SubscriptionStatus {
-  switch (stripeStatus) {
-    case 'active':
-      return SubscriptionStatus.ACTIVE;
-    case 'trialing':
-      return SubscriptionStatus.TRIALING;
-    case 'past_due':
-      return SubscriptionStatus.PAST_DUE;
-    case 'paused':
-      return SubscriptionStatus.PAUSED;
-    case 'canceled':
-      return SubscriptionStatus.CANCELED;
-    default:
-      return SubscriptionStatus.ACTIVE;
-  }
+  return mapStripeSubscriptionStatus(stripeStatus);
 }
 
 function dominantStatus(issues: ReconciliationIssue[]): ReconciliationStatus {
@@ -525,9 +514,11 @@ export class SubscriptionReconciliationService {
         id: true,
         firstName: true,
         lastName: true,
-        email: true,
       },
     });
+    // Staff-facing reference only: never an email (this payload reaches the Admin and logs).
+    const safeName = (m: { firstName: string; lastName: string }) =>
+      [m.firstName, m.lastName ? `${m.lastName.slice(0, 1)}.` : ''].filter(Boolean).join(' ') || 'miembro';
 
     const findings: StudioReconciliationFinding[] = [];
 
@@ -536,7 +527,7 @@ export class SubscriptionReconciliationService {
       for (const issue of result.issues) {
         findings.push({
           userId: member.id,
-          memberName: [member.firstName, member.lastName].filter(Boolean).join(' ') || member.email,
+          memberName: safeName(member),
           issue: issue.kind,
           severity: issueSeverity(issue.kind),
           requiresManualResolution: result.requiresManualResolution,
@@ -549,9 +540,7 @@ export class SubscriptionReconciliationService {
     // paid has no access, and nothing here may repair it automatically.
     const entitlementGaps = await loadPaidWithoutEntitlement(this.prisma, { studioId });
     if (entitlementGaps.length > 0) {
-      const names = new Map(
-        membersWithStripe.map((m) => [m.id, [m.firstName, m.lastName].filter(Boolean).join(' ') || m.email]),
-      );
+      const names = new Map(membersWithStripe.map((m) => [m.id, safeName(m)]));
       for (const gap of entitlementGaps) {
         findings.push({
           userId: gap.userId,

@@ -16,6 +16,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from './subscription-lifecycle.constants';
+import { mapStripeSubscriptionStatus } from './stripe-subscription-status';
 import { SubscriptionReconciliationService } from './subscription-reconciliation.service';
 import {
   currentlyEntitledSubscriptionWhere,
@@ -727,20 +728,8 @@ export class SubscriptionLifecycleService {
     );
   }
 
+  /** Same mapping as the webhook path: `unpaid` is PAST_DUE and `incomplete` PAUSED, never ACTIVE. */
   private mapLocalStatus(stripeStatus: string): SubscriptionStatus {
-    switch (stripeStatus) {
-      case 'active':
-        return SubscriptionStatus.ACTIVE;
-      case 'trialing':
-        return SubscriptionStatus.TRIALING;
-      case 'past_due':
-        return SubscriptionStatus.PAST_DUE;
-      case 'paused':
-        return SubscriptionStatus.PAUSED;
-      case 'canceled':
-        return SubscriptionStatus.CANCELED;
-      default:
-        return SubscriptionStatus.ACTIVE;
-    }
+    return mapStripeSubscriptionStatus(stripeStatus);
   }
 }

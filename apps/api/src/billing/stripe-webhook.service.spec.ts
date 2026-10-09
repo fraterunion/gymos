@@ -160,6 +160,7 @@ function makeMocks() {
   };
 
   const renewalAudit = { maybeLogExternalRenewalChange: jest.fn().mockResolvedValue('skipped_no_transition') };
+  const billingCases = { observe: jest.fn().mockResolvedValue({ outcome: 'created', case: {} }) };
   const service = new StripeWebhookService(
     prisma,
     stripe as unknown as StripeService,
@@ -167,6 +168,7 @@ function makeMocks() {
     subscriptionLifecycle as never,
     stripeToCash as never,
     renewalAudit as never,
+    billingCases as never,
   );
 
   jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -335,6 +337,8 @@ function makeBootyHarness(options: {
         return data;
       }),
       findUnique: jest.fn(async ({ where }: { where: { stripeEventId: string } }) => events.get(where.stripeEventId) ?? null),
+      // Late-payment policy: "when did Stripe end this subscription?" — no stored deletion here.
+      findFirst: jest.fn(async () => null),
       update: jest.fn(async ({ where }: { where: { stripeEventId: string } }) => {
         events.get(where.stripeEventId)!.attemptCount += 1;
         return {};
@@ -353,6 +357,8 @@ function makeBootyHarness(options: {
         (where.id === subscription.id || where.stripeSubscriptionId === subscription.stripeSubscriptionId)
           ? { ...subscription, membershipPlan: plan }
           : null),
+      // Late-payment policy: "is there a newer same-family membership?" — none in this harness.
+      findFirst: jest.fn(async () => null),
       update: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
         subscriptionWrites.push(data);
         Object.assign(subscription, data);
@@ -450,6 +456,7 @@ function makeBootyHarness(options: {
     deactivatePrice: jest.fn(),
   };
 
+  const billingCases = { observe: jest.fn(async (...args: unknown[]) => ({ outcome: 'created', case: {}, argCount: args.length })) };
   const service = new StripeWebhookService(
     prisma as unknown as PrismaService,
     stripe as unknown as StripeService,
@@ -457,6 +464,7 @@ function makeBootyHarness(options: {
     { auditDuplicateRenewableSubscriptions: jest.fn(), reconcileSubscriptionPlansFromStripe: jest.fn() } as never,
     { activateScheduledCashIfDue: jest.fn() } as never,
     { maybeLogExternalRenewalChange: jest.fn() } as never,
+    billingCases as never,
   );
   jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
   const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -470,7 +478,7 @@ function makeBootyHarness(options: {
     [stripe.updateSubscription, stripe.cancelSubscription, stripe.scheduleSubscriptionPriceChangeAtPeriodEnd, stripe.createRecurringPrice, stripe.deactivatePrice]
       .some((fn) => fn.mock.calls.length > 0);
 
-  return { service, prisma, stripe, events, payments, cycles, plan, subscription, subscriptionWrites, state, deliver, errorLog, stripeWasMutated };
+  return { service, prisma, stripe, events, payments, cycles, plan, subscription, subscriptionWrites, state, deliver, errorLog, stripeWasMutated, billingCases };
 }
 
 describe('StripeWebhookService — Booty Lab renewal on the real dahlia payload', () => {
@@ -665,14 +673,27 @@ describe('StripeWebhookService — Booty Lab renewal on the real dahlia payload'
     expect(switching.cycles).toHaveLength(1);
   });
 
-    it('never adds a paid period to a row already superseded by a successor', async () => {
+    it('never adds a paid period to a row already superseded by a successor — the money becomes a CRITICAL case, not a dead letter', async () => {
     const h = makeBootyHarness({
       subscription: { status: SubscriptionStatus.CANCELED, supersededBySubscriptionId: 'cash_successor', endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD },
     });
-    await expect(h.deliver(RENEWAL())).rejects.toThrow('[fixed-duration-entitlement:SUBSCRIPTION_SUPERSEDED]');
+    h.stripe.retrieveSubscription.mockResolvedValue({ id: 'sub_fx_booty_member', status: 'active', cancellation_details: null });
+    await h.deliver(RENEWAL());
     expect(h.payments.size).toBe(1); // the money is still recorded
-    expect(h.cycles).toHaveLength(1);
+    expect(h.cycles).toHaveLength(1); // no second paid window on a replaced membership
     expect(h.subscription.entitlementEndsAt).toEqual(OCT_2);
+    expect(h.subscription.status).toBe(SubscriptionStatus.CANCELED);
+    expect(h.billingCases.observe).toHaveBeenCalledTimes(1);
+    expect(h.billingCases.observe.mock.calls[0]![1]).toMatchObject({
+      category: 'PAID_WITHOUT_ENTITLEMENT',
+      severity: 'CRITICAL',
+      reasonCode: 'SUPERSEDED_MEMBERSHIP',
+      stripeInvoiceId: 'in_fx_booty_renewal',
+      evidence: expect.objectContaining({ entitlementGranted: false, amountCents: 80000 }),
+    });
+    expect(h.stripeWasMutated()).toBe(false);
+    // Retrying cannot "repair" a business decision, so the event is processed, not dead-lettered.
+    expect([...h.events.values()][0]).toMatchObject({ processed: true });
   });
 
   it('re-checks the plan under the lock and retries if it changed meanwhile', async () => {
@@ -955,28 +976,37 @@ function makeSubscriptionWebhookMocks() {
   const upsertCalls: Array<Record<string, unknown>> = [];
   const createCalls: Array<Record<string, unknown>> = [];
 
+  // The service writes an existing row with a status-conditional updateMany and a new row with
+  // create; both land in `upsertCalls` so assertions read "what was written for this Stripe sub".
+  let lastWritten: Record<string, unknown> | null = null;
   const txSubscription = {
-    upsert: jest.fn().mockImplementation(async ({ update, create }: { update: Record<string, unknown>; create: Record<string, unknown> }) => {
-      const row = { id: 'sub-local-1', ...create, ...update };
-      upsertCalls.push(row);
-      return row;
-    }),
     // Default: incoming sub not yet in DB (conflict check enters the CREATE branch)
     findUnique: jest.fn().mockResolvedValue(null),
+    findUniqueOrThrow: jest.fn().mockImplementation(async () => lastWritten ?? { id: 'sub-local-1' }),
     // Default: no conflicting ACTIVE row (conflict check finds nothing to conflict with)
     findFirst: jest.fn().mockResolvedValue(null),
     // MM-1: renewable-conflict + scheduled-cash lookups now use findMany.
     findMany: jest.fn().mockResolvedValue([]),
     update: jest.fn().mockResolvedValue({ id: 'sub-local-cash-1', status: 'CANCELED' }),
+    updateMany: jest.fn().mockImplementation(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+      const row = { id: where.id, ...data };
+      upsertCalls.push(row);
+      lastWritten = row;
+      return { count: 1 };
+    }),
     create: jest.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
       const row = { id: 'sub-local-new', ...data };
       createCalls.push(row);
+      upsertCalls.push(row);
+      lastWritten = row;
       return row;
     }),
   };
 
   const prisma = {
     user: { findFirst: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+    // Pre-transaction read used by the stale-event guard.
+    subscription: { findUnique: jest.fn().mockImplementation((args: unknown) => txSubscription.findUnique(args)) },
     membershipPlan: {
       findFirst: jest.fn().mockImplementation(async (args: { where: { id?: string; stripePriceId?: string } }) => {
         if (args.where.stripePriceId === 'price_full') return { id: 'plan-full', studioId: 'studio_1' };
@@ -1005,13 +1035,16 @@ function makeSubscriptionWebhookMocks() {
   };
 
   const renewalAudit = { maybeLogExternalRenewalChange: jest.fn().mockResolvedValue('skipped_no_transition') };
+  const billingCases = { observe: jest.fn().mockResolvedValue({ outcome: 'created', case: {} }) };
+  const stripe = { retrieveSubscription: jest.fn() };
   const service = new StripeWebhookService(
     prisma,
-    {} as StripeService,
+    stripe as unknown as StripeService,
     {} as EnrollmentService,
     subscriptionLifecycle as never,
     stripeToCash as never,
     renewalAudit as never,
+    billingCases as never,
   );
 
   jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
@@ -1024,6 +1057,8 @@ function makeSubscriptionWebhookMocks() {
     createCalls,
     txSubscription,
     renewalAudit,
+    billingCases,
+    stripe,
     prisma,
   };
 }
@@ -1182,7 +1217,7 @@ describe('StripeWebhookService — handleIncomingWebhook error observability', (
       }),
     } as unknown as StripeService;
 
-    const service = new StripeWebhookService(prisma, stripe, {} as EnrollmentService, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never, { maybeLogExternalRenewalChange: jest.fn() } as never);
+    const service = new StripeWebhookService(prisma, stripe, {} as EnrollmentService, {} as never, { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never, { maybeLogExternalRenewalChange: jest.fn() } as never, { observe: jest.fn().mockResolvedValue({ outcome: 'created', case: {} }) } as never);
     return { service, prisma, stripe, updateManyMock };
   }
 
@@ -1341,7 +1376,9 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     expect(upsertCalls).toHaveLength(1);
     expect(upsertCalls[0]).toMatchObject({ membershipPlanId: 'plan-full', status: 'ACTIVE' });
     expect(txSubscription.update).not.toHaveBeenCalled();
-    expect(txSubscription.create).not.toHaveBeenCalled();
+    // A row that does not exist yet is created explicitly; existing rows use a conditional update.
+    expect(txSubscription.create).toHaveBeenCalledTimes(1);
+    expect(txSubscription.updateMany).not.toHaveBeenCalled();
   });
 
   // 2. Expired CASH row + incoming Stripe → safe supersede
@@ -1381,8 +1418,8 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       stripeSubscriptionId: activeSub.id,
       membershipPlanId: 'plan-full',
     });
-    // Upsert must NOT be called (CREATE path replaced by explicit create)
-    expect(upsertCalls).toHaveLength(0);
+    // Exactly one row was written for the incoming subscription (the explicit create above).
+    expect(upsertCalls).toHaveLength(1);
     // Supersede logged
     const supersededLog = logSpy.mock.calls.find(
       (args) => typeof args[0] === 'string' && (args[0] as string).includes('webhook_superseded_expired_cash_subscription'),

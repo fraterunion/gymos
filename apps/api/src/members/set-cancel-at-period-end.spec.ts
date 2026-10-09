@@ -45,6 +45,7 @@ describe('MembersService.setCancelAtPeriodEnd', () => {
       {} as never,
       { logGymosRenewalChange: logGymos } as unknown as StripeRenewalAuditService,
       {} as never,
+      {} as never,
     );
 
     return { service, prisma, updateSubscription, logGymos };

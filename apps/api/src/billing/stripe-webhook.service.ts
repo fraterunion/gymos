@@ -20,6 +20,20 @@ import {
   readPendingPlanIdFromMetadata,
 } from './subscription-plan-resolution.utils';
 import { markStripeWebhookEventProcessed, tryClaimStripeWebhookEvent } from './stripe-webhook-idempotency';
+import { BillingCaseService } from './reconciliation/billing-case.service';
+import type { ObservedIssue } from './reconciliation/billing-case.types';
+import { formatDateEs, formatMoney } from './reconciliation/billing-case-copy';
+import { decidePaidInvoice, type PaidInvoiceDecision } from './paid-invoice-policy';
+import {
+  ConcurrentSubscriptionWriteError,
+  StaleSubscriptionEventUnverifiedError,
+  isTerminalStripeStatus,
+  judgeTerminalConflict,
+  needsLiveVerification,
+  type LiveSubscriptionLookup,
+} from './stale-subscription-event';
+import { resolveStripeEndReason } from './subscription-end-reason';
+import type { WebhookChargePayload, WebhookDisputePayload } from './stripe-webhook-payloads';
 import {
   type WebhookCheckoutSessionPayload,
   type WebhookInvoicePayload,
@@ -61,6 +75,9 @@ type InvoiceContext = {
 };
 
 type FixedDurationSubscription = Subscription & { membershipPlan: MembershipPlan };
+
+/** Request-path Stripe GETs (terminal-conflict guard, late-payment policy) must fail fast. */
+const LIVE_LOOKUP_TIMEOUT_MS = 4_000;
 
 const CYCLE_SELECT = {
   id: true,
@@ -118,7 +135,30 @@ export class StripeWebhookService {
     private readonly subscriptionLifecycle: SubscriptionLifecycleService,
     private readonly stripeToCash: StripeToCashTransitionService,
     private readonly stripeRenewalAudit: StripeRenewalAuditService,
+    private readonly billingCases: BillingCaseService,
   ) {}
+
+  /**
+   * Kill switch for the out-of-order subscription-event guard (`BILLING_STALE_EVENT_GUARD=off`
+   * restores the pre-guard upsert without a deploy). Default: on.
+   */
+  private staleEventGuardEnabled(): boolean {
+    return process.env['BILLING_STALE_EVENT_GUARD'] !== 'off';
+  }
+
+  /** GET-only: Stripe's current view of a subscription, for terminal-conflict decisions. */
+  private async lookupLiveSubscription(stripeSubscriptionId: string): Promise<LiveSubscriptionLookup> {
+    try {
+      const live = await this.stripe.retrieveSubscription(stripeSubscriptionId, { timeoutMs: LIVE_LOOKUP_TIMEOUT_MS });
+      return { ok: true, status: live.status, cancellationReason: live.cancellation_details?.reason ?? null };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const code = (err as { code?: string } | null)?.code;
+      // A subscription Stripe no longer knows is, for ordering purposes, terminal.
+      if (code === 'resource_missing' || /No such subscription/i.test(message)) return { ok: true, status: 'canceled', cancellationReason: null };
+      return { ok: false, error: message };
+    }
+  }
 
   async handleIncomingWebhook(rawBody: Buffer, signature: string): Promise<void> {
     const event = this.stripe.constructWebhookEvent(rawBody, signature) as VerifiedStripeEvent;
@@ -189,6 +229,14 @@ export class StripeWebhookService {
           event.type,
           event.id,
         );
+        break;
+      // Delivered only once the Stripe endpoint subscribes to them (release step); mirrored
+      // into Payment status + a reconciliation case, never into access.
+      case 'charge.refunded':
+        await this.onChargeRefunded(event.data.object as WebhookChargePayload, event.id);
+        break;
+      case 'charge.dispute.created':
+        await this.onChargeDisputed(event.data.object as WebhookDisputePayload, event.id);
         break;
       default:
         break;
@@ -292,6 +340,20 @@ export class StripeWebhookService {
         ? { currentPeriodStart, currentPeriodEnd }
         : {};
 
+    // Out-of-order protection, step 1 (outside the member lock so it never waits on the network):
+    // when the local row is already CANCELED and this event still calls the subscription alive,
+    // Stripe's CURRENT state decides — never event order or timestamps. See stale-subscription-event.ts.
+    let liveLookup: LiveSubscriptionLookup | null = null;
+    if (this.staleEventGuardEnabled() && !isTerminalStripeStatus(sub.status)) {
+      const preRead = await this.prisma.subscription.findUnique({
+        where: { stripeSubscriptionId: sub.id },
+        select: { status: true },
+      });
+      if (preRead && needsLiveVerification(preRead.status, sub.status)) {
+        liveLookup = await this.lookupLiveSubscription(sub.id);
+      }
+    }
+
     const saved = await this.prisma.$transaction(async (tx) => {
       // MM-4: unified member-scoped subscription-write lock — serialises concurrent webhook
       // deliveries AND cash sales / scheduled-cash creation for the same member, preventing
@@ -342,10 +404,95 @@ export class StripeWebhookService {
           id: true,
           cancelAtPeriodEnd: true,
           status: true,
+          endReason: true,
+          supersededBySubscriptionId: true,
+          membershipPlanId: true,
+          pendingMembershipPlanId: true,
+          currentPeriodStart: true,
+          currentPeriodEnd: true,
         },
       });
       const previousCancelAtPeriodEnd =
         existingRowForThisSub == null ? null : existingRowForThisSub.cancelAtPeriodEnd;
+
+      // Out-of-order protection, step 2 (under the member lock). A CANCELED row is terminal for
+      // this Stripe id: Stripe never un-cancels, so an "alive" event here is either stale or a
+      // GymOS-side cancellation Stripe does not know about. Neither may rewrite the row.
+      if (
+        this.staleEventGuardEnabled() &&
+        existingRowForThisSub &&
+        needsLiveVerification(existingRowForThisSub.status, sub.status)
+      ) {
+        const verdict = judgeTerminalConflict({
+          localStatus: existingRowForThisSub.status,
+          incomingStripeStatus: sub.status,
+          live: liveLookup,
+        });
+        if (verdict.action === 'RETRY_UNVERIFIED') {
+          // Fail closed: the event stays unprocessed (visible) and Stripe redelivers it.
+          throw new StaleSubscriptionEventUnverifiedError(sub.id, verdict.error);
+        }
+        if (verdict.action === 'IGNORE_STALE') {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'stale_subscription_event_ignored',
+              stripeEventId: eventContext?.eventId ?? null,
+              stripeEventType,
+              stripeSubscriptionId: sub.id,
+              localSubscriptionId: existingRowForThisSub.id,
+              localStatus: existingRowForThisSub.status,
+              eventStatus: sub.status,
+              liveStatus: verdict.liveStatus,
+            }),
+          );
+          return null;
+        }
+        // KEEP_LOCAL_OPEN_CASE — Stripe keeps the subscription alive (and billing) while GymOS
+        // canceled it. Not auto-reactivated: an operator decides, from a durable case (observed
+        // after this transaction commits, so a concurrent observer can never abort it).
+        if (verdict.action !== 'KEEP_LOCAL_OPEN_CASE') {
+          throw new StaleSubscriptionEventUnverifiedError(sub.id, `unexpected verdict ${verdict.action}`);
+        }
+        this.logger.warn(
+          JSON.stringify({
+            event: 'subscription_event_kept_local_canceled',
+            stripeEventId: eventContext?.eventId ?? null,
+            stripeEventType,
+            stripeSubscriptionId: sub.id,
+            localSubscriptionId: existingRowForThisSub.id,
+            liveStatus: verdict.liveStatus,
+          }),
+        );
+        return {
+          row: null,
+          previousCancelAtPeriodEnd,
+          keepLocalCase: {
+          studioId,
+          category: 'LOCAL_CANCELED_STRIPE_ALIVE',
+          severity: 'HIGH',
+          reasonCode: 'STRIPE_EVENT_AFTER_LOCAL_CANCEL',
+          issueRef: existingRowForThisSub.id,
+          userId,
+          subscriptionId: existingRowForThisSub.id,
+          stripeSubscriptionId: sub.id,
+          stripeCustomerId: customerId,
+          stripeEventId: eventContext?.eventId ?? null,
+          title: 'GymOS canceló la suscripción, pero Stripe la mantiene vigente',
+          summary: `Stripe reporta la suscripción como «${verdict.liveStatus}» y GymOS la tiene cancelada (${existingRowForThisSub.endReason ?? 'sin motivo'}). Mientras siga vigente en Stripe puede seguir cobrando; el evento de Stripe no reactivó la membresía.`,
+          suggestedAction:
+            'Decide en Stripe: cancela la suscripción si la membresía ya no aplica, o corrige la membresía en GymOS si el miembro sí debe tener acceso. No cobres manualmente.',
+          evidence: {
+            localStatus: existingRowForThisSub.status,
+            localEndReason: existingRowForThisSub.endReason,
+            stripeStatus: verdict.liveStatus,
+            eventStatus: sub.status,
+            stripeEventType,
+            stripeEventId: eventContext?.eventId ?? null,
+            planId: membershipPlanId,
+          },
+          } satisfies ObservedIssue,
+        };
+      }
 
       if (RENEWABLE_SUBSCRIPTION_STATUSES.includes(status)) {
         if (!existingRowForThisSub) {
@@ -390,49 +537,90 @@ export class StripeWebhookService {
         }
       }
 
-      let row = await tx.subscription.upsert({
-        where: { stripeSubscriptionId: sub.id },
-        create: {
-          studioId,
-          userId,
-          membershipPlanId,
-          pendingMembershipPlanId,
-          // A fixed-duration row is not entitled until its paid invoice creates a cycle.
-          status: plan.entitlementDays != null ? SubscriptionStatus.PAST_DUE : status,
-          stripeSubscriptionId: sub.id,
-          cancelAtPeriodEnd: sub.cancel_at_period_end,
-          // MM-1: purchase-time snapshot of the plan's exclusivity group.
-          exclusiveGroupKey: plan.exclusiveGroup,
-          ...periodData,
-          // entitlementEndsAt is set only at creation — decoupled from Stripe period updates
-          ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
-        },
-        update: {
-          status,
-          cancelAtPeriodEnd: sub.cancel_at_period_end,
-          membershipPlanId,
-          pendingMembershipPlanId,
-          ...periodData,
-          // entitlementEndsAt deliberately omitted from update — never overwritten by Stripe
-        },
-      });
+      let row: Subscription;
+      if (!existingRowForThisSub) {
+        row = await tx.subscription.create({
+          data: {
+            studioId,
+            userId,
+            membershipPlanId,
+            pendingMembershipPlanId,
+            // A fixed-duration row is not entitled until its paid invoice creates a cycle.
+            status: plan.entitlementDays != null && status !== SubscriptionStatus.CANCELED ? SubscriptionStatus.PAST_DUE : status,
+            stripeSubscriptionId: sub.id,
+            cancelAtPeriodEnd: sub.cancel_at_period_end,
+            // MM-1: purchase-time snapshot of the plan's exclusivity group.
+            exclusiveGroupKey: plan.exclusiveGroup,
+            ...periodData,
+            // entitlementEndsAt is set only at creation — decoupled from Stripe period updates
+            ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
+          },
+        });
+      } else {
+        // Fixed-duration rows keep the period of their paid cycle (re-pinned below), so Stripe's
+        // billing period is never written to them — writing it would only bump updated_at twice.
+        const periodWrite = plan.entitlementDays != null ? {} : periodData;
+        const sameTime = (a: Date | null, b: Date | undefined) => (b === undefined ? true : a !== null && a.getTime() === b.getTime());
+        const unchanged =
+          existingRowForThisSub.status === status &&
+          existingRowForThisSub.cancelAtPeriodEnd === sub.cancel_at_period_end &&
+          existingRowForThisSub.membershipPlanId === membershipPlanId &&
+          existingRowForThisSub.pendingMembershipPlanId === pendingMembershipPlanId &&
+          sameTime(existingRowForThisSub.currentPeriodStart, periodWrite.currentPeriodStart) &&
+          sameTime(existingRowForThisSub.currentPeriodEnd, periodWrite.currentPeriodEnd);
+        if (!unchanged) {
+          // Status-conditional write (optimistic concurrency): the row must still be in the status
+          // read under the lock. A writer that bypasses the member lock (staff status override,
+          // cash sale supersession) makes this a no-op, and the event is retried against fresh
+          // state rather than overwriting it. A redelivery that changes nothing is not written at
+          // all: `updated_at` is the cancellation date analytics read, and must not drift.
+          const written = await tx.subscription.updateMany({
+            where: { id: existingRowForThisSub.id, status: existingRowForThisSub.status },
+            data: {
+              status,
+              cancelAtPeriodEnd: sub.cancel_at_period_end,
+              membershipPlanId,
+              pendingMembershipPlanId,
+              ...periodWrite,
+              // entitlementEndsAt deliberately omitted from update — never overwritten by Stripe
+            },
+          });
+          if (written.count !== 1) {
+            throw new ConcurrentSubscriptionWriteError(sub.id, existingRowForThisSub.status);
+          }
+        }
+        row = await tx.subscription.findUniqueOrThrow({ where: { id: existingRowForThisSub.id } });
+      }
 
       if (plan.entitlementDays != null) {
         const paidCycle = await tx.membershipEntitlementCycle.findFirst({
           where: { subscriptionId: row.id },
           orderBy: { endsAt: 'desc' },
         });
-        row = await tx.subscription.update({
-          where: { id: row.id },
-          data: paidCycle
-            ? {
-                status,
-                currentPeriodStart: paidCycle.startsAt,
-                currentPeriodEnd: paidCycle.endsAt,
-                entitlementEndsAt: paidCycle.endsAt,
-              }
-            : { status: SubscriptionStatus.PAST_DUE, entitlementEndsAt: null },
-        });
+        const desired = paidCycle
+          ? {
+              status,
+              currentPeriodStart: paidCycle.startsAt,
+              currentPeriodEnd: paidCycle.endsAt,
+              entitlementEndsAt: paidCycle.endsAt,
+            }
+          : {
+              // Unpaid fixed-duration rows wait as PAST_DUE — unless Stripe already ended the
+              // subscription, which must never leave a renewable (PAST_DUE) row behind.
+              status: status === SubscriptionStatus.CANCELED ? SubscriptionStatus.CANCELED : SubscriptionStatus.PAST_DUE,
+              currentPeriodStart: row.currentPeriodStart,
+              currentPeriodEnd: row.currentPeriodEnd,
+              entitlementEndsAt: null as Date | null,
+            };
+        const same = (a: Date | null, b: Date | null) => (a === null ? b === null : b !== null && a.getTime() === b.getTime());
+        const alreadyThere =
+          row.status === desired.status &&
+          same(row.currentPeriodStart, desired.currentPeriodStart) &&
+          same(row.currentPeriodEnd, desired.currentPeriodEnd) &&
+          same(row.entitlementEndsAt, desired.entitlementEndsAt);
+        if (!alreadyThere) {
+          row = await tx.subscription.update({ where: { id: row.id }, data: desired });
+        }
       }
 
       if (status === SubscriptionStatus.CANCELED) {
@@ -458,12 +646,16 @@ export class StripeWebhookService {
           { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
         )[0]?.row ?? null;
         if (row.endReason == null) {
+          // Stripe's own facts decide between a requested cancellation and an involuntary end
+          // (failed collection, dispute, never-paid first invoice). Never invents an actor.
+          const endReason = resolveStripeEndReason(
+            { status: sub.status, cancellationReason: readCancellationDetails(sub).reason },
+            { pendingCashSuccessor: pendingCash !== null },
+          );
           row = await tx.subscription.update({
             where: { id: row.id },
             data: {
-              endReason: pendingCash
-                ? SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD
-                : SubscriptionEndReason.MEMBER_CANCELLED,
+              endReason,
               ...(pendingCash
                 ? { supersededBySubscriptionId: pendingCash.id }
                 : {}),
@@ -493,9 +685,12 @@ export class StripeWebhookService {
         });
       }
 
-      return { row, previousCancelAtPeriodEnd };
+      return { row, previousCancelAtPeriodEnd, keepLocalCase: null as ObservedIssue | null };
     });
 
+    if (saved?.keepLocalCase) {
+      await this.billingCases.observe(this.prisma, saved.keepLocalCase);
+    }
     if (!saved?.row) return;
 
     const { row: savedRow, previousCancelAtPeriodEnd } = saved;
@@ -813,7 +1008,16 @@ export class StripeWebhookService {
         );
         return;
       }
+      // A coupon/balance-settled period obeys the same late-payment policy as a paid one: no
+      // window on a superseded or double-covered membership, and nothing silent.
+      const zeroPolicy = await this.applyPaidInvoicePolicy(ctx, invoice, stripeEventId, { priorPaymentStatus: null, amountPaidCents: 0 });
+      if (!zeroPolicy.decision.allowEntitlementGrant) {
+        this.logger.warn(JSON.stringify({ event: 'stripe_invoice_paid_zero_amount_withheld', stripeEventId: stripeEventId ?? null, stripeInvoiceId: invoice.id, reason: zeroPolicy.decision.exception?.reasonCode ?? null }));
+        if (zeroPolicy.recordException) await zeroPolicy.recordException();
+        return;
+      }
       await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice, stripeEventId);
+      if (zeroPolicy.recordException) await zeroPolicy.recordException();
       return;
     }
     // Pre-basil payloads embed the PaymentIntent; basil-and-later (the live dahlia endpoint) do
@@ -825,6 +1029,13 @@ export class StripeWebhookService {
     const paidAt = invoice.status_transitions?.paid_at
       ? new Date(invoice.status_transitions.paid_at * 1000)
       : new Date();
+
+    // What this invoice's Payment row said BEFORE this delivery drives the late-payment policy
+    // (a recovered failure vs. an idempotent redelivery vs. a first observation).
+    const priorPayment = await this.prisma.payment.findUnique({
+      where: { stripeInvoiceId: invoice.id },
+      select: { status: true },
+    });
 
     // Keyed by stripeInvoiceId — idempotent on Stripe retries. Recorded BEFORE the entitlement
     // grant on purpose: the financial fact must never be lost, even when the grant below needs
@@ -857,9 +1068,270 @@ export class StripeWebhookService {
       },
     });
 
-    await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice, stripeEventId);
+    // Late-payment policy: money is recorded above regardless; this decides whether the paid
+    // period may become entitlement and whether an operator must see it (paid-invoice-policy.ts).
+    const policy = await this.applyPaidInvoicePolicy(ctx, invoice, stripeEventId, {
+      priorPaymentStatus: priorPayment?.status ?? null,
+      amountPaidCents: amountCents,
+    });
+
+    if (policy.decision.allowEntitlementGrant) {
+      // Grant first: the case (if any) must describe what actually happened, and a grant that
+      // needs review dead-letters visibly instead of leaving a case that claims a window.
+      await this.grantFixedDurationCycleForPaidInvoice(ctx, invoice, stripeEventId);
+    }
+    if (policy.recordException) await policy.recordException();
 
     if (!piId) await this.enrichPaymentIntentReference(invoice.id);
+  }
+
+  /**
+   * Classifies a paid invoice against the local membership and (when the local row is terminal)
+   * Stripe's current state, and turns any exception into a durable reconciliation case. Never
+   * refunds, voids, reactivates or grants anything itself.
+   */
+  private async applyPaidInvoicePolicy(
+    ctx: InvoiceContext,
+    invoice: WebhookInvoicePayload,
+    stripeEventId: string | undefined,
+    input: { priorPaymentStatus: PaymentStatus | null; amountPaidCents: number },
+  ): Promise<{ decision: PaidInvoiceDecision; recordException: (() => Promise<void>) | null }> {
+    const row = ctx.dbSubscriptionId
+      ? await this.prisma.subscription.findUnique({
+          where: { id: ctx.dbSubscriptionId },
+          select: {
+            id: true,
+            userId: true,
+            studioId: true,
+            status: true,
+            endReason: true,
+            supersededBySubscriptionId: true,
+            cancelAtPeriodEnd: true,
+            currentPeriodEnd: true,
+            updatedAt: true,
+            membershipPlanId: true,
+            exclusiveGroupKey: true,
+            membershipPlan: { select: { name: true, entitlementDays: true } },
+          },
+        })
+      : null;
+
+    const terminalLocally = row !== null && (row.status === SubscriptionStatus.CANCELED || row.supersededBySubscriptionId !== null);
+    const stripeSubscriptionId = readInvoiceSubscriptionId(invoice);
+    let liveStripeStatus: string | 'unavailable' | null = null;
+    let entitledSiblingExists = false;
+    let endedAt: Date | null = null;
+    if (terminalLocally && stripeSubscriptionId) {
+      const live = await this.lookupLiveSubscription(stripeSubscriptionId);
+      liveStripeStatus = live.ok ? live.status : 'unavailable';
+      // When the membership ended: Stripe's own deletion event (immutable), else the row's last write.
+      const deletion = await this.prisma.stripeWebhookEvent.findFirst({
+        where: { eventType: 'customer.subscription.deleted', payload: { path: ['data', 'object', 'id'], equals: stripeSubscriptionId } },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      endedAt = deletion?.createdAt ?? row?.updatedAt ?? null;
+    }
+    if (row && row.status === SubscriptionStatus.CANCELED) {
+      // A newer membership of the same family (same plan, or same non-null exclusive group) that
+      // is renewable or still entitled means this payment would cover a period twice.
+      const now = new Date();
+      const sibling = await this.prisma.subscription.findFirst({
+        where: {
+          studioId: row.studioId,
+          userId: row.userId,
+          id: { not: row.id },
+          OR: [{ membershipPlanId: row.membershipPlanId }, ...(row.exclusiveGroupKey ? [{ exclusiveGroupKey: row.exclusiveGroupKey }] : [])],
+          AND: [{ OR: [{ status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } }, { entitlementEndsAt: { gt: now } }, { status: SubscriptionStatus.CANCELED, entitlementEndsAt: null, currentPeriodEnd: { gt: now }, source: { not: SubscriptionSource.STRIPE } }] }],
+        },
+        select: { id: true },
+      });
+      entitledSiblingExists = sibling !== null;
+    }
+
+    const paidAt = invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000) : null;
+    const decision = decidePaidInvoice({
+      invoiceId: invoice.id,
+      amountPaidCents: input.amountPaidCents,
+      billingReason: invoice.billing_reason ?? null,
+      paidAt,
+      subscription: row
+        ? {
+            id: row.id,
+            status: row.status,
+            endReason: row.endReason,
+            supersededBySubscriptionId: row.supersededBySubscriptionId,
+            cancelAtPeriodEnd: row.cancelAtPeriodEnd,
+            isFixedDuration: row.membershipPlan.entitlementDays != null,
+            endedAt,
+          }
+        : null,
+      liveStripeStatus,
+      paymentAlreadySucceeded: input.priorPaymentStatus === PaymentStatus.SUCCEEDED,
+      paymentPreviouslyFailed: input.priorPaymentStatus === PaymentStatus.FAILED,
+      entitledSiblingExists,
+    });
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'paid_invoice_policy',
+        stripeEventId: stripeEventId ?? null,
+        stripeInvoiceId: invoice.id,
+        localSubscriptionId: row?.id ?? null,
+        scenario: decision.scenario,
+        allowEntitlementGrant: decision.allowEntitlementGrant,
+        exception: decision.exception?.reasonCode ?? null,
+      }),
+    );
+
+    if (!decision.exception) return { decision, recordException: null };
+    const exception = decision.exception;
+
+    const recordException = async () => {
+    const parsed = parseInvoiceLines(invoice.lines);
+    const serviceLine = parsed.lines.find((l) => l.kind === 'subscription_item' && !l.proration) ?? parsed.lines[0] ?? null;
+    const currency = (invoice.currency ?? 'mxn').toLowerCase();
+    const paymentRow = await this.prisma.payment.findUnique({ where: { stripeInvoiceId: invoice.id }, select: { id: true } });
+    const amountText = formatMoney(input.amountPaidCents, currency);
+    const periodText = serviceLine
+      ? `${formatDateEs(new Date(serviceLine.periodStart * 1000))} → ${formatDateEs(new Date(serviceLine.periodEnd * 1000))}`
+      : 'periodo no identificado';
+    const planName = row?.membershipPlan.name ?? 'membresía';
+    const paidWithoutAccess = exception.paidWithoutAccess;
+    const zeroAmount = input.amountPaidCents <= 0;
+    // A row-level disagreement (Stripe alive, GymOS canceled) is keyed on the local row, exactly
+    // like the nightly detector, so both observe ONE case; invoice-level exceptions key on the invoice.
+    const rowLevel = exception.reasonCode === 'LOCAL_CANCELED_STRIPE_ALIVE' && !paidWithoutAccess && row !== null;
+
+    await this.billingCases.observe(this.prisma, {
+      studioId: ctx.studioId,
+      category: rowLevel ? 'LOCAL_CANCELED_STRIPE_ALIVE' : 'PAID_WITHOUT_ENTITLEMENT',
+      severity: zeroAmount && exception.severity === 'CRITICAL' ? 'MEDIUM' : exception.severity,
+      reasonCode: rowLevel ? 'LATE_PAYMENT_STRIPE_ALIVE' : exception.reasonCode,
+      issueRef: rowLevel ? row.id : invoice.id,
+      userId: ctx.userId,
+      subscriptionId: row?.id ?? null,
+      paymentId: paymentRow?.id ?? null,
+      stripeSubscriptionId,
+      stripeInvoiceId: invoice.id,
+      stripeCustomerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id ?? null,
+      stripeEventId: stripeEventId ?? null,
+      title: zeroAmount
+        ? `Factura sin cobro (cupón o saldo) ${paidWithoutAccess ? 'no otorgó' : 'otorgó'} vigencia de ${planName}`
+        : paidWithoutAccess
+          ? `Pago recibido sin acceso: ${amountText} de ${planName}`
+          : `Pago tardío aplicado a una membresía cancelada: ${amountText} de ${planName}`,
+      summary: `${exception.explanation} Factura ${invoice.id} (${invoice.billing_reason ?? 'motivo desconocido'}), periodo ${periodText}. Stripe: ${liveStripeStatus ?? 'no consultado'} · GymOS: ${row?.status ?? 'sin suscripción'}${row?.endReason ? ` (${row.endReason})` : ''}.`,
+      suggestedAction: paidWithoutAccess
+        ? 'Decide con el miembro: reembolsa en Stripe o vende/activa la membresía correcta en GymOS. No reactives la suscripción cancelada ni cobres de nuevo.'
+        : 'Confirma que la vigencia otorgada es correcta; Stripe no volverá a renovar esta suscripción.',
+      evidence: {
+        amountCents: input.amountPaidCents,
+        currency,
+        stripeInvoiceId: invoice.id,
+        billingReason: invoice.billing_reason ?? null,
+        servicePeriodStart: serviceLine ? new Date(serviceLine.periodStart * 1000).toISOString() : null,
+        servicePeriodEnd: serviceLine ? new Date(serviceLine.periodEnd * 1000).toISOString() : null,
+        paidAt: invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000).toISOString() : null,
+        entitlementGranted: !paidWithoutAccess,
+        whyNotGranted: paidWithoutAccess ? exception.reasonCode : null,
+        stripeStatus: liveStripeStatus,
+        localStatus: row?.status ?? null,
+        localEndReason: row?.endReason ?? null,
+        localPeriodEnd: row?.currentPeriodEnd?.toISOString() ?? null,
+        scenario: decision.scenario,
+        paymentId: paymentRow?.id ?? null,
+        entitledSiblingExists,
+      },
+    });
+    };
+    return { decision, recordException };
+  }
+
+  /**
+   * Locates the Payment row a charge belongs to. Basil-and-later charges carry no `invoice`: the
+   * PaymentIntent is matched directly, else resolved to its invoice through the InvoicePayment
+   * resource (GET). A legacy `invoice` field, when present, is honoured first.
+   */
+  private async findPaymentForCharge(input: { invoice?: string | { id: string } | null; payment_intent: string | { id: string } | null }) {
+    const invoiceId = typeof input.invoice === 'string' ? input.invoice : input.invoice?.id ?? null;
+    const paymentIntentId = typeof input.payment_intent === 'string' ? input.payment_intent : input.payment_intent?.id ?? null;
+    const select = { id: true, studioId: true, userId: true, subscriptionId: true, amountCents: true, currency: true, status: true, stripeInvoiceId: true, stripePaymentIntentId: true } as const;
+    if (invoiceId) {
+      const byInvoice = await this.prisma.payment.findUnique({ where: { stripeInvoiceId: invoiceId }, select });
+      if (byInvoice) return byInvoice;
+    }
+    if (!paymentIntentId) return null;
+    const byIntent = await this.prisma.payment.findUnique({ where: { stripePaymentIntentId: paymentIntentId }, select });
+    if (byIntent) return byIntent;
+    try {
+      const paidInvoiceId = await this.stripe.findInvoiceIdForPaymentIntent(paymentIntentId);
+      if (paidInvoiceId) return this.prisma.payment.findUnique({ where: { stripeInvoiceId: paidInvoiceId }, select });
+    } catch (err) {
+      this.logger.warn(JSON.stringify({ event: 'charge_payment_lookup_failed', paymentIntentId, error: (err instanceof Error ? err.message : String(err)).slice(0, 160) }));
+    }
+    return null;
+  }
+
+  private async onChargeRefunded(charge: WebhookChargePayload, stripeEventId: string): Promise<void> {
+    const payment = await this.findPaymentForCharge(charge);
+    if (!payment) {
+      this.logger.warn(JSON.stringify({ event: 'charge_refunded_without_local_payment', stripeEventId, chargeId: charge.id }));
+      return;
+    }
+    const amountRefunded = charge.amount_refunded ?? 0;
+    const fullyRefunded = charge.refunded === true || (charge.amount !== null && amountRefunded >= charge.amount);
+    const nextStatus = fullyRefunded ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED;
+    // Mirror the money fact. Access is NOT revoked here: whether a refund ends a membership is a
+    // decision the case asks an operator to make.
+    await this.prisma.payment.updateMany({
+      where: { id: payment.id, status: { in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED] } },
+      data: { status: nextStatus },
+    });
+    const currency = (charge.currency ?? payment.currency ?? 'mxn').toLowerCase();
+    await this.billingCases.observe(this.prisma, {
+      studioId: payment.studioId,
+      category: 'PAYMENT_REFUNDED_OR_DISPUTED',
+      severity: 'MEDIUM',
+      reasonCode: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED',
+      issueRef: charge.id,
+      userId: payment.userId,
+      subscriptionId: payment.subscriptionId,
+      paymentId: payment.id,
+      stripeInvoiceId: payment.stripeInvoiceId,
+      stripeCustomerId: typeof charge.customer === 'string' ? charge.customer : charge.customer?.id ?? null,
+      stripeEventId,
+      title: `${fullyRefunded ? 'Reembolso' : 'Reembolso parcial'} en Stripe: ${formatMoney(amountRefunded, currency)}`,
+      summary: `Stripe reembolsó ${formatMoney(amountRefunded, currency)} de un pago de ${formatMoney(payment.amountCents, payment.currency)}. GymOS registró el reembolso en el historial de pagos y NO retiró el acceso.`,
+      suggestedAction: 'Revisa si la vigencia pagada debe terminar antes o cancelarse; si fue un cobro duplicado, no se requiere más acción.',
+      evidence: { chargeId: charge.id, amountCents: charge.amount, amountRefundedCents: amountRefunded, currency, stripeInvoiceId: payment.stripeInvoiceId, paymentStatus: nextStatus },
+    });
+  }
+
+  private async onChargeDisputed(dispute: WebhookDisputePayload, stripeEventId: string): Promise<void> {
+    const chargeId = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id ?? null;
+    const payment = await this.findPaymentForCharge({ invoice: null, payment_intent: dispute.payment_intent });
+    if (!payment) {
+      this.logger.warn(JSON.stringify({ event: 'charge_dispute_without_local_payment', stripeEventId, disputeId: dispute.id, chargeId }));
+      return;
+    }
+    const currency = (dispute.currency ?? payment.currency ?? 'mxn').toLowerCase();
+    await this.billingCases.observe(this.prisma, {
+      studioId: payment.studioId,
+      category: 'PAYMENT_REFUNDED_OR_DISPUTED',
+      severity: 'HIGH',
+      reasonCode: 'DISPUTED',
+      issueRef: dispute.id,
+      userId: payment.userId,
+      subscriptionId: payment.subscriptionId,
+      paymentId: payment.id,
+      stripeInvoiceId: payment.stripeInvoiceId,
+      stripeEventId,
+      title: `Disputa de pago en Stripe: ${formatMoney(dispute.amount ?? payment.amountCents, currency)}`,
+      summary: `El miembro disputó un cobro (${dispute.reason ?? 'motivo no indicado'}; estado ${dispute.status ?? 'desconocido'}). GymOS no cambió el acceso; Stripe puede cancelar la suscripción si la disputa procede.`,
+      suggestedAction: 'Responde la disputa en Stripe y decide si la membresía debe seguir vigente mientras se resuelve.',
+      evidence: { disputeId: dispute.id, chargeId, amountCents: dispute.amount, currency, reason: dispute.reason, status: dispute.status, stripeInvoiceId: payment.stripeInvoiceId },
+    });
   }
 
   /**

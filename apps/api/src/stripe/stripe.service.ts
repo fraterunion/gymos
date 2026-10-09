@@ -82,8 +82,27 @@ export class StripeService {
     });
   }
 
-  async retrieveSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
-    return this.getClient().subscriptions.retrieve(subscriptionId) as Promise<Stripe.Subscription>;
+  /**
+   * READ-ONLY. `timeoutMs` bounds request-path callers (webhook guard, Admin actions) so a Stripe
+   * brownout cannot hold a request for the SDK's 80 s default.
+   */
+  async retrieveSubscription(subscriptionId: string, opts: { timeoutMs?: number } = {}): Promise<Stripe.Subscription> {
+    const options = opts.timeoutMs ? { timeout: opts.timeoutMs, maxNetworkRetries: 1 } : undefined;
+    return this.getClient().subscriptions.retrieve(subscriptionId, undefined, options) as Promise<Stripe.Subscription>;
+  }
+
+  /**
+   * READ-ONLY. The invoice a PaymentIntent paid, via the InvoicePayment resource (basil removed
+   * `charge.invoice` / `payment_intent.invoice`). Null when none or ambiguous.
+   */
+  async findInvoiceIdForPaymentIntent(paymentIntentId: string): Promise<string | null> {
+    const page = await this.getClient().invoicePayments.list(
+      { payment: { type: 'payment_intent', payment_intent: paymentIntentId }, limit: 2 },
+      { timeout: 4_000, maxNetworkRetries: 1 },
+    );
+    if (page.data.length !== 1) return null;
+    const invoice = page.data[0]!.invoice;
+    return typeof invoice === 'string' ? invoice : invoice?.id ?? null;
   }
 
   async retrievePrice(priceId: string): Promise<Stripe.Price> {
@@ -359,15 +378,48 @@ export class StripeService {
    * Used by the reconciliation layer to detect orphaned or duplicate subscriptions.
    * Callers are responsible for filtering by studioId via subscription metadata.
    */
-  async listSubscriptionsForCustomer(customerId: string): Promise<Stripe.Subscription[]> {
+  /**
+   * All of a customer's subscriptions. Stripe omits canceled ones by default; reconciliation
+   * passes `includeCanceled` so "ended in Stripe" and "unknown to Stripe" can be told apart.
+   */
+  async listSubscriptionsForCustomer(
+    customerId: string,
+    opts: { includeCanceled?: boolean } = {},
+  ): Promise<Stripe.Subscription[]> {
     const stripe = this.getClient();
     const results: Stripe.Subscription[] = [];
     for await (const sub of stripe.subscriptions.list({
       customer: customerId,
       limit: 100,
+      ...(opts.includeCanceled ? { status: 'all' } : {}),
     })) {
       results.push(sub as Stripe.Subscription);
     }
     return results;
+  }
+
+  // ── Read-only reconciliation lookups (GET only; bounded by `limit`) ─────────
+
+  async listOpenInvoicesForCustomer(customerId: string, limit = 25): Promise<Stripe.Invoice[]> {
+    const page = await this.getClient().invoices.list({ customer: customerId, status: 'open', limit });
+    return page.data;
+  }
+
+  async listRefundsSince(createdGteUnix: number, limit = 100): Promise<{ data: Stripe.Refund[]; hasMore: boolean }> {
+    const page = await this.getClient().refunds.list({ created: { gte: createdGteUnix }, limit });
+    return { data: page.data, hasMore: page.has_more };
+  }
+
+  async listDisputesSince(createdGteUnix: number, limit = 100): Promise<{ data: Stripe.Dispute[]; hasMore: boolean }> {
+    const page = await this.getClient().disputes.list({ created: { gte: createdGteUnix }, limit });
+    return { data: page.data, hasMore: page.has_more };
+  }
+
+  async retrieveCharge(chargeId: string): Promise<Stripe.Charge> {
+    return this.getClient().charges.retrieve(chargeId);
+  }
+
+  async retrieveInvoice(invoiceId: string): Promise<Stripe.Invoice> {
+    return this.getClient().invoices.retrieve(invoiceId);
   }
 }

@@ -782,7 +782,7 @@ describe('SubscriptionReconciliationService — auditStudio', () => {
     expect(orphan).toBeDefined();
     expect(orphan?.severity).toBe('critical');
     expect(orphan?.requiresManualResolution).toBe(true);
-    expect(orphan?.memberName).toBe('Jane Doe');
+    expect(orphan?.memberName).toBe('Jane D.');
   });
 
   // Test 10: duplicate_renewable case — two Stripe subs, one local

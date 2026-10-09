@@ -9,6 +9,7 @@ import {
 import { deriveMembershipLifecycle } from '../memberships/membership-entitlement';
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
+import { BillingCaseService } from '../billing/reconciliation/billing-case.service';
 import {
   buildPaymentFailureView,
   explainMembershipBilling,
@@ -28,12 +29,30 @@ import {
   type RenewalChangeOrigin,
 } from './membership-billing-status';
 
+export type MemberBillingCaseView = {
+  id: string;
+  category: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  status: 'OPEN' | 'ACKNOWLEDGED';
+  reasonCode: string | null;
+  title: string;
+  summary: string;
+  suggestedAction: string;
+  subscriptionId: string | null;
+  stripeInvoiceId: string | null;
+  firstDetectedAt: string;
+  lastObservedAt: string;
+  acknowledgedAt: string | null;
+};
+
 export type MemberBillingStatusResponse = {
   generatedAt: string;
   /** One explanation per subscription of the member, newest first. */
   memberships: MembershipBillingStatus[];
   /** FAILED payments, newest first, with the decline reason when it could be read. */
   failedPayments: PaymentFailureView[];
+  /** Open/acknowledged reconciliation cases for this member — never "Al corriente" while one is critical. */
+  openCases: MemberBillingCaseView[];
 };
 
 export type SubscriptionEndingView = {
@@ -85,11 +104,12 @@ export class MemberBillingStatusService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripe: StripeService,
+    private readonly billingCases: BillingCaseService,
   ) {}
 
   async getMemberBillingStatus(studioId: string, userId: string, now = new Date()): Promise<MemberBillingStatusResponse> {
-    const { generatedAt, memberships, failedPayments } = await this.loadBillingContext(studioId, userId, now);
-    return { generatedAt, memberships, failedPayments };
+    const { generatedAt, memberships, failedPayments, openCases } = await this.loadBillingContext(studioId, userId, now);
+    return { generatedAt, memberships, failedPayments, openCases };
   }
 
   async loadBillingContext(studioId: string, userId: string, now = new Date()): Promise<MemberBillingContext> {
@@ -246,10 +266,28 @@ export class MemberBillingStatusService {
       return { subscriptionId, planName, ...ending, failure: failureRow ? failureViews.get(failureRow.id) ?? null : null };
     });
 
+    const openCaseRows = await this.billingCases.openCasesForMember(this.prisma, studioId, userId);
+    const openCases: MemberBillingCaseView[] = openCaseRows.map((c) => ({
+      id: c.id,
+      category: c.category,
+      severity: c.severity,
+      status: c.status as 'OPEN' | 'ACKNOWLEDGED',
+      reasonCode: c.reasonCode,
+      title: c.title,
+      summary: c.summary,
+      suggestedAction: c.suggestedAction,
+      subscriptionId: c.subscriptionId,
+      stripeInvoiceId: c.stripeInvoiceId,
+      firstDetectedAt: c.firstDetectedAt.toISOString(),
+      lastObservedAt: c.lastObservedAt.toISOString(),
+      acknowledgedAt: c.acknowledgedAt?.toISOString() ?? null,
+    }));
+
     return {
       generatedAt: now.toISOString(),
       memberships,
       failedPayments: failedRows.slice(0, 20).map((p) => failureViews.get(p.id) as PaymentFailureView),
+      openCases,
       subscriptionEvents,
       subscriptionEndings,
     };

@@ -1,4 +1,5 @@
 import type {
+  MemberBillingCaseView,
   MemberBillingStatus,
   MemberProfile,
   MembershipBillingStatus,
@@ -500,6 +501,39 @@ function fallbackCopy(row: MembershipCardInput, billing: "loading" | "error" | "
   return { paymentLabel: "Revisar cobro", tone: "warning", paymentProblem: false, explanation: [pending], caution: null, action: null };
 }
 
+/** The most severe open reconciliation case that names this subscription, if any. */
+export function openCaseForSubscription(cases: readonly MemberBillingCaseView[] | undefined, subscriptionId: string): MemberBillingCaseView | null {
+  const rank: Record<MemberBillingCaseView["severity"], number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+  const matching = (cases ?? []).filter((c) => c.subscriptionId === subscriptionId && (c.severity === "CRITICAL" || c.severity === "HIGH"));
+  if (matching.length === 0) return null;
+  return [...matching].sort((a, b) => rank[a.severity] - rank[b.severity])[0] ?? null;
+}
+
+/**
+ * An unresolved CRITICAL/HIGH case overrides the card's payment copy: a member with a paid-but-
+ * no-access or Stripe/GymOS disagreement is never shown as "Al corriente", and the card never
+ * suggests a manual charge that could duplicate a Stripe payment.
+ */
+export function applyOpenCaseToCopy(copy: BillingCopy, openCase: MemberBillingCaseView | null): BillingCopy {
+  if (!openCase) return copy;
+  const label = openCase.category === "PAID_WITHOUT_ENTITLEMENT"
+    ? "Pago recibido sin acceso"
+    : openCase.category === "STRIPE_CANCELED_LOCAL_ALIVE" || openCase.category === "LOCAL_CANCELED_STRIPE_ALIVE" || openCase.category === "SUBSCRIPTION_IDENTITY_MISMATCH"
+      ? "GymOS y Stripe tienen estados distintos"
+      : openCase.category === "PAYMENT_REFUNDED_OR_DISPUTED"
+        ? "Pago reembolsado o disputado"
+        : "Caso de facturación abierto";
+  const reviewed = openCase.status === "ACKNOWLEDGED" ? " Este caso ya fue revisado y sigue en seguimiento." : "";
+  return {
+    paymentLabel: label,
+    tone: openCase.severity === "CRITICAL" ? "critical" : "warning",
+    paymentProblem: true,
+    explanation: [openCase.summary + reviewed, ...copy.explanation.filter((line) => line !== openCase.summary)],
+    caution: "No cobres de nuevo ni registres un cobro en efectivo hasta resolver el caso: podría cobrarse dos veces.",
+    action: { ...ACTIONS.REVIEW_BILLING, detail: openCase.suggestedAction },
+  };
+}
+
 export function buildMembershipCards(input: {
   rows: readonly MembershipCardInput[];
   billing: MemberBillingStatus | null;
@@ -509,8 +543,13 @@ export function buildMembershipCards(input: {
   const now = input.now ?? new Date();
   const cards = input.rows.map((row): MembershipCard => {
     const status = input.billing?.memberships.find((m) => m.subscriptionId === row.subscriptionId) ?? null;
-    const copy = status ? billingCopy(status) : fallbackCopy(row, input.billingState === "ready" ? "missing" : input.billingState);
-    const severity: MembershipCard["severity"] = status?.severity ?? (copy.tone === "critical" ? "critical" : copy.tone === "warning" ? "warning" : "ok");
+    const baseCopy = status ? billingCopy(status) : fallbackCopy(row, input.billingState === "ready" ? "missing" : input.billingState);
+    const openCase = openCaseForSubscription(input.billing?.openCases, row.subscriptionId);
+    const copy = applyOpenCaseToCopy(baseCopy, openCase);
+    // An open case sets the card's severity (and so its sort order), never below the API's own.
+    const severity: MembershipCard["severity"] = openCase
+      ? openCase.severity === "CRITICAL" ? "critical" : "warning"
+      : status?.severity ?? (copy.tone === "critical" ? "critical" : copy.tone === "warning" ? "warning" : "ok");
     return {
       subscriptionId: row.subscriptionId,
       planName: row.planName,

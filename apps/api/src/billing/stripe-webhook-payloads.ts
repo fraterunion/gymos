@@ -73,6 +73,29 @@ export type WebhookInvoicePayload = {
   } | null;
 };
 
+/** `charge.refunded` (dahlia): only the fields GymOS mirrors; never card details. */
+export type WebhookChargePayload = {
+  id: string;
+  amount: number | null;
+  amount_refunded: number | null;
+  refunded: boolean | null;
+  currency: string | null;
+  customer: string | { id: string } | null;
+  invoice: string | { id: string } | null;
+  payment_intent: string | { id: string } | null;
+};
+
+/** `charge.dispute.created` (dahlia). */
+export type WebhookDisputePayload = {
+  id: string;
+  amount: number | null;
+  currency: string | null;
+  reason: string | null;
+  status: string | null;
+  charge: string | { id: string } | null;
+  payment_intent: string | { id: string } | null;
+};
+
 export type WebhookPaymentIntentPayload = {
   id: string;
   status: string;

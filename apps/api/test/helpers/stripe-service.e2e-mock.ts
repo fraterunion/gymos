@@ -135,5 +135,12 @@ export function createE2eStripeServiceMock(config: {
     // Staff billing explanations: no decline data unless a test provides it.
     getInvoicePaymentFailureSnapshot: jest.fn().mockRejectedValue(new Error('no Stripe network in e2e')),
     listSubscriptionsForCustomer: jest.fn().mockResolvedValue([]),
+    // Reconciliation lookups (GET-only in production); empty unless a test provides data.
+    listOpenInvoicesForCustomer: jest.fn().mockResolvedValue([]),
+    listRefundsSince: jest.fn().mockResolvedValue({ data: [], hasMore: false }),
+    listDisputesSince: jest.fn().mockResolvedValue({ data: [], hasMore: false }),
+    retrieveCharge: jest.fn().mockRejectedValue(new Error('no Stripe network in e2e')),
+    retrieveInvoice: jest.fn().mockRejectedValue(new Error('no Stripe network in e2e')),
+    findInvoiceIdForPaymentIntent: jest.fn().mockResolvedValue(null),
   } as unknown as StripeService;
 }

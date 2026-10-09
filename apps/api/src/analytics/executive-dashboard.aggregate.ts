@@ -37,6 +37,12 @@ export type ExecutiveMembershipStatsRow = {
   new_members_30d: bigint;
   prev_new_members_30d: bigint;
   cancellations_30d: bigint;
+  /** Of cancellations_30d: a member or staff request (MEMBER_CANCELLED / STAFF_CANCELLED). */
+  voluntary_cancellations_30d: bigint;
+  /** Of cancellations_30d: Stripe ended them for non-payment / dispute / never-paid first invoice. */
+  involuntary_cancellations_30d: bigint;
+  /** Of cancellations_30d: administrative supersessions (renewal, plan or payment-method change). */
+  superseded_cancellations_30d: bigint;
   inactive_21d: bigint;
   subs_missing_stripe: bigint;
   active_stripe_no_payment: bigint;
@@ -241,6 +247,24 @@ export function sqlMembershipStats(
           AND s.status = 'CANCELED'
           AND s.updated_at >= ${thirtyDaysAgo}
           ${SQL_SUBSCRIPTION_USER_EXCLUDE}) AS cancellations_30d,
+      (SELECT COUNT(*)::bigint FROM subscriptions s
+        WHERE s.studio_id = ${studioId}
+          AND s.status = 'CANCELED'
+          AND s.updated_at >= ${thirtyDaysAgo}
+          AND s.end_reason IN ('MEMBER_CANCELLED', 'STAFF_CANCELLED')
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}) AS voluntary_cancellations_30d,
+      (SELECT COUNT(*)::bigint FROM subscriptions s
+        WHERE s.studio_id = ${studioId}
+          AND s.status = 'CANCELED'
+          AND s.updated_at >= ${thirtyDaysAgo}
+          AND s.end_reason IN ('PAYMENT_FAILED', 'PAYMENT_DISPUTED', 'INCOMPLETE_EXPIRED')
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}) AS involuntary_cancellations_30d,
+      (SELECT COUNT(*)::bigint FROM subscriptions s
+        WHERE s.studio_id = ${studioId}
+          AND s.status = 'CANCELED'
+          AND s.updated_at >= ${thirtyDaysAgo}
+          AND s.end_reason IN ('SUPERSEDED_PAYMENT_METHOD', 'SUPERSEDED_RENEWAL', 'SUPERSEDED_PLAN_CHANGE')
+          ${SQL_SUBSCRIPTION_USER_EXCLUDE}) AS superseded_cancellations_30d,
       (SELECT COUNT(*)::bigint FROM studio_memberships sm
         WHERE sm.studio_id = ${studioId}
           AND sm.role = 'MEMBER'

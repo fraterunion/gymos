@@ -119,7 +119,8 @@ function build(opts: {
   } as unknown as PrismaService;
   const getInvoicePaymentFailureSnapshot = jest.fn(opts.snapshot ?? (async () => DECLINED));
   const stripe = { getInvoicePaymentFailureSnapshot } as unknown as StripeService;
-  return { service: new MemberBillingStatusService(prisma, stripe), prisma, getInvoicePaymentFailureSnapshot, webhookFindMany };
+  const billingCases = { openCasesForMember: jest.fn().mockResolvedValue([]) };
+  return { service: new MemberBillingStatusService(prisma, stripe, billingCases as never), prisma, getInvoicePaymentFailureSnapshot, webhookFindMany };
 }
 
 describe('MemberBillingStatusService', () => {

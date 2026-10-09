@@ -11,10 +11,16 @@ import { SubscriptionReconciliationService } from './subscription-reconciliation
 import { StripeWebhookController } from './stripe-webhook.controller';
 import { StripeWebhookService } from './stripe-webhook.service';
 import { StudioBillingController } from './studio-billing.controller';
+import { EmailModule } from '../email/email.module';
+import { BillingAlertService } from './reconciliation/billing-alert.service';
+import { BillingCaseService } from './reconciliation/billing-case.service';
+import { BillingDetectorsService } from './reconciliation/billing-detectors.service';
+import { BillingReconciliationController } from './reconciliation/billing-reconciliation.controller';
+import { BillingReconciliationRunService } from './reconciliation/billing-reconciliation-run.service';
 
 @Module({
-  imports: [PrismaModule, StripeModule, EnrollmentModule, WaiverModule],
-  controllers: [StudioBillingController, StripeWebhookController],
+  imports: [PrismaModule, StripeModule, EnrollmentModule, WaiverModule, EmailModule],
+  controllers: [StudioBillingController, StripeWebhookController, BillingReconciliationController],
   providers: [
     BillingService,
     SubscriptionLifecycleService,
@@ -22,6 +28,10 @@ import { StudioBillingController } from './studio-billing.controller';
     StripeToCashTransitionService,
     StripeRenewalAuditService,
     StripeWebhookService,
+    BillingCaseService,
+    BillingDetectorsService,
+    BillingAlertService,
+    BillingReconciliationRunService,
   ],
   exports: [
     BillingService,
@@ -29,6 +39,9 @@ import { StudioBillingController } from './studio-billing.controller';
     SubscriptionReconciliationService,
     StripeToCashTransitionService,
     StripeRenewalAuditService,
+    BillingCaseService,
+    BillingDetectorsService,
+    BillingReconciliationRunService,
     StripeModule,
   ],
 })

@@ -290,8 +290,9 @@ export class MembersController {
     @Param('userId') userId: string,
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: UpdateSubscriptionStatusDto,
+    @CurrentUser('sub') actorUserId: string,
   ) {
-    return this.membersService.updateMemberSubscription(studioId, userId, subscriptionId, dto);
+    return this.membersService.updateMemberSubscription(studioId, userId, subscriptionId, dto, actorUserId);
   }
 
   @Patch(':userId/subscriptions/:subscriptionId/cancel-at-period-end')

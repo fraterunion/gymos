@@ -52,6 +52,7 @@ describe('StripeWebhookService — Day Pass PaymentIntent events', () => {
     {} as never,
     { activateScheduledCashIfDue: jest.fn().mockResolvedValue(null) } as never,
     { maybeLogExternalRenewalChange: jest.fn() } as never,
+    { observe: jest.fn().mockResolvedValue({ outcome: 'created', case: {} }) } as never,
   );
   const dispatch = (e: ReturnType<typeof event>) =>
     (service as unknown as { dispatch: (e: unknown) => Promise<void> }).dispatch(e);

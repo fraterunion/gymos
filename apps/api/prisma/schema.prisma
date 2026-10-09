@@ -36,11 +36,23 @@ enum SubscriptionStatus {
 }
 
 /// Why a subscription record ended. Distinct from SubscriptionStatus (provider state).
+/// Voluntary vs involuntary churn is derived from this value (see billing/subscription-end-reason.ts);
+/// never from `status` alone.
 enum SubscriptionEndReason {
+  /// A cancellation was requested (Stripe `cancellation_requested`: member portal, or Stripe
+  /// Dashboard when GymOS has no actor). Never used for failed collection.
   MEMBER_CANCELLED
   SUPERSEDED_PAYMENT_METHOD
   SUPERSEDED_RENEWAL
   SUPERSEDED_PLAN_CHANGE
+  /// Stripe ended the subscription after its payment retries were exhausted (involuntary).
+  PAYMENT_FAILED
+  /// Stripe ended the subscription after a payment dispute (involuntary).
+  PAYMENT_DISPUTED
+  /// Stripe `incomplete_expired`: the first invoice was never paid; the membership never started.
+  INCOMPLETE_EXPIRED
+  /// GymOS staff set the status to CANCELED from the Admin (actor recorded in audit_logs).
+  STAFF_CANCELLED
 }
 
 enum BillingInterval {
@@ -280,6 +292,8 @@ model Studio {
   planClassAccess            MembershipPlanClassAccess[]
   dayPassClassAccess         DayPassClassAccess[]
   walletCredentials          WalletCredential[]
+  billingReconciliationCases BillingReconciliationCase[]
+  billingReconciliationRuns  BillingReconciliationRun[]
 
   @@map("studios")
 }
@@ -326,6 +340,10 @@ model User {
   subscriptionsCreated        Subscription[]          @relation("SubscriptionCreatedBy")
   operationalNotesAuthored    MemberOperationalNote[] @relation("OperationalNoteAuthor")
   operationalNotesAbout       MemberOperationalNote[] @relation("OperationalNoteMember")
+  billingReconciliationCases  BillingReconciliationCase[] @relation("BillingCaseMember")
+  billingCasesAcknowledged    BillingReconciliationCase[] @relation("BillingCaseAcknowledgedBy")
+  billingCasesResolved        BillingReconciliationCase[] @relation("BillingCaseResolvedBy")
+  billingCasesDismissed       BillingReconciliationCase[] @relation("BillingCaseDismissedBy")
 
   @@map("users")
 }
@@ -453,6 +471,7 @@ model Subscription {
   entitlementCycles MembershipEntitlementCycle[]
   attributedBookings    Booking[]    @relation("BookingEntitlementSubscription")
   attributedAttendances Attendance[] @relation("AttendanceEntitlementSubscription")
+  billingReconciliationCases BillingReconciliationCase[]
 
   @@index([studioId])
   @@index([studioId, userId])
@@ -861,6 +880,7 @@ model Payment {
   subscription   Subscription?   @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   membershipPlan MembershipPlan? @relation(fields: [membershipPlanId], references: [id], onDelete: SetNull)
   recordedBy     User?           @relation("PaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  billingReconciliationCases BillingReconciliationCase[]
 
   @@index([studioId])
   @@index([studioId, userId])
@@ -1279,4 +1299,152 @@ model AuditLog {
   @@index([studioId, action])
   @@index([targetUserId])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Billing reliability — reconciliation cases (durable, operator-actionable exceptions)
+// ---------------------------------------------------------------------------
+
+enum BillingCaseCategory {
+  /// Stripe shows the subscription canceled/ended while GymOS still has it renewable.
+  STRIPE_CANCELED_LOCAL_ALIVE
+  /// GymOS canceled the row while Stripe keeps the subscription alive (and billing).
+  LOCAL_CANCELED_STRIPE_ALIVE
+  /// A successful Stripe payment that produced no entitlement (reason_code says why).
+  PAID_WITHOUT_ENTITLEMENT
+  /// The local renewal period lags Stripe's current period (missed period sync).
+  STALE_RENEWAL_PERIOD
+  OVERLAPPING_ENTITLEMENT_CYCLES
+  /// A stored webhook event whose handler failed and that nobody resolved.
+  WEBHOOK_DEAD_LETTER
+  /// A claimed webhook event that never finished processing.
+  WEBHOOK_BACKLOG
+  /// The row's end reason contradicts Stripe's cancellation reason (analytics accuracy).
+  CANCELLATION_REASON_MISMATCH
+  /// An invoice still collectible on a subscription that already ended.
+  OPEN_INVOICE_ON_ENDED_SUBSCRIPTION
+  REPEATED_PAYMENT_FAILURES
+  /// Stripe and GymOS disagree on who/what a subscription belongs to (orphans, duplicates).
+  SUBSCRIPTION_IDENTITY_MISMATCH
+  PAYMENT_REFUNDED_OR_DISPUTED
+}
+
+enum BillingCaseSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum BillingCaseStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+enum BillingReconciliationRunStatus {
+  RUNNING
+  COMPLETED
+  /// Finished, but at least one member/detector failed (e.g. Stripe outage): no auto-resolution.
+  PARTIAL
+  FAILED
+}
+
+enum BillingReconciliationRunTrigger {
+  CRON
+  MANUAL
+}
+
+/// One durable exception. Detectors and webhook handlers *observe* issues; the same issue
+/// (same `issueKey`) is one row for its whole life — repeated runs update `lastObservedAt`
+/// instead of creating duplicates, and an issue observed again after RESOLVED reopens the same
+/// row with `occurrenceCount` + 1. Evidence never contains card data, secrets or emails.
+model BillingReconciliationCase {
+  id        String  @id @default(cuid())
+  /// Null = platform scope (a dead-lettered event that names no studio). Studio endpoints
+  /// always filter on their own studioId, so platform rows are never visible to a tenant.
+  studioId  String? @map("studio_id")
+  /// Globally unique, deterministic: `<studioId|platform>:<category>:<primary ref>`.
+  issueKey  String  @unique @map("issue_key")
+  category  BillingCaseCategory
+  severity  BillingCaseSeverity
+  status    BillingCaseStatus @default(OPEN)
+  /// Finer classification within a category (e.g. SUBSCRIPTION_ENDED, FIXED_DURATION_NO_CYCLE).
+  reasonCode String? @map("reason_code")
+
+  userId               String? @map("user_id")
+  subscriptionId       String? @map("subscription_id")
+  paymentId            String? @map("payment_id")
+  stripeSubscriptionId String? @map("stripe_subscription_id")
+  stripeInvoiceId      String? @map("stripe_invoice_id")
+  stripeCustomerId     String? @map("stripe_customer_id")
+  stripeEventId        String? @map("stripe_event_id")
+
+  /// Operator-facing Spanish copy, rendered at detection time from the evidence.
+  title           String
+  summary         String
+  suggestedAction String @map("suggested_action")
+  evidence        Json   @default("{}")
+  /// Append-only, capped: status transitions, re-detections after resolution, alerts sent.
+  history         Json   @default("[]")
+
+  firstDetectedAt  DateTime @map("first_detected_at")
+  lastObservedAt   DateTime @map("last_observed_at")
+  observationCount Int      @default(1) @map("observation_count")
+  /// How many times the issue has been (re)opened; > 1 means it recurred after a resolution.
+  occurrenceCount  Int      @default(1) @map("occurrence_count")
+
+  acknowledgedAt       DateTime? @map("acknowledged_at")
+  acknowledgedByUserId String?   @map("acknowledged_by_user_id")
+  resolvedAt           DateTime? @map("resolved_at")
+  resolvedByUserId     String?   @map("resolved_by_user_id")
+  resolutionNote       String?   @map("resolution_note")
+  dismissedAt          DateTime? @map("dismissed_at")
+  dismissedByUserId    String?   @map("dismissed_by_user_id")
+  dismissReason        String?   @map("dismiss_reason")
+
+  lastAlertedAt DateTime? @map("last_alerted_at")
+  alertCount    Int       @default(0) @map("alert_count")
+  escalatedAt   DateTime? @map("escalated_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  studio         Studio?       @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user           User?         @relation("BillingCaseMember", fields: [userId], references: [id], onDelete: SetNull)
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  payment        Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  acknowledgedBy User?         @relation("BillingCaseAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull)
+  resolvedBy     User?         @relation("BillingCaseResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  dismissedBy    User?         @relation("BillingCaseDismissedBy", fields: [dismissedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([studioId, status, severity])
+  @@index([studioId, userId, status])
+  @@index([studioId, category, status])
+  @@index([status, severity, lastAlertedAt])
+  @@map("billing_reconciliation_cases")
+}
+
+/// One detection run (cron or manual). `runScope` is the studio id or `*` for an all-studio
+/// run; a partial unique index on (run_scope) WHERE status = 'RUNNING' (migration SQL) makes
+/// overlapping runs of the same scope impossible.
+model BillingReconciliationRun {
+  id         String                          @id @default(cuid())
+  studioId   String?                         @map("studio_id")
+  runScope   String                          @default("*") @map("run_scope")
+  trigger    BillingReconciliationRunTrigger
+  status     BillingReconciliationRunStatus  @default(RUNNING)
+  startedAt  DateTime                        @default(now()) @map("started_at")
+  finishedAt DateTime?                       @map("finished_at")
+  /// Counters and per-detector coverage; no member data.
+  stats      Json                            @default("{}")
+  error      String?
+  createdAt  DateTime                        @default(now()) @map("created_at")
+
+  studio Studio? @relation(fields: [studioId], references: [id], onDelete: Restrict)
+
+  @@index([studioId, startedAt])
+  @@index([status, startedAt])
+  @@map("billing_reconciliation_runs")
 }
