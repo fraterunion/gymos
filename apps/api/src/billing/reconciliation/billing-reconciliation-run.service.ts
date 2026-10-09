@@ -123,11 +123,16 @@ export class BillingReconciliationRunService {
       return summary;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      await this.prisma.billingReconciliationRun.update({
-        where: { id: run.id },
-        data: { status: BillingReconciliationRunStatus.FAILED, finishedAt: new Date(), error: error.slice(0, 500) },
-      });
       this.logger.error(JSON.stringify({ event: 'billing_reconciliation_run_failed', runId: run.id, scope: runScope, error: error.slice(0, 300) }));
+      try {
+        await this.prisma.billingReconciliationRun.update({
+          where: { id: run.id },
+          data: { status: BillingReconciliationRunStatus.FAILED, finishedAt: new Date(), error: error.slice(0, 500) },
+        });
+      } catch (writeErr) {
+        // The status write failing (connection gone, row reclaimed) must not replace the root cause.
+        this.logger.error(JSON.stringify({ event: 'billing_reconciliation_run_status_write_failed', runId: run.id, scope: runScope, error: (writeErr instanceof Error ? writeErr.message : String(writeErr)).slice(0, 300) }));
+      }
       throw err;
     }
   }

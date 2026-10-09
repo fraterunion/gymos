@@ -35,6 +35,7 @@ import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
 import { StripeRenewalAuditService } from '../billing/stripe-renewal-audit.service';
 import { BillingCaseService } from '../billing/reconciliation/billing-case.service';
+import { recordableEndReason } from '../billing/subscription-end-reason';
 import {
   buildGymosRenewalIdempotencyKey,
   readJsonMetadata,
@@ -1311,7 +1312,8 @@ export class MembersService {
     // A reason already recorded (e.g. PAYMENT_FAILED from Stripe) is never overwritten by re-saving
     // an already-canceled row; only a real transition into CANCELED records the staff reason.
     if (dto.status === SubscriptionStatus.CANCELED && (sub.status !== SubscriptionStatus.CANCELED || sub.endReason == null)) {
-      data.endReason = actorUserId ? SubscriptionEndReason.STAFF_CANCELLED : SubscriptionEndReason.MEMBER_CANCELLED;
+      // STAFF_CANCELLED is a new enum value: written only once the BILLING_END_REASON_V2 gate is on.
+      data.endReason = recordableEndReason(actorUserId ? SubscriptionEndReason.STAFF_CANCELLED : SubscriptionEndReason.MEMBER_CANCELLED);
     }
     const updated = await this.prisma.subscription.update({
       where: { id: subscriptionId },

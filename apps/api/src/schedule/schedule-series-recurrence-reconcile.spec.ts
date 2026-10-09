@@ -139,7 +139,8 @@ describe('schedule-series-recurrence-reconcile', () => {
         attendanceCount: 0,
       },
     ];
-    const plan = planFinishSeriesBoundary(template, TZ, '2026-09-30', futureRows);
+    // Pin "now" like the other tests: rows that already started are (rightly) never cancelled.
+    const plan = planFinishSeriesBoundary(template, TZ, '2026-09-30', futureRows, new Date('2026-08-21T12:00:00.000Z'));
     expect(plan.cancelIds).toEqual(['cancel']);
   });
 });

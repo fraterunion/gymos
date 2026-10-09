@@ -1,5 +1,5 @@
 import { SubscriptionEndReason, SubscriptionStatus } from '@prisma/client';
-import { decidePaidInvoice, type PaidInvoiceFacts, type PaidInvoiceSubscriptionFacts } from './paid-invoice-policy';
+import { decidePaidInvoice, deletionEndedAt, type PaidInvoiceFacts, type PaidInvoiceSubscriptionFacts } from './paid-invoice-policy';
 
 const ENDED_AT = new Date('2026-09-28T02:14:04.000Z');
 
@@ -56,12 +56,52 @@ describe('paid-invoice-policy — late-payment scenarios', () => {
 
   it('J: a redelivery for an invoice already recorded as paid changes nothing and opens no case', () => {
     expect(decidePaidInvoice(facts({ paymentAlreadySucceeded: true, subscription: canceled() }))).toEqual({ scenario: 'J', allowEntitlementGrant: true, exception: null });
+    // Fixed-duration: "already processed" needs the cycle, not just the Payment.
+    expect(decidePaidInvoice(facts({ paymentAlreadySucceeded: true, cycleExistsForInvoice: true, subscription: canceled({ isFixedDuration: true }), liveStripeStatus: 'canceled' }))).toEqual({ scenario: 'J', allowEntitlementGrant: true, exception: null });
+  });
+
+  it('J does not bypass the CANCELED/duplicate rules when the recorded Payment never got its cycle (replay after a failed grant)', () => {
+    const replay = (overrides: Partial<PaidInvoiceFacts>) => decidePaidInvoice(facts({ paymentAlreadySucceeded: true, cycleExistsForInvoice: false, liveStripeStatus: 'canceled', ...overrides }));
+    // Live row: the replay simply repairs the missing cycle.
+    expect(replay({ subscription: sub({ isFixedDuration: true }) })).toEqual({ scenario: 'G', allowEntitlementGrant: true, exception: null });
+    // Canceled row, nobody else covering the member: the late window is honoured and visible.
+    expect(replay({ subscription: canceled({ isFixedDuration: true }) })).toMatchObject({ scenario: 'C', allowEntitlementGrant: true, exception: { reasonCode: 'LATE_FIXED_WINDOW_GRANTED' } });
+    // Canceled row with a newer same-family membership: never a second window, a human decides.
+    expect(replay({ subscription: canceled({ isFixedDuration: true }), entitledSiblingExists: true })).toMatchObject({ scenario: 'C', allowEntitlementGrant: false, exception: { reasonCode: 'DUPLICATE_MEMBERSHIP_PAYMENT', severity: 'CRITICAL' } });
+    // ...even when the payment itself was made while the row was still live.
+    expect(replay({ paidAt: new Date('2026-09-14T02:00:00.000Z'), subscription: canceled({ isFixedDuration: true }), entitledSiblingExists: true })).toMatchObject({ allowEntitlementGrant: false, exception: { reasonCode: 'DUPLICATE_MEMBERSHIP_PAYMENT' } });
+    // A monthly row has no cycle to miss: a redelivery stays J.
+    expect(replay({ subscription: canceled() })).toEqual({ scenario: 'J', allowEntitlementGrant: true, exception: null });
   });
 
   it('E beats J: a redelivery for a superseded membership still grants nothing', () => {
     const decision = decidePaidInvoice(facts({ paymentAlreadySucceeded: true, subscription: canceled({ supersededBySubscriptionId: 'cash_successor', endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD }) }));
     expect(decision.scenario).toBe('E');
     expect(decision.allowEntitlementGrant).toBe(false);
+  });
+
+  it('E for a period paid WHILE the replaced membership was live: no grant, and no cry-wolf CRITICAL', () => {
+    const paidBeforeEnd = new Date('2026-09-14T02:00:00.000Z');
+    const superseded = (overrides: Partial<PaidInvoiceSubscriptionFacts> = {}) => canceled({ supersededBySubscriptionId: 'cash_successor', endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD, ...overrides });
+    // Monthly: the live row honoured the period; a redelivery (or a late first delivery) changes nothing.
+    expect(decidePaidInvoice(facts({ paidAt: paidBeforeEnd, subscription: superseded(), paymentAlreadySucceeded: true }))).toEqual({ scenario: 'E', allowEntitlementGrant: false, exception: null });
+    expect(decidePaidInvoice(facts({ paidAt: paidBeforeEnd, subscription: superseded() }))).toEqual({ scenario: 'E', allowEntitlementGrant: false, exception: null });
+    // Fixed-duration with its cycle in place: same.
+    expect(decidePaidInvoice(facts({ paidAt: paidBeforeEnd, subscription: superseded({ isFixedDuration: true }), paymentAlreadySucceeded: true, cycleExistsForInvoice: true }))).toEqual({ scenario: 'E', allowEntitlementGrant: false, exception: null });
+    // Fixed-duration WITHOUT its cycle: the member paid for a window nobody granted — still a case.
+    expect(decidePaidInvoice(facts({ paidAt: paidBeforeEnd, subscription: superseded({ isFixedDuration: true }), cycleExistsForInvoice: false })).exception).toMatchObject({ severity: 'CRITICAL', reasonCode: 'SUPERSEDED_MEMBERSHIP' });
+    // Paid after the supersession: the original E.
+    expect(decidePaidInvoice(facts({ subscription: superseded(), paymentAlreadySucceeded: true })).exception).toMatchObject({ reasonCode: 'SUPERSEDED_MEMBERSHIP' });
+  });
+
+  it('endedAt is Stripe\'s clock: ended_at, else the event\'s created, else canceled_at, else the receipt time', () => {
+    const received = new Date('2026-09-28T04:30:00.000Z');
+    expect(deletionEndedAt({ created: 1790561644, data: { object: { ended_at: 1790561641, canceled_at: 1790561641 } } }, received)).toEqual(new Date('2026-09-28T02:14:01.000Z'));
+    expect(deletionEndedAt({ created: 1790561644, data: { object: { ended_at: null, canceled_at: 1790561641 } } }, received)).toEqual(new Date('2026-09-28T02:14:04.000Z'));
+    expect(deletionEndedAt({ data: { object: { canceled_at: 1790561641 } } }, received)).toEqual(new Date('2026-09-28T02:14:01.000Z'));
+    expect(deletionEndedAt({ data: { object: {} } }, received)).toBe(received);
+    expect(deletionEndedAt(null, received)).toBe(received);
+    expect(deletionEndedAt({ created: 'soon', data: { object: { ended_at: -1 } } }, received)).toBe(received);
   });
 
   it('C (monthly): a payment after the subscription ended records money, grants nothing, and is CRITICAL', () => {

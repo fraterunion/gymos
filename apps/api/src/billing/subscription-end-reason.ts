@@ -69,6 +69,32 @@ export function resolveStripeEndReason(
   return expectedEndReasonFromStripe(facts) ?? SubscriptionEndReason.MEMBER_CANCELLED;
 }
 
+/** The four values added by migration 20261008200000; unknown to the previous API build's Prisma client. */
+export const END_REASON_V2_VALUES: readonly SubscriptionEndReason[] = [
+  SubscriptionEndReason.PAYMENT_FAILED,
+  SubscriptionEndReason.PAYMENT_DISPUTED,
+  SubscriptionEndReason.INCOMPLETE_EXPIRED,
+  SubscriptionEndReason.STAFF_CANCELLED,
+];
+
+/**
+ * Expand-and-contract gate for the new enum values. The previous API build's Prisma client throws
+ * on any read that returns a row holding one of them ("Value … not found in enum"), which would
+ * break member lists and Member 360 for that member after a rollback. So the schema ships first
+ * (expand) and the new values are only WRITTEN once `BILLING_END_REASON_V2=true` is set
+ * deliberately, after the rollback window. Default: off (legacy values are written, old build
+ * stays runnable). Reads, analytics and detectors accept both at all times.
+ */
+export function involuntaryEndReasonsEnabled(): boolean {
+  return process.env['BILLING_END_REASON_V2'] === 'true';
+}
+
+/** The value to persist for `reason` under the current compatibility mode. */
+export function recordableEndReason(reason: SubscriptionEndReason): SubscriptionEndReason {
+  if (involuntaryEndReasonsEnabled()) return reason;
+  return END_REASON_V2_VALUES.includes(reason) ? SubscriptionEndReason.MEMBER_CANCELLED : reason;
+}
+
 /** Operator-facing Spanish label. */
 export function describeEndReason(reason: SubscriptionEndReason | null | undefined): string {
   switch (reason) {

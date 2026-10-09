@@ -58,10 +58,19 @@ describe('Billing reliability — reconciliation cases, runs, alerts (e2e)', () 
   const canceledInStripe = (w: ReliabilityWorld) => stripeSubscriptionLike({ id: 'sub_fx_full', customer: 'cus_fx_member', status: 'canceled', studioId: w.studio.id, userId: w.member.id, planId: w.full.id, canceledAt: 1790561641, cancellationReason: 'payment_failed', latestInvoice: 'in_fx0032' });
   const activeInStripe = (w: ReliabilityWorld, extra: Partial<Parameters<typeof stripeSubscriptionLike>[0]> = {}) => stripeSubscriptionLike({ id: 'sub_fx_full', customer: 'cus_fx_member', status: 'active', studioId: w.studio.id, userId: w.member.id, planId: w.full.id, ...extra });
 
+  /** Money/access tables, byte-for-byte: detection and auto-resolution must never touch them. */
+  const financialSnapshot = async () => JSON.stringify({
+    subscriptions: await prisma.subscription.findMany({ orderBy: { id: 'asc' } }),
+    payments: await prisma.payment.findMany({ orderBy: { id: 'asc' } }),
+    cycles: await prisma.membershipEntitlementCycle.findMany({ orderBy: { id: 'asc' } }),
+  });
+
   it('D1: detects "Stripe canceled, GymOS alive" (the Incident B state) as HIGH, once, with evidence; repeated runs update instead of duplicating', async () => {
     const w = await buildWorld(prisma, { fullStatus: SubscriptionStatus.PAST_DUE });
     stripeLists(w, [canceledInStripe(w)]);
+    const beforeRuns = await financialSnapshot();
     const first = await runs.runStudio(w.studio.id, 'MANUAL', { dispatchAlerts: false });
+    expect(await financialSnapshot()).toBe(beforeRuns); // detection writes cases, never money or access
     expect(first.status).toBe('COMPLETED');
     expect(first.studios[0]).toMatchObject({ created: 1, checkedMembers: 1, error: null, incompleteCategories: [] });
     const [c] = await cases(w.studio.id);
@@ -83,8 +92,10 @@ describe('Billing reliability — reconciliation cases, runs, alerts (e2e)', () 
     await runs.runStudio(w.studio.id, 'MANUAL', { dispatchAlerts: false });
     // Operator corrects the row (like the approved 2026-10-08 reconciliation).
     await prisma.subscription.update({ where: { id: w.sub.id }, data: { status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.PAYMENT_FAILED } });
+    const beforeFixRun = await financialSnapshot();
     const fixRun = await runs.runStudio(w.studio.id, 'MANUAL', { dispatchAlerts: false });
     expect(fixRun.studios[0]!.autoResolved).toBe(1);
+    expect(await financialSnapshot()).toBe(beforeFixRun); // auto-resolution is case bookkeeping only
     const resolved = (await cases(w.studio.id))[0]!;
     expect(resolved).toMatchObject({ status: 'RESOLVED', resolvedByUserId: null, resolutionNote: expect.stringContaining('revisión automática') });
     expect((resolved.history as Array<{ type: string }>).map((h) => h.type)).toEqual(['DETECTED', 'AUTO_RESOLVED']);

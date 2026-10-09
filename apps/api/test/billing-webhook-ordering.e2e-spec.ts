@@ -36,6 +36,12 @@ describe('Billing reliability — subscription event ordering (e2e)', () => {
     stripe['listSubscriptionsForCustomer'].mockResolvedValue([]);
     stripe['findPaidInvoicePaymentIntentId'].mockResolvedValue(null);
     delete process.env['BILLING_STALE_EVENT_GUARD'];
+    // These suites exercise the activated end-reason model; the gate itself is tested below.
+    process.env['BILLING_END_REASON_V2'] = 'true';
+  });
+
+  afterEach(() => {
+    delete process.env['BILLING_END_REASON_V2'];
   });
 
   const post = (e: Parameters<typeof signedPost>[2]) => signedPost(app, webhookSecret, e);
@@ -171,6 +177,18 @@ describe('Billing reliability — subscription event ordering (e2e)', () => {
     const expired = await prisma.subscription.update({ where: { id: disputed.sub.id }, data: { status: SubscriptionStatus.PAUSED, endReason: null } });
     await post(disputed.subscriptionEvent({ type: 'customer.subscription.deleted', status: 'incomplete_expired', cancellationReason: null })).expect(200);
     expect(await prisma.subscription.findUniqueOrThrow({ where: { id: expired.id } })).toMatchObject({ status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.INCOMPLETE_EXPIRED });
+  });
+
+  it('E0 (rollout gate OFF, the production default on day one): the deletion still records the legacy MEMBER_CANCELLED, so the previous API build can read the row', async () => {
+    delete process.env['BILLING_END_REASON_V2'];
+    const w = await buildWorld(prisma);
+    await post(w.subscriptionEvent({ type: 'customer.subscription.deleted', cancellationReason: 'payment_failed' })).expect(200);
+    expect(await row(w)).toMatchObject({ status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.MEMBER_CANCELLED });
+    // A cash successor still takes precedence, exactly as before.
+    const w2 = await buildWorld(prisma, { suffix: '_gate' });
+    await prisma.subscription.update({ where: { id: w2.sub.id }, data: { endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD } });
+    await post(w2.subscriptionEvent({ type: 'customer.subscription.deleted', cancellationReason: 'payment_failed' })).expect(200);
+    expect((await prisma.subscription.findUniqueOrThrow({ where: { id: w2.sub.id } })).endReason).toBe(SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD);
   });
 
   it('E2: an end reason GymOS already recorded (e.g. a Stripe→cash supersession) is never overwritten by the deletion', async () => {

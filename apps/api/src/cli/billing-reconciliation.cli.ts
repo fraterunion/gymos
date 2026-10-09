@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { Module } from '@nestjs/common';
+import { ConflictException, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -16,7 +16,8 @@ import { BillingReconciliationRunService } from '../billing/reconciliation/billi
  *
  * Detection only: GET-only against Stripe, writes reconciliation cases/runs, never memberships,
  * payments or Stripe objects. Alerts are additionally gated by BILLING_ALERTS_ENABLED.
- * Exit codes: 0 completed (or intentionally disabled), 2 partial (a detector could not finish), 1 failed.
+ * Exit codes: 0 completed (or intentionally disabled, or skipped because a run already holds the
+ * scope), 2 partial (a detector could not finish), 1 failed.
  */
 /**
  * Deliberately NOT AppModule: no HTTP server, no NestSchedulerModule (so the API's own cron jobs
@@ -52,6 +53,14 @@ async function main(): Promise<number> {
       : await runs.runAllStudios('CRON', { dispatchAlerts });
     console.log(JSON.stringify({ event: 'billing_reconciliation_cli_summary', ...summary }));
     return summary.status === 'COMPLETED' ? 0 : 2;
+  } catch (err) {
+    if (err instanceof ConflictException) {
+      // Another run holds this scope (a stale one is reclaimed after 3 h): overlapping triggers
+      // are a documented no-op, not a failed cron run.
+      console.log(JSON.stringify({ event: 'billing_reconciliation_cli_skipped', reason: 'run_in_progress', scope: studioId ?? '*' }));
+      return 0;
+    }
+    throw err;
   } finally {
     await app.close();
   }

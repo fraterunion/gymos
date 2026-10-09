@@ -10,6 +10,7 @@ import {
   detectStalePeriods,
   detectStripeCanceledLocalAlive,
   detectWebhookProblems,
+  stripeCustomerCoverage,
   type LocalSubscriptionSnapshot,
   type MemberSnapshot,
   type PaymentSnapshot,
@@ -93,6 +94,19 @@ describe('detector rules — identity', () => {
     expect(missing[0]).toMatchObject({ reasonCode: 'STRIPE_CUSTOMER_NOT_FOUND', severity: 'LOW' });
   });
 
+  it('a key for the wrong Stripe account (every card-billed member "missing") marks the Stripe phase incomplete; one deleted customer does not', () => {
+    const billed = (userId: string) => local({ id: `local_${userId}`, userId });
+    const m = (userId: string, customerMissingInStripe: boolean): MemberSnapshot => ({ userId, stripeCustomerId: `cus_${userId}`, customerMissingInStripe });
+    // Wrong account/mode: nobody is recognised.
+    expect(stripeCustomerCoverage([m('a', true), m('b', true), m('c', true)], [billed('a'), billed('b'), billed('c')])).toEqual({ billedByCard: 3, missingInStripe: 3, misconfigured: true });
+    // One legitimately deleted customer among many: a LOW identity case, not an incomplete run.
+    expect(stripeCustomerCoverage([m('a', true), m('b', false), m('c', false)], [billed('a'), billed('b'), billed('c')]).misconfigured).toBe(false);
+    // A single-member studio with a missing customer (the demo seed) stays complete.
+    expect(stripeCustomerCoverage([m('a', true)], [billed('a')])).toEqual({ billedByCard: 1, missingInStripe: 1, misconfigured: false });
+    // Members without a renewable card membership (cash, canceled) do not count either way.
+    expect(stripeCustomerCoverage([m('a', true), m('b', true)], [local({ userId: 'a', source: 'CASH', stripeSubscriptionId: null }), local({ userId: 'b', status: SubscriptionStatus.CANCELED })]).misconfigured).toBe(false);
+  });
+
   it('does not treat compatible multi-membership siblings as duplicates', () => {
     const booty = stripe({ id: 'sub_booty', metadataPlanId: 'plan_booty', priceId: 'price_booty' });
     const locals = [local(), local({ id: 'local_2', membershipPlanId: 'plan_booty', planName: 'Booty Lab', exclusiveGroupKey: null, stripeSubscriptionId: 'sub_booty', isFixedDuration: true })];
@@ -171,7 +185,7 @@ describe('detector rules — cycles, reasons, invoices, failures, webhooks', () 
   });
 
   it('reports a MEMBER_CANCELLED row Stripe actually ended for non-payment (LOW), and nothing for requested cancellations or corrected rows', () => {
-    const deletion = { stripeEventId: 'evt_del', stripeSubscriptionId: 'sub_1', status: 'canceled', cancellationReason: 'payment_failed', createdAt: new Date(NOW.getTime() - 11 * DAY) };
+    const deletion = { stripeEventId: 'evt_del', stripeSubscriptionId: 'sub_1', status: 'canceled', cancellationReason: 'payment_failed', createdAt: new Date(NOW.getTime() - 11 * DAY), endedAt: new Date(NOW.getTime() - 11 * DAY) };
     const mislabeled = local({ status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.MEMBER_CANCELLED });
     expect(detectCancellationReasonMismatch(ctx, [mislabeled], [deletion])[0]).toMatchObject({ category: 'CANCELLATION_REASON_MISMATCH', severity: 'LOW', reasonCode: 'EXPECTED_PAYMENT_FAILED' });
     expect(detectCancellationReasonMismatch(ctx, [local({ status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.PAYMENT_FAILED })], [deletion])).toHaveLength(0);

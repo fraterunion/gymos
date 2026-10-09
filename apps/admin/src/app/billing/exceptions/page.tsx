@@ -33,7 +33,13 @@ import {
   when,
   type CaseFilterPreset,
 } from "@/lib/billingCases";
-import { canManageStudioSettings } from "@/lib/deskRoles";
+import { canManageStudioSettings, normalizeStudioRole } from "@/lib/deskRoles";
+
+/** Mirrors the API: OWNER/ADMIN/STAFF read cases; FRONT_DESK and members get a plain notice. */
+function canViewBillingCases(role: string | null): boolean {
+  const normalized = normalizeStudioRole(role);
+  return normalized === "OWNER" || normalized === "ADMIN" || normalized === "STAFF";
+}
 
 function Pill({ label, tone }: { label: string; tone: ReturnType<typeof severityTone> }) {
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${toneClasses(tone)}`}>{label}</span>;
@@ -183,6 +189,13 @@ export default function BillingExceptionsPage() {
   }
 
   if (!selectedStudioId) return null;
+  if (!canViewBillingCases(studioRole ?? null)) {
+    return (
+      <AdminPageShell>
+        <PageHeader title="Facturación · casos por revisar" subtitle="Esta sección es para administradores y staff del estudio." />
+      </AdminPageShell>
+    );
+  }
   const counts = activeSeverityCounts(data?.counts ?? []);
   const selected = data?.items.find((c) => c.id === selectedId) ?? null;
 

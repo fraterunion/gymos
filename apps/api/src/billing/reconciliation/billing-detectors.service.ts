@@ -4,6 +4,7 @@ import type Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StripeService } from '../../stripe/stripe.service';
 import { ENTITLEMENT_LEDGER_STARTED_AT, loadPaidWithoutEntitlement } from '../paid-without-entitlement';
+import { deletionEndedAt } from '../paid-invoice-policy';
 import type { ObservedIssue } from './billing-case.types';
 import { formatDateEs, formatMoney } from './billing-case-copy';
 import {
@@ -17,6 +18,7 @@ import {
   detectStalePeriods,
   detectStripeCanceledLocalAlive,
   detectWebhookProblems,
+  stripeCustomerCoverage,
   type CycleSnapshot,
   type DeletedEventSnapshot,
   type FailedInvoiceSnapshot,
@@ -266,10 +268,11 @@ export class BillingDetectorsService {
     issues.push(...detectIdentityMismatches(ctx, locals, stripeSubs, members, planGroupById));
     issues.push(...detectStalePeriods(ctx, locals, stripeById));
     issues.push(...detectOpenInvoicesOnEndedSubscriptions(ctx, openInvoices, stripeById, locals));
+    // Stripe's clock for "when did it end" (a late-stored deletion must not hide a late payment).
     const endedAtByStripeSubscription = new Map<string, Date>();
     for (const d of deletedEvents) {
       const prev = endedAtByStripeSubscription.get(d.stripeSubscriptionId);
-      if (!prev || prev < d.createdAt) endedAtByStripeSubscription.set(d.stripeSubscriptionId, d.createdAt);
+      if (!prev || prev < d.endedAt) endedAtByStripeSubscription.set(d.stripeSubscriptionId, d.endedAt);
     }
     issues.push(...detectMonthlyPaidWithoutEntitlement(ctx, payments, locals, { ledgerStartedAt: ENTITLEMENT_LEDGER_STARTED_AT, endedAtByStripeSubscription }));
     issues.push(...(await this.fixedDurationPaidWithoutCycle(ctx, locals)));
@@ -277,12 +280,20 @@ export class BillingDetectorsService {
     issues.push(...detectCancellationReasonMismatch(ctx, locals, deletedEvents));
     issues.push(...detectRepeatedPaymentFailures(ctx, locals, failedInvoices, succeededInvoiceIds));
 
-    const stripeComplete = counters.stripeFailures === 0 && !deadlineHit && counters.skipped === 0;
+    // A key for the wrong Stripe account/mode makes every customer "missing": that is not a clean
+    // observation that may close cases, it is an incomplete Stripe phase (PARTIAL run).
+    const customerCoverage = stripeCustomerCoverage(members, locals);
+    if (customerCoverage.misconfigured) {
+      this.logger.error(JSON.stringify({ event: 'billing_detector_stripe_customers_unrecognised', studioId, missingInStripe: customerCoverage.missingInStripe, billedByCard: customerCoverage.billedByCard }));
+    }
+    const stripeComplete = counters.stripeFailures === 0 && !deadlineHit && counters.skipped === 0 && !customerCoverage.misconfigured;
     const coverage: DetectorCoverage[] = [
       ...STRIPE_CATEGORIES.map((category) => ({
         category,
         complete: category === 'OPEN_INVOICE_ON_ENDED_SUBSCRIPTION' ? stripeComplete && openInvoiceFailures === 0 : stripeComplete,
-        detail: stripeComplete ? undefined : `stripeFailures=${counters.stripeFailures} skipped=${counters.skipped} deadlineHit=${deadlineHit}`,
+        detail: stripeComplete
+          ? undefined
+          : `stripeFailures=${counters.stripeFailures} skipped=${counters.skipped} deadlineHit=${deadlineHit} customersMissingInStripe=${customerCoverage.missingInStripe}/${customerCoverage.billedByCard}`,
       })),
       // Local rules see every row only when no member was dropped by the cap.
       ...LOCAL_CATEGORIES.map((category) => ({ category, complete: counters.skipped === 0, detail: counters.skipped === 0 ? undefined : `skipped=${counters.skipped}` })),
@@ -497,7 +508,14 @@ export class BillingDetectorsService {
       if (typeof subId !== 'string' || !localStripeIds.has(subId)) continue;
       const status = readPath(r.payload, ['data', 'object', 'status']);
       const reason = readPath(r.payload, ['data', 'object', 'cancellation_details', 'reason']);
-      out.push({ stripeEventId: r.stripeEventId, stripeSubscriptionId: subId, status: typeof status === 'string' ? status : 'canceled', cancellationReason: typeof reason === 'string' ? reason : null, createdAt: r.createdAt });
+      out.push({
+        stripeEventId: r.stripeEventId,
+        stripeSubscriptionId: subId,
+        status: typeof status === 'string' ? status : 'canceled',
+        cancellationReason: typeof reason === 'string' ? reason : null,
+        createdAt: r.createdAt,
+        endedAt: deletionEndedAt(r.payload, r.createdAt),
+      });
     }
     return out;
   }

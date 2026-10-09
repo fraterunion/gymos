@@ -22,8 +22,11 @@ export type PaidInvoiceSubscriptionFacts = {
   /** Plans with `entitlementDays` grant explicit paid windows (cycles); monthly plans do not. */
   isFixedDuration: boolean;
   /**
-   * When the membership ended (the stored `customer.subscription.deleted` event, else the row's
-   * last write). A payment made before this instant was made while the membership was live.
+   * When the membership ended, on STRIPE's clock: the stored `customer.subscription.deleted`
+   * payload's `ended_at` (else the event's `created`), falling back to the row's last write.
+   * `paidAt` is also Stripe's clock, so the comparison is clock-consistent: the moment GymOS
+   * happened to receive the deletion (a retried delivery can arrive hours late) must never
+   * decide whether a payment was "while live".
    */
   endedAt: Date | null;
 };
@@ -44,6 +47,12 @@ export type PaidInvoiceFacts = {
   paymentAlreadySucceeded: boolean;
   /** The Payment row for this invoice previously read FAILED. */
   paymentPreviouslyFailed: boolean;
+  /**
+   * A paid entitlement cycle keyed by this invoice already exists (fixed-duration plans only).
+   * "Already processed" (J) means money AND entitlement were processed: a recorded Payment whose
+   * grant failed (the Incident A shape) must still go through the full policy on replay.
+   */
+  cycleExistsForInvoice?: boolean;
   /**
    * The member already holds another renewable or currently-entitled membership in the same plan
    * family (e.g. a cash Booty Lab sold after Stripe canceled the card one). A late payment on the
@@ -80,6 +89,21 @@ export function isSupersededSubscription(sub: Pick<PaidInvoiceSubscriptionFacts,
   return sub.supersededBySubscriptionId !== null || (sub.endReason !== null && SUPERSESSION_END_REASONS.includes(sub.endReason));
 }
 
+/**
+ * When a subscription ended according to STRIPE, read from a stored `customer.subscription.deleted`
+ * event: `data.object.ended_at`, else the event's `created`, else `canceled_at`; only when the
+ * payload carries none of them does the local receipt time stand in. Stripe retries a delivery
+ * for days, so "when GymOS stored the event" can be hours after the membership actually ended.
+ */
+export function deletionEndedAt(payload: unknown, receivedAt: Date): Date {
+  const event = payload as { created?: unknown; data?: { object?: { ended_at?: unknown; canceled_at?: unknown } } } | null | undefined;
+  const object = event?.data?.object;
+  for (const candidate of [object?.ended_at, event?.created, object?.canceled_at]) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) return new Date(candidate * 1000);
+  }
+  return receivedAt;
+}
+
 export function decidePaidInvoice(facts: PaidInvoiceFacts): PaidInvoiceDecision {
   const sub = facts.subscription;
 
@@ -102,10 +126,22 @@ export function decidePaidInvoice(facts: PaidInvoiceFacts): PaidInvoiceDecision 
     };
   }
 
+  // A payment made while the membership was still live (a replayed or late-delivered
+  // invoice.paid for a period the member already consumed) is ordinary, not a late payment.
+  // Both instants are Stripe's clock (see PaidInvoiceSubscriptionFacts.endedAt).
+  const paidWhileLive = facts.paidAt !== null && sub.endedAt !== null && facts.paidAt.getTime() <= sub.endedAt.getTime();
+  // For a fixed-duration row the entitlement is the cycle: "already processed" needs the cycle.
+  const entitlementAlreadyProcessed = !sub.isFixedDuration || facts.cycleExistsForInvoice === true;
+
   if (isSupersededSubscription(sub)) {
     // E — the membership this invoice belongs to was replaced (cash successor, renewal row, plan
     // change). Granting here would double-cover a period another row already honours. Checked
     // before J so a redelivery can never slip a grant past the supersession.
+    if (paidWhileLive && entitlementAlreadyProcessed) {
+      // The period was consumed while the row was live (a redelivery of the last live invoice, a
+      // delivery that outlived a period-end handoff): nothing to grant, nothing to review.
+      return { scenario: 'E', allowEntitlementGrant: false, exception: null };
+    }
     return {
       scenario: 'E',
       allowEntitlementGrant: false,
@@ -118,16 +154,18 @@ export function decidePaidInvoice(facts: PaidInvoiceFacts): PaidInvoiceDecision 
     };
   }
 
-  if (facts.paymentAlreadySucceeded) {
-    // J — idempotent redelivery: the grant path is itself idempotent (one cycle per invoice).
+  if (facts.paymentAlreadySucceeded && entitlementAlreadyProcessed) {
+    // J — idempotent redelivery: the grant path is itself idempotent (one cycle per invoice). A
+    // recorded Payment whose cycle is missing is NOT "already processed": its replay is the
+    // documented repair and must obey the CANCELED/duplicate rules below like a first delivery.
     return { scenario: 'J', allowEntitlementGrant: true, exception: null };
   }
 
   if (sub.status === SubscriptionStatus.CANCELED) {
-    // A payment made while the membership was still live (a replayed or late-delivered
-    // invoice.paid for a period the member already consumed) is ordinary, not a late payment.
-    const paidWhileLive = facts.paidAt !== null && sub.endedAt !== null && facts.paidAt.getTime() <= sub.endedAt.getTime();
-    if (paidWhileLive) {
+    // Paid while live: ordinary — unless honouring a fixed-duration window would sit next to a
+    // newer same-family membership (a human decides between refund and extension, never a
+    // silent second window).
+    if (paidWhileLive && (!sub.isFixedDuration || !facts.entitledSiblingExists)) {
       return { scenario: sub.isFixedDuration ? 'G' : 'H', allowEntitlementGrant: true, exception: null };
     }
     const stripeAlive = facts.liveStripeStatus !== null && facts.liveStripeStatus !== 'unavailable' && !isTerminalStripeStatus(facts.liveStripeStatus);

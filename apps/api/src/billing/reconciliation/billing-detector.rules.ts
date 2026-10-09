@@ -71,7 +71,16 @@ export type PaymentSnapshot = {
 
 export type CycleSnapshot = { id: string; subscriptionId: string; userId: string; membershipPlanId: string; startsAt: Date; endsAt: Date; stripeInvoiceId: string | null };
 
-export type DeletedEventSnapshot = { stripeEventId: string; stripeSubscriptionId: string; status: string; cancellationReason: string | null; createdAt: Date };
+export type DeletedEventSnapshot = {
+  stripeEventId: string;
+  stripeSubscriptionId: string;
+  status: string;
+  cancellationReason: string | null;
+  /** When GymOS stored the event. */
+  createdAt: Date;
+  /** When the subscription ended on Stripe's clock (`ended_at`, else the event's `created`). */
+  endedAt: Date;
+};
 
 export type FailedInvoiceSnapshot = { stripeInvoiceId: string; stripeSubscriptionId: string | null; attempts: number; lastAttemptAt: Date; nextPaymentAttempt: Date | null };
 
@@ -90,6 +99,28 @@ function isRenewable(status: SubscriptionStatus): boolean {
 
 function base(ctx: RulesContext, partial: Omit<ObservedIssue, 'studioId'>): ObservedIssue {
   return { studioId: ctx.studioId, ...partial };
+}
+
+/**
+ * A Stripe key for the wrong account or mode answers "No such customer" for EVERY customer. Taken at
+ * face value that is a complete, clean observation — and a complete observation auto-resolves every
+ * open Stripe-side case. When the members Stripe does not recognise are at least half of those
+ * GymOS bills by card (and more than one), the Stripe phase is reported incomplete instead:
+ * nothing closes, the identity cases still open, the run exits PARTIAL for a human to notice.
+ */
+export function stripeCustomerCoverage(
+  members: MemberSnapshot[],
+  locals: LocalSubscriptionSnapshot[],
+): { billedByCard: number; missingInStripe: number; misconfigured: boolean } {
+  const billedUsers = new Set(locals.filter((l) => l.source === 'STRIPE' && isRenewable(l.status)).map((l) => l.userId));
+  let billedByCard = 0;
+  let missingInStripe = 0;
+  for (const m of members) {
+    if (!billedUsers.has(m.userId)) continue;
+    billedByCard += 1;
+    if (m.customerMissingInStripe) missingInStripe += 1;
+  }
+  return { billedByCard, missingInStripe, misconfigured: missingInStripe >= 2 && missingInStripe * 2 >= billedByCard };
 }
 
 // ── 1. Stripe canceled / unknown while GymOS keeps the row renewable ────────────

@@ -61,6 +61,17 @@ already recorded is never overwritten. The Admin status override records `STAFF_
 `audit_logs` row (`SUBSCRIPTION_STATUS_OVERRIDDEN`), and — when Stripe still bills the
 subscription — opens a HIGH case immediately.
 
+**Expand-and-contract gate (`BILLING_END_REASON_V2`, default off).** The previous API build's
+Prisma client throws `Value 'PAYMENT_FAILED' not found in enum 'SubscriptionEndReason'` on any read
+that returns such a row (verified on an isolated database with the a054151 client: member lists,
+Member 360 and webhook row reads fail; reads that exclude the column, counts, status-only updates
+and raw SQL still work). So the enum values ship with the schema (expand) but are only *written*
+when `BILLING_END_REASON_V2=true`; until then `recordableEndReason()` stores the legacy
+`MEMBER_CANCELLED`, and the previous build can be redeployed at any moment with no data fix. The
+gate is turned on deliberately after the rollback window; from then on an emergency rollback must
+first remap the rows written after activation (SQL in the rollback section). Reads, analytics and
+detectors accept both forms at all times.
+
 Analytics: `membershipHealth.cancellationsBreakdown { voluntary, involuntary, superseded }` is added
 to the executive dashboard (additive; existing totals unchanged). Historical rows are **not**
 rewritten: `scripts/cancellation-reason-backfill-dry-run.ts` is read-only and prints proposals; the
@@ -73,19 +84,29 @@ rewritten: `scripts/cancellation-reason-backfill-dry-run.ts` is read-only and pr
 | Scenario | Entitlement | Case |
 |---|---|---|
 | A/B/D/F/G/H active, scheduled-to-cancel, recovered failure, plan change, monthly, fixed | normal | none |
-| J redelivery of a recorded invoice | idempotent | none |
+| J redelivery of a recorded invoice (fixed-duration: recorded **and** its cycle exists) | idempotent | none |
 | C canceled **monthly** (Stripe ended, or GymOS canceled while Stripe bills) | **none** | `PAID_WITHOUT_ENTITLEMENT` CRITICAL (`SUBSCRIPTION_ENDED` / `LOCAL_CANCELED_STRIPE_ALIVE`) |
 | C canceled **fixed-duration** | the explicit paid window only; row stays CANCELED | `PAID_WITHOUT_ENTITLEMENT` MEDIUM `LATE_FIXED_WINDOW_GRANTED` (HIGH if Stripe alive) |
 | E superseded membership | **none** | CRITICAL `SUPERSEDED_MEMBERSHIP` (event processed, no dead-letter loop) |
 | renewal invoice with no local row | — | CRITICAL `NO_LOCAL_SUBSCRIPTION` (first-purchase races are left to the nightly run) |
 | I `charge.refunded` / `charge.dispute.created` | untouched | Payment status mirrored; `PAYMENT_REFUNDED_OR_DISPUTED` MEDIUM / HIGH |
 
-Two refinements from the adversarial reviews: a payment whose `paid_at` precedes the stored
-`customer.subscription.deleted` event (a replayed or late-delivered invoice for a period the
-member consumed while live) is ordinary, not a late payment; and a canceled row whose member
-already holds a newer renewable/entitled membership of the same plan family never gets a second
-window (`DUPLICATE_MEMBERSHIP_PAYMENT`, CRITICAL). Zero-amount (coupon/balance) invoices obey the
-same policy. Refund/dispute charges carry no `invoice` on basil/dahlia payloads: Payments are
+Refinements from the adversarial reviews: a payment whose `paid_at` precedes the moment the
+subscription ended (a replayed or late-delivered invoice for a period the member consumed while
+live) is ordinary, not a late payment — both instants are **Stripe's clock** (`paid_at` vs the
+stored deletion payload's `ended_at`/`created`), never the time GymOS happened to receive the
+deletion, so a retried delivery that arrives hours late cannot hide a genuinely late payment
+(release preflight, 2026-10-09). The same rule applies to a superseded row: a live-period invoice
+redelivered after a Stripe→cash handoff opens no case (a fixed-duration row still needs its cycle
+to count as processed). A canceled row whose member already holds a newer renewable/entitled
+membership of the same plan family (the access predicate `currentlyEntitledSubscriptionWhere`)
+never gets a second window (`DUPLICATE_MEMBERSHIP_PAYMENT`, CRITICAL) — including when the
+invoice was paid while live and is being replayed. "Already processed" (J) for a fixed-duration
+row means the Payment **and** its cycle exist: replaying a recorded invoice whose grant failed
+(the Incident A shape, which the case copy itself suggests) runs the full policy — it repairs a
+live row and is refused with a CRITICAL duplicate case next to a newer membership. A redelivered
+`invoice.paid` never flips a Payment already mirrored as REFUNDED/PARTIALLY_REFUNDED back to
+SUCCEEDED. Zero-amount (coupon/balance) invoices obey the same policy. Refund/dispute charges carry no `invoice` on basil/dahlia payloads: Payments are
 matched by PaymentIntent, else through the InvoicePayment resource (GET).
 
 Nothing in this path refunds, voids, reactivates or writes to Stripe.
@@ -134,9 +155,15 @@ Auto-resolution: after a run, active cases in categories whose detector **comple
 not observed are RESOLVED with an automatic note (and reopen on recurrence). Guard rails: a case
 first detected or last observed after the run started (a webhook opened it mid-run) is never
 touched; reason codes only a webhook can observe (`LATE_FIXED_WINDOW_GRANTED`,
-`DUPLICATE_MEMBERSHIP_PAYMENT`, `NO_LOCAL_SUBSCRIPTION`) are never auto-resolved; a PARTIAL run
-(Stripe failures, deadline, truncation) never auto-resolves anything. When two rules name the same
-issue the most severe view is kept. Refund/dispute cases are window-bounded and only closed by
+`DUPLICATE_MEMBERSHIP_PAYMENT`, `NO_LOCAL_SUBSCRIPTION`) are never auto-resolved; completeness is
+tracked **per category**: in a PARTIAL run the Stripe-backed categories (Stripe failures, deadline,
+truncation) auto-resolve nothing, while the four DB-only categories still do when no member was
+dropped by the cap — their evidence does not depend on Stripe. A Stripe key for the wrong account
+or mode answers "No such customer" for everyone; when the unrecognised customers are ≥ 2 and at
+least half of the members GymOS bills by card, the Stripe phase is reported incomplete
+(`billing_detector_stripe_customers_unrecognised`, run PARTIAL) instead of closing every open
+Stripe-side case as "no longer observed". When two rules name the same issue the most severe view
+is kept. Refund/dispute cases are window-bounded and only closed by
 operators. Webhook-created cases and nightly observations share keys (invoice id for payment
 exceptions, local row id for Stripe/GymOS disagreements), so one issue is always one case.
 
@@ -177,7 +204,8 @@ Dashboard, which regenerates a missing cycle idempotently) is referenced from th
 
 | Variable | Default | Effect |
 |---|---|---|
-| `BILLING_STALE_EVENT_GUARD` | on | `off` restores the pre-guard upsert |
+| `BILLING_STALE_EVENT_GUARD` | on | only the exact value `off` disables the guard (any other value keeps it on) |
+| `BILLING_END_REASON_V2` | off | only the exact value `true` writes the four new end-reason values; otherwise legacy values are written (previous build rollback-safe) |
 | `BILLING_RECONCILIATION_RUN_ENABLED` | true | `false` makes the CLI exit without running |
 | `BILLING_ALERTS_ENABLED` | false | outbound alerts (cases are always persisted + logged) |
 | `BILLING_ALERT_WEBHOOK_URL` | — | JSON POST endpoint |
@@ -196,23 +224,46 @@ reports no residual drift for the new objects). **Not applied to production.**
 
 ## Rollout (every step needs explicit approval)
 
+0. **Read-only preflight (minutes before the merge)** — `railway run --service api npx prisma
+   migrate status` must list exactly the two migrations as pending, and the names the migrations
+   create must be free: `SELECT to_regclass('billing_reconciliation_cases'),
+   to_regclass('billing_reconciliation_runs')` → both NULL; `SELECT typname FROM pg_type WHERE
+   typname LIKE 'Billing%'` → no rows; `SELECT count(*) FROM pg_enum e JOIN pg_type t ON
+   t.oid = e.enumtypid WHERE t.typname = 'SubscriptionEndReason'` → 4. (Checked 2026-10-09; see
+   the preflight report.) Have the P3009 remedy below ready before merging.
 1. **Stage 1+2 code** — merge to `main` (Railway runs `prisma migrate deploy` then starts; the two
    migrations are additive). Webhook guard and late-payment cases activate immediately; alerts
-   stay off. **MERGING TO MAIN WILL APPLY THESE MIGRATIONS TO PRODUCTION.**
+   stay off; new end-reason values are NOT written until `BILLING_END_REASON_V2=true` (step 1b,
+   after the rollback window). While the gate is off, every involuntary Stripe cancellation is
+   stored as MEMBER_CANCELLED and the nightly `CANCELLATION_REASON_MISMATCH` detector opens one LOW
+   case per such row — expected noise until step 1b plus the backfill (step 6); tell operators.
+   **MERGING TO MAIN WILL APPLY THESE MIGRATIONS TO PRODUCTION.**
+   The monorepo deploys API (Railway) and Admin (Vercel) from the same merge: those two cannot be
+   gated separately, but both orderings are safe (rollback table G/H). Cron cutover, alerts, the
+   end-reason gate, Stripe endpoint events and the backfill are each separate, independently
+   reversible actions.
 2. **Cron cutover** — Railway service `billing-integrity-audit` (schedule `0 7 * * *`): change the
    start command to `cd apps/api && node dist/cli/billing-reconciliation.cli.js` (the nixpacks build
-   already produces `dist/`). Exit code 0 completed or intentionally disabled / 2 partial / 1 failed.
-   The old script keeps working until then. **Environment:** the CLI boots the API's config
-   validation (`validateEnv`), so the cron service needs the API's variables, not just
-   `DATABASE_URL` + `STRIPE_SECRET_KEY`: in production that is `NODE_ENV`, `DATABASE_URL`,
-   `JWT_SECRET`, `JWT_QR_SECRET`, `CORS_ORIGIN`, the six `STRIPE_*`, `EXPO_BUILD_WEBHOOK_SECRET`,
-   optionally `RESEND_API_KEY`/`EMAIL_*`, and the `BILLING_*` flags — easiest as Railway reference
-   variables (`${{api.X}}`). Verified locally: the compiled CLI boots a minimal Nest context (no
+   already produces `dist/`). Exit code 0 completed, intentionally disabled, or skipped because a
+   run already holds the scope (`billing_reconciliation_cli_skipped`; a stale RUNNING row is
+   reclaimed after 3 h) / 2 partial / 1 failed.
+   The old script keeps working until then. **Environment:** the cron service currently carries
+   only `DATABASE_URL`, `NODE_ENV`, `STRIPE_SECRET_KEY` (checked 2026-10-09). The CLI boots the
+   API's config validation (`validateEnv`) and `AuthModule` (transitively), so before the cutover
+   add, as Railway reference variables (`${{api.X}}`): `JWT_SECRET`, `JWT_QR_SECRET`,
+   `CORS_ORIGIN`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_SUCCESS_URL`,
+   `STRIPE_CANCEL_URL`, `STRIPE_BILLING_PORTAL_RETURN_URL`, `EXPO_BUILD_WEBHOOK_SECRET`; optional:
+   `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`; plus `BILLING_RECONCILIATION_RUN_ENABLED`,
+   `BILLING_ALERTS_ENABLED` (false until step 4) and the other `BILLING_*` flags. Leave
+   `PASSWORD_RECOVERY_ENABLED` unset on the cron (production default off). Missing variables make
+   the CLI exit 1 at boot with a `validateEnv` message — nothing is detected and nothing is written. Verified locally: the compiled CLI boots a minimal Nest context (no
    HTTP server, no schedulers), runs, writes the run row and exits in ~1 s. Optional first run:
    `railway run --service api node dist/cli/billing-reconciliation.cli.js --no-alerts`. A
    studio-scoped manual run (Admin "Revisar ahora") and the all-studio cron have different lock
    scopes and may overlap; observations are idempotent, so this is benign.
-3. **Admin** — Vercel deploys from `main`; the page is role-gated (`canManageStudioSettings`).
+3. **Admin** — Vercel deploys from `main`; `/billing/exceptions` renders for OWNER/ADMIN/STAFF
+   (other roles see a notice), case actions and "Revisar ahora" need OWNER/ADMIN
+   (`canManageStudioSettings`), and the navigation link is OWNER/ADMIN only — matching the API.
 4. **Alerts** — set `BILLING_ALERT_WEBHOOK_URL` and/or `BILLING_ALERT_EMAIL_TO`, then
    `BILLING_ALERTS_ENABLED=true` on the API service and the cron service. Verify with one run.
 5. **Stripe endpoint events** — add `charge.refunded` and `charge.dispute.created` to webhook
@@ -223,13 +274,43 @@ reports no residual drift for the new objects). **Not applied to production.**
 
 ## Rollback
 
-- Code: redeploy the previous Railway/Vercel deployment. The new tables are ignored by the old
-  build. **Rows written with the new `SubscriptionEndReason` values must first be mapped back**
-  (`UPDATE subscriptions SET end_reason = 'MEMBER_CANCELLED' WHERE end_reason IN ('PAYMENT_FAILED','PAYMENT_DISPUTED','INCOMPLETE_EXPIRED','STAFF_CANCELLED')`),
-  because the old Prisma client fails to read unknown enum values. Expected count: small (only
-  cancellations after the release).
+Verified on an isolated database (migrated schema + the a054151 build): the old migrations
+directory reports "Database schema is up to date / No pending migrations" against the migrated
+database, so the previous image's start command (`prisma migrate deploy && start:prod`) boots.
+
+**If a migration fails mid-way (P3018)** — Prisma rolls that migration's statements back (each
+migration is one transaction; verified with a probe), but leaves a `_prisma_migrations` row with
+`finished_at NULL`. From then on `prisma migrate deploy` exits with **P3009 ("failed migrations
+found")** — for the new image AND for a Railway redeploy of the previous image, because both start
+commands run `migrate deploy` first. Redeploying does not fix it; the only remedy is Prisma's
+documented one, run once by a human and read-only otherwise:
+
+```
+railway run --service api npx prisma migrate resolve --rolled-back <migration_name>
+```
+
+then redeploy (the previous image to roll back, or the new one to retry). Keep this command ready
+during the release window; the failure mode is improbable (both migrations are additive and the
+names were verified free in step 0) but its impact is a boot loop.
+
+| Scenario | Previous API build | Action |
+|---|---|---|
+| A. Schema expanded, new code not yet active | runs normally (new tables/values unused) | none |
+| B. New code active, `BILLING_END_REASON_V2` off (day-one default) | runs normally; it ignores `billing_reconciliation_*` | redeploy previous Railway deployment |
+| C. New enum values already persisted (gate was on) | **fails** on reads returning those rows | run the remap below first, then redeploy |
+| D. Reconciliation cases already created | unaffected (tables unused by the old build) | none; cases keep their history |
+| E. Cron running during rollback | the cron service builds from the same commit: after a `main` revert its `dist/cli` disappears → restore the legacy start command (`npx ts-node … scripts/billing-integrity-audit.ts`) | restore command; a RUNNING run row older than 3 h is reclaimed automatically |
+| F. Alerting active during rollback | only the cron/manual runs send alerts; `BILLING_ALERTS_ENABLED=false` stops them without a deploy | set the flag |
+| G. API rolled back, Admin not | `/billing/exceptions` shows an error banner (404s), Member 360 shows no banner (`openCases` absent); nothing else changes | optional Admin rollback |
+| H. Admin rolled back, API not | old Admin ignores `openCases` and the new endpoints | none |
+
+Remap (only rows written after the gate was activated; never historical rows):
+`UPDATE subscriptions SET end_reason = 'MEMBER_CANCELLED' WHERE end_reason IN ('PAYMENT_FAILED','PAYMENT_DISPUTED','INCOMPLETE_EXPIRED','STAFF_CANCELLED');`
+(verified: after the remap the old client reads every row again).
 - Guard only: `BILLING_STALE_EVENT_GUARD=off`, no deploy (restores the legacy *semantics*: an
-  alive event is applied without consulting Stripe; the write stays status-conditional).
+  alive event is applied without consulting Stripe; the write stays status-conditional). Note
+  that turning it off reintroduces the Incident B resurrection class — only do it to unblock a
+  Stripe outage that keeps terminal-conflict events failing closed.
 - Alerts only: `BILLING_ALERTS_ENABLED=false`.
 - Cron only: restore the previous start command.
 - Migrations are additive; dropping them is possible but unnecessary.
@@ -275,3 +356,8 @@ requires the member to have no card membership row at all (unit-tested).
   now audited and surfaced immediately, but not blocked (product decision).
 - `reconcile()` (used by plan-change preflight) still promotes scheduled cash as a side effect —
   unchanged, documented.
+- `WEBHOOK_DEAD_LETTER` alerts carry the handler's `lastError` text (truncated; Stripe masks keys);
+  it is an unreviewed free-text channel to Slack/email — allow-listing error classes is a follow-up.
+- `POST …/runs` (manual "Revisar ahora") is OWNER/ADMIN-only and refuses overlap (409) but is not
+  rate-limited; the nightly Stripe list calls use the SDK's 80 s default timeout, bounded by the
+  per-studio deadline and the 3 h stale-run reclaim.

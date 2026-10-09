@@ -1,5 +1,5 @@
 import { SubscriptionEndReason } from '@prisma/client';
-import { classifyEndReason, describeEndReason, expectedEndReasonFromStripe, resolveStripeEndReason } from './subscription-end-reason';
+import { classifyEndReason, describeEndReason, expectedEndReasonFromStripe, recordableEndReason, resolveStripeEndReason } from './subscription-end-reason';
 
 describe('subscription-end-reason — Stripe facts → recorded reason', () => {
   it('maps failed collection, disputes and never-paid first invoices to involuntary reasons', () => {
@@ -26,6 +26,24 @@ describe('subscription-end-reason — Stripe facts → recorded reason', () => {
     expect(classifyEndReason(SubscriptionEndReason.INCOMPLETE_EXPIRED)).toBe('INVOLUNTARY');
     expect(classifyEndReason(SubscriptionEndReason.SUPERSEDED_PLAN_CHANGE)).toBe('SUPERSEDED');
     expect(classifyEndReason(null)).toBe('UNKNOWN');
+  });
+
+  it('rollout gate: new values are only written once BILLING_END_REASON_V2=true (previous build stays rollback-safe)', () => {
+    const saved = process.env['BILLING_END_REASON_V2'];
+    try {
+      for (const v of [undefined, '', 'false', 'TRUE', '1']) {
+        if (v === undefined) delete process.env['BILLING_END_REASON_V2'];
+        else process.env['BILLING_END_REASON_V2'] = v;
+        expect(recordableEndReason(SubscriptionEndReason.PAYMENT_FAILED)).toBe(SubscriptionEndReason.MEMBER_CANCELLED);
+        expect(recordableEndReason(SubscriptionEndReason.STAFF_CANCELLED)).toBe(SubscriptionEndReason.MEMBER_CANCELLED);
+        expect(recordableEndReason(SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD)).toBe(SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD);
+      }
+      process.env['BILLING_END_REASON_V2'] = 'true';
+      for (const reason of Object.values(SubscriptionEndReason)) expect(recordableEndReason(reason)).toBe(reason);
+    } finally {
+      if (saved === undefined) delete process.env['BILLING_END_REASON_V2'];
+      else process.env['BILLING_END_REASON_V2'] = saved;
+    }
   });
 
   it('describes every reason in operator Spanish', () => {

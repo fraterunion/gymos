@@ -23,7 +23,8 @@ import { markStripeWebhookEventProcessed, tryClaimStripeWebhookEvent } from './s
 import { BillingCaseService } from './reconciliation/billing-case.service';
 import type { ObservedIssue } from './reconciliation/billing-case.types';
 import { formatDateEs, formatMoney } from './reconciliation/billing-case-copy';
-import { decidePaidInvoice, type PaidInvoiceDecision } from './paid-invoice-policy';
+import { decidePaidInvoice, deletionEndedAt, type PaidInvoiceDecision } from './paid-invoice-policy';
+import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
 import {
   ConcurrentSubscriptionWriteError,
   StaleSubscriptionEventUnverifiedError,
@@ -32,7 +33,7 @@ import {
   needsLiveVerification,
   type LiveSubscriptionLookup,
 } from './stale-subscription-event';
-import { resolveStripeEndReason } from './subscription-end-reason';
+import { recordableEndReason, resolveStripeEndReason } from './subscription-end-reason';
 import type { WebhookChargePayload, WebhookDisputePayload } from './stripe-webhook-payloads';
 import {
   type WebhookCheckoutSessionPayload,
@@ -648,9 +649,13 @@ export class StripeWebhookService {
         if (row.endReason == null) {
           // Stripe's own facts decide between a requested cancellation and an involuntary end
           // (failed collection, dispute, never-paid first invoice). Never invents an actor.
-          const endReason = resolveStripeEndReason(
-            { status: sub.status, cancellationReason: readCancellationDetails(sub).reason },
-            { pendingCashSuccessor: pendingCash !== null },
+          // `recordableEndReason` downgrades the new values to the legacy one until the
+          // BILLING_END_REASON_V2 rollout gate is on (previous-build rollback compatibility).
+          const endReason = recordableEndReason(
+            resolveStripeEndReason(
+              { status: sub.status, cancellationReason: readCancellationDetails(sub).reason },
+              { pendingCashSuccessor: pendingCash !== null },
+            ),
           );
           row = await tx.subscription.update({
             where: { id: row.id },
@@ -1057,7 +1062,10 @@ export class StripeWebhookService {
         paidAt,
       },
       update: {
-        status: PaymentStatus.SUCCEEDED,
+        // A redelivered invoice.paid must not undo a refund already mirrored from charge.refunded.
+        ...(priorPayment?.status === PaymentStatus.REFUNDED || priorPayment?.status === PaymentStatus.PARTIALLY_REFUNDED
+          ? {}
+          : { status: PaymentStatus.SUCCEEDED }),
         paymentMethod: PaymentMethod.STRIPE,
         amountCents,
         currency: (invoice.currency ?? 'usd').toLowerCase(),
@@ -1124,14 +1132,21 @@ export class StripeWebhookService {
     if (terminalLocally && stripeSubscriptionId) {
       const live = await this.lookupLiveSubscription(stripeSubscriptionId);
       liveStripeStatus = live.ok ? live.status : 'unavailable';
-      // When the membership ended: Stripe's own deletion event (immutable), else the row's last write.
+      // When the membership ended, on Stripe's clock (the stored deletion payload's `ended_at`,
+      // not the moment GymOS happened to receive it), else the row's last write.
       const deletion = await this.prisma.stripeWebhookEvent.findFirst({
         where: { eventType: 'customer.subscription.deleted', payload: { path: ['data', 'object', 'id'], equals: stripeSubscriptionId } },
         orderBy: { createdAt: 'desc' },
-        select: { createdAt: true },
+        select: { createdAt: true, payload: true },
       });
-      endedAt = deletion?.createdAt ?? row?.updatedAt ?? null;
+      endedAt = deletion ? deletionEndedAt(deletion.payload, deletion.createdAt) : row?.updatedAt ?? null;
     }
+    // "Already processed" for a fixed-duration row means its paid cycle exists, not just its
+    // Payment: a replay after a failed grant must go through the full policy.
+    const cycleExistsForInvoice =
+      row && row.membershipPlan.entitlementDays != null
+        ? (await this.prisma.membershipEntitlementCycle.findUnique({ where: { stripeInvoiceId: invoice.id }, select: { id: true } })) !== null
+        : false;
     if (row && row.status === SubscriptionStatus.CANCELED) {
       // A newer membership of the same family (same plan, or same non-null exclusive group) that
       // is renewable or still entitled means this payment would cover a period twice.
@@ -1142,7 +1157,8 @@ export class StripeWebhookService {
           userId: row.userId,
           id: { not: row.id },
           OR: [{ membershipPlanId: row.membershipPlanId }, ...(row.exclusiveGroupKey ? [{ exclusiveGroupKey: row.exclusiveGroupKey }] : [])],
-          AND: [{ OR: [{ status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } }, { entitlementEndsAt: { gt: now } }, { status: SubscriptionStatus.CANCELED, entitlementEndsAt: null, currentPeriodEnd: { gt: now }, source: { not: SubscriptionSource.STRIPE } }] }],
+          // Renewable, or entitled right now by the same predicate access checks use.
+          AND: [{ OR: [{ status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } }, currentlyEntitledSubscriptionWhere(now)] }],
         },
         select: { id: true },
       });
@@ -1170,6 +1186,7 @@ export class StripeWebhookService {
       paymentAlreadySucceeded: input.priorPaymentStatus === PaymentStatus.SUCCEEDED,
       paymentPreviouslyFailed: input.priorPaymentStatus === PaymentStatus.FAILED,
       entitledSiblingExists,
+      cycleExistsForInvoice,
     });
 
     this.logger.log(

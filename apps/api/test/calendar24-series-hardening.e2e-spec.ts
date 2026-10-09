@@ -127,7 +127,16 @@ describe('Calendar 2.4 series hardening (e2e)', () => {
     const studio = await createStudio(prisma, { timezone: MX });
     const tpl = await createClassTemplate(prisma, studio.id);
     const admin = await seedUser(studio.id, Role.ADMIN, 'admin');
-    await createWeeklySeries(studio.id, tpl.id, admin.id, MX);
+    // Anchor the series strictly in the future (same idiom as the off-cadence test below).
+    // A startsOn on/before today materializes today's slot even after its start time has
+    // elapsed, and recurrence edits never touch rows with startsAt < now, so on the series'
+    // own weekday after 07:15 that row would survive past endsOn and fail this assertion.
+    let startsOn = addDaysToDateKey(getStudioLocalDateKey(new Date(), MX), 7);
+    while (getDayOfWeekFromDateKey(startsOn) !== 4) {
+      startsOn = addDaysToDateKey(startsOn, 1);
+    }
+    const endsOn = addDaysToDateKey(startsOn, 14); // inclusive: startsOn, +7 and +14 stay
+    await createWeeklySeries(studio.id, tpl.id, admin.id, MX, startsOn);
 
     const template = await prisma.scheduleTemplate.findFirst({ where: { studioId: studio.id } });
     const anchor = await prisma.scheduledClass.findFirst({
@@ -138,7 +147,7 @@ describe('Calendar 2.4 series hardening (e2e)', () => {
     await seriesService.editOccurrence(
       studio.id,
       anchor!.id,
-      { scope: 'SERIES', endsOn: '2026-09-30', confirmReservations: true },
+      { scope: 'SERIES', endsOn, confirmReservations: true },
       admin.id,
     );
 
@@ -146,10 +155,19 @@ describe('Calendar 2.4 series hardening (e2e)', () => {
       where: {
         scheduleTemplateId: template!.id,
         status: ClassStatus.SCHEDULED,
-        startsAt: { gt: studioLocalDateKeyToUtcAnchor('2026-09-30', MX) },
+        startsAt: { gte: studioLocalDateKeyToUtcAnchor(addDaysToDateKey(endsOn, 1), MX) },
       },
     });
     expect(afterEnd).toHaveLength(0);
+    const kept = await prisma.scheduledClass.findMany({
+      where: { scheduleTemplateId: template!.id, status: ClassStatus.SCHEDULED },
+      orderBy: { startsAt: 'asc' },
+    });
+    expect(kept.map((row) => getStudioLocalDateKey(row.startsAt, MX))).toEqual([
+      startsOn,
+      addDaysToDateKey(startsOn, 7),
+      endsOn,
+    ]);
   });
 
   it('booked off-cadence occurrence requires confirmation', async () => {
