@@ -26,7 +26,7 @@ replacement, a prompted re-add, or both.
 ## Decisions the operator must make first
 
 1. **Where staging runs.**
-   - **Recommended: a separate Railway environment** (e.g. `staging-wallet`) in the existing
+   - **Recommended: a separate Railway environment** (`smart-wallet-staging`) in the existing
      project. It contains only an API service deployed from `feat/smart-wallet-foundation`, has
      no cron service and no Vercel or Expo changes, and uses the Railway-provided
      `*.up.railway.app` domain. That domain has public TLS, so no DNS work is needed.
@@ -34,7 +34,7 @@ replacement, a prompted re-add, or both.
      and no branch push, but the tunnel hostname is signed into the test passes, so they stop
      updating when the tunnel ends.
 2. **Which Pass Type ID signs the staging passes.**
-   - **Recommended: a dedicated staging Pass Type ID** (e.g. `pass.<team-domain>.member.staging`)
+   - **Recommended: a dedicated staging Pass Type ID** (proposed: `pass.com.fraterunion.gymos.smartwallet.staging`)
      with its own certificate. This keeps the production signing secret out of another
      environment, and a staging mistake can never produce a pass Wallet treats as a production
      pass. It is an Apple Developer change that needs approval and takes about 15 minutes.
@@ -153,11 +153,24 @@ and (if chosen) Pass Type ID, and to contact live APNs.
     the operator's decision. If a dedicated staging Pass Type ID was created, keep it for later
     stages or revoke its certificate.
 
-## Preparation work still to be built (small)
+## Staging-only tooling (built for Stage 2)
 
-- A staging-only seed script (studio, owner and two members, with passwords from the environment).
-- Optional: a CLI `export` command that writes a pass to a file, as an alternative to the
-  90-second download link.
+`apps/api/dist/cli/wallet-staging.cli.js` runs only when Railway reports the
+`smart-wallet-staging` environment **and** `DATABASE_URL` is on Railway's private network
+(`*.railway.internal`); anywhere else it exits 2 without touching the database.
+
+| Command | Effect |
+|---|---|
+| `seed` | One synthetic studio (`sw-staging`, America/Mexico_City), one synthetic plan, members A and B (`@staging.invalid`, no usable password) with an active synthetic cash membership, a wallet credential and a STATIC Apple pass each. Idempotent. Refuses a database that holds anything else. |
+| `set-entitlement --member a\|b --state active\|expired` | The controlled entitlement change used to trigger an update. |
+| `export --member a\|b` | The stored `.pkpass` as base64 between `-----BEGIN PKPASS-----` / `-----END PKPASS-----` lines, for AirDrop. Metadata goes to stderr. |
+| `status` | Serial, pass mode/version, timestamps, QR fingerprint, and registrations as {device hash, push-token length}. |
+
+Dynamic enrollment, refresh and pushes use `apps/api/dist/cli/wallet-dynamic-pass.cli.js`. Push
+summaries include Apple's `apns-id` per registration for tracing.
+
+The 90-second member download link remains an alternative to `export`, but needs a member
+login. The synthetic members cannot log in.
 
 ## Risks specific to the spike
 
