@@ -294,6 +294,7 @@ model Studio {
   walletCredentials          WalletCredential[]
   billingReconciliationCases BillingReconciliationCase[]
   billingReconciliationRuns  BillingReconciliationRun[]
+  walletPassRegistrations    WalletPassRegistration[]
 
   @@map("studios")
 }
@@ -781,6 +782,14 @@ enum WalletPassPlatform {
   GOOGLE
 }
 
+/// Smart Wallet 2.0. STATIC: a signed pass with no web service (every artifact built before
+/// Stage 1A). DYNAMIC: carries a PassKit webServiceURL + per-pass authenticationToken so Wallet
+/// can register for and fetch updates. An artifact only becomes DYNAMIC by explicit enrollment.
+enum WalletPassMode {
+  STATIC
+  DYNAMIC
+}
+
 /// Durable record that a platform pass has been provisioned for a WalletCredential, so a
 /// repeat "Add to Wallet" tap can re-deliver the SAME pass without ever needing the raw
 /// credential value again (which Phase 1 deliberately never persists). Never grants access
@@ -804,13 +813,65 @@ model WalletPassArtifact {
   /// NULL means "built before versioning existed" and is always treated as stale. Apple-only
   /// today; Google objects are updated in place by the Google API and carry no version.
   templateVersion    Int?               @map("template_version")
+  /// Smart Wallet 2.0 (Apple only). STATIC for every pre-existing row; the static template
+  /// refresh never touches a DYNAMIC artifact, and the dynamic path never touches a STATIC one
+  /// except through explicit enrollment.
+  passMode                WalletPassMode @default(STATIC) @map("pass_mode")
+  /// DYNAMIC only: APPLE_DYNAMIC_PASS_TEMPLATE_VERSION the bytes were built with (independent
+  /// of templateVersion, which versions the static template).
+  dynamicTemplateVersion  Int?           @map("dynamic_template_version")
+  /// DYNAMIC only: SHA-256 (hex) of the pass's PassKit authenticationToken. The raw token
+  /// exists only inside the signed pass; it is fixed for the life of the pass, never rotated.
+  authenticationTokenHash String?        @map("authentication_token_hash")
+  /// DYNAMIC only: deterministic hash of the pass content (pass.json + assets, not the
+  /// signature). A rebuild with the same hash is not a change: no new version, no push.
+  contentHash             String?        @map("content_hash")
+  /// DYNAMIC only: increments each time the pass content changes.
+  passVersion             Int            @default(0) @map("pass_version")
+  /// DYNAMIC only: when the content last changed — PassKit Last-Modified and the
+  /// passesUpdatedSince cursor. Distinct from updatedAt, which moves on any write.
+  lastModifiedAt          DateTime?      @map("last_modified_at")
+  /// DYNAMIC only: snapshot.nextTransitionAt at the last build — the earliest instant the
+  /// pass could go stale purely because time passed. Informational in Stage 1A (no scheduler).
+  nextTransitionAt        DateTime?      @map("next_transition_at")
+  /// DYNAMIC only: WALLET_ACCESS_SNAPSHOT_SCHEMA_VERSION of the snapshot behind the content.
+  snapshotSchemaVersion   Int?           @map("snapshot_schema_version")
+  /// When this artifact was enrolled as DYNAMIC (audit; null for STATIC).
+  dynamicEnabledAt        DateTime?      @map("dynamic_enabled_at")
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at")
 
-  walletCredential WalletCredential @relation(fields: [walletCredentialId], references: [id], onDelete: Cascade)
+  walletCredential WalletCredential         @relation(fields: [walletCredentialId], references: [id], onDelete: Cascade)
+  registrations    WalletPassRegistration[]
 
   @@unique([walletCredentialId, platform])
   @@map("wallet_pass_artifacts")
+}
+
+/// Smart Wallet 2.0 PassKit web service: one row per (device, pass) registration. Created only
+/// by a registration request authenticated with that pass's authenticationToken; studioId is
+/// copied from the pass's own credential, never taken from the request.
+model WalletPassRegistration {
+  id                      String   @id @default(cuid())
+  studioId                String   @map("studio_id")
+  walletPassArtifactId    String   @map("wallet_pass_artifact_id")
+  /// Apple's opaque per-device identifier (path parameter of the PassKit routes).
+  deviceLibraryIdentifier String   @map("device_library_identifier")
+  passTypeIdentifier      String   @map("pass_type_identifier")
+  /// The pass serial (== WalletCredential.id), denormalized for the device's serials query.
+  serialNumber            String   @map("serial_number")
+  /// APNs device token for Wallet on this device. Never logged.
+  pushToken               String   @map("push_token")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  studio   Studio             @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  artifact WalletPassArtifact @relation(fields: [walletPassArtifactId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceLibraryIdentifier, passTypeIdentifier, serialNumber])
+  @@index([walletPassArtifactId])
+  @@index([studioId])
+  @@map("wallet_pass_registrations")
 }
 
 model RefreshToken {
