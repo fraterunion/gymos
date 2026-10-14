@@ -30,6 +30,19 @@ Non-production: `apps/api` `validateEnv` supplies safe **development defaults** 
 
 For **real** test Checkout, Customer Portal, and webhooks ( **`sk_test_`**, **`whsec_`** from a **test** endpoint or Stripe CLI), see [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md). Quick env shape check (no secrets printed): `pnpm --filter api smoke:stripe-env` from a shell where the Stripe variables are exported.
 
+### Smart Wallet 2.0 (Stage 1A, all OFF by default)
+
+Dynamic Apple Wallet passes and the PassKit web service. Every flag is normalised by `validateEnv` to `'true'` / `'false'`; only the exact word `true` enables it. See [`SMART_WALLET_2_STAGE_1A.md`](./SMART_WALLET_2_STAGE_1A.md).
+
+| Variable | Purpose |
+|----------|---------|
+| `WALLET_DYNAMIC_PASSES_ENABLED` | Allows building/enrolling DYNAMIC Apple passes (operator CLI only in Stage 1A). Default `false`. |
+| `WALLET_PASSKIT_ROUTES_ENABLED` | Serves the PassKit web service under `/api/v1/wallet/passkit/v1/...`. When `false` every route answers 404. Default `false`. |
+| `WALLET_APNS_ENABLED` | Allows APNs pass-update pushes (production APNs only, with the pass-signing certificate). Default `false`. |
+| `WALLET_PASSKIT_WEB_SERVICE_URL` | `webServiceURL` signed into every dynamic pass. Required when dynamic passes or the routes are on. Absolute, no credentials/query/fragment, must end with `/api/v1/wallet/passkit`; `https` required in production. |
+
+Any of the three flags on also requires the full `WALLET_APPLE_*` signing configuration; the API refuses to boot otherwise.
+
 Future (document when implemented):
 
 - `REDIS_URL` — if caching or rate limits require it.
