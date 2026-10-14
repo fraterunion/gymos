@@ -170,6 +170,42 @@ describe('WalletAccessSnapshot — membership kinds', () => {
     expect(buildWalletPassDisplay(snap).validity?.value).toBe('Vigente hasta el 16 nov 2026, 10:54');
   });
 
+  it('fixed-duration Stripe membership in TRIALING with a running paid window: current, renews', () => {
+    const trialing = sub({
+      plan: BOOTY_LAB,
+      exclusiveGroupKey: null,
+      status: SubscriptionStatus.TRIALING,
+      source: SubscriptionSource.STRIPE,
+      cancelAtPeriodEnd: false,
+      currentPeriodStart: new Date('2026-10-02T16:54:40.000Z'),
+      currentPeriodEnd: new Date('2026-11-16T16:54:40.000Z'),
+      entitlementEndsAt: new Date('2026-11-16T16:54:40.000Z'),
+    });
+    const snap = computeWalletAccessSnapshot(input({ subscriptions: [trialing] }), NOW);
+    expect(snap.overall).toBe('ACCESS_VALID');
+    expect(snap.headline).toMatchObject({ lifecycleStatus: 'TRIALING', renewal: 'AUTO_RENEWS', fixedDuration: true });
+    const display = buildWalletPassDisplay(snap);
+    expect(display.status.value).toBe('VIGENTE');
+    expect(display.validity?.value).toBe('Renueva el 16 nov 2026');
+  });
+
+  it('fixed-duration: the paid cycle end (entitlementEndsAt) wins over a later Stripe period end, as at check-in', () => {
+    const lapsedCycle = sub({
+      plan: BOOTY_LAB,
+      exclusiveGroupKey: null,
+      source: SubscriptionSource.STRIPE,
+      cancelAtPeriodEnd: false,
+      currentPeriodStart: new Date('2026-08-18T16:54:40.000Z'),
+      currentPeriodEnd: new Date('2026-11-16T16:54:40.000Z'),
+      entitlementEndsAt: new Date('2026-10-02T16:54:40.000Z'),
+    });
+    const snap = computeWalletAccessSnapshot(input({ subscriptions: [lapsedCycle] }), NOW);
+    expect(snap.overall).toBe('INACTIVE');
+    expect(snap.headline).toMatchObject({ accessState: 'EXPIRED', effectiveEnd: '2026-10-02T16:54:40.000Z' });
+    expect(buildWalletPassDisplay(snap).validity?.value).toBe('Venció el 2 oct 2026');
+    expect(resolveEntitledPrimaryPlanName([lapsedCycle], NOW)).toBeNull();
+  });
+
   it('CANCELED with no paid window and PAUSED are not current', () => {
     const canceled = sub({ status: SubscriptionStatus.CANCELED, source: SubscriptionSource.STRIPE, currentPeriodEnd: new Date('2026-11-14T01:12:27.000Z') });
     const snapC = computeWalletAccessSnapshot(input({ subscriptions: [canceled] }), NOW);
