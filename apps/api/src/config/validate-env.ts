@@ -1,3 +1,5 @@
+import { APPLE_WALLET_ENV_KEYS } from '../wallet/apple/apple-wallet.constants';
+
 const NODE_ENVS = ['development', 'test', 'production'] as const;
 type NodeEnv = (typeof NODE_ENVS)[number];
 
@@ -145,8 +147,76 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
   assertStripeBillingEnv(out, nodeEnv);
   assertExpoBuildWebhookEnv(out, nodeEnv);
   assertDayPassEnv(out);
+  assertWalletPassEnv(out, nodeEnv);
 
   return out;
+}
+
+const WALLET_FLAG_KEYS = [
+  'WALLET_DYNAMIC_PASSES_ENABLED',
+  'WALLET_PASSKIT_ROUTES_ENABLED',
+  'WALLET_APNS_ENABLED',
+] as const;
+const PASSKIT_ROUTE_SUFFIX = '/api/v1/wallet/passkit';
+
+/**
+ * Smart Wallet 2.0 (Stage 1A). Every flag is normalised to 'true' | 'false' and defaults OFF.
+ *
+ * WALLET_PASSKIT_WEB_SERVICE_URL is validated hard because it is SIGNED into every dynamic
+ * pass: a pass carrying a wrong URL can never fetch the update that would correct it. It must
+ * be an absolute https URL (http only outside production, for device testing with Wallet's
+ * developer "Allow HTTP Services" setting) without credentials, query or fragment, and must
+ * point at this API's PassKit controller. Any capability that signs passes or talks to APNs
+ * also requires the complete Apple signing configuration, so a misconfigured deploy refuses
+ * to boot rather than failing per request.
+ */
+function assertWalletPassEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): void {
+  for (const key of WALLET_FLAG_KEYS) {
+    const v = out[key];
+    out[key] = typeof v === 'string' && v.trim().toLowerCase() === 'true' ? 'true' : 'false';
+  }
+  const anyOn = WALLET_FLAG_KEYS.some((key) => out[key] === 'true');
+  const needsUrl = out['WALLET_DYNAMIC_PASSES_ENABLED'] === 'true' || out['WALLET_PASSKIT_ROUTES_ENABLED'] === 'true';
+
+  const rawUrl = out['WALLET_PASSKIT_WEB_SERVICE_URL'];
+  if (typeof rawUrl === 'string' && rawUrl.trim() !== '') {
+    out['WALLET_PASSKIT_WEB_SERVICE_URL'] = normalizePasskitWebServiceUrl(rawUrl.trim(), nodeEnv);
+  } else if (needsUrl) {
+    throw new Error(
+      'WALLET_PASSKIT_WEB_SERVICE_URL is required when WALLET_DYNAMIC_PASSES_ENABLED or WALLET_PASSKIT_ROUTES_ENABLED is true',
+    );
+  }
+
+  if (anyOn) {
+    const missing = APPLE_WALLET_ENV_KEYS.filter((key) => {
+      const v = out[key];
+      return typeof v !== 'string' || v.trim() === '';
+    });
+    if (missing.length > 0) {
+      throw new Error(`Smart Wallet flags require the Apple Wallet signing configuration; missing: ${missing.join(', ')}`);
+    }
+  }
+}
+
+function normalizePasskitWebServiceUrl(raw: string, nodeEnv: NodeEnv): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('WALLET_PASSKIT_WEB_SERVICE_URL must be an absolute URL');
+  }
+  const httpsOnly = nodeEnv === 'production';
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && !httpsOnly)) {
+    throw new Error(`WALLET_PASSKIT_WEB_SERVICE_URL must use https${httpsOnly ? ' in production' : ' (or http outside production)'}`);
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error('WALLET_PASSKIT_WEB_SERVICE_URL must not contain credentials, a query or a fragment');
+  }
+  const path = url.pathname.replace(/\/+$/, '');
+  if (!path.endsWith(PASSKIT_ROUTE_SUFFIX)) {
+    throw new Error(`WALLET_PASSKIT_WEB_SERVICE_URL must end with ${PASSKIT_ROUTE_SUFFIX}`);
+  }
+  return `${url.origin}${path}`;
 }
 
 /**

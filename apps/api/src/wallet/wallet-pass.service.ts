@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { WalletPassPlatform, type WalletCredential, type WalletPassArtifact } from '@prisma/client';
+import { WalletPassMode, WalletPassPlatform, type WalletCredential, type WalletPassArtifact } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildWalletCredentialBarcode, WALLET_CREDENTIAL_PREFIX } from './wallet-credential.constants';
@@ -28,8 +28,14 @@ const APPLE_DOWNLOAD_TOKEN_TTL_SECONDS = 90;
  * A persisted .pkpass is served verbatim, so it keeps whatever presentation it was signed
  * with until something explicitly invalidates it. `null` covers rows written before
  * versioning existed and is therefore stale by definition.
+ *
+ * A DYNAMIC artifact (Smart Wallet 2.0) is never stale here: it is versioned by its own
+ * dynamicTemplateVersion and rebuilt only by WalletDynamicPassService, which preserves its
+ * PassKit authenticationToken. Rebuilding it as a static pass would strip the web service and
+ * the token from the stored pass and leave the installed one unable to update.
  */
 export function isStaleAppleArtifact(artifact: WalletPassArtifact): boolean {
+  if (artifact.passMode === WalletPassMode.DYNAMIC) return false;
   return artifact.templateVersion !== APPLE_PASS_TEMPLATE_VERSION;
 }
 

@@ -36,3 +36,15 @@ export const PASS_FORMAT_VERSION = 1;
  *   2 — Member Experience 1.2: brand logo images, plan in headerFields, graphite surface
  */
 export const APPLE_PASS_TEMPLATE_VERSION = 2;
+
+/**
+ * Presentation version of DYNAMIC passes (Smart Wallet 2.0), tracked separately from
+ * APPLE_PASS_TEMPLATE_VERSION in WalletPassArtifact.dynamicTemplateVersion: a static template
+ * bump never touches a dynamic pass, and a dynamic template bump never rebuilds static ones.
+ *
+ * BUMP THIS whenever buildDynamicPassJson's structure changes.
+ * `apple-dynamic-pass-template-fingerprint.spec.ts` fails if you forget.
+ *
+ *   1 — Stage 1A: membership state header, plan/validity/scope fields, per-membership back lines
+ */
+export const APPLE_DYNAMIC_PASS_TEMPLATE_VERSION = 1;

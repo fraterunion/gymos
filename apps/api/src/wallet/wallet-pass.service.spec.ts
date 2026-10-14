@@ -456,6 +456,61 @@ describe('WalletPassService', () => {
     });
   });
 
+  /**
+   * Smart Wallet 2.0 template-version separation: a DYNAMIC artifact belongs to
+   * WalletDynamicPassService. The static path must serve it as stored and never rebuild it —
+   * a static rebuild would drop the web service and the PassKit token from the stored pass.
+   */
+  describe('DYNAMIC artifacts are never touched by the static path', () => {
+    const BARCODE = 'gymos:v1:the-raw-value';
+    const CRED = { id: 'wc1', studioId: 'studio-1', userId: 'user-1' };
+
+    beforeEach(() => {
+      walletCredentials.resolve.mockResolvedValue({ status: 'active', credential: CRED });
+    });
+
+    it('is never stale, whatever its static templateVersion says', () => {
+      expect(isStaleAppleArtifact({ passMode: 'DYNAMIC', templateVersion: null } as never)).toBe(false);
+      expect(isStaleAppleArtifact({ passMode: 'DYNAMIC', templateVersion: 1 } as never)).toBe(false);
+      expect(isStaleAppleArtifact({ passMode: 'STATIC', templateVersion: 1 } as never)).toBe(true);
+    });
+
+    it('download serves the stored dynamic bytes without re-signing, even with raw in hand', async () => {
+      walletCredentials.issue.mockResolvedValue({ credential: CRED, rawCredential: 'raw1' });
+      const dynamicBytes = await buildFixturePkpass(BARCODE);
+      prisma.walletPassArtifact.findUnique.mockImplementation(({ where }: { where: { walletCredentialId_platform: { platform: string } } }) =>
+        Promise.resolve(
+          where.walletCredentialId_platform.platform === 'APPLE'
+            ? { pkpassData: dynamicBytes, passMode: 'DYNAMIC', templateVersion: null }
+            : { googleObjectId: 'obj1' },
+        ),
+      );
+
+      const result = await service.getApplePass('studio-1', 'user-1');
+
+      expect(result.equals(dynamicBytes)).toBe(true);
+      expect(appleProvider.buildPkpass).not.toHaveBeenCalled();
+      expect(prisma.walletPassArtifact.upsert).not.toHaveBeenCalled();
+    });
+
+    it('in-app QR recovery reads the barcode from a dynamic pass and does not rebuild it', async () => {
+      walletCredentials.issue.mockResolvedValue({ credential: CRED, rawCredential: null });
+      const dynamicBytes = await buildFixturePkpass(BARCODE);
+      prisma.walletPassArtifact.findUnique.mockImplementation(({ where }: { where: { walletCredentialId_platform: { platform: string } } }) =>
+        Promise.resolve(
+          where.walletCredentialId_platform.platform === 'APPLE'
+            ? { pkpassData: dynamicBytes, passMode: 'DYNAMIC', templateVersion: null }
+            : null,
+        ),
+      );
+      googleProvider.isConfigured.mockReturnValue(false);
+
+      await expect(service.getBarcode('studio-1', 'user-1')).resolves.toEqual({ barcode: BARCODE, isNew: false });
+      expect(appleProvider.buildPkpass).not.toHaveBeenCalled();
+      expect(prisma.walletPassArtifact.upsert).not.toHaveBeenCalled();
+    });
+  });
+
   describe('reissue-required (existing credential, no artifact, no raw value available)', () => {
     it('throws WALLET_PASS_REISSUE_REQUIRED instead of silently reissuing the credential', async () => {
       walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: null });

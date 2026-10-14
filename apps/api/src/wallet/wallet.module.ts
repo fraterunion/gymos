@@ -4,6 +4,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AppleWalletProvider } from './apple/apple-wallet-provider.service';
 import { GoogleWalletProvider } from './google/google-wallet-provider.service';
 import { WalletAccessSnapshotLoader } from './access/wallet-access-snapshot.loader';
+import { WalletDynamicPassService } from './dynamic/wallet-dynamic-pass.service';
 import { WalletCredentialService } from './wallet-credential.service';
 import { WalletPassBrandingResolver } from './wallet-pass-branding.resolver';
 import { WalletPassController } from './wallet-pass.controller';
@@ -19,7 +20,8 @@ import { WalletPassService } from './wallet-pass.service';
     GoogleWalletProvider,
     WalletAccessSnapshotLoader,
     WalletPassService,
+    WalletDynamicPassService,
   ],
-  exports: [WalletCredentialService],
+  exports: [WalletCredentialService, WalletDynamicPassService],
 })
 export class WalletModule {}
