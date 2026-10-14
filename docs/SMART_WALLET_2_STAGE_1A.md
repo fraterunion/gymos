@@ -210,8 +210,8 @@ contains the token, the barcode or the member's name.
 
 ## 8. Verification (local, isolated database `gymos_wallet_test`)
 
-- **Unit tests.** 124 suites / 1,547 tests pass. They include the snapshot matrix (23 cases,
-  including the October 2026 regression), the display wording, the token utilities, both template
+- **Unit tests.** 124 suites / 1,549 tests pass. They include the snapshot matrix (25 cases,
+  including the October 2026 regression and fixed-duration TRIALING / lapsed-cycle cases), the display wording, the token utilities, both template
   fingerprints, PKCS#7 signature verification of a dynamic pass with openssl against the test
   WWDR (plus a tamper check that must fail), the static compatibility check, the env validation,
   the APNs client against a local HTTP/2 server, and the static-path protections.
@@ -229,6 +229,12 @@ contains the token, the barcode or the member's name.
   - schema drift identical to base, i.e. no new drift;
   - the same final schema on the upgrade and fresh paths;
   - the documented rollback SQL, which restores exactly the base schema.
+- **Static bundle, base vs this branch.** A temporary harness built static passes with the
+  base commit's provider (`e365d2d`) and with this branch's refactored provider, from identical
+  inputs and test PKI. It covered three cases: brand assets with a plan, brand assets without a
+  plan, and placeholder icons. In every case `pass.json`, `manifest.json` and every image were
+  byte-identical, with the same zip members in the same order. Only the PKCS#7 `signature`,
+  which embeds a signing time, can differ. The harness was not committed.
 - **CLI smoke.** The compiled CLI was run against a seeded synthetic member: usage, status,
   preview, dry-run enroll, refused enroll with the flag off, confirmed enroll, unchanged refresh,
   and refused push with APNs off.

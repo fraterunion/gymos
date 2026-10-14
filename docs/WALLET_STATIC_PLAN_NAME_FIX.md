@@ -64,3 +64,7 @@ deploy. Existing Google objects are never updated: creation is insert-only, and 
   database", builds a real static pass for the incident shape and asserts an empty header.
 - `src/wallet/apple/apple-pass-template-fingerprint.spec.ts` still passes with the pinned v2
   fingerprint.
+- The signing code was refactored in the dynamic-pass commit. Static passes built by the base
+  commit's provider and by the refactored provider, from identical inputs, were byte-identical
+  in every file except the time-stamped signature. This held for three cases: brand assets with
+  a plan, brand assets without a plan, and placeholder icons.
