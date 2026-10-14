@@ -21,6 +21,8 @@ export type WalletPassPushSummary = {
   failed: number;
   invalidTokensRemoved: number;
   failureReasons: string[];
+  /** One entry per registration pushed: registration row id + APNs outcome. No push tokens. */
+  results: Array<{ registrationId: string; ok: boolean; status: number | null; reason: string | null; apnsId: string | null }>;
 };
 
 /**
@@ -78,6 +80,7 @@ export class WalletPassPushService {
       failed: 0,
       invalidTokensRemoved: 0,
       failureReasons: [],
+      results: [],
     };
     if (artifact.registrations.length === 0) {
       this.logSummary(artifact.walletCredential.studioId, summary);
@@ -95,6 +98,13 @@ export class WalletPassPushService {
       for (const registration of artifact.registrations) {
         // A registration only exists for the configured pass type (checked at registration).
         const result = await client.sendPassUpdate(registration.pushToken, identity.passTypeIdentifier);
+        summary.results.push({
+          registrationId: registration.id,
+          ok: result.ok,
+          status: result.status,
+          reason: result.ok ? null : result.reason,
+          apnsId: result.apnsId,
+        });
         if (result.ok) {
           summary.delivered += 1;
           continue;

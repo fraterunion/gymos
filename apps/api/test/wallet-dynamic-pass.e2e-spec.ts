@@ -511,7 +511,7 @@ maybeDescribe('Smart Wallet 2.0 Stage 1A (e2e)', () => {
           const path = String(headers[':path']);
           received.push({ path, topic: headers['apns-topic'], body: Buffer.concat(chunks).toString('utf8') });
           const dead = path.endsWith('dead'.repeat(16));
-          stream.respond({ ':status': dead ? 410 : 200, 'content-type': 'application/json' });
+          stream.respond({ ':status': dead ? 410 : 200, 'content-type': 'application/json', 'apns-id': dead ? '11111111-1111-4111-8111-111111111111' : '22222222-2222-4222-8222-222222222222' });
           stream.end(dead ? JSON.stringify({ reason: 'Unregistered' }) : '');
         });
       });
@@ -538,6 +538,13 @@ maybeDescribe('Smart Wallet 2.0 Stage 1A (e2e)', () => {
         const summary = await pushes.pushPassUpdate(m.serial, { host, ca: identity.certPem });
 
         expect(summary).toMatchObject({ registrations: 2, delivered: 1, failed: 1, invalidTokensRemoved: 1, failureReasons: ['410:Unregistered'] });
+        expect(summary.results.map((r) => [r.ok, r.status, r.apnsId]).sort()).toEqual([
+          [false, 410, '11111111-1111-4111-8111-111111111111'],
+          [true, 200, '22222222-2222-4222-8222-222222222222'],
+        ]);
+        // The summary names registrations by row id only: push tokens never appear in it.
+        expect(JSON.stringify(summary)).not.toContain('ab'.repeat(32));
+        expect(JSON.stringify(summary)).not.toContain('dead'.repeat(16));
         expect(received.map((r) => ({ topic: r.topic, body: r.body })).sort((x, y) => String(x.topic).localeCompare(String(y.topic)))).toEqual([
           { topic: PASS_TYPE, body: '{}' },
           { topic: PASS_TYPE, body: '{}' },

@@ -90,7 +90,7 @@ maybeDescribe('ApnsClient (local HTTP/2 server, test PKI)', () => {
         const token = path.split('/').pop()!;
         const r = responses.get(token) ?? { status: 200 };
         if (r.hang) return; // never answer: exercises the client timeout
-        stream.respond({ ':status': r.status, 'content-type': 'application/json' });
+        stream.respond({ ':status': r.status, 'content-type': 'application/json', 'apns-id': `00000000-0000-4000-8000-${token.padStart(12, '0').slice(-12)}` });
         stream.end(r.body ?? '');
       });
     });
@@ -114,7 +114,11 @@ maybeDescribe('ApnsClient (local HTTP/2 server, test PKI)', () => {
   it('sends Apple\'s pass-update request: POST /3/device/<token>, topic = pass type id, body {}, client cert', async () => {
     const c = client();
     try {
-      await expect(c.sendPassUpdate('aabbccdd00112233', 'pass.co.gymos.member.test')).resolves.toEqual({ ok: true, status: 200 });
+      await expect(c.sendPassUpdate('aabbccdd00112233', 'pass.co.gymos.member.test')).resolves.toEqual({
+        ok: true,
+        status: 200,
+        apnsId: '00000000-0000-4000-8000-ccdd00112233',
+      });
     } finally {
       c.close();
     }
@@ -132,12 +136,12 @@ maybeDescribe('ApnsClient (local HTTP/2 server, test PKI)', () => {
   it('marks 410 Unregistered and BadDeviceToken as permanently invalid tokens; 5xx as transient', async () => {
     responses.set('dead0001', { status: 410, body: JSON.stringify({ reason: 'Unregistered' }) });
     responses.set('dead0002', { status: 400, body: JSON.stringify({ reason: 'BadDeviceToken' }) });
-    responses.set('busy0003', { status: 503, body: JSON.stringify({ reason: 'ServiceUnavailable' }) });
+    responses.set('beef0003', { status: 503, body: JSON.stringify({ reason: 'ServiceUnavailable' }) });
     const c = client();
     try {
-      await expect(c.sendPassUpdate('dead0001', 'pass.x')).resolves.toEqual({ ok: false, status: 410, reason: 'Unregistered', tokenInvalid: true });
-      await expect(c.sendPassUpdate('dead0002', 'pass.x')).resolves.toEqual({ ok: false, status: 400, reason: 'BadDeviceToken', tokenInvalid: true });
-      await expect(c.sendPassUpdate('busy0003', 'pass.x')).resolves.toEqual({ ok: false, status: 503, reason: 'ServiceUnavailable', tokenInvalid: false });
+      await expect(c.sendPassUpdate('dead0001', 'pass.x')).resolves.toEqual({ ok: false, status: 410, reason: 'Unregistered', tokenInvalid: true, apnsId: '00000000-0000-4000-8000-0000dead0001' });
+      await expect(c.sendPassUpdate('dead0002', 'pass.x')).resolves.toEqual({ ok: false, status: 400, reason: 'BadDeviceToken', tokenInvalid: true, apnsId: '00000000-0000-4000-8000-0000dead0002' });
+      await expect(c.sendPassUpdate('beef0003', 'pass.x')).resolves.toEqual({ ok: false, status: 503, reason: 'ServiceUnavailable', tokenInvalid: false, apnsId: '00000000-0000-4000-8000-0000beef0003' });
     } finally {
       c.close();
     }

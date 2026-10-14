@@ -11,9 +11,13 @@ export type ApnsClientOptions = {
   timeoutMs?: number;
 };
 
+/**
+ * `apnsId` is the apns-id response header: Apple's identifier for this notification, safe to log
+ * and the key Apple support uses to trace a delivery. Never the push token.
+ */
 export type ApnsSendResult =
-  | { ok: true; status: 200 }
-  | { ok: false; status: number | null; reason: string | null; tokenInvalid: boolean };
+  | { ok: true; status: 200; apnsId: string | null }
+  | { ok: false; status: number | null; reason: string | null; tokenInvalid: boolean; apnsId: string | null };
 
 /** APNs reasons meaning "this device token will never work for this topic again". */
 const INVALID_TOKEN_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
@@ -37,7 +41,7 @@ export class ApnsClient {
     try {
       session = this.connect();
     } catch {
-      return { ok: false, status: null, reason: 'ConnectionFailed', tokenInvalid: false };
+      return { ok: false, status: null, reason: 'ConnectionFailed', tokenInvalid: false, apnsId: null };
     }
     const body = Buffer.from('{}', 'utf8');
 
@@ -60,30 +64,33 @@ export class ApnsClient {
           'content-length': body.length,
         });
       } catch {
-        finish({ ok: false, status: null, reason: 'RequestFailed', tokenInvalid: false });
+        finish({ ok: false, status: null, reason: 'RequestFailed', tokenInvalid: false, apnsId: null });
         return;
       }
 
       req.setTimeout(this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS, () => {
         req.close(http2.constants.NGHTTP2_CANCEL);
-        finish({ ok: false, status: null, reason: 'Timeout', tokenInvalid: false });
+        finish({ ok: false, status: null, reason: 'Timeout', tokenInvalid: false, apnsId });
       });
 
       let status: number | null = null;
+      let apnsId: string | null = null;
       const chunks: Buffer[] = [];
       req.on('response', (headers) => {
         const s = headers[':status'];
         status = typeof s === 'number' ? s : null;
+        const id = headers['apns-id'];
+        apnsId = typeof id === 'string' && /^[0-9A-Fa-f-]{1,64}$/.test(id) ? id : null;
       });
       req.on('data', (chunk: Buffer) => {
         if (chunks.reduce((n, c) => n + c.length, 0) < 4096) chunks.push(chunk);
       });
-      req.on('error', () => finish({ ok: false, status, reason: 'StreamError', tokenInvalid: false }));
+      req.on('error', () => finish({ ok: false, status, reason: 'StreamError', tokenInvalid: false, apnsId }));
       // Backstop: a stream closed without a complete response still settles exactly once.
-      req.on('close', () => finish({ ok: false, status, reason: 'StreamClosed', tokenInvalid: false }));
+      req.on('close', () => finish({ ok: false, status, reason: 'StreamClosed', tokenInvalid: false, apnsId }));
       req.on('end', () => {
         if (status === 200) {
-          finish({ ok: true, status: 200 });
+          finish({ ok: true, status: 200, apnsId });
           return;
         }
         let reason: string | null = null;
@@ -98,6 +105,7 @@ export class ApnsClient {
           status,
           reason,
           tokenInvalid: status === 410 || (reason !== null && INVALID_TOKEN_REASONS.has(reason)),
+          apnsId,
         });
       });
 
