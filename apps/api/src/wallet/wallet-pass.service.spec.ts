@@ -4,6 +4,39 @@ import JSZip from 'jszip';
 import * as jwt from 'jsonwebtoken';
 import { WalletPassService, isStaleAppleArtifact } from './wallet-pass.service';
 import { APPLE_PASS_TEMPLATE_VERSION } from './apple/apple-wallet.constants';
+import { WalletAccessSnapshotLoader } from './access/wallet-access-snapshot.loader';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A subscription row in the shape WalletAccessSnapshotLoader selects. */
+function subscriptionRow(overrides: Record<string, unknown> = {}, plan: Record<string, unknown> = {}) {
+  const now = Date.now();
+  return {
+    id: 'sub-1',
+    status: 'ACTIVE',
+    source: 'CASH',
+    currentPeriodStart: new Date(now - 10 * DAY_MS),
+    currentPeriodEnd: new Date(now + 20 * DAY_MS),
+    entitlementEndsAt: null,
+    cancelAtPeriodEnd: true,
+    exclusiveGroupKey: 'CORE',
+    supersededBySubscriptionId: null,
+    endReason: null,
+    createdAt: new Date(now - 10 * DAY_MS),
+    membershipPlan: {
+      id: 'plan-full',
+      name: 'Full Access',
+      classCredits: null,
+      allClassesAccess: true,
+      entitlementDays: null,
+      openGymAccess: true,
+      openGymWindowStart: null,
+      openGymWindowEnd: null,
+      ...plan,
+    },
+    ...overrides,
+  };
+}
 
 /** A minimal-but-real .pkpass zip fixture — just enough for extractBarcodeMessageFromPkpass
  *  to parse, without involving real signing (Phase 3.2 recovery tests only need pass.json). */
@@ -18,7 +51,7 @@ describe('WalletPassService', () => {
     studioMembership: { findFirst: jest.fn() },
     walletPassArtifact: { findUnique: jest.fn(), upsert: jest.fn() },
     user: { findUniqueOrThrow: jest.fn() },
-    subscription: { findFirst: jest.fn() },
+    subscription: { findMany: jest.fn() },
   };
   const walletCredentials = { issue: jest.fn(), reissue: jest.fn(), resolve: jest.fn() };
   const branding = { resolve: jest.fn() };
@@ -38,13 +71,14 @@ describe('WalletPassService', () => {
     branding as never,
     appleProvider as never,
     googleProvider as never,
+    new WalletAccessSnapshotLoader(prisma as never),
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.studioMembership.findFirst.mockResolvedValue({ user: { deletedAt: null } });
     prisma.user.findUniqueOrThrow.mockResolvedValue({ firstName: 'Ivonne', lastName: 'Araujo' });
-    prisma.subscription.findFirst.mockResolvedValue({ membershipPlan: { name: 'Full Access' } });
+    prisma.subscription.findMany.mockResolvedValue([subscriptionRow()]);
     branding.resolve.mockResolvedValue({ organizationName: 'ARES Training Club' });
     appleProvider.isConfigured.mockReturnValue(true);
     googleProvider.isConfigured.mockReturnValue(true);
@@ -63,7 +97,7 @@ describe('WalletPassService', () => {
     });
 
     it('does not require an active subscription/entitlement to issue a pass (Phase 1 principle)', async () => {
-      prisma.subscription.findFirst.mockResolvedValue(null); // no active plan
+      prisma.subscription.findMany.mockResolvedValue([]); // no membership at all
       walletCredentials.issue.mockResolvedValue({
         credential: { id: 'wc1' },
         rawCredential: 'raw1',
@@ -131,6 +165,99 @@ describe('WalletPassService', () => {
       expect(result).toEqual({ saveUrl: 'https://pay.google.com/gp/v/save/tok' });
       expect(googleProvider.ensureClassAndObject).not.toHaveBeenCalled();
       expect(googleProvider.buildSaveUrl).toHaveBeenCalledWith('existing-obj');
+    });
+  });
+
+  /**
+   * Smart Wallet 2.0 Stage 1A, Workstream B. The plan a NEWLY built static pass names comes from
+   * canonical entitlement (deriveMembershipLifecycle + selectPrimaryMembership), never from the
+   * stored Subscription.status alone.
+   */
+  describe('static pass plan name — canonical entitlement', () => {
+    beforeEach(() => {
+      walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: 'raw1' });
+      prisma.walletPassArtifact.findUnique.mockResolvedValue(null);
+      appleProvider.buildPkpass.mockResolvedValue(Buffer.from('pkpass-bytes'));
+      prisma.walletPassArtifact.upsert.mockResolvedValue({ pkpassData: Buffer.from('pkpass-bytes') });
+      googleProvider.ensureClassAndObject.mockResolvedValue({ objectId: 'obj1' });
+    });
+
+    const planNamesBuilt = () => ({
+      apple: appleProvider.buildPkpass.mock.calls[0]?.[0]?.planName,
+      google: googleProvider.ensureClassAndObject.mock.calls[0]?.[0]?.planName,
+    });
+
+    it('October 2026 regression: a cash row still ACTIVE after its paid period ended names no plan', async () => {
+      const now = Date.now();
+      prisma.subscription.findMany.mockResolvedValue([
+        subscriptionRow({
+          id: 'sub-current',
+          currentPeriodStart: new Date(now - 34 * DAY_MS),
+          currentPeriodEnd: new Date(now - 4 * DAY_MS), // ended 4 days ago, status still ACTIVE
+          createdAt: new Date(now - 34 * DAY_MS),
+        }),
+        subscriptionRow({
+          id: 'sub-previous',
+          status: 'CANCELED',
+          endReason: 'SUPERSEDED_RENEWAL',
+          supersededBySubscriptionId: 'sub-current',
+          currentPeriodStart: new Date(now - 77 * DAY_MS),
+          currentPeriodEnd: new Date(now - 46 * DAY_MS),
+          createdAt: new Date(now - 77 * DAY_MS),
+        }),
+      ]);
+
+      await service.getApplePass('studio-1', 'user-1');
+
+      expect(planNamesBuilt()).toEqual({ apple: null, google: null });
+    });
+
+    it('names a CANCELED membership that is still inside its paid window', async () => {
+      prisma.subscription.findMany.mockResolvedValue([
+        subscriptionRow(
+          { status: 'CANCELED', source: 'STRIPE', exclusiveGroupKey: null, entitlementEndsAt: new Date(Date.now() + 5 * DAY_MS) },
+          { id: 'plan-booty', name: 'Booty Lab', classCredits: 4, allClassesAccess: false, entitlementDays: 45, openGymAccess: false },
+        ),
+      ]);
+
+      await service.getApplePass('studio-1', 'user-1');
+
+      expect(planNamesBuilt()).toEqual({ apple: 'Booty Lab', google: 'Booty Lab' });
+    });
+
+    it('names the CORE membership, not merely the newest row, when several are entitled', async () => {
+      const now = Date.now();
+      prisma.subscription.findMany.mockResolvedValue([
+        subscriptionRow(
+          { id: 'sub-booty', exclusiveGroupKey: null, createdAt: new Date(now - 1 * DAY_MS) },
+          { id: 'plan-booty', name: 'Booty Lab' },
+        ),
+        subscriptionRow({ id: 'sub-full', createdAt: new Date(now - 9 * DAY_MS) }),
+      ]);
+
+      await service.getApplePass('studio-1', 'user-1');
+
+      expect(planNamesBuilt()).toEqual({ apple: 'Full Access', google: 'Full Access' });
+    });
+
+    it('names no plan for a membership that has not started yet', async () => {
+      const now = Date.now();
+      prisma.subscription.findMany.mockResolvedValue([
+        subscriptionRow({ currentPeriodStart: new Date(now + 2 * DAY_MS), currentPeriodEnd: new Date(now + 32 * DAY_MS) }),
+      ]);
+
+      await service.getApplePass('studio-1', 'user-1');
+
+      expect(planNamesBuilt()).toEqual({ apple: null, google: null });
+    });
+
+    it('reads every subscription of the member in the studio, scoped by studio and member', async () => {
+      await service.getApplePass('studio-1', 'user-1');
+
+      expect(prisma.subscription.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { studioId: 'studio-1', userId: 'user-1' } }),
+      );
+      expect(planNamesBuilt()).toEqual({ apple: 'Full Access', google: 'Full Access' });
     });
   });
 

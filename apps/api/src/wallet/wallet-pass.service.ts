@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SubscriptionStatus, WalletPassPlatform, type WalletCredential, type WalletPassArtifact } from '@prisma/client';
+import { WalletPassPlatform, type WalletCredential, type WalletPassArtifact } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildWalletCredentialBarcode, WALLET_CREDENTIAL_PREFIX } from './wallet-credential.constants';
@@ -17,6 +17,8 @@ import { APPLE_PASS_TEMPLATE_VERSION, WALLET_APPLE_NOT_CONFIGURED_MESSAGE } from
 import { extractBarcodeMessageFromPkpass } from './apple/pkpass-reader';
 import { GoogleWalletProvider } from './google/google-wallet-provider.service';
 import { WALLET_GOOGLE_NOT_CONFIGURED_MESSAGE } from './google/google-wallet.constants';
+import { resolveEntitledPrimaryPlanName } from './access/wallet-access-snapshot';
+import { WalletAccessSnapshotLoader } from './access/wallet-access-snapshot.loader';
 
 type MemberContext = { memberName: string; planName: string | null };
 
@@ -59,6 +61,7 @@ export class WalletPassService {
     private readonly branding: WalletPassBrandingResolver,
     private readonly appleProvider: AppleWalletProvider,
     private readonly googleProvider: GoogleWalletProvider,
+    private readonly accessLoader: WalletAccessSnapshotLoader,
   ) {}
 
   /**
@@ -429,21 +432,28 @@ export class WalletPassService {
     });
   }
 
+  /**
+   * The plan named on a newly built static pass is the canonical PRIMARY membership the member
+   * is ENTITLED to right now (deriveMembershipLifecycle + selectPrimaryMembership — the same
+   * rules check-in and booking use), or none. It used to be the newest row whose stored status
+   * was ACTIVE/TRIALING, which kept naming a cash plan after its paid period had ended (cash
+   * rows keep status ACTIVE past their end date), skipped CANCELED rows still inside a paid
+   * window, and picked the newest row rather than the CORE membership.
+   *
+   * Only passes built from now on are affected: a stored .pkpass is served verbatim and
+   * APPLE_PASS_TEMPLATE_VERSION is unchanged, so no existing artifact is rebuilt by this.
+   */
   private async loadMemberContext(studioId: string, userId: string): Promise<MemberContext> {
-    const [user, subscription] = await Promise.all([
+    const [user, subscriptions] = await Promise.all([
       this.prisma.user.findUniqueOrThrow({
         where: { id: userId },
         select: { firstName: true, lastName: true },
       }),
-      this.prisma.subscription.findFirst({
-        where: { studioId, userId, status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] } },
-        orderBy: { createdAt: 'desc' },
-        select: { membershipPlan: { select: { name: true } } },
-      }),
+      this.accessLoader.loadSubscriptions(studioId, userId),
     ]);
     return {
       memberName: `${user.firstName} ${user.lastName}`.trim(),
-      planName: subscription?.membershipPlan.name ?? null,
+      planName: resolveEntitledPrimaryPlanName(subscriptions, new Date()),
     };
   }
 
