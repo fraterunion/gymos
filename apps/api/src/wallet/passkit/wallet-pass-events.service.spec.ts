@@ -1,6 +1,13 @@
 import { WalletPassEventType as T } from '@prisma/client';
 import type { PrismaService } from '../../prisma/prisma.service';
-import { analyzeRegistrationHistory, deviceHashOf, type PassEventRow, WalletPassEventsService } from './wallet-pass-events.service';
+import {
+  analyzeRegistrationHistory,
+  deviceHashOf,
+  devicesNotListedSince,
+  NO_ACTIVE_UPDATE_REGISTRATION,
+  type PassEventRow,
+  WalletPassEventsService,
+} from './wallet-pass-events.service';
 import { isPassNotModified } from './passkit.service';
 
 const t0 = new Date('2026-10-14T18:40:00.000Z');
@@ -48,8 +55,8 @@ describe('analyzeRegistrationHistory', () => {
     );
     expect(r.churnSuspectedDevices).toEqual([A]);
     expect(r.findings).toHaveLength(2);
-    expect(r.findings[0]).toMatch(/^NO_ACTIVE_REGISTRATION/);
-    expect(r.findings[0]).toMatch(/does not prove the pass was removed/);
+    expect(r.findings[0]).toMatch(/^NO_ACTIVE_UPDATE_REGISTRATION: no active update registration/);
+    expect(r.findings[0]).toMatch(/does not mean the pass was removed/);
     expect(r.findings[1]).toMatch(/^REGISTRATION_CHURN/);
     expect(r.findings[1]).toMatch(/do not recreate registrations server-side/);
     expect(r.findings.join(' ')).not.toMatch(/uninstalled|deleted by the member/i);
@@ -68,7 +75,7 @@ describe('analyzeRegistrationHistory', () => {
   it('an unregistration long after registering is not churn', () => {
     const r = analyzeRegistrationHistory([ev(T.REGISTERED, 0, B), ev(T.UNREGISTERED, 3 * 24 * 3600, B)], [], { passVersion: 1, lastModifiedAt: null });
     expect(r.churnSuspectedDevices).toEqual([]);
-    expect(r.findings.map((f) => f.split(':')[0])).toEqual(['NO_ACTIVE_REGISTRATION']);
+    expect(r.findings.map((f) => f.split(':')[0])).toEqual([NO_ACTIVE_UPDATE_REGISTRATION]);
   });
 
   it('a 304 is not a retrieval, and a retrieval of an older version does not count', () => {
@@ -87,6 +94,27 @@ describe('analyzeRegistrationHistory', () => {
     const r = analyzeRegistrationHistory([ev(T.APNS_FAILED, 10, A, 1, 503), ev(T.APNS_INVALID_TOKEN, 20, B, 1, 410)], [A], { passVersion: 1, lastModifiedAt: null });
     expect(r.lastApnsAcceptedAt).toBeNull();
     expect(r.lastApnsFailureAt).toEqual(at(20));
+  });
+});
+
+describe('devicesNotListedSince (APNs acceptance is not proof of display)', () => {
+  const pushAt = at(600);
+  it('a device counts as having acted on a push only if it listed changed passes at or after the push', () => {
+    const events = [
+      ev(T.SERIALS_LISTED, 300, A, 1, 200), // before the push: does not count
+      ev(T.APNS_ACCEPTED, 600, A, 2, 200),
+      ev(T.APNS_ACCEPTED, 600, B, 2, 200),
+      ev(T.SERIALS_LISTED, 601, A, 2, 200),
+      ev(T.PASS_RETRIEVED, 602, null, 2, 200), // device-less: never attributed
+    ];
+    expect(devicesNotListedSince(events, [A, B], pushAt)).toEqual([B]);
+    expect(devicesNotListedSince(events, [A], pushAt)).toEqual([]);
+    expect(devicesNotListedSince([], [A, B], pushAt)).toEqual([A, B]);
+  });
+
+  it('records when a device last listed the pass', () => {
+    const r = analyzeRegistrationHistory([ev(T.REGISTERED, 0, A), ev(T.SERIALS_LISTED, 700, A, 2, 200)], [A], { passVersion: 2, lastModifiedAt: at(650) });
+    expect(r.lastSerialsListedAt).toEqual(at(700));
   });
 });
 

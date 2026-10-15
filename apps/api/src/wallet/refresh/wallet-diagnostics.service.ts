@@ -2,13 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { WalletPassMode, WalletPassPlatform, WalletPassRefreshStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppleWalletProvider } from '../apple/apple-wallet-provider.service';
-import { analyzeRegistrationHistory, deviceHashOf, type PassEventRow } from '../passkit/wallet-pass-events.service';
+import {
+  analyzeRegistrationHistory,
+  deviceHashOf,
+  devicesNotListedSince,
+  NO_ACTIVE_UPDATE_REGISTRATION_TEXT,
+  type PassEventRow,
+} from '../passkit/wallet-pass-events.service';
 import { certificateExpiryLevel } from './wallet-refresh.constants';
 
 const EVENT_WINDOW = 500;
 const STUDIO_EVENT_LOOKBACK_MS = 30 * 24 * 60 * 60_000;
-const CAVEAT =
-  'Registrations are created and removed only by devices. Zero registrations means no device is currently registered for updates; it does not prove the pass was removed from the Wallet.';
+const CAVEAT = `Registrations are created and removed only by devices. Zero registrations means ${NO_ACTIVE_UPDATE_REGISTRATION_TEXT} An APNs acceptance proves only that Apple took the notification; a device counts as having acted on it when it asks for its changed passes afterwards (SERIALS_LISTED).`;
 
 /**
  * Read-only operator diagnostics (Smart Wallet 2.0 Stage 3). Never prints raw device
@@ -61,6 +66,14 @@ export class WalletDiagnosticsService {
       passVersion: artifact.passVersion,
       lastModifiedAt: artifact.lastModifiedAt,
     });
+    // Devices registered when the last push went out that have not asked for changed passes since.
+    const devicesNotFetchedSinceLastPush = artifact.lastPushedAt
+      ? devicesNotListedSince(
+          events as PassEventRow[],
+          registrations.filter((r) => r.createdAt <= artifact.lastPushedAt!).map((r) => r.device),
+          artifact.lastPushedAt,
+        )
+      : [];
     const recentJobs = await this.prisma.walletPassRefreshJob.findMany({
       where: { studioId: artifact.walletCredential.studioId, userId: artifact.walletCredential.userId },
       orderBy: { createdAt: 'desc' },
@@ -85,6 +98,7 @@ export class WalletDiagnosticsService {
       activeDeviceCount: registrations.length,
       registrations,
       ...analysis,
+      devicesNotFetchedSinceLastPush,
       recentEvents: newestFirst.slice(0, recentEventCount).map((e) => ({
         at: e.occurredAt,
         type: e.type,
@@ -138,6 +152,7 @@ export class WalletDiagnosticsService {
         lastUnregisteredAt: analysis.lastUnregisteredAt,
         lastApnsAcceptedAt: analysis.lastApnsAcceptedAt,
         lastPassRetrievedAt: analysis.lastPassRetrievedAt,
+        lastSerialsListedAt: analysis.lastSerialsListedAt,
         currentVersionRetrieved: analysis.currentVersionRetrieved,
         churnSuspected: analysis.churnSuspectedDevices.length > 0,
         nextTransitionAt: a.nextTransitionAt,

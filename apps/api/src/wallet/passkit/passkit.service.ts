@@ -233,7 +233,11 @@ export class PasskitService {
           ...(since !== null ? { lastModifiedAt: { gt: new Date(since) } } : {}),
         },
       },
-      select: { serialNumber: true, artifact: { select: { lastModifiedAt: true } } },
+      select: {
+        serialNumber: true,
+        studioId: true,
+        artifact: { select: { id: true, walletCredentialId: true, passVersion: true, lastModifiedAt: true } },
+      },
       orderBy: { serialNumber: 'asc' },
       take: MAX_SERIALS_PER_RESPONSE,
     });
@@ -241,6 +245,20 @@ export class PasskitService {
 
     const newest = Math.max(...rows.map((r) => r.artifact.lastModifiedAt?.getTime() ?? 0));
     const lastUpdated = Math.min(newest, Date.now() - CURSOR_SAFETY_LAG_MS);
+    // Per-device delivery evidence: this device asked which passes changed and was told about
+    // these. (APNs accepting a push does not prove a device acted on it; this does.)
+    for (const r of rows) {
+      await this.events.record({
+        studioId: r.studioId,
+        walletPassArtifactId: r.artifact.id,
+        walletCredentialId: r.artifact.walletCredentialId,
+        type: WalletPassEventType.SERIALS_LISTED,
+        deviceLibraryIdentifier: device.deviceLibraryIdentifier,
+        passVersion: r.artifact.passVersion,
+        httpStatus: 200,
+        detail: { listed: rows.length, sinceTag: since !== null },
+      });
+    }
     return { serialNumbers: rows.map((r) => r.serialNumber), lastUpdated: String(Math.max(lastUpdated, since ?? 0)) };
   }
 

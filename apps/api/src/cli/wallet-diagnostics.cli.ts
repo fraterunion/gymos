@@ -6,6 +6,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { validateEnv } from '../config/validate-env';
 import { PrismaModule } from '../prisma/prisma.module';
 import { WalletDiagnosticsService } from '../wallet/refresh/wallet-diagnostics.service';
+import { WalletHealthService, walletHealthNeedsAttention } from '../wallet/refresh/wallet-health.service';
 import { WalletModule } from '../wallet/wallet.module';
 
 /**
@@ -15,12 +16,17 @@ import { WalletModule } from '../wallet/wallet.module';
  *   node dist/cli/wallet-diagnostics.cli.js pass --credential <walletCredentialId>
  *   node dist/cli/wallet-diagnostics.cli.js studio --studio <studioId>
  *   node dist/cli/wallet-diagnostics.cli.js certificate
+ *   node dist/cli/wallet-diagnostics.cli.js health [--studio <studioId>]
  *
  *   pass         one pass: versions (current vs pushed), active registrations as {device hash,
  *                push-token length, timestamps}, last registration / unregistration / APNs
  *                acceptance / retrieval, churn and stale-version findings, recent events and jobs.
  *   studio       every dynamic pass of a studio with the same signals, plus the queue state.
  *   certificate  the pass signing certificate's identifiers, validity window and expiry level.
+ *   health       operational findings (dead letters, refresh-failure spikes, APNs failures, passes
+ *                with no active update registration, undelivered versions, devices that did not
+ *                fetch after an accepted push, queue backlog, stuck jobs, idle worker, certificate).
+ *                Exit code 3 when any finding is HIGH or CRITICAL (for a cron), 0 otherwise.
  *
  * Zero registrations is reported as "no active registration", never as "pass removed".
  * Never prints a device library identifier, push token, authentication token or QR value.
@@ -54,9 +60,10 @@ async function main(): Promise<number> {
   const valid =
     (command === 'pass' && credential !== undefined && ID_PATTERN.test(credential)) ||
     (command === 'studio' && studio !== undefined && ID_PATTERN.test(studio)) ||
+    (command === 'health' && (studio === undefined || ID_PATTERN.test(studio))) ||
     command === 'certificate';
   if (!valid) {
-    print('usage', { usage: 'wallet-diagnostics.cli <pass --credential <id> | studio --studio <id> | certificate>' });
+    print('usage', { usage: 'wallet-diagnostics.cli <pass --credential <id> | studio --studio <id> | certificate | health [--studio <id>]>' });
     return 1;
   }
 
@@ -66,7 +73,11 @@ async function main(): Promise<number> {
     const now = new Date();
     if (command === 'pass') print('pass', await diagnostics.passReport(credential!));
     else if (command === 'studio') print('studio', await diagnostics.studioReport(studio!, now));
-    else print('certificate', diagnostics.certificateReport(now));
+    else if (command === 'health') {
+      const report = await app.get(WalletHealthService).evaluate(now, { studioId: studio });
+      print('health', report);
+      return walletHealthNeedsAttention(report) ? 3 : 0;
+    } else print('certificate', diagnostics.certificateReport(now));
     return 0;
   } finally {
     await app.close();

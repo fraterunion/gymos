@@ -11,6 +11,7 @@ import {
   WALLET_REFRESH_SWEEP_LIMIT,
   WALLET_REFRESH_TRANSITION_LOOKAHEAD_MS,
   WALLET_RETENTION_DELETE_BATCH,
+  WALLET_RETENTION_MAX_BATCHES,
   type WalletRefreshReason,
 } from './wallet-refresh.constants';
 import { WalletRefreshQueueService, type WalletRefreshTarget } from './wallet-refresh-queue.service';
@@ -21,6 +22,7 @@ const DAY_MS = 24 * 60 * 60_000;
 const LOCK_KEYS = {
   changes: 'wallet_refresh:detect_changes',
   transitions: 'wallet_refresh:transition_sweep',
+  undelivered: 'wallet_refresh:undelivered_sweep',
   reconcile: 'wallet_refresh:reconcile',
 } as const;
 
@@ -127,6 +129,35 @@ export class WalletRefreshTriggersService {
     });
   }
 
+  /**
+   * Re-queue members whose newest dynamic-pass version was not delivered (APNs was off, or every
+   * retry failed) — so turning APNs on, or APNs recovering, delivers within a minute instead of
+   * waiting for the hourly reconciliation. Members that already have a PENDING or RUNNING job are
+   * left alone: a retry waiting out its backoff is never pulled forward, and dead letters keep
+   * their cooldown. The caller runs this only while APNs is enabled.
+   */
+  async sweepUndelivered(now: Date): Promise<{ skipped: boolean; enqueued: number; members: number }> {
+    return this.withPhaseLock<{ skipped: boolean; enqueued: number; members: number }>(LOCK_KEYS.undelivered, { skipped: true, enqueued: 0, members: 0 }, async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ studio_id: string; user_id: string }>>`
+        SELECT DISTINCT wc.studio_id, wc.user_id
+        FROM wallet_pass_artifacts a
+        JOIN wallet_credentials wc ON wc.id = a.wallet_credential_id
+        WHERE a.pass_mode = 'DYNAMIC'::"WalletPassMode" AND a.platform = 'APPLE'::"WalletPassPlatform"
+          AND a.pass_version > a.pushed_pass_version
+          AND NOT EXISTS (
+            SELECT 1 FROM wallet_pass_refresh_jobs j
+            WHERE j.studio_id = wc.studio_id AND j.user_id = wc.user_id
+              AND j.status IN ('PENDING'::"WalletPassRefreshStatus", 'RUNNING'::"WalletPassRefreshStatus"))
+        LIMIT ${WALLET_REFRESH_SWEEP_LIMIT}`;
+      const targets = rows.map((r) => ({ studioId: r.studio_id, userId: r.user_id }));
+      const enqueued = await this.enqueueInChunks(targets, 'UNDELIVERED', now);
+      if (targets.length > 0) {
+        this.logger.log(JSON.stringify({ event: 'wallet.refresh.undelivered_enqueued', members: targets.length, enqueued }));
+      }
+      return { skipped: false, enqueued, members: targets.length };
+    });
+  }
+
   /** Enqueue every dynamic-pass holder; unchanged passes cost a render and a hash comparison. */
   async reconcileAll(now: Date): Promise<{ skipped: boolean; enqueued: number; members: number }> {
     return this.withPhaseLock<{ skipped: boolean; enqueued: number; members: number }>(LOCK_KEYS.reconcile, { skipped: true, enqueued: 0, members: 0 }, async (tx) => {
@@ -140,27 +171,42 @@ export class WalletRefreshTriggersService {
     });
   }
 
-  /** Documented retention, in bounded batches (short locks). */
-  async applyRetention(now: Date): Promise<{ events: number; jobs: number; failedJobs: number }> {
+  /**
+   * Documented retention. Each table drains in statements of WALLET_RETENTION_DELETE_BATCH rows
+   * (short locks) until nothing is left to delete, up to WALLET_RETENTION_MAX_BATCHES statements per
+   * run; a backlog beyond that continues on the next run and is logged as such.
+   */
+  async applyRetention(now: Date): Promise<{ events: number; jobs: number; failedJobs: number; backlog: boolean }> {
     const eventsBefore = new Date(now.getTime() - WALLET_PASS_EVENT_RETENTION_DAYS * DAY_MS);
     const jobsBefore = new Date(now.getTime() - WALLET_REFRESH_JOB_RETENTION_DAYS * DAY_MS);
     const failedBefore = new Date(now.getTime() - WALLET_REFRESH_FAILED_JOB_RETENTION_DAYS * DAY_MS);
-    const events = await this.prisma.$executeRaw`
+    const drain = async (deleteBatch: () => Promise<number>) => {
+      let total = 0;
+      for (let i = 0; i < WALLET_RETENTION_MAX_BATCHES; i += 1) {
+        const n = await deleteBatch();
+        total += n;
+        if (n < WALLET_RETENTION_DELETE_BATCH) return { total, backlog: false };
+      }
+      return { total, backlog: true };
+    };
+    const events = await drain(() => this.prisma.$executeRaw`
       DELETE FROM wallet_pass_events WHERE id IN (
-        SELECT id FROM wallet_pass_events WHERE occurred_at < ${utc(eventsBefore)} LIMIT ${WALLET_RETENTION_DELETE_BATCH})`;
-    const jobs = await this.prisma.$executeRaw`
+        SELECT id FROM wallet_pass_events WHERE occurred_at < ${utc(eventsBefore)} LIMIT ${WALLET_RETENTION_DELETE_BATCH})`);
+    const jobs = await drain(() => this.prisma.$executeRaw`
       DELETE FROM wallet_pass_refresh_jobs WHERE id IN (
         SELECT id FROM wallet_pass_refresh_jobs
         WHERE status IN ('SUCCEEDED'::"WalletPassRefreshStatus", 'SUPERSEDED'::"WalletPassRefreshStatus")
-          AND completed_at < ${utc(jobsBefore)} LIMIT ${WALLET_RETENTION_DELETE_BATCH})`;
-    const failedJobs = await this.prisma.$executeRaw`
+          AND completed_at < ${utc(jobsBefore)} LIMIT ${WALLET_RETENTION_DELETE_BATCH})`);
+    const failedJobs = await drain(() => this.prisma.$executeRaw`
       DELETE FROM wallet_pass_refresh_jobs WHERE id IN (
         SELECT id FROM wallet_pass_refresh_jobs
-        WHERE status = 'FAILED'::"WalletPassRefreshStatus" AND completed_at < ${utc(failedBefore)} LIMIT ${WALLET_RETENTION_DELETE_BATCH})`;
-    if (events + jobs + failedJobs > 0) {
-      this.logger.log(JSON.stringify({ event: 'wallet.refresh.retention_applied', events, jobs, failedJobs }));
+        WHERE status = 'FAILED'::"WalletPassRefreshStatus" AND completed_at < ${utc(failedBefore)} LIMIT ${WALLET_RETENTION_DELETE_BATCH})`);
+    const result = { events: events.total, jobs: jobs.total, failedJobs: failedJobs.total, backlog: events.backlog || jobs.backlog || failedJobs.backlog };
+    if (result.events + result.jobs + result.failedJobs > 0) {
+      this.logger.log(JSON.stringify({ event: 'wallet.refresh.retention_applied', ...result }));
     }
-    return { events, jobs, failedJobs };
+    if (result.backlog) this.logger.warn(JSON.stringify({ event: 'wallet.refresh.retention_backlog', ...result }));
+    return result;
   }
 
   /** Automatic triggers respect the dead-letter cooldown; each statement stays bounded. */

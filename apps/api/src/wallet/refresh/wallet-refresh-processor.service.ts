@@ -100,7 +100,7 @@ export class WalletRefreshProcessorService {
     if (!this.push.isEnabled()) return 'push_pending_apns_disabled';
     let summary;
     try {
-      summary = await this.push.pushPassUpdate(walletCredentialId);
+      summary = await this.push.pushPassUpdate(walletCredentialId, {}, { skipDevicesAlreadyAccepted: true });
     } catch (e) {
       if (e instanceof WalletPassPushError) throw new WalletRefreshRetryableError(e.code);
       throw new WalletRefreshRetryableError(`APNS_ERROR:${sanitizeRefreshError(e)}`);
@@ -109,6 +109,7 @@ export class WalletRefreshProcessorService {
     if (transient.length > 0) {
       throw new WalletRefreshRetryableError(`APNS_TRANSIENT:${transient.map((r) => `${r.status ?? 'none'}:${r.reason ?? 'unknown'}`).join(',')}`);
     }
-    return summary.registrations === 0 ? 'no_registrations' : `pushed:${summary.delivered}`;
+    if (summary.registrations === 0) return 'no_registrations';
+    return summary.alreadyAccepted > 0 ? `pushed:${summary.delivered},already:${summary.alreadyAccepted}` : `pushed:${summary.delivered}`;
   }
 }

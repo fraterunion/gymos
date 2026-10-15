@@ -20,6 +20,8 @@ const ALLOWED_DETAIL_KEYS = new Set([
   'apnsId',
   'reason',
   'pruned',
+  'listed',
+  'sinceTag',
 ]);
 
 function safeDetail(detail: Record<string, unknown> | undefined): Prisma.InputJsonValue | undefined {
@@ -45,6 +47,11 @@ export type WalletPassEventInput = {
   occurredAt?: Date;
 };
 
+/** Finding code and the exact wording for a pass with zero registrations (never "removed"). */
+export const NO_ACTIVE_UPDATE_REGISTRATION = 'NO_ACTIVE_UPDATE_REGISTRATION';
+export const NO_ACTIVE_UPDATE_REGISTRATION_TEXT =
+  'no active update registration: no device is currently registered to receive updates for this pass. This does not mean the pass was removed from Wallet — Wallet can drop a registration while keeping the pass installed.';
+
 export type PassEventRow = {
   type: WalletPassEventType;
   deviceHash: string | null;
@@ -61,6 +68,8 @@ export type RegistrationHistoryAnalysis = {
   lastPassRetrievedAt: Date | null;
   lastPassRetrievedVersion: number | null;
   lastNotModifiedAt: Date | null;
+  /** Last time a registered device asked which passes changed and was told about this one. */
+  lastSerialsListedAt: Date | null;
   /** A device fetched the current passVersion with a 200 at or after the content changed. */
   currentVersionRetrieved: boolean;
   /** Devices that unregistered soon after registering and have no active registration now. */
@@ -106,9 +115,7 @@ export function analyzeRegistrationHistory(
 
   const findings: string[] = [];
   if (active.size === 0) {
-    findings.push(
-      'NO_ACTIVE_REGISTRATION: no device is registered for updates. This does not prove the pass was removed: Wallet can drop a registration while keeping the pass installed.',
-    );
+    findings.push(`${NO_ACTIVE_UPDATE_REGISTRATION}: ${NO_ACTIVE_UPDATE_REGISTRATION_TEXT}`);
   }
   if (churnSuspectedDevices.length > 0) {
     findings.push(
@@ -129,10 +136,26 @@ export function analyzeRegistrationHistory(
     lastPassRetrievedAt: retrieved?.occurredAt ?? null,
     lastPassRetrievedVersion: retrieved?.passVersion ?? null,
     lastNotModifiedAt: last(WalletPassEventType.PASS_NOT_MODIFIED)?.occurredAt ?? null,
+    lastSerialsListedAt: last(WalletPassEventType.SERIALS_LISTED)?.occurredAt ?? null,
     currentVersionRetrieved,
     churnSuspectedDevices,
     findings,
   };
+}
+
+/**
+ * Pure: registered devices that have not asked Wallet's "which passes changed?" question about
+ * this pass since `since` (normally the last APNs push). An APNs 200 proves only that Apple
+ * accepted the notification; a SERIALS_LISTED event from the device proves Wallet on that device
+ * acted on it. Devices returned here may still be showing the previous version.
+ */
+export function devicesNotListedSince(events: readonly PassEventRow[], activeDeviceHashes: readonly string[], since: Date): string[] {
+  const listed = new Set(
+    events
+      .filter((e) => e.type === WalletPassEventType.SERIALS_LISTED && e.deviceHash !== null && e.occurredAt >= since)
+      .map((e) => e.deviceHash as string),
+  );
+  return activeDeviceHashes.filter((device) => !listed.has(device));
 }
 
 /**

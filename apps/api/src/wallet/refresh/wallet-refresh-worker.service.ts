@@ -4,22 +4,26 @@ import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppleWalletProvider } from '../apple/apple-wallet-provider.service';
 import { WalletDynamicPassService } from '../dynamic/wallet-dynamic-pass.service';
-import { refreshWorkerEnabled } from '../dynamic/wallet-dynamic-pass.config';
+import { apnsEnabled, refreshWorkerEnabled } from '../dynamic/wallet-dynamic-pass.config';
 import {
   certificateExpiryLevel,
   WALLET_REFRESH_BATCH_SIZE,
   WALLET_REFRESH_CERTIFICATE_CHECK_MS,
   WALLET_REFRESH_CHANGE_POLL_MS,
+  WALLET_REFRESH_HEALTH_MS,
   WALLET_REFRESH_RECONCILE_MS,
   WALLET_REFRESH_RETENTION_MS,
   WALLET_REFRESH_TICK_MS,
   WALLET_REFRESH_TRANSITION_SWEEP_MS,
+  WALLET_REFRESH_UNDELIVERED_SWEEP_MS,
+  walletRefreshInitialReconcileDelayMs,
 } from './wallet-refresh.constants';
+import { WalletHealthService } from './wallet-health.service';
 import { WalletRefreshPermanentError, WalletRefreshProcessorService } from './wallet-refresh-processor.service';
 import { sanitizeRefreshError, WalletRefreshQueueService } from './wallet-refresh-queue.service';
 import { WalletRefreshTriggersService } from './wallet-refresh-triggers.service';
 
-type Phase = 'changes' | 'transitions' | 'reconcile' | 'retention' | 'certificate';
+type Phase = 'changes' | 'transitions' | 'undelivered' | 'reconcile' | 'retention' | 'certificate' | 'health';
 
 export type WalletRefreshJobReport = { jobId: string; studioId: string; result: 'SUCCEEDED' | 'RETRY' | 'FAILED' | 'SUPERSEDED' | 'LOST'; outcome: string };
 
@@ -38,9 +42,11 @@ export type WalletRefreshTickReport = {
  *
  * Each tick (default every 5 s, never overlapping within an instance):
  *   1. recover expired leases (crash recovery);
- *   2. the trigger phases that are due — change detection (15 s), time-transition sweep (1 min),
- *      reconciliation (1 h), retention (24 h), certificate expiry check (1 h) — each guarded by a
- *      transaction-scoped advisory lock so only one instance runs it;
+ *   2. the phases that are due — change detection (15 s), time-transition sweep (1 min),
+ *      pending-delivery sweep (1 min, only while APNs is enabled), reconciliation (1 h; the first
+ *      one 5–15 min after start, never at boot), retention (24 h), certificate expiry check (1 h),
+ *      health evaluation (15 min) — the scheduling ones guarded by a transaction-scoped advisory
+ *      lock so only one instance runs them;
  *   3. claim and process up to 10 due jobs (SKIP LOCKED; safe across instances).
  *
  * No database transaction spans signing or APNs: refresh() signs before its single guarded
@@ -52,7 +58,18 @@ export class WalletRefreshWorkerService implements OnModuleDestroy {
   readonly workerId = `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
-  private readonly lastRunAt: Record<Phase, number> = { changes: 0, transitions: 0, reconcile: 0, retention: 0, certificate: 0 };
+  // Every phase is due at the first tick except reconciliation: re-rendering every pass on each
+  // deploy or restart is avoidable load, and nothing depends on it (detection resumes from its
+  // durable cursor; transitions and pending deliveries have their own sweeps).
+  private readonly lastRunAt: Record<Phase, number> = {
+    changes: 0,
+    transitions: 0,
+    undelivered: 0,
+    reconcile: Date.now() - WALLET_REFRESH_RECONCILE_MS + walletRefreshInitialReconcileDelayMs(),
+    retention: 0,
+    certificate: 0,
+    health: 0,
+  };
 
   constructor(
     private readonly config: ConfigService,
@@ -61,6 +78,7 @@ export class WalletRefreshWorkerService implements OnModuleDestroy {
     private readonly processor: WalletRefreshProcessorService,
     private readonly dynamic: WalletDynamicPassService,
     private readonly appleProvider: AppleWalletProvider,
+    private readonly health: WalletHealthService,
   ) {}
 
   isEnabled(): boolean {
@@ -123,9 +141,17 @@ export class WalletRefreshWorkerService implements OnModuleDestroy {
     };
     await run('changes', WALLET_REFRESH_CHANGE_POLL_MS, () => this.triggers.detectChanges(now));
     await run('transitions', WALLET_REFRESH_TRANSITION_SWEEP_MS, () => this.triggers.sweepTransitions(now));
+    if (apnsEnabled(this.config)) {
+      await run('undelivered', WALLET_REFRESH_UNDELIVERED_SWEEP_MS, () => this.triggers.sweepUndelivered(now));
+    }
     await run('reconcile', WALLET_REFRESH_RECONCILE_MS, () => this.triggers.reconcileAll(now));
     await run('retention', WALLET_REFRESH_RETENTION_MS, () => this.triggers.applyRetention(now));
     await run('certificate', WALLET_REFRESH_CERTIFICATE_CHECK_MS, async () => this.checkCertificate(now));
+    await run('health', WALLET_REFRESH_HEALTH_MS, async () => {
+      const report = await this.health.evaluate(now);
+      this.health.logReport(report);
+      return { maxSeverity: report.maxSeverity, counts: report.counts };
+    });
     if (opts.processJobs !== false) {
       report.jobs = await this.processDue(now, opts.limit ?? WALLET_REFRESH_BATCH_SIZE);
     }

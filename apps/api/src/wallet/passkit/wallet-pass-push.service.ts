@@ -5,7 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppleWalletProvider } from '../apple/apple-wallet-provider.service';
 import { APNS_PRODUCTION_HOST, apnsEnabled } from '../dynamic/wallet-dynamic-pass.config';
 import { ApnsClientFactory, type ApnsClientOptions } from './apns.client';
-import { WalletPassEventsService } from './wallet-pass-events.service';
+import { deviceHashOf, WalletPassEventsService } from './wallet-pass-events.service';
 import { MAX_REGISTRATIONS_PER_PASS } from './passkit.service';
 
 export class WalletPassPushError extends Error {
@@ -27,6 +27,17 @@ export type WalletPassPushSummary = {
   /** The passVersion this push announced, and whether it is now recorded as delivered. */
   passVersion: number;
   versionRecordedAsPushed: boolean;
+  /** Registrations not pushed again because APNs already accepted this version for that device. */
+  alreadyAccepted: number;
+};
+
+export type WalletPassPushOptions = {
+  /**
+   * Retry mode (refresh worker): skip a registration whose device APNs already accepted for this
+   * passVersion after the registration last changed — so a retry after one device's transient
+   * failure re-notifies only the devices that still need it. Operator pushes send to every device.
+   */
+  skipDevicesAlreadyAccepted?: boolean;
 };
 
 /**
@@ -62,7 +73,11 @@ export class WalletPassPushService {
    * `clientOverrides` exists for tests against a local HTTP/2 server (host + trust anchor);
    * production callers never pass it, so production pushes always go to api.push.apple.com.
    */
-  async pushPassUpdate(walletCredentialId: string, clientOverrides: Partial<ApnsClientOptions> = {}): Promise<WalletPassPushSummary> {
+  async pushPassUpdate(
+    walletCredentialId: string,
+    clientOverrides: Partial<ApnsClientOptions> = {},
+    options: WalletPassPushOptions = {},
+  ): Promise<WalletPassPushSummary> {
     if (!this.isEnabled()) throw new WalletPassPushError('WALLET_APNS_DISABLED');
     if (!this.appleProvider.isConfigured()) throw new WalletPassPushError('WALLET_APPLE_NOT_CONFIGURED');
 
@@ -74,7 +89,7 @@ export class WalletPassPushService {
         passVersion: true,
         walletCredential: { select: { studioId: true } },
         registrations: {
-          select: { id: true, pushToken: true, passTypeIdentifier: true, deviceLibraryIdentifier: true },
+          select: { id: true, pushToken: true, passTypeIdentifier: true, deviceLibraryIdentifier: true, updatedAt: true },
           orderBy: { createdAt: 'asc' },
           take: MAX_REGISTRATIONS_PER_PASS,
         },
@@ -95,10 +110,16 @@ export class WalletPassPushService {
       results: [],
       passVersion: artifact.passVersion,
       versionRecordedAsPushed: false,
+      alreadyAccepted: 0,
     };
     const studioId = artifact.walletCredential.studioId;
-    if (artifact.registrations.length === 0) {
-      // Nothing to notify: a device that registers later downloads the current pass anyway.
+    const pending = options.skipDevicesAlreadyAccepted
+      ? await this.withoutAlreadyAccepted(artifact.id, artifact.passVersion, artifact.registrations)
+      : artifact.registrations;
+    summary.alreadyAccepted = artifact.registrations.length - pending.length;
+    if (pending.length === 0) {
+      // Nothing to notify: no registrations (a device that registers later downloads the current
+      // pass on registration), or every device was already notified of this version.
       summary.versionRecordedAsPushed = await this.recordPushed(artifact.id, artifact.passVersion);
       this.logSummary(studioId, summary);
       return summary;
@@ -112,7 +133,7 @@ export class WalletPassPushService {
     });
     const invalidRegistrationIds: string[] = [];
     try {
-      for (const registration of artifact.registrations) {
+      for (const registration of pending) {
         // A registration only exists for the configured pass type (checked at registration).
         const result = await client.sendPassUpdate(registration.pushToken, identity.passTypeIdentifier);
         const tokenInvalid = !result.ok && result.tokenInvalid;
@@ -162,6 +183,31 @@ export class WalletPassPushService {
     }
     this.logSummary(studioId, summary);
     return summary;
+  }
+
+  /**
+   * Registrations still needing a notification for this version: drops a registration when the
+   * history shows APNs accepted this passVersion for its device at or after the registration last
+   * changed (a new push token re-qualifies it). History is best-effort, so a missing event only
+   * means one extra, harmless notification — never a skipped one.
+   */
+  private async withoutAlreadyAccepted<T extends { deviceLibraryIdentifier: string; updatedAt: Date }>(
+    walletPassArtifactId: string,
+    passVersion: number,
+    registrations: T[],
+  ): Promise<T[]> {
+    const accepted = await this.prisma.walletPassEvent.findMany({
+      where: { walletPassArtifactId, type: WalletPassEventType.APNS_ACCEPTED, passVersion },
+      select: { deviceHash: true, occurredAt: true },
+    });
+    const latest = new Map<string, number>();
+    for (const e of accepted) {
+      if (e.deviceHash) latest.set(e.deviceHash, Math.max(latest.get(e.deviceHash) ?? 0, e.occurredAt.getTime()));
+    }
+    return registrations.filter((r) => {
+      const at = latest.get(deviceHashOf(r.deviceLibraryIdentifier));
+      return at === undefined || at < r.updatedAt.getTime();
+    });
   }
 
   /** Guarded: only advances, and only if the pass is still at the version that was pushed. */

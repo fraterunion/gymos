@@ -1,8 +1,12 @@
 import {
   certificateExpiryLevel,
+  isRefreshFailureSpike,
   WALLET_REFRESH_BACKOFF_CAP_MS,
+  WALLET_REFRESH_RECONCILE_INITIAL_DELAY_MAX_MS,
+  WALLET_REFRESH_RECONCILE_INITIAL_DELAY_MIN_MS,
   walletRefreshBackoffMs,
   walletRefreshBackoffWithJitterMs,
+  walletRefreshInitialReconcileDelayMs,
 } from './wallet-refresh.constants';
 import { sanitizeRefreshError } from './wallet-refresh-queue.service';
 
@@ -41,6 +45,29 @@ describe('certificateExpiryLevel', () => {
     expect(certificateExpiryLevel(at(0.01), now)).toEqual({ daysLeft: 0, level: 'CRITICAL' });
     expect(certificateExpiryLevel(now, now).level).toBe('EXPIRED');
     expect(certificateExpiryLevel(at(-3), now)).toEqual({ daysLeft: -3, level: 'EXPIRED' });
+  });
+});
+
+describe('refresh-failure spike rule', () => {
+  it('needs an absolute floor and a multiple of the previous day’s hourly average', () => {
+    expect(isRefreshFailureSpike(4, 0)).toBe(false); // below the floor
+    expect(isRefreshFailureSpike(5, 0)).toBe(true);
+    expect(isRefreshFailureSpike(5, 48)).toBe(false); // baseline 2/h → needs >= 6
+    expect(isRefreshFailureSpike(6, 48)).toBe(true);
+    expect(isRefreshFailureSpike(30, 240)).toBe(true); // baseline 10/h → needs >= 30
+    expect(isRefreshFailureSpike(29, 240)).toBe(false);
+  });
+});
+
+describe('first reconciliation delay after a worker starts', () => {
+  it('is always inside the 5–15 minute window', () => {
+    expect(walletRefreshInitialReconcileDelayMs(() => 0)).toBe(WALLET_REFRESH_RECONCILE_INITIAL_DELAY_MIN_MS);
+    expect(walletRefreshInitialReconcileDelayMs(() => 1)).toBe(WALLET_REFRESH_RECONCILE_INITIAL_DELAY_MAX_MS);
+    for (let i = 0; i < 100; i += 1) {
+      const d = walletRefreshInitialReconcileDelayMs();
+      expect(d).toBeGreaterThanOrEqual(5 * 60_000);
+      expect(d).toBeLessThanOrEqual(15 * 60_000);
+    }
   });
 });
 

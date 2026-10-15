@@ -12,6 +12,7 @@ import { PasskitService } from './passkit/passkit.service';
 import { WalletPassEventsService } from './passkit/wallet-pass-events.service';
 import { WalletPassPushService } from './passkit/wallet-pass-push.service';
 import { WalletDiagnosticsService } from './refresh/wallet-diagnostics.service';
+import { WalletHealthService } from './refresh/wallet-health.service';
 import { WalletRefreshProcessorService } from './refresh/wallet-refresh-processor.service';
 import { WalletRefreshQueueService } from './refresh/wallet-refresh-queue.service';
 import { WalletRefreshTriggersService } from './refresh/wallet-refresh-triggers.service';
@@ -44,6 +45,7 @@ import { WalletPassService } from './wallet-pass.service';
     WalletRefreshProcessorService,
     WalletRefreshWorkerService,
     WalletDiagnosticsService,
+    WalletHealthService,
   ],
   exports: [
     WalletCredentialService,
@@ -52,6 +54,7 @@ import { WalletPassService } from './wallet-pass.service';
     WalletRefreshWorkerService,
     WalletRefreshQueueService,
     WalletDiagnosticsService,
+    WalletHealthService,
   ],
 })
 export class WalletModule {}
