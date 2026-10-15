@@ -234,8 +234,9 @@ maybeDescribe('Smart Wallet 2.0 Stage 3 — registration history and diagnostics
         churnSuspectedDevices: [deviceHashOf(DEVICE)],
       });
       if (!report.found) throw new Error('unreachable');
-      expect(report.findings.map((f) => f.split(':')[0])).toEqual(['NO_ACTIVE_REGISTRATION', 'REGISTRATION_CHURN']);
-      expect(report.caveat).toMatch(/does not prove the pass was removed/);
+      expect(report.findings.map((f) => f.split(':')[0])).toEqual(['NO_ACTIVE_UPDATE_REGISTRATION', 'REGISTRATION_CHURN']);
+      expect(report.caveat).toMatch(/no active update registration/);
+      expect(report.caveat).toMatch(/does not mean the pass was removed/);
       const json = JSON.stringify(report);
       for (const secret of [DEVICE, PUSH_1, p.token, p.barcode]) expect(json).not.toContain(secret);
 
@@ -301,9 +302,18 @@ maybeDescribe('Smart Wallet 2.0 Stage 3 — registration history and diagnostics
       ],
     });
 
-    expect(await app.get(WalletRefreshTriggersService).applyRetention(now)).toEqual({ events: 1, jobs: 2, failedJobs: 1 });
+    expect(await app.get(WalletRefreshTriggersService).applyRetention(now)).toEqual({ events: 1, jobs: 2, failedJobs: 1, backlog: false });
     expect((await events()).map((e) => e.type)).toEqual([T.PASS_RETRIEVED]);
     const left = await prisma.walletPassRefreshJob.findMany({ select: { status: true, completedAt: true } });
     expect(left.map((j) => j.status).sort()).toEqual([WalletPassRefreshStatus.FAILED, WalletPassRefreshStatus.SUCCEEDED]);
+  });
+
+  it('retention drains more than one batch per run (a day of history cannot outgrow the daily cleanup)', async () => {
+    const p = await enrolledMember('retention-drain');
+    const old = new Date(Date.now() - 200 * DAY);
+    const base = { studioId: p.studioId, walletPassArtifactId: p.artifact.id, walletCredentialId: p.serial, type: T.PASS_NOT_MODIFIED, occurredAt: old };
+    await prisma.walletPassEvent.createMany({ data: Array.from({ length: 2_500 }, () => base) });
+    expect(await app.get(WalletRefreshTriggersService).applyRetention(new Date())).toMatchObject({ events: 2_500, backlog: false });
+    expect(await prisma.walletPassEvent.count()).toBe(0);
   });
 });
