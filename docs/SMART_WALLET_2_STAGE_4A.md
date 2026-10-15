@@ -23,15 +23,20 @@ valid route or a 401 on a token that the previous request had accepted. Stage 1A
   binding receives the request. It answers with its own 404 or 401, or drops the connection.
 - Linux refuses that second bind, which is why CI never failed.
 
-**Evidence.** A local stress process held about 1,000 short-lived `127.0.0.1` listeners (each
-answering 404) while four HTTP-heavy suites ran:
+**Evidence.** A local stress process held short-lived `127.0.0.1` listeners (each answering 404)
+while four HTTP-heavy suites ran:
 
-| Harness | Squatter binds | Requests intercepted | Result |
+| Harness | Stress | Requests intercepted | Result |
 |---|---|---|---|
-| before (per-request `listen(0)` on `::`) | 78,000 | 7 | 43/56: 13 failures, **all 404** |
-| after (`app.listen(0, '127.0.0.1')` once per suite) | 86,000 | **0** | 56/56 |
+| before (per-request `listen(0)` on `::`) | about 300 listeners | 2 | 54/56: **2 failures, both 404** |
+| before | about 1,300 listeners (two stress processes) | 13 (7 + 6) | 43/56: **13 failures, all 404** |
+| after (`app.listen(0, '127.0.0.1')` once per suite) | about 300 listeners | **0** | 56/56 |
+| after | about 1,300 listeners | **0** | 56/56 |
 
-A lighter run (about 300 listeners) gave 2 intercepted requests and 2 failures, against 0 and 56/56.
+Every failure under the old harness matched one intercepted request (2 for 2, 13 for 13). A
+300-listener stress process was accidentally left running for about 30 minutes, about 2.1 million
+binds. It covered every fixed-harness run, including two full suites of 578 and 590 tests, and
+intercepted **nothing**.
 
 **Fix (commit `e6e31dc`, test-only).** `createTestApp()` now listens once on `127.0.0.1`. Any
 other process's bind on that port fails with EADDRINUSE, and every request in a suite reuses one
@@ -93,6 +98,11 @@ chain for a device is:
 
 `NOT_FETCHED_AFTER_PUSH` and the pass report's `devicesNotFetchedSinceLastPush` name the devices
 missing step 2.
+
+Each device is measured from **its own** latest APNs acceptance of the current version, falling
+back to the pass's last push only when none is recorded. Measuring every device from the final
+push of a retry falsely flagged devices that had fetched right after their own notification; a
+test covers that case.
 
 **Pending delivery and restarts (changed).**
 - A new **pending-delivery sweep** (every minute, only while APNs is enabled) queues passes whose
@@ -178,11 +188,16 @@ or row changes.
 
 ## 7. Verification (local)
 
-- **Unit:** 128 suites, 1,576 tests.
+- **Unit:** 128 suites, 1,577 tests.
 - **End to end:**
-  - 50 suites, 590 tests;
-  - the new `wallet-delivery-safety.e2e-spec.ts` (11 tests);
+  - 50 suites, 591 tests;
+  - the new `wallet-delivery-safety.e2e-spec.ts` (12 tests);
   - the retention drain test;
   - all existing wallet, billing and check-in suites.
-- **Repeated full-suite runs** with the fixed harness are reported in the Stage 4A report.
+- **Repeated full-suite runs on the final commit (`24a52b4`):**
+  - **10 of 10** runs green: 591/591 each, 5,910 test executions, 0 failures;
+  - one more full run under a 1,000-listener stress process: 591/591, 0 interceptions;
+  - before the fix, 2 of 12 full runs had one failure. Eleven clean runs alone would not prove the
+    fix (the 95 % upper bound on the failure rate is still about 27 %); the 1:1 interception
+    evidence above is what does.
 - `prisma validate`, `nest build`, lint and typecheck are clean.
