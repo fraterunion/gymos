@@ -1,7 +1,11 @@
-# Smart Wallet 2.0 — real-iPhone staging spike (specification, NOT executed)
+# Smart Wallet 2.0 — real-iPhone staging spike (specification)
+
+> **Executed in Stage 2 (October 2026).** Results and the corrected recovery finding are in
+> [`SMART_WALLET_2_STAGE_3.md`](./SMART_WALLET_2_STAGE_3.md) §0. The text below is the original
+> specification, kept as written.
 
 This is the minimum staging setup to prove, on a real iPhone, what Stage 1A cannot prove locally.
-**Nothing here has been run.** Each step that creates, changes or sends something needs explicit
+**At the time of writing, nothing here had been run.** Each step that creates, changes or sends something needs explicit
 approval before it happens. Production (the `api` service on `main`, its Neon database, the ARES
 OTA channel and the billing cron) is not touched at any point.
 

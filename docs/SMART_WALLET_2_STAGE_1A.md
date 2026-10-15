@@ -242,7 +242,8 @@ contains the token, the barcode or the member's name.
 ## 9. Known limitations (deliberate in Stage 1A)
 
 - Passes change only when the operator runs `refresh`. No scheduler acts on `nextTransitionAt`,
-  and no event hooks exist in billing, sales or check-in.
+  and no event hooks exist in billing, sales or check-in. (Stage 3 adds an automatic, flag-gated
+  refresh worker; see [`SMART_WALLET_2_STAGE_3.md`](./SMART_WALLET_2_STAGE_3.md).)
 - The GET-pass route serves stored bytes. On-demand recompute is a next-stage decision.
 - No staff or admin UI. Enrollment is CLI only.
 - Whether Wallet registers for updates after a static pass is **replaced** by a dynamic one

@@ -40,8 +40,9 @@ Dynamic Apple Wallet passes and the PassKit web service. Every flag is normalise
 | `WALLET_PASSKIT_ROUTES_ENABLED` | Serves the PassKit web service under `/api/v1/wallet/passkit/v1/...`. When `false` every route answers 404. Default `false`. |
 | `WALLET_APNS_ENABLED` | Allows APNs pass-update pushes (production APNs only, with the pass-signing certificate). Default `false`. |
 | `WALLET_PASSKIT_WEB_SERVICE_URL` | `webServiceURL` signed into every dynamic pass. Required when dynamic passes or the routes are on. Absolute, no credentials/query/fragment, must end with `/api/v1/wallet/passkit`; `https` required in production. |
+| `WALLET_REFRESH_WORKER_ENABLED` | Stage 3: starts the automatic refresh worker inside the API process (change detection, transition sweep, hourly reconciliation, retention, certificate-expiry check). Requires `WALLET_DYNAMIC_PASSES_ENABLED=true` (the API refuses to boot otherwise). Does not imply pushes: those still need `WALLET_APNS_ENABLED=true`. Default `false`. See [`SMART_WALLET_2_STAGE_3.md`](./SMART_WALLET_2_STAGE_3.md). |
 
-Any of the three flags on also requires the full `WALLET_APPLE_*` signing configuration; the API refuses to boot otherwise.
+Any of these flags on also requires the full `WALLET_APPLE_*` signing configuration; the API refuses to boot otherwise.
 
 Future (document when implemented):
 
