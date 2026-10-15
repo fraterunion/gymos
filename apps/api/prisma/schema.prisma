@@ -803,6 +803,8 @@ enum WalletPassRefreshStatus {
 }
 
 /// Smart Wallet 2.0 Stage 3: append-only pass lifecycle and delivery history.
+/// SERIALS_LISTED (Stage 4A): a registered device asked which passes changed and was told about
+/// this one — the per-device evidence that a push (or a poll) actually reached Wallet.
 enum WalletPassEventType {
   REGISTERED
   UNREGISTERED
@@ -811,6 +813,7 @@ enum WalletPassEventType {
   APNS_ACCEPTED
   APNS_INVALID_TOKEN
   APNS_FAILED
+  SERIALS_LISTED
 }
 
 /// Durable record that a platform pass has been provisioned for a WalletCredential, so a

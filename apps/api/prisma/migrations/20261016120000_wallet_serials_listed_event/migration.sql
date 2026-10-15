@@ -1,0 +1,17 @@
+-- Smart Wallet 2.0 Stage 4A: per-device delivery evidence. ADDITIVE ONLY.
+--
+-- Adds one value to the WalletPassEventType enum so the PassKit service can record, per device,
+-- that Wallet asked for its changed passes and was told about a given pass (the step between
+-- "APNs accepted the push" and "the device downloaded the new version"). No table, column or row
+-- changes.
+--
+-- PostgreSQL 12+ accepts ALTER TYPE ... ADD VALUE inside the migration transaction as long as the
+-- new value is not used in that same transaction (it is not). Lock impact: a brief lock on the
+-- type only.
+-- Rollback: code only; the value stays (PostgreSQL cannot drop an enum value without recreating
+-- the type). Verified on a scratch database: the previous build's Prisma client fails with
+-- "Value 'SERIALS_LISTED' not found in enum" when it reads UNFILTERED event history, which in that
+-- build only its read-only diagnostics CLI does (devices, PassKit routes and the refresh worker
+-- never read events). After a code rollback, if those diagnostics are needed, first run:
+--   DELETE FROM wallet_pass_events WHERE type::text = 'SERIALS_LISTED';
+ALTER TYPE "WalletPassEventType" ADD VALUE 'SERIALS_LISTED';
