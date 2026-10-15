@@ -61,6 +61,11 @@ export async function createTestApp(): Promise<INestApplication> {
   prisma.enableShutdownHooks(app);
   app.enableShutdownHooks();
   configureHttpApp(app);
-  await app.init();
+  // Listen once, on the IPv4 loopback address supertest connects to. Left unbound, supertest
+  // re-listens on an OS-chosen port of the IPv6 wildcard (::) for every request while sending to
+  // 127.0.0.1 — and on macOS any other local process may bind 127.0.0.1:<that port> and answer
+  // instead (seen as intermittent 404/401 on valid routes and tokens). Binding 127.0.0.1 makes
+  // such a bind fail (EADDRINUSE) and reuses one server per suite.
+  await app.listen(0, '127.0.0.1');
   return app;
 }
