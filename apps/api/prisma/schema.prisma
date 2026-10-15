@@ -295,6 +295,8 @@ model Studio {
   billingReconciliationCases BillingReconciliationCase[]
   billingReconciliationRuns  BillingReconciliationRun[]
   walletPassRegistrations    WalletPassRegistration[]
+  walletPassRefreshJobs      WalletPassRefreshJob[]
+  walletPassEvents           WalletPassEvent[]
 
   @@map("studios")
 }
@@ -321,6 +323,7 @@ model User {
   attendancesRecorded Attendance[]       @relation("AttendanceRecordedBy")
   qrTokens            QRToken[]
   walletCredentials   WalletCredential[]
+  walletPassRefreshJobs WalletPassRefreshJob[]
   payments            Payment[]
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
@@ -790,6 +793,26 @@ enum WalletPassMode {
   DYNAMIC
 }
 
+/// Smart Wallet 2.0 Stage 3: lifecycle of one durable pass-refresh request.
+enum WalletPassRefreshStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SUPERSEDED
+}
+
+/// Smart Wallet 2.0 Stage 3: append-only pass lifecycle and delivery history.
+enum WalletPassEventType {
+  REGISTERED
+  UNREGISTERED
+  PASS_RETRIEVED
+  PASS_NOT_MODIFIED
+  APNS_ACCEPTED
+  APNS_INVALID_TOKEN
+  APNS_FAILED
+}
+
 /// Durable record that a platform pass has been provisioned for a WalletCredential, so a
 /// repeat "Add to Wallet" tap can re-deliver the SAME pass without ever needing the raw
 /// credential value again (which Phase 1 deliberately never persists). Never grants access
@@ -838,14 +861,96 @@ model WalletPassArtifact {
   snapshotSchemaVersion   Int?           @map("snapshot_schema_version")
   /// When this artifact was enrolled as DYNAMIC (audit; null for STATIC).
   dynamicEnabledAt        DateTime?      @map("dynamic_enabled_at")
+  /// DYNAMIC only: the passVersion whose APNs update was last delivered (or needed no push).
+  /// A refresh pushes only while passVersion > pushedPassVersion, so unchanged content is
+  /// never pushed and a failed push is retried until it lands.
+  pushedPassVersion       Int            @default(0) @map("pushed_pass_version")
+  lastPushedAt            DateTime?      @map("last_pushed_at")
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at")
 
   walletCredential WalletCredential         @relation(fields: [walletCredentialId], references: [id], onDelete: Cascade)
   registrations    WalletPassRegistration[]
+  events           WalletPassEvent[]
 
   @@unique([walletCredentialId, platform])
+  @@index([passMode, nextTransitionAt])
   @@map("wallet_pass_artifacts")
+}
+
+/// Smart Wallet 2.0 Stage 3: one durable request to recompute a member's dynamic passes in a
+/// studio. Created only by the refresh triggers (change detection, time transitions,
+/// reconciliation, operator). At most one PENDING row per (studio, member) — a partial unique
+/// index created in SQL (Prisma cannot express it) — so repeated triggers coalesce.
+model WalletPassRefreshJob {
+  id             String                  @id @default(cuid())
+  studioId       String                  @map("studio_id")
+  userId         String                  @map("user_id")
+  status         WalletPassRefreshStatus @default(PENDING)
+  /// First trigger that created the row (CHANGE_DETECTED, TIME_TRANSITION, RECONCILIATION, MANUAL).
+  reason         String
+  /// How many triggers coalesced into this row while it was PENDING.
+  triggerCount   Int                     @default(1) @map("trigger_count")
+  attempts       Int                     @default(0)
+  maxAttempts    Int                     @default(6) @map("max_attempts")
+  runAfter       DateTime                @default(now()) @map("run_after")
+  lockedBy       String?                 @map("locked_by")
+  leaseExpiresAt DateTime?               @map("lease_expires_at")
+  startedAt      DateTime?               @map("started_at")
+  completedAt    DateTime?               @map("completed_at")
+  /// Sanitized error code/message of the last failed attempt. Never contains tokens or QR values.
+  lastError      String?                 @map("last_error")
+  /// Compact result summary of the last completed attempt.
+  outcome        String?
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([status, runAfter])
+  @@index([status, leaseExpiresAt])
+  @@index([studioId, userId])
+  @@index([status, completedAt])
+  @@map("wallet_pass_refresh_jobs")
+}
+
+/// Smart Wallet 2.0 Stage 3: change-detection checkpoint (one row per detector).
+model WalletRefreshCursor {
+  source    String   @id
+  position  DateTime
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("wallet_refresh_cursors")
+}
+
+/// Smart Wallet 2.0 Stage 3: append-only history of a dynamic pass's device registrations,
+/// downloads and APNs deliveries, for diagnosing lost registrations. Devices are stored only as
+/// a SHA-256 prefix; push tokens, authentication tokens and QR values are never stored here.
+/// Retention: rows older than WALLET_PASS_EVENT_RETENTION_DAYS (180) are deleted by the
+/// refresh worker's daily cleanup.
+model WalletPassEvent {
+  id                   String              @id @default(cuid())
+  studioId             String              @map("studio_id")
+  walletPassArtifactId String              @map("wallet_pass_artifact_id")
+  /// The pass serial (== WalletCredential.id), denormalized for reporting.
+  walletCredentialId   String              @map("wallet_credential_id")
+  type                 WalletPassEventType
+  /// First 16 hex chars of SHA-256(deviceLibraryIdentifier); null for device-less events.
+  deviceHash           String?             @map("device_hash")
+  passVersion          Int?                @map("pass_version")
+  httpStatus           Int?                @map("http_status")
+  /// Small, code-controlled detail object (outcome, counts, apns-id, reason). Never secrets.
+  detail               Json?
+  occurredAt           DateTime            @default(now()) @map("occurred_at")
+
+  studio   Studio             @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  artifact WalletPassArtifact @relation(fields: [walletPassArtifactId], references: [id], onDelete: Cascade)
+
+  @@index([walletPassArtifactId, occurredAt])
+  @@index([studioId, occurredAt])
+  @@index([occurredAt])
+  @@map("wallet_pass_events")
 }
 
 /// Smart Wallet 2.0 PassKit web service: one row per (device, pass) registration. Created only
