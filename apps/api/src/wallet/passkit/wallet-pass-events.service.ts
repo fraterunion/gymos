@@ -145,17 +145,37 @@ export function analyzeRegistrationHistory(
 
 /**
  * Pure: registered devices that have not asked Wallet's "which passes changed?" question about
- * this pass since `since` (normally the last APNs push). An APNs 200 proves only that Apple
- * accepted the notification; a SERIALS_LISTED event from the device proves Wallet on that device
- * acted on it. Devices returned here may still be showing the previous version.
+ * this pass since they were notified of `passVersion`. An APNs 200 proves only that Apple accepted
+ * the notification; a SERIALS_LISTED event from the device proves Wallet on that device acted on it.
+ *
+ * Each device is measured from ITS OWN latest APNs acceptance of `passVersion` — with several
+ * devices and a retry, a device accepted on the first attempt usually lists its passes before the
+ * retry finishes — and from `fallbackSince` (the pass's last push) only when no acceptance of that
+ * version is recorded for it. Devices returned here may still be showing the previous version.
  */
-export function devicesNotListedSince(events: readonly PassEventRow[], activeDeviceHashes: readonly string[], since: Date): string[] {
-  const listed = new Set(
-    events
-      .filter((e) => e.type === WalletPassEventType.SERIALS_LISTED && e.deviceHash !== null && e.occurredAt >= since)
-      .map((e) => e.deviceHash as string),
-  );
-  return activeDeviceHashes.filter((device) => !listed.has(device));
+export function devicesNotListedSince(
+  events: readonly PassEventRow[],
+  activeDeviceHashes: readonly string[],
+  fallbackSince: Date,
+  passVersion?: number,
+): string[] {
+  const acceptedAt = new Map<string, number>();
+  const listedAt = new Map<string, number[]>();
+  for (const e of events) {
+    if (e.deviceHash === null) continue;
+    const t = e.occurredAt.getTime();
+    if (e.type === WalletPassEventType.APNS_ACCEPTED && passVersion !== undefined && e.passVersion === passVersion) {
+      acceptedAt.set(e.deviceHash, Math.max(acceptedAt.get(e.deviceHash) ?? 0, t));
+    } else if (e.type === WalletPassEventType.SERIALS_LISTED) {
+      const list = listedAt.get(e.deviceHash) ?? [];
+      list.push(t);
+      listedAt.set(e.deviceHash, list);
+    }
+  }
+  return activeDeviceHashes.filter((device) => {
+    const since = acceptedAt.get(device) ?? fallbackSince.getTime();
+    return !(listedAt.get(device) ?? []).some((t) => t >= since);
+  });
 }
 
 /**

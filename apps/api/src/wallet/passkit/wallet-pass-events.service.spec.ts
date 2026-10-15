@@ -112,6 +112,21 @@ describe('devicesNotListedSince (APNs acceptance is not proof of display)', () =
     expect(devicesNotListedSince([], [A, B], pushAt)).toEqual([A, B]);
   });
 
+  it('measures each device from its own acceptance of the version, not from the final push of a retry', () => {
+    // A accepted on the first attempt and listed at once; B failed, was retried and accepted later.
+    const events = [
+      ev(T.APNS_ACCEPTED, 600, A, 2, 200),
+      ev(T.SERIALS_LISTED, 601, A, 2, 200),
+      ev(T.APNS_FAILED, 600, B, 2, 503),
+      ev(T.APNS_ACCEPTED, 660, B, 2, 200),
+    ];
+    const lastPushedAt = at(660); // recorded only when the retry succeeded
+    expect(devicesNotListedSince(events, [A, B], lastPushedAt, 2)).toEqual([B]); // A is NOT a false positive
+    expect(devicesNotListedSince([...events, ev(T.SERIALS_LISTED, 661, B, 2, 200)], [A, B], lastPushedAt, 2)).toEqual([]);
+    // An acceptance of an OLDER version does not count as the starting point for the new one.
+    expect(devicesNotListedSince([ev(T.APNS_ACCEPTED, 100, A, 1, 200), ev(T.SERIALS_LISTED, 101, A, 1, 200)], [A], at(600), 2)).toEqual([A]);
+  });
+
   it('records when a device last listed the pass', () => {
     const r = analyzeRegistrationHistory([ev(T.REGISTERED, 0, A), ev(T.SERIALS_LISTED, 700, A, 2, 200)], [A], { passVersion: 2, lastModifiedAt: at(650) });
     expect(r.lastSerialsListedAt).toEqual(at(700));

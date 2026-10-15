@@ -335,6 +335,26 @@ maybeDescribe('Smart Wallet 2.0 Stage 4A — delivery safety, monitoring, transi
       expect(diagnostics.devicesNotFetchedSinceLastPush).toEqual([deviceHashOf('device-ipad')]);
       expect(JSON.stringify(report)).not.toMatch(/device-iphone|device-ipad|1111111111|3333333333/);
     });
+
+    it('a device that fetched right after its own notification is not reported when another device’s retry finishes later', async () => {
+      apns.reply = (token) => (token === TOKEN_FLAKY && received(TOKEN_FLAKY) === 1 ? { status: 503, reason: 'ServiceUnavailable' } : { status: 200 });
+      const m = await activeCashMember('retry-fetch');
+      await registerDevice(m.serial, m.token, 'device-fast', TOKEN_OK);
+      await registerDevice(m.serial, m.token, 'device-slow', TOKEN_FLAKY);
+      await changeAndEnqueue(m);
+      const now = new Date();
+      await worker.processDue(now); // device-fast accepted; device-slow failed → retry later
+      await request(app.getHttpServer()).get(`${PASSKIT}/devices/device-fast/registrations/${DYNAMIC_PASS_TYPE}?passesUpdatedSince=1`).expect(200);
+      await worker.processDue(new Date(now.getTime() + 40_000)); // device-slow accepted; version recorded as pushed now
+      expect(await artifactOf(m.serial)).toMatchObject({ passVersion: 2, pushedPassVersion: 2 });
+
+      const later = () => new Date(Date.now() + 31 * MIN);
+      const gap = (await health.evaluate(later())).findings.find((f) => f.code === 'NOT_FETCHED_AFTER_PUSH');
+      expect(gap?.metrics['devicesNotFetched']).toEqual([deviceHashOf('device-slow')]); // never device-fast
+
+      await request(app.getHttpServer()).get(`${PASSKIT}/devices/device-slow/registrations/${DYNAMIC_PASS_TYPE}?passesUpdatedSince=1`).expect(200);
+      expect((await health.evaluate(later())).findings.find((f) => f.code === 'NOT_FETCHED_AFTER_PUSH')).toBeUndefined();
+    });
   });
 
   // --- remaining automatic transitions ---------------------------------------------------------

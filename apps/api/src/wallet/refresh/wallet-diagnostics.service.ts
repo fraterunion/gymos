@@ -72,6 +72,7 @@ export class WalletDiagnosticsService {
           events as PassEventRow[],
           registrations.filter((r) => r.createdAt <= artifact.lastPushedAt!).map((r) => r.device),
           artifact.lastPushedAt,
+          artifact.passVersion,
         )
       : [];
     const recentJobs = await this.prisma.walletPassRefreshJob.findMany({

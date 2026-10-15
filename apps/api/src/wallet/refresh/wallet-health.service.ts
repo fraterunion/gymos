@@ -209,7 +209,7 @@ export class WalletHealthService {
         const registeredAtPush = a.registrations
           .filter((r) => r.createdAt.getTime() <= a.lastPushedAt!.getTime())
           .map((r) => deviceHashOf(r.deviceLibraryIdentifier));
-        const silent = devicesNotListedSince(rows as PassEventRow[], registeredAtPush, a.lastPushedAt);
+        const silent = devicesNotListedSince(rows as PassEventRow[], registeredAtPush, a.lastPushedAt, a.passVersion);
         if (silent.length > 0) {
           findings.push({
             ...base,
