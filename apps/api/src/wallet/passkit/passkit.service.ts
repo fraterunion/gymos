@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
-import { Prisma, WalletPassMode, WalletPassPlatform, type WalletPassArtifact } from '@prisma/client';
+import { Prisma, WalletPassEventType, WalletPassMode, WalletPassPlatform, type WalletPassArtifact } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppleWalletProvider } from '../apple/apple-wallet-provider.service';
 import { parseApplePassAuthorization, verifyPassAuthenticationToken } from '../apple/passkit-token';
+import { WalletPassEventsService } from './wallet-pass-events.service';
 
 /** Bounded input. Apple's identifiers are opaque; these bounds are generous but finite. */
 const DEVICE_LIBRARY_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -36,6 +37,22 @@ type AuthenticatedPass = WalletPassArtifact & { walletCredential: { studioId: st
 function deviceRef(deviceLibraryIdentifier: string): string {
   return createHash('sha256').update(deviceLibraryIdentifier).digest('hex').slice(0, 12);
 }
+
+/**
+ * HTTP conditional GET (RFC 9110): the stored pass is "not modified" when the device's
+ * If-Modified-Since is at or after the pass's Last-Modified, compared at the one-second
+ * precision of HTTP dates. Unparseable or absent headers mean a full 200 response.
+ */
+export function isPassNotModified(lastModifiedAt: Date, ifModifiedSince: string | string[] | undefined): boolean {
+  if (typeof ifModifiedSince !== 'string' || ifModifiedSince.length > 64) return false;
+  const since = Date.parse(ifModifiedSince);
+  if (Number.isNaN(since)) return false;
+  return Math.floor(lastModifiedAt.getTime() / 1000) <= Math.floor(since / 1000);
+}
+
+export type LatestPassResult =
+  | { notModified: true; lastModifiedAt: Date; passVersion: number }
+  | { notModified: false; pkpass: Buffer; lastModifiedAt: Date; passVersion: number };
 
 /** Keeps printable characters only (no control characters reach the log line). */
 function stripControlCharacters(message: string): string {
@@ -73,6 +90,7 @@ export class PasskitService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly appleProvider: AppleWalletProvider,
+    private readonly events: WalletPassEventsService,
   ) {}
 
   async register(
@@ -99,10 +117,12 @@ export class PasskitService {
     };
     const existing = await this.prisma.walletPassRegistration.findUnique({ where: key });
     if (existing) {
-      if (existing.pushToken !== pushToken) {
+      const pushTokenChanged = existing.pushToken !== pushToken;
+      if (pushTokenChanged) {
         await this.prisma.walletPassRegistration.update({ where: { id: existing.id }, data: { pushToken } });
       }
       this.logRegistration('existing', artifact, deviceLibraryIdentifier);
+      await this.recordRegistration(artifact, deviceLibraryIdentifier, 'existing', pushTokenChanged);
       return 'existing';
     }
 
@@ -135,11 +155,13 @@ export class PasskitService {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         await this.prisma.walletPassRegistration.updateMany({ where: key.deviceLibraryIdentifier_passTypeIdentifier_serialNumber, data: { pushToken } });
         this.logRegistration('existing', artifact, deviceLibraryIdentifier);
+        await this.recordRegistration(artifact, deviceLibraryIdentifier, 'existing', false);
         return 'existing';
       }
       throw e;
     }
     this.logRegistration('created', artifact, deviceLibraryIdentifier);
+    await this.recordRegistration(artifact, deviceLibraryIdentifier, 'created', false);
     return 'created';
   }
 
@@ -152,14 +174,15 @@ export class PasskitService {
     if (!DEVICE_LIBRARY_ID_PATTERN.test(deviceLibraryIdentifier)) {
       throw new BadRequestException('Invalid device library identifier');
     }
-    const { count } = await this.prisma.walletPassRegistration.deleteMany({
-      where: {
-        deviceLibraryIdentifier,
-        passTypeIdentifier: pass.passTypeIdentifier,
-        serialNumber: pass.serialNumber,
-        walletPassArtifactId: artifact.id,
-      },
-    });
+    const where = {
+      deviceLibraryIdentifier,
+      passTypeIdentifier: pass.passTypeIdentifier,
+      serialNumber: pass.serialNumber,
+      walletPassArtifactId: artifact.id,
+    };
+    const existing = await this.prisma.walletPassRegistration.findFirst({ where, select: { createdAt: true } });
+    const { count } = await this.prisma.walletPassRegistration.deleteMany({ where });
+    const registrationAgeMs = existing ? Date.now() - existing.createdAt.getTime() : null;
     this.logger.log(
       JSON.stringify({
         event: 'wallet.passkit.unregistered',
@@ -167,8 +190,19 @@ export class PasskitService {
         walletCredentialId: artifact.walletCredentialId,
         device: deviceRef(deviceLibraryIdentifier),
         removed: count,
+        registrationAgeMs,
       }),
     );
+    await this.events.record({
+      studioId: artifact.walletCredential.studioId,
+      walletPassArtifactId: artifact.id,
+      walletCredentialId: artifact.walletCredentialId,
+      type: WalletPassEventType.UNREGISTERED,
+      deviceLibraryIdentifier,
+      passVersion: artifact.passVersion,
+      httpStatus: 200,
+      detail: { removed: count, registrationAgeMs },
+    });
   }
 
   /**
@@ -210,20 +244,46 @@ export class PasskitService {
     return { serialNumbers: rows.map((r) => r.serialNumber), lastUpdated: String(Math.max(lastUpdated, since ?? 0)) };
   }
 
+  /**
+   * The latest pass, or a 304 when the device already holds it. The decision is made here, so
+   * the log and the history record exactly what the device received: `pass_served` only for a
+   * 200 carrying the .pkpass body, `pass_not_modified` for a 304 with no body.
+   */
   async getLatestPass(
     pass: PasskitPassRef,
     authorization: string | string[] | undefined,
-  ): Promise<{ pkpass: Buffer; lastModifiedAt: Date }> {
+    ifModifiedSince?: string | string[],
+  ): Promise<LatestPassResult> {
     const artifact = await this.authenticate(pass, authorization);
+    const lastModifiedAt = artifact.lastModifiedAt ?? artifact.updatedAt;
+    const base = {
+      studioId: artifact.walletCredential.studioId,
+      walletPassArtifactId: artifact.id,
+      walletCredentialId: artifact.walletCredentialId,
+      passVersion: artifact.passVersion,
+    };
+    if (isPassNotModified(lastModifiedAt, ifModifiedSince)) {
+      this.logger.log(JSON.stringify({ event: 'wallet.passkit.pass_not_modified', studioId: base.studioId, walletCredentialId: base.walletCredentialId, passVersion: base.passVersion }));
+      await this.events.record({ ...base, type: WalletPassEventType.PASS_NOT_MODIFIED, httpStatus: 304 });
+      return { notModified: true, lastModifiedAt, passVersion: artifact.passVersion };
+    }
+    const pkpass = Buffer.from(artifact.pkpassData!);
     this.logger.log(
       JSON.stringify({
         event: 'wallet.passkit.pass_served',
-        studioId: artifact.walletCredential.studioId,
-        walletCredentialId: artifact.walletCredentialId,
-        passVersion: artifact.passVersion,
+        studioId: base.studioId,
+        walletCredentialId: base.walletCredentialId,
+        passVersion: base.passVersion,
+        bytes: pkpass.length,
       }),
     );
-    return { pkpass: Buffer.from(artifact.pkpassData!), lastModifiedAt: artifact.lastModifiedAt ?? artifact.updatedAt };
+    await this.events.record({
+      ...base,
+      type: WalletPassEventType.PASS_RETRIEVED,
+      httpStatus: 200,
+      detail: { bytes: pkpass.length, ifModifiedSince: typeof ifModifiedSince === 'string' },
+    });
+    return { notModified: false, pkpass, lastModifiedAt, passVersion: artifact.passVersion };
   }
 
   /** Apple's diagnostic channel. Bounded, sanitized, never persisted. */
@@ -284,6 +344,24 @@ export class PasskitService {
 
   private configuredPassTypeIdentifier(): string | null {
     return this.appleProvider.isConfigured() ? this.appleProvider.passTypeIdentifier() : null;
+  }
+
+  private recordRegistration(
+    artifact: AuthenticatedPass,
+    deviceLibraryIdentifier: string,
+    outcome: 'created' | 'existing',
+    pushTokenChanged: boolean,
+  ): Promise<void> {
+    return this.events.record({
+      studioId: artifact.walletCredential.studioId,
+      walletPassArtifactId: artifact.id,
+      walletCredentialId: artifact.walletCredentialId,
+      type: WalletPassEventType.REGISTERED,
+      deviceLibraryIdentifier,
+      passVersion: artifact.passVersion,
+      httpStatus: outcome === 'created' ? 201 : 200,
+      detail: { outcome, pushTokenChanged },
+    });
   }
 
   private logRegistration(outcome: 'created' | 'existing', artifact: AuthenticatedPass, deviceLibraryIdentifier: string): void {

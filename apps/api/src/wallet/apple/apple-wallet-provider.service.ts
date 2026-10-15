@@ -130,6 +130,32 @@ export class AppleWalletProvider {
     };
   }
 
+  /**
+   * Identity and validity of the configured signing certificate (no key material). Used by the
+   * refresh worker's expiry monitoring and the operator diagnostics.
+   */
+  signingCertificateInfo(): {
+    notBefore: Date;
+    notAfter: Date;
+    passTypeIdentifier: string | null;
+    teamIdentifier: string | null;
+    serialNumber: string;
+  } {
+    const cfg = this.requireConfig();
+    const { cert } = loadP12(cfg.p12Base64, cfg.p12Password);
+    const attribute = (oid: string): string | null => {
+      const value = cert.subject.attributes.find((a) => a.type === oid)?.value;
+      return typeof value === 'string' ? value : null;
+    };
+    return {
+      notBefore: cert.validity.notBefore,
+      notAfter: cert.validity.notAfter,
+      passTypeIdentifier: attribute('0.9.2342.19200300.100.1.1'), // UID
+      teamIdentifier: attribute('2.5.4.11'), // OU
+      serialNumber: cert.serialNumber,
+    };
+  }
+
   /** The configured Pass Type ID (PassKit requests must name exactly this one). */
   passTypeIdentifier(): string {
     return this.requireConfig().passTypeIdentifier;

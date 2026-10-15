@@ -156,6 +156,7 @@ const WALLET_FLAG_KEYS = [
   'WALLET_DYNAMIC_PASSES_ENABLED',
   'WALLET_PASSKIT_ROUTES_ENABLED',
   'WALLET_APNS_ENABLED',
+  'WALLET_REFRESH_WORKER_ENABLED',
 ] as const;
 const PASSKIT_ROUTE_SUFFIX = '/api/v1/wallet/passkit';
 
@@ -185,6 +186,10 @@ function assertWalletPassEnv(out: Record<string, unknown>, nodeEnv: NodeEnv): vo
     throw new Error(
       'WALLET_PASSKIT_WEB_SERVICE_URL is required when WALLET_DYNAMIC_PASSES_ENABLED or WALLET_PASSKIT_ROUTES_ENABLED is true',
     );
+  }
+
+  if (out['WALLET_REFRESH_WORKER_ENABLED'] === 'true' && out['WALLET_DYNAMIC_PASSES_ENABLED'] !== 'true') {
+    throw new Error('WALLET_REFRESH_WORKER_ENABLED requires WALLET_DYNAMIC_PASSES_ENABLED=true');
   }
 
   if (anyOn) {

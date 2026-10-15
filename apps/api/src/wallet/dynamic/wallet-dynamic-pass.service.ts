@@ -65,11 +65,14 @@ type Loaded = { credential: WalletCredential; artifact: WalletPassArtifact };
 
 /**
  * The content-change timestamp is taken at write time (after signing), not when the build
- * started, and always moves forward by at least 1 ms — it is the cursor devices page updates
- * by, so it must not lag behind the commit it describes or repeat a previous value.
+ * started. It is both the cursor devices page updates by and the HTTP Last-Modified Wallet sends
+ * back as If-Modified-Since, whose precision is one second — so every new version lands in a
+ * strictly later SECOND than the previous one. Otherwise two versions written within the same
+ * second would share a Last-Modified and the second could be answered with a stale 304.
  */
-function nextLastModifiedAt(artifact: WalletPassArtifact): Date {
-  return new Date(Math.max(Date.now(), (artifact.lastModifiedAt?.getTime() ?? 0) + 1));
+export function nextLastModifiedAt(previous: Date | null, nowMs: number = Date.now()): Date {
+  const nextSecond = previous === null ? 0 : (Math.floor(previous.getTime() / 1000) + 1) * 1000;
+  return new Date(Math.max(nowMs, nextSecond));
 }
 
 /**
@@ -148,7 +151,7 @@ export class WalletDynamicPassService {
     const pkpass = await this.appleProvider.signRenderedPass(rendered);
 
     const passVersion = artifact.passVersion + 1;
-    const writtenAt = nextLastModifiedAt(artifact);
+    const writtenAt = nextLastModifiedAt(artifact.lastModifiedAt);
     const { count } = await this.prisma.walletPassArtifact.updateMany({
       where: {
         id: artifact.id,
@@ -167,6 +170,9 @@ export class WalletDynamicPassService {
         nextTransitionAt: snapshot.nextTransitionAt ? new Date(snapshot.nextTransitionAt) : null,
         snapshotSchemaVersion: WALLET_ACCESS_SNAPSHOT_SCHEMA_VERSION,
         dynamicEnabledAt: writtenAt,
+        // Devices holding the static pass have no registration to notify; a device that installs
+        // this version downloads it directly. Nothing about it is "unpushed".
+        pushedPassVersion: passVersion,
       },
     });
     if (count !== 1) throw new WalletDynamicPassError('WALLET_DYNAMIC_CONCURRENT_MODIFICATION');
@@ -203,12 +209,22 @@ export class WalletDynamicPassService {
       rendered.contentHash === artifact.contentHash &&
       artifact.dynamicTemplateVersion === APPLE_DYNAMIC_PASS_TEMPLATE_VERSION
     ) {
+      // Same content, but the next time-based transition may have moved (e.g. a boundary passed
+      // without changing what the pass shows). Persist it so the transition sweep never loops on
+      // a stale instant. No version bump, no new bytes, nothing for devices to download.
+      const nextTransitionAt = snapshot.nextTransitionAt ? new Date(snapshot.nextTransitionAt) : null;
+      if ((nextTransitionAt?.getTime() ?? null) !== (artifact.nextTransitionAt?.getTime() ?? null)) {
+        await this.prisma.walletPassArtifact.updateMany({
+          where: { id: artifact.id, passMode: WalletPassMode.DYNAMIC, passVersion: artifact.passVersion, updatedAt: artifact.updatedAt },
+          data: { nextTransitionAt },
+        });
+      }
       return this.outcome('unchanged', credential, artifact, snapshot);
     }
 
     const pkpass = await this.appleProvider.signRenderedPass(rendered);
     const passVersion = artifact.passVersion + 1;
-    const writtenAt = nextLastModifiedAt(artifact);
+    const writtenAt = nextLastModifiedAt(artifact.lastModifiedAt);
     const { count } = await this.prisma.walletPassArtifact.updateMany({
       where: {
         id: artifact.id,

@@ -96,6 +96,17 @@ describe('validateEnv — Smart Wallet 2.0 flags', () => {
   it('production with everything off boots exactly as before (no new requirement)', () => {
     const out = run({ ...PROD });
     expect(out['WALLET_DYNAMIC_PASSES_ENABLED']).toBe('false');
+    expect(out['WALLET_REFRESH_WORKER_ENABLED']).toBe('false');
     expect(out['WALLET_PASSKIT_WEB_SERVICE_URL']).toBeUndefined();
+  });
+
+  it('the Stage 3 refresh worker defaults OFF and cannot run without dynamic passes', () => {
+    expect(run({})['WALLET_REFRESH_WORKER_ENABLED']).toBe('false');
+    expect(() => run({ ...APPLE, WALLET_REFRESH_WORKER_ENABLED: 'true' })).toThrow(
+      /WALLET_REFRESH_WORKER_ENABLED requires WALLET_DYNAMIC_PASSES_ENABLED=true/,
+    );
+    const on = run({ ...APPLE, WALLET_DYNAMIC_PASSES_ENABLED: 'true', WALLET_PASSKIT_WEB_SERVICE_URL: URL_OK, WALLET_REFRESH_WORKER_ENABLED: 'true' });
+    expect(on['WALLET_REFRESH_WORKER_ENABLED']).toBe('true');
+    expect(on['WALLET_APNS_ENABLED']).toBe('false'); // the worker does not imply pushes
   });
 });

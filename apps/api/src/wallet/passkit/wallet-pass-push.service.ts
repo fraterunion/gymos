@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { WalletPassMode, WalletPassPlatform } from '@prisma/client';
+import { WalletPassEventType, WalletPassMode, WalletPassPlatform } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppleWalletProvider } from '../apple/apple-wallet-provider.service';
 import { APNS_PRODUCTION_HOST, apnsEnabled } from '../dynamic/wallet-dynamic-pass.config';
-import { ApnsClient, type ApnsClientOptions } from './apns.client';
+import { ApnsClientFactory, type ApnsClientOptions } from './apns.client';
+import { WalletPassEventsService } from './wallet-pass-events.service';
 import { MAX_REGISTRATIONS_PER_PASS } from './passkit.service';
 
 export class WalletPassPushError extends Error {
@@ -22,16 +23,24 @@ export type WalletPassPushSummary = {
   invalidTokensRemoved: number;
   failureReasons: string[];
   /** One entry per registration pushed: registration row id + APNs outcome. No push tokens. */
-  results: Array<{ registrationId: string; ok: boolean; status: number | null; reason: string | null; apnsId: string | null }>;
+  results: Array<{ registrationId: string; ok: boolean; status: number | null; reason: string | null; apnsId: string | null; tokenInvalid: boolean }>;
+  /** The passVersion this push announced, and whether it is now recorded as delivered. */
+  passVersion: number;
+  versionRecordedAsPushed: boolean;
 };
 
 /**
  * Tells every device registered for ONE dynamic pass that it changed (APNs, empty payload);
  * Wallet then asks the PassKit service for changed serials and downloads the new pass.
  *
- * Off unless WALLET_APNS_ENABLED=true. Called explicitly (the operator CLI in Stage 1A) —
- * there is no background job. No transaction is held across the network calls; tokens APNs
- * reports as permanently invalid are deleted afterwards, one short statement each.
+ * Off unless WALLET_APNS_ENABLED=true. Called by the operator CLI and by the Stage 3 refresh
+ * worker. No transaction is held across the network calls; tokens APNs reports as permanently
+ * invalid are deleted afterwards, one short statement each.
+ *
+ * Delivery bookkeeping: when no registration failed transiently, the artifact's
+ * pushedPassVersion advances to the passVersion read at the start (guarded, so a newer version
+ * written meanwhile stays "unpushed"). A transient failure leaves it behind, so the refresh
+ * worker retries the push; a pass whose content did not change is never pushed again.
  */
 @Injectable()
 export class WalletPassPushService {
@@ -41,6 +50,8 @@ export class WalletPassPushService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly appleProvider: AppleWalletProvider,
+    private readonly clients: ApnsClientFactory,
+    private readonly events: WalletPassEventsService,
   ) {}
 
   isEnabled(): boolean {
@@ -60,9 +71,10 @@ export class WalletPassPushService {
       select: {
         id: true,
         passMode: true,
+        passVersion: true,
         walletCredential: { select: { studioId: true } },
         registrations: {
-          select: { id: true, pushToken: true, passTypeIdentifier: true },
+          select: { id: true, pushToken: true, passTypeIdentifier: true, deviceLibraryIdentifier: true },
           orderBy: { createdAt: 'asc' },
           take: MAX_REGISTRATIONS_PER_PASS,
         },
@@ -81,13 +93,18 @@ export class WalletPassPushService {
       invalidTokensRemoved: 0,
       failureReasons: [],
       results: [],
+      passVersion: artifact.passVersion,
+      versionRecordedAsPushed: false,
     };
+    const studioId = artifact.walletCredential.studioId;
     if (artifact.registrations.length === 0) {
-      this.logSummary(artifact.walletCredential.studioId, summary);
+      // Nothing to notify: a device that registers later downloads the current pass anyway.
+      summary.versionRecordedAsPushed = await this.recordPushed(artifact.id, artifact.passVersion);
+      this.logSummary(studioId, summary);
       return summary;
     }
 
-    const client = new ApnsClient({
+    const client = this.clients.create({
       host: APNS_PRODUCTION_HOST,
       certPem: identity.certPem,
       keyPem: identity.keyPem,
@@ -98,12 +115,28 @@ export class WalletPassPushService {
       for (const registration of artifact.registrations) {
         // A registration only exists for the configured pass type (checked at registration).
         const result = await client.sendPassUpdate(registration.pushToken, identity.passTypeIdentifier);
+        const tokenInvalid = !result.ok && result.tokenInvalid;
         summary.results.push({
           registrationId: registration.id,
           ok: result.ok,
           status: result.status,
           reason: result.ok ? null : result.reason,
           apnsId: result.apnsId,
+          tokenInvalid,
+        });
+        await this.events.record({
+          studioId,
+          walletPassArtifactId: artifact.id,
+          walletCredentialId,
+          type: result.ok
+            ? WalletPassEventType.APNS_ACCEPTED
+            : tokenInvalid
+              ? WalletPassEventType.APNS_INVALID_TOKEN
+              : WalletPassEventType.APNS_FAILED,
+          deviceLibraryIdentifier: registration.deviceLibraryIdentifier,
+          passVersion: artifact.passVersion,
+          httpStatus: result.status,
+          detail: { apnsId: result.apnsId, reason: result.ok ? null : result.reason, pruned: tokenInvalid },
         });
         if (result.ok) {
           summary.delivered += 1;
@@ -123,8 +156,21 @@ export class WalletPassPushService {
       });
       summary.invalidTokensRemoved = count;
     }
-    this.logSummary(artifact.walletCredential.studioId, summary);
+    const transientFailures = summary.results.filter((r) => !r.ok && !r.tokenInvalid).length;
+    if (transientFailures === 0) {
+      summary.versionRecordedAsPushed = await this.recordPushed(artifact.id, artifact.passVersion);
+    }
+    this.logSummary(studioId, summary);
     return summary;
+  }
+
+  /** Guarded: only advances, and only if the pass is still at the version that was pushed. */
+  private async recordPushed(artifactId: string, passVersion: number): Promise<boolean> {
+    const { count } = await this.prisma.walletPassArtifact.updateMany({
+      where: { id: artifactId, passVersion, pushedPassVersion: { lt: passVersion } },
+      data: { pushedPassVersion: passVersion, lastPushedAt: new Date() },
+    });
+    return count === 1;
   }
 
   private logSummary(studioId: string, summary: WalletPassPushSummary): void {

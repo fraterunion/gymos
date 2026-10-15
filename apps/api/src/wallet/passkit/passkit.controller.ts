@@ -98,25 +98,29 @@ export class PasskitController {
     res.status(HttpStatus.OK).end();
   }
 
+  /**
+   * 200 with the .pkpass, or an explicit 304 when the device's If-Modified-Since shows it is
+   * current. The body is written with res.end(), not res.send(), so Express's implicit
+   * ETag/freshness handling cannot turn a logged "served" into an unlogged 304.
+   */
   @Get('v1/passes/:passTypeIdentifier/:serialNumber')
   async getLatestPass(
     @Param('passTypeIdentifier') passTypeIdentifier: string,
     @Param('serialNumber') serialNumber: string,
     @Headers('authorization') authorization: string | undefined,
+    @Headers('if-modified-since') ifModifiedSince: string | undefined,
     @Res() res: Response,
   ): Promise<void> {
-    const { pkpass, lastModifiedAt } = await this.passkit.getLatestPass(
-      { passTypeIdentifier, serialNumber },
-      authorization,
-    );
+    const result = await this.passkit.getLatestPass({ passTypeIdentifier, serialNumber }, authorization, ifModifiedSince);
+    const headers = { 'Last-Modified': result.lastModifiedAt.toUTCString(), 'Cache-Control': 'no-store' };
+    if (result.notModified) {
+      res.status(HttpStatus.NOT_MODIFIED).set(headers).end();
+      return;
+    }
     res
       .status(HttpStatus.OK)
-      .set({
-        'Content-Type': 'application/vnd.apple.pkpass',
-        'Last-Modified': lastModifiedAt.toUTCString(),
-        'Cache-Control': 'no-store',
-      })
-      .send(pkpass);
+      .set({ ...headers, 'Content-Type': 'application/vnd.apple.pkpass', 'Content-Length': String(result.pkpass.length) })
+      .end(result.pkpass);
   }
 
   @Post('v1/log')

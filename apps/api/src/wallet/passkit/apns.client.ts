@@ -1,4 +1,5 @@
 import * as http2 from 'node:http2';
+import { Injectable } from '@nestjs/common';
 
 export type ApnsClientOptions = {
   /** host[:port]. Production Wallet pushes only work against api.push.apple.com. */
@@ -131,5 +132,17 @@ export class ApnsClient {
     session.on('error', () => undefined);
     this.session = session;
     return session;
+  }
+}
+
+/**
+ * DI seam for creating APNs clients: production uses it as-is; tests replace `create` on the
+ * instance to point the real client at a local HTTP/2 server. No configuration path exists that
+ * changes the production host.
+ */
+@Injectable()
+export class ApnsClientFactory {
+  create(options: ApnsClientOptions): ApnsClient {
+    return new ApnsClient(options);
   }
 }

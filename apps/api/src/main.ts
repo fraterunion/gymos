@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureHttpApp } from './http-app.setup';
 import { PrismaService } from './prisma/prisma.service';
+import { WalletRefreshWorkerService } from './wallet/refresh/wallet-refresh-worker.service';
 
 const API_PREFIX = 'api/v1';
 const HEALTH_PATH = '/health';
@@ -22,6 +23,9 @@ async function bootstrap() {
   const nodeEnv = config.get<string>('NODE_ENV', process.env.NODE_ENV ?? 'development');
 
   await app.listen(port);
+  // Smart Wallet 2.0 refresh worker: started here (not on module init) so CLIs and tests that
+  // load the module never run it. A no-op unless WALLET_REFRESH_WORKER_ENABLED=true.
+  app.get(WalletRefreshWorkerService).start();
 
   logger.log(
     `Listening port=${port} env=${nodeEnv} health=GET ${HEALTH_PATH} apiPrefix=/${API_PREFIX}`,

@@ -7,8 +7,15 @@ import { GoogleWalletProvider } from './google/google-wallet-provider.service';
 import { WalletAccessSnapshotLoader } from './access/wallet-access-snapshot.loader';
 import { WalletDynamicPassService } from './dynamic/wallet-dynamic-pass.service';
 import { PasskitController, PasskitRoutesEnabledGuard } from './passkit/passkit.controller';
+import { ApnsClientFactory } from './passkit/apns.client';
 import { PasskitService } from './passkit/passkit.service';
+import { WalletPassEventsService } from './passkit/wallet-pass-events.service';
 import { WalletPassPushService } from './passkit/wallet-pass-push.service';
+import { WalletDiagnosticsService } from './refresh/wallet-diagnostics.service';
+import { WalletRefreshProcessorService } from './refresh/wallet-refresh-processor.service';
+import { WalletRefreshQueueService } from './refresh/wallet-refresh-queue.service';
+import { WalletRefreshTriggersService } from './refresh/wallet-refresh-triggers.service';
+import { WalletRefreshWorkerService } from './refresh/wallet-refresh-worker.service';
 import { WalletCredentialService } from './wallet-credential.service';
 import { WalletPassBrandingResolver } from './wallet-pass-branding.resolver';
 import { WalletPassController } from './wallet-pass.controller';
@@ -27,10 +34,24 @@ import { WalletPassService } from './wallet-pass.service';
     WalletPassService,
     WalletDynamicPassService,
     WalletPassPushService,
+    ApnsClientFactory,
+    WalletPassEventsService,
     PasskitService,
     PasskitRoutesEnabledGuard,
     PublicThrottlerGuard,
+    WalletRefreshQueueService,
+    WalletRefreshTriggersService,
+    WalletRefreshProcessorService,
+    WalletRefreshWorkerService,
+    WalletDiagnosticsService,
   ],
-  exports: [WalletCredentialService, WalletDynamicPassService, WalletPassPushService],
+  exports: [
+    WalletCredentialService,
+    WalletDynamicPassService,
+    WalletPassPushService,
+    WalletRefreshWorkerService,
+    WalletRefreshQueueService,
+    WalletDiagnosticsService,
+  ],
 })
 export class WalletModule {}

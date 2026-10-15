@@ -83,6 +83,17 @@ maybeDescribe('AppleWalletProvider — dynamic pass signing (throwaway test PKI,
   const wwdrPem = Buffer.from(fixture?.wwdrPemBase64 ?? '', 'base64').toString('utf8');
   const token = generatePassAuthenticationToken();
 
+  it('reports the signing certificate validity for expiry monitoring (no secret material)', () => {
+    const info = providerWithFixture().signingCertificateInfo();
+    expect(info.notAfter.getTime() - info.notBefore.getTime()).toBe(24 * 60 * 60 * 1000); // the fixture is a 1-day cert
+    expect(info.notAfter.getTime()).toBeGreaterThan(Date.now());
+    // The throwaway fixture only carries a CN; real Pass Type ID certificates carry UID and OU.
+    expect(info.passTypeIdentifier).toBeNull();
+    expect(info.teamIdentifier).toBeNull();
+    expect(info.serialNumber).toMatch(/^[0-9a-f]+$/i);
+    expect(JSON.stringify(info)).not.toMatch(/PRIVATE KEY|BEGIN CERTIFICATE/);
+  });
+
   it('produces a correctly signed .pkpass whose manifest matches every packaged file', async () => {
     const provider = providerWithFixture();
     const rendered = provider.renderDynamicPass({

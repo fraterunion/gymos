@@ -7,6 +7,8 @@ import type { ConfigService } from '@nestjs/config';
  * WALLET_DYNAMIC_PASSES_ENABLED   — may the server build/enroll DYNAMIC Apple passes at all.
  * WALLET_PASSKIT_ROUTES_ENABLED   — do the PassKit web service routes answer (404 otherwise).
  * WALLET_APNS_ENABLED             — may the server send APNs pushes for pass updates.
+ * WALLET_REFRESH_WORKER_ENABLED   — run the Stage 3 automatic refresh worker in the API process
+ *                                   (requires WALLET_DYNAMIC_PASSES_ENABLED).
  * WALLET_PASSKIT_WEB_SERVICE_URL  — webServiceURL baked into dynamic passes; must point at
  *                                   this API's PassKit controller (".../api/v1/wallet/passkit").
  *
@@ -16,6 +18,7 @@ import type { ConfigService } from '@nestjs/config';
 export const WALLET_DYNAMIC_PASSES_ENABLED = 'WALLET_DYNAMIC_PASSES_ENABLED';
 export const WALLET_PASSKIT_ROUTES_ENABLED = 'WALLET_PASSKIT_ROUTES_ENABLED';
 export const WALLET_APNS_ENABLED = 'WALLET_APNS_ENABLED';
+export const WALLET_REFRESH_WORKER_ENABLED = 'WALLET_REFRESH_WORKER_ENABLED';
 export const WALLET_PASSKIT_WEB_SERVICE_URL = 'WALLET_PASSKIT_WEB_SERVICE_URL';
 
 export const WALLET_PASSKIT_ROUTE_BASE = 'wallet/passkit';
@@ -35,6 +38,10 @@ export function passkitRoutesEnabled(config: Pick<ConfigService, 'get'>): boolea
 
 export function apnsEnabled(config: Pick<ConfigService, 'get'>): boolean {
   return isFlagOn(config, WALLET_APNS_ENABLED);
+}
+
+export function refreshWorkerEnabled(config: Pick<ConfigService, 'get'>): boolean {
+  return isFlagOn(config, WALLET_REFRESH_WORKER_ENABLED);
 }
 
 /** The configured webServiceURL, or null when absent (validateEnv already normalized it). */
