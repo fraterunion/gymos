@@ -65,7 +65,7 @@ prove receipt without touching the card. Measuring it needs a `SERIALS_LISTED` h
 which Stage 3 does not record.
 
 **Detecting missing registrations:**
-- `NO_ACTIVE_REGISTRATION` and `REGISTRATION_CHURN` findings, per pass and counted per studio
+- `NO_ACTIVE_UPDATE_REGISTRATION` and `REGISTRATION_CHURN` findings, per pass and counted per studio
   (`studio --studio <id>`).
 - The report never says "removed": zero registrations does not prove the pass is gone.
 - The only remedy is on the member's device: open the pass, or remove and re-add it.

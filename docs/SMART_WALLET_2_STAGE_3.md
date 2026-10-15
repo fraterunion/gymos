@@ -1,9 +1,18 @@
 # Smart Wallet 2.0 — Stage 3: automatic refresh and registration reliability
 
-Status: **implemented locally on the Smart Wallet feature branch. Not pushed, not deployed.
-The new worker is OFF by default (`WALLET_REFRESH_WORKER_ENABLED=false`). No existing ARES pass
-has been migrated. Migrating existing production passes remains NO-GO.** The migration question
-is evaluated separately in [`SMART_WALLET_2_MIGRATION_READINESS.md`](./SMART_WALLET_2_MIGRATION_READINESS.md).
+Status: **validated on staging on 2026-10-15** (an automatic entitlement-driven update reached a
+real iPhone). The worker is OFF by default (`WALLET_REFRESH_WORKER_ENABLED=false`). No existing
+ARES pass has been migrated, and migrating existing production passes remains NO-GO. The migration
+question is evaluated separately in
+[`SMART_WALLET_2_MIGRATION_READINESS.md`](./SMART_WALLET_2_MIGRATION_READINESS.md).
+
+> **Changed in Stage 4A** (see [`SMART_WALLET_2_STAGE_4A.md`](./SMART_WALLET_2_STAGE_4A.md)):
+> - the first reconciliation now runs 5–15 minutes after the worker starts, not at boot;
+> - a new pending-delivery sweep runs every minute while APNs is on;
+> - retries skip devices that already accepted the version;
+> - devices' change-list requests are recorded (`SERIALS_LISTED`);
+> - a health evaluator was added;
+> - the zero-registration finding is now `NO_ACTIVE_UPDATE_REGISTRATION`.
 
 Stage 3 makes a dynamic pass follow the member's entitlement on its own, and makes the state of
 Wallet's device registrations observable. It does not change who may enter, book or pay. Check-in
@@ -51,7 +60,7 @@ Three device-level observations are anecdotes, not a rate.
 |---|---|---|
 | **Change detection** (`detectChanges`) | every 15 s | Committed rows changed since a cursor (minus a 120 s overlap), for members holding a dynamic pass |
 | **Transition sweep** (`sweepTransitions`) | every 60 s | Passes whose stored `nextTransitionAt` is due within 5 min. The job runs at the boundary + 1 s |
-| **Reconciliation** (`reconcileAll`) | hourly, and when the worker starts | Every dynamic pass. This is the safety net for anything the other two miss |
+| **Reconciliation** (`reconcileAll`) | hourly; since Stage 4A the first run is 5–15 min after start | Every dynamic pass. This is the safety net for anything the other two miss |
 
 **Why change detection instead of hooks in billing or sales code:**
 - **It is post-commit by construction.** It reads only committed rows, so a rolled-back sale or webhook leaves nothing to refresh, and no wallet code runs inside anyone else's transaction.
@@ -195,8 +204,8 @@ stage does not touch alerts.
 - churn: a device that unregistered within 10 minutes of registering and has not re-registered,
   which is the Stage 2 replacement pattern.
 
-**Wording rule:** zero registrations is reported as "no device is currently registered for
-updates", never as "pass removed". Wallet can drop a registration while keeping the pass.
+**Wording rule:** zero registrations is reported as "no active update registration", never as
+"pass removed". Wallet can drop a registration while keeping the pass.
 
 **Retention**, applied daily in batches of 1,000:
 
@@ -312,8 +321,8 @@ tables. This was reproduced on a scratch database.
 - **Re-processing within the overlap.** A change is re-detected for 120 s after it happened and
   recomputed: harmless and unchanged, but extra work. Logins and other user-row updates also
   trigger a recompute.
-- **Every worker start reconciles every dynamic pass.** That is cheap at today's scale, but it
-  is load proportional to the number of dynamic passes on each deploy.
+- **Every worker start reconciled every dynamic pass.** Fixed in Stage 4A: the first
+  reconciliation now runs 5–15 minutes after start.
 - **Retrieval events carry no device.** Apple's latest-pass request does not identify the
   device, so "current version retrieved" is per pass, not per device.
 - **Stale cards.** A pass whose registration Wallet has dropped keeps showing its last state
