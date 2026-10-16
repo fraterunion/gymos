@@ -40,14 +40,21 @@ function isUniqueViolation(error: unknown): boolean {
  * Durable refresh queue (Smart Wallet 2.0 Stage 3), following the BuildJobs claim pattern.
  *
  * - enqueue: one statement; coalesces into the member's single PENDING row (partial unique
- *   index) keeping the EARLIEST runAfter, so a time-scheduled job is pulled forward by a change.
+ *   index). A row that has never run keeps the EARLIEST runAfter, so a time-scheduled job is
+ *   pulled forward by a change. A row that has already been attempted is a scheduled RETRY: its
+ *   backoff stands and the trigger rides along (the retry recomputes the member's latest state).
+ *   Change detection re-scans 120 s behind its cursor, so one change is seen on ~9 polls; before
+ *   Stage 4A.1 each of them pulled the retry forward and six attempts ran out in 75 s.
  * - claim: `FOR UPDATE SKIP LOCKED` + lease; safe with several API instances. A member with a
  *   live RUNNING job is skipped, so one member is never processed by two workers at once
  *   (except after a lease expires, where the optimistic artifact writes still hold).
  * - Every state change after a claim is guarded by (status RUNNING, lockedBy = this worker), so a
  *   worker whose lease was recovered can never overwrite the newer state.
- * - A retry that would collide with a newer PENDING row for the same member is SUPERSEDED: the
- *   pending row will recompute from scratch anyway.
+ * - A trigger that lands while a job is RUNNING queues a PENDING sibling. If the running attempt
+ *   then fails, the job is SUPERSEDED by that sibling, which INHERITS the member's attempt count
+ *   and, for a failed attempt, its backoff; so neither a trigger nor a crash can restart the
+ *   retry budget. A dead letter holds the sibling back until the cooldown ends (an operator
+ *   request, which ignores the cooldown, can still pull it forward).
  * - Nothing here calls out of the database, and every statement is short.
  */
 @Injectable()
@@ -87,7 +94,10 @@ export class WalletRefreshQueueService {
       FROM unnest(${studioIds}::text[], ${userIds}::text[], ${runAfters}::text[]) AS m(studio_id, user_id, run_after)
       ${cooldownFilter}
       ON CONFLICT (studio_id, user_id) WHERE status = 'PENDING'::"WalletPassRefreshStatus"
-      DO UPDATE SET run_after = LEAST(wallet_pass_refresh_jobs.run_after, EXCLUDED.run_after),
+      DO UPDATE SET run_after = CASE
+                      WHEN wallet_pass_refresh_jobs.attempts > 0 THEN wallet_pass_refresh_jobs.run_after
+                      ELSE LEAST(wallet_pass_refresh_jobs.run_after, EXCLUDED.run_after)
+                    END,
                     trigger_count = wallet_pass_refresh_jobs.trigger_count + 1,
                     updated_at = now()`;
   }
@@ -155,18 +165,17 @@ export class WalletRefreshQueueService {
       return count === 1 ? 'RETRY' : 'LOST';
     } catch (e) {
       if (!isUniqueViolation(e)) throw e;
-      return (await this.supersede(job.id, { lockedBy: workerId }, lastError, now)) ? 'SUPERSEDED' : 'LOST';
+      // A trigger queued a PENDING sibling while this attempt ran: it takes over, carrying this
+      // failure's attempt count and backoff.
+      return (await this.supersede(job, { lockedBy: workerId }, lastError, now, { notBefore: runAfter })) ? 'SUPERSEDED' : 'LOST';
     }
   }
 
   /** Non-retryable failure (integrity / poison): dead letter. */
   async fail(job: ClaimedRefreshJob, workerId: string, error: unknown, now: Date): Promise<boolean> {
     const lastError = typeof error === 'string' ? error.slice(0, 300) : sanitizeRefreshError(error);
-    const { count } = await this.prisma.walletPassRefreshJob.updateMany({
-      where: { id: job.id, status: WalletPassRefreshStatus.RUNNING, lockedBy: workerId },
-      data: { status: WalletPassRefreshStatus.FAILED, lastError, completedAt: now, lockedBy: null, leaseExpiresAt: null },
-    });
-    if (count === 1) {
+    const failed = await this.deadLetter(job, { lockedBy: workerId }, lastError, now);
+    if (failed) {
       this.logger.error(
         JSON.stringify({
           event: 'wallet.refresh.dead_letter',
@@ -177,7 +186,7 @@ export class WalletRefreshQueueService {
         }),
       );
     }
-    return count === 1;
+    return failed;
   }
 
   /**
@@ -193,25 +202,24 @@ export class WalletRefreshQueueService {
     });
     const result = { requeued: 0, superseded: 0, failed: 0 };
     for (const job of expired) {
-      const guard = { id: job.id, status: WalletPassRefreshStatus.RUNNING, leaseExpiresAt: job.leaseExpiresAt };
+      const guard = { leaseExpiresAt: job.leaseExpiresAt };
       if (job.attempts >= job.maxAttempts) {
-        const { count } = await this.prisma.walletPassRefreshJob.updateMany({
-          where: guard,
-          data: { status: WalletPassRefreshStatus.FAILED, lastError: 'LEASE_EXPIRED_AFTER_MAX_ATTEMPTS', completedAt: now, lockedBy: null, leaseExpiresAt: null },
-        });
-        result.failed += count;
-        if (count) this.logger.error(JSON.stringify({ event: 'wallet.refresh.dead_letter', jobId: job.id, studioId: job.studioId, attempts: job.attempts, error: 'LEASE_EXPIRED_AFTER_MAX_ATTEMPTS' }));
+        const failed = await this.deadLetter(job, guard, 'LEASE_EXPIRED_AFTER_MAX_ATTEMPTS', now);
+        result.failed += failed ? 1 : 0;
+        if (failed) this.logger.error(JSON.stringify({ event: 'wallet.refresh.dead_letter', jobId: job.id, studioId: job.studioId, attempts: job.attempts, error: 'LEASE_EXPIRED_AFTER_MAX_ATTEMPTS' }));
         continue;
       }
       try {
         const { count } = await this.prisma.walletPassRefreshJob.updateMany({
-          where: guard,
+          where: { id: job.id, status: WalletPassRefreshStatus.RUNNING, ...guard },
           data: { status: WalletPassRefreshStatus.PENDING, runAfter: now, lastError: 'LEASE_EXPIRED', lockedBy: null, leaseExpiresAt: null },
         });
         result.requeued += count;
       } catch (e) {
         if (!isUniqueViolation(e)) throw e;
-        result.superseded += (await this.supersede(job.id, { leaseExpiresAt: job.leaseExpiresAt }, 'LEASE_EXPIRED', now)) ? 1 : 0;
+        // An expired lease is not the job's failure, so no backoff: the sibling is due now
+        // (unless it is itself a scheduled retry), but it keeps counting the attempts.
+        result.superseded += (await this.supersede(job, guard, 'LEASE_EXPIRED', now, { notBefore: null })) ? 1 : 0;
       }
     }
     if (expired.length > 0) {
@@ -247,23 +255,66 @@ export class WalletRefreshQueueService {
     };
   }
 
+  /**
+   * Closes a RUNNING job as SUPERSEDED by the member's PENDING sibling, which inherits the
+   * attempt count. After a failed attempt (`notBefore` = its backoff) the sibling also inherits
+   * the backoff; after an expired lease the work is due now, unless the sibling is itself a
+   * scheduled retry. One transaction, so no worker can claim the sibling half-updated.
+   */
   private async supersede(
-    id: string,
+    job: { id: string; studioId: string; userId: string; attempts: number },
+    extraGuard: Prisma.WalletPassRefreshJobWhereInput,
+    lastError: string,
+    now: Date,
+    carry: { notBefore: Date | null },
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.walletPassRefreshJob.updateMany({
+        where: { id: job.id, status: WalletPassRefreshStatus.RUNNING, ...extraGuard },
+        data: {
+          status: WalletPassRefreshStatus.SUPERSEDED,
+          outcome: 'superseded_by_pending',
+          lastError,
+          completedAt: now,
+          lockedBy: null,
+          leaseExpiresAt: null,
+        },
+      });
+      if (count !== 1) return false;
+      const runAfter = carry.notBefore
+        ? Prisma.sql`GREATEST(run_after, ${utc(carry.notBefore)})`
+        : Prisma.sql`CASE WHEN attempts > 0 THEN run_after ELSE LEAST(run_after, ${utc(now)}) END`;
+      await tx.$executeRaw`
+        UPDATE wallet_pass_refresh_jobs
+        SET attempts = GREATEST(attempts, ${job.attempts}), run_after = ${runAfter}, last_error = ${lastError}, updated_at = now()
+        WHERE studio_id = ${job.studioId} AND user_id = ${job.userId} AND status = 'PENDING'::"WalletPassRefreshStatus"`;
+      return true;
+    });
+  }
+
+  /**
+   * Dead letter. A PENDING sibling (queued by a trigger during the final attempt) is held back
+   * until the cooldown ends, exactly like the automatic triggers the cooldown already filters;
+   * an operator enqueue ignores the cooldown and still pulls it forward.
+   */
+  private async deadLetter(
+    job: { id: string; studioId: string; userId: string },
     extraGuard: Prisma.WalletPassRefreshJobWhereInput,
     lastError: string,
     now: Date,
   ): Promise<boolean> {
-    const { count } = await this.prisma.walletPassRefreshJob.updateMany({
-      where: { id, status: WalletPassRefreshStatus.RUNNING, ...extraGuard },
-      data: {
-        status: WalletPassRefreshStatus.SUPERSEDED,
-        outcome: 'superseded_by_pending',
-        lastError,
-        completedAt: now,
-        lockedBy: null,
-        leaseExpiresAt: null,
-      },
+    const cooldownEnd = new Date(now.getTime() + WALLET_REFRESH_DEAD_LETTER_COOLDOWN_MS);
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.walletPassRefreshJob.updateMany({
+        where: { id: job.id, status: WalletPassRefreshStatus.RUNNING, ...extraGuard },
+        data: { status: WalletPassRefreshStatus.FAILED, lastError, completedAt: now, lockedBy: null, leaseExpiresAt: null },
+      });
+      if (count !== 1) return false;
+      await tx.$executeRaw`
+        UPDATE wallet_pass_refresh_jobs
+        SET run_after = GREATEST(run_after, ${utc(cooldownEnd)}), updated_at = now()
+        WHERE studio_id = ${job.studioId} AND user_id = ${job.userId} AND status = 'PENDING'::"WalletPassRefreshStatus"`;
+      return true;
     });
-    return count === 1;
   }
 }
