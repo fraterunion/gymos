@@ -78,6 +78,22 @@ export const WALLET_HEALTH_FAILURE_SPIKE_MIN = 5;
 export const WALLET_HEALTH_FAILURE_SPIKE_FACTOR = 3;
 export const WALLET_HEALTH_WORKER_IDLE_MS = 2 * 60 * 60_000;
 
+/**
+ * Worker liveness (Stage 4A.1). Only the worker's own loop writes these two cursor rows (never a
+ * CLI): `worker_heartbeat` at most every 30 s, and `worker_running_since` when a run begins. A
+ * start after a gap longer than the staleness threshold begins a new run; a quick restart (a
+ * deploy) continues the previous one.
+ */
+export const WALLET_WORKER_HEARTBEAT_CURSOR = 'worker_heartbeat';
+export const WALLET_WORKER_RUNNING_SINCE_CURSOR = 'worker_running_since';
+export const WALLET_REFRESH_HEARTBEAT_MS = 30_000;
+/** No heartbeat for this long while the worker is enabled: it has stopped. */
+export const WALLET_HEALTH_WORKER_HEARTBEAT_STALE_MS = 5 * 60_000;
+/** Slack after the latest possible first reconciliation before a missing first run is idle. */
+export const WALLET_HEALTH_WORKER_STARTUP_GRACE_MS = 10 * 60_000;
+/** A run younger than this is reported as STARTING. */
+export const WALLET_HEALTH_WORKER_STARTING_MS = 60_000;
+
 /** Random first-reconciliation delay for a worker that just started. */
 export function walletRefreshInitialReconcileDelayMs(random: () => number = Math.random): number {
   const span = WALLET_REFRESH_RECONCILE_INITIAL_DELAY_MAX_MS - WALLET_REFRESH_RECONCILE_INITIAL_DELAY_MIN_MS;

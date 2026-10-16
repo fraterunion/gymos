@@ -12,7 +12,7 @@ export const DYNAMIC_WEB_SERVICE_URL = 'http://127.0.0.1:3999/api/v1/wallet/pass
 
 export const appleFixture = generateTestApplePkiFixture();
 
-export function applyWalletDynamicEnv(flags: { dynamic: boolean; routes: boolean; apns: boolean }): void {
+export function applyWalletDynamicEnv(flags: { dynamic: boolean; routes: boolean; apns: boolean; worker?: boolean }): void {
   if (!appleFixture) return;
   process.env['WALLET_APPLE_TEAM_ID'] = 'TEAM123TEST';
   process.env['WALLET_APPLE_PASS_TYPE_ID'] = DYNAMIC_PASS_TYPE;
@@ -22,5 +22,7 @@ export function applyWalletDynamicEnv(flags: { dynamic: boolean; routes: boolean
   process.env['WALLET_DYNAMIC_PASSES_ENABLED'] = String(flags.dynamic);
   process.env['WALLET_PASSKIT_ROUTES_ENABLED'] = String(flags.routes);
   process.env['WALLET_APNS_ENABLED'] = String(flags.apns);
+  // The refresh worker flag only matters to health (worker liveness); tests never start its timer.
+  if (flags.worker !== undefined) process.env['WALLET_REFRESH_WORKER_ENABLED'] = String(flags.worker);
   process.env['WALLET_PASSKIT_WEB_SERVICE_URL'] = DYNAMIC_WEB_SERVICE_URL;
 }

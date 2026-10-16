@@ -482,5 +482,17 @@ maybeDescribe('Smart Wallet 2.0 Stage 4A — delivery safety, monitoring, transi
       const report = await health.evaluate(new Date());
       expect(report.findings.filter((f) => f.code !== 'CERTIFICATE_EXPIRY')).toEqual([]);
     });
+
+    it('worker flag off: the worker is DISABLED and never reported idle or stopped, whatever its old liveness rows say', async () => {
+      const m = await activeCashMember('health-disabled');
+      await registerDevice(m.serial, m.token, 'device-disabled', TOKEN_OK);
+      // Liveness rows left by a worker that ran days ago, before the flag was turned off.
+      await health.recordWorkerHeartbeat(new Date(Date.now() - 3 * DAY), { starting: true });
+      const report = await health.evaluate(new Date());
+      expect(report.flags.worker).toBe(false);
+      expect(report.worker).toMatchObject({ state: 'DISABLED', reason: null });
+      expect(report.findings.map((f) => f.code)).not.toEqual(expect.arrayContaining(['WORKER_IDLE']));
+      expect(report.findings.map((f) => f.code)).not.toEqual(expect.arrayContaining(['WORKER_STOPPED']));
+    });
   });
 });

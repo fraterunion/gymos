@@ -11,6 +11,7 @@ import {
   WALLET_REFRESH_CERTIFICATE_CHECK_MS,
   WALLET_REFRESH_CHANGE_POLL_MS,
   WALLET_REFRESH_HEALTH_MS,
+  WALLET_REFRESH_HEARTBEAT_MS,
   WALLET_REFRESH_RECONCILE_MS,
   WALLET_REFRESH_RETENTION_MS,
   WALLET_REFRESH_TICK_MS,
@@ -41,6 +42,7 @@ export type WalletRefreshTickReport = {
  * a CLI that happens to load the module.
  *
  * Each tick (default every 5 s, never overlapping within an instance):
+ *   0. record the liveness heartbeat (at most every 30 s; the loop only — CLIs never do);
  *   1. recover expired leases (crash recovery);
  *   2. the phases that are due — change detection (15 s), time-transition sweep (1 min),
  *      pending-delivery sweep (1 min, only while APNs is enabled), reconciliation (1 h; the first
@@ -58,6 +60,7 @@ export class WalletRefreshWorkerService implements OnModuleDestroy {
   readonly workerId = `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  private heartbeatWrittenAt: number | null = null;
   // Every phase is due at the first tick except reconciliation: re-rendering every pass on each
   // deploy or restart is avoidable load, and nothing depends on it (detection resumes from its
   // durable cursor; transitions and pending deliveries have their own sweeps).
@@ -92,7 +95,7 @@ export class WalletRefreshWorkerService implements OnModuleDestroy {
       return false;
     }
     if (this.timer) return true;
-    this.timer = setInterval(() => void this.safeTick(), WALLET_REFRESH_TICK_MS);
+    this.timer = setInterval(() => void this.tick(), WALLET_REFRESH_TICK_MS);
     this.logger.log(JSON.stringify({ event: 'wallet.refresh.worker_started', workerId: this.workerId, tickMs: WALLET_REFRESH_TICK_MS }));
     return true;
   }
@@ -104,15 +107,35 @@ export class WalletRefreshWorkerService implements OnModuleDestroy {
     }
   }
 
-  private async safeTick(): Promise<void> {
-    if (this.ticking) return;
+  /**
+   * One iteration of the real loop: the interval calls it, tests drive it with a fake clock.
+   * Records the liveness heartbeat, then runs a normal cycle; never overlaps itself. Operator
+   * CLIs call runOnce() instead, so they can never make a stopped worker look alive.
+   */
+  async tick(now: Date = new Date()): Promise<WalletRefreshTickReport | null> {
+    if (this.ticking) return null;
     this.ticking = true;
     try {
-      await this.runOnce(new Date());
+      await this.heartbeat(now);
+      return await this.runOnce(now);
     } catch (e) {
       this.logger.error(JSON.stringify({ event: 'wallet.refresh.tick_failed', error: sanitizeRefreshError(e) }));
+      return null;
     } finally {
       this.ticking = false;
+    }
+  }
+
+  private async heartbeat(now: Date): Promise<void> {
+    const starting = this.heartbeatWrittenAt === null;
+    if (!starting && now.getTime() - this.heartbeatWrittenAt! < WALLET_REFRESH_HEARTBEAT_MS) return;
+    try {
+      await this.health.recordWorkerHeartbeat(now, { starting });
+      this.heartbeatWrittenAt = now.getTime();
+    } catch (e) {
+      // Liveness bookkeeping must never stop the refresh work itself; a missing heartbeat
+      // surfaces as WORKER_STOPPED, which is the truth if the database cannot be written.
+      this.logger.error(JSON.stringify({ event: 'wallet.refresh.heartbeat_failed', error: sanitizeRefreshError(e) }));
     }
   }
 

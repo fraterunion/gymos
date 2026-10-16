@@ -22,9 +22,12 @@ import {
   WALLET_HEALTH_QUEUE_BACKLOG_HIGH_MS,
   WALLET_HEALTH_QUEUE_BACKLOG_MEDIUM_MS,
   WALLET_HEALTH_UNDELIVERED_AFTER_MS,
-  WALLET_HEALTH_WORKER_IDLE_MS,
+  WALLET_HEALTH_WORKER_HEARTBEAT_STALE_MS,
   WALLET_REFRESH_LEASE_MS,
+  WALLET_WORKER_HEARTBEAT_CURSOR,
+  WALLET_WORKER_RUNNING_SINCE_CURSOR,
 } from './wallet-refresh.constants';
+import { classifyRefreshWorker, type WalletRefreshWorkerState, type WalletRefreshWorkerStatus } from './wallet-worker-state';
 
 /** Same vocabulary as billing reconciliation cases. */
 export type WalletHealthSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
@@ -42,6 +45,7 @@ export type WalletHealthCode =
   | 'QUEUE_BACKLOG'
   | 'STUCK_JOBS'
   | 'WORKER_IDLE'
+  | 'WORKER_STOPPED'
   | 'CERTIFICATE_EXPIRY';
 
 export type WalletHealthFinding = {
@@ -58,6 +62,15 @@ export type WalletHealthReport = {
   studioId: string | null;
   flags: { dynamic: boolean; apns: boolean; worker: boolean };
   totals: { dynamicPasses: number; withActiveRegistration: number; undelivered: number; deadLetters24h: number; queuePendingDue: number; queueRunning: number };
+  /** Refresh worker liveness (Stage 4A.1); see wallet-worker-state.ts for the states. */
+  worker: {
+    state: WalletRefreshWorkerState;
+    reason: WalletRefreshWorkerStatus['reason'];
+    runningSince: string | null;
+    lastHeartbeatAt: string | null;
+    lastCompletedAt: string | null;
+    firstRunDeadline: string | null;
+  };
   counts: Record<WalletHealthSeverity, number>;
   maxSeverity: WalletHealthSeverity | null;
   findings: WalletHealthFinding[];
@@ -317,23 +330,36 @@ export class WalletHealthService {
       });
     }
 
-    if (flags.worker && artifacts.length > 0) {
-      const lastCompleted = await this.prisma.walletPassRefreshJob.findFirst({
-        where: { ...studioJobs, completedAt: { not: null } },
-        orderBy: { completedAt: 'desc' },
-        select: { completedAt: true },
+    // ---- worker liveness (Stage 4A.1) ----------------------------------------------------------
+    // Before 4A.1 this was "no completed job in 2 h", which fired HIGH on every first evaluation
+    // after the worker had been off for 2 h, because the first reconciliation is deliberately
+    // delayed 5–15 min. The worker's own heartbeat now separates starting from stopped or stalled.
+    const worker = await this.workerStatus(now, flags.worker, artifacts.length > 0, studioJobs);
+    const minutesSince = (d: Date | null) => (d ? Math.round((now.getTime() - d.getTime()) / 60_000) : null);
+    if (worker.state === 'STOPPED') {
+      findings.push({
+        code: 'WORKER_STOPPED',
+        severity: 'HIGH',
+        studioId: null,
+        walletCredentialId: null,
+        message:
+          worker.reason === 'NEVER_STARTED'
+            ? 'The refresh worker is enabled but has never recorded a heartbeat: it is not running.'
+            : 'The refresh worker is enabled but has not recorded a heartbeat recently: its loop or its process has stopped.',
+        metrics: { reason: worker.reason, minutesSinceHeartbeat: minutesSince(worker.lastHeartbeatAt) },
       });
-      const idleMs = lastCompleted?.completedAt ? now.getTime() - lastCompleted.completedAt.getTime() : null;
-      if (idleMs === null || idleMs > WALLET_HEALTH_WORKER_IDLE_MS) {
-        findings.push({
-          code: 'WORKER_IDLE',
-          severity: 'HIGH',
-          studioId,
-          walletCredentialId: null,
-          message: 'The refresh worker is enabled but has completed no job recently (the hourly reconciliation alone should produce some).',
-          metrics: { idleMinutes: idleMs === null ? null : Math.round(idleMs / 60_000) },
-        });
-      }
+    } else if (worker.state === 'IDLE') {
+      findings.push({
+        code: 'WORKER_IDLE',
+        severity: 'HIGH',
+        studioId,
+        walletCredentialId: null,
+        message:
+          worker.reason === 'FIRST_RUN_OVERDUE'
+            ? 'The refresh worker is running but has completed no job since it started, well past its first scheduled reconciliation.'
+            : 'The refresh worker is running but has completed no job for over two hours (the hourly reconciliation alone should produce some).',
+        metrics: { reason: worker.reason, minutesSinceStart: minutesSince(worker.runningSince), idleMinutes: minutesSince(worker.lastCompletedAt) },
+      });
     }
 
     // ---- certificate ----------------------------------------------------------------------
@@ -378,17 +404,66 @@ export class WalletHealthService {
         queuePendingDue: pendingDue,
         queueRunning: running,
       },
+      worker: {
+        state: worker.state,
+        reason: worker.reason,
+        runningSince: worker.runningSince?.toISOString() ?? null,
+        lastHeartbeatAt: worker.lastHeartbeatAt?.toISOString() ?? null,
+        lastCompletedAt: worker.lastCompletedAt?.toISOString() ?? null,
+        firstRunDeadline: worker.firstRunDeadline?.toISOString() ?? null,
+      },
       counts,
       maxSeverity: findings[0]?.severity ?? null,
       findings,
     };
   }
 
+  /**
+   * Worker liveness for the classification in evaluate(). Called ONLY by the worker's own loop,
+   * never by a CLI, so an operator command can never make a stopped worker look alive. A start
+   * after a gap longer than the staleness threshold begins a new run; a quick restart (a deploy)
+   * continues the current one, so a crash loop cannot keep renewing the startup grace.
+   */
+  async recordWorkerHeartbeat(now: Date, opts: { starting: boolean }): Promise<void> {
+    if (opts.starting) {
+      const { heartbeatAt, runningSince } = await this.workerCursors();
+      const continuing = heartbeatAt !== null && runningSince !== null && now.getTime() - heartbeatAt.getTime() <= WALLET_HEALTH_WORKER_HEARTBEAT_STALE_MS;
+      if (!continuing) await this.setCursor(WALLET_WORKER_RUNNING_SINCE_CURSOR, now);
+    }
+    await this.setCursor(WALLET_WORKER_HEARTBEAT_CURSOR, now);
+  }
+
+  private async workerStatus(now: Date, enabled: boolean, expectsJobs: boolean, studioJobs: { studioId?: string }): Promise<WalletRefreshWorkerStatus> {
+    const { heartbeatAt, runningSince } = await this.workerCursors();
+    const lastCompleted =
+      enabled && expectsJobs
+        ? await this.prisma.walletPassRefreshJob.findFirst({ where: { ...studioJobs, completedAt: { not: null } }, orderBy: { completedAt: 'desc' }, select: { completedAt: true } })
+        : null;
+    return classifyRefreshWorker({ now, enabled, heartbeatAt, runningSince, lastCompletedAt: lastCompleted?.completedAt ?? null, expectsJobs });
+  }
+
+  private async workerCursors(): Promise<{ heartbeatAt: Date | null; runningSince: Date | null }> {
+    const rows = await this.prisma.walletRefreshCursor.findMany({ where: { source: { in: [WALLET_WORKER_HEARTBEAT_CURSOR, WALLET_WORKER_RUNNING_SINCE_CURSOR] } } });
+    const at = (source: string) => rows.find((r) => r.source === source)?.position ?? null;
+    return { heartbeatAt: at(WALLET_WORKER_HEARTBEAT_CURSOR), runningSince: at(WALLET_WORKER_RUNNING_SINCE_CURSOR) };
+  }
+
+  private async setCursor(source: string, position: Date): Promise<void> {
+    await this.prisma.walletRefreshCursor.upsert({ where: { source }, create: { source, position }, update: { position } });
+  }
+
   /** One summary line plus one line per finding; level follows severity. Ids only, no personal data. */
   logReport(report: WalletHealthReport): void {
     const levelOf = (s: WalletHealthSeverity | null) => (s === 'CRITICAL' || s === 'HIGH' ? 'error' : s === 'MEDIUM' ? 'warn' : 'log');
     this.logger[levelOf(report.maxSeverity)](
-      JSON.stringify({ event: 'wallet.health.summary', maxSeverity: report.maxSeverity, counts: report.counts, totals: report.totals, flags: report.flags }),
+      JSON.stringify({
+        event: 'wallet.health.summary',
+        maxSeverity: report.maxSeverity,
+        counts: report.counts,
+        totals: report.totals,
+        flags: report.flags,
+        worker: { state: report.worker.state, reason: report.worker.reason },
+      }),
     );
     for (const f of report.findings) {
       this.logger[levelOf(f.severity)](
