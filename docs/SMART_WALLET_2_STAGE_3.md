@@ -13,6 +13,12 @@ question is evaluated separately in
 > - devices' change-list requests are recorded (`SERIALS_LISTED`);
 > - a health evaluator was added;
 > - the zero-registration finding is now `NO_ACTIVE_UPDATE_REGISTRATION`.
+>
+> **Changed in Stage 4A.1** (see [`SMART_WALLET_2_STAGE_4A1.md`](./SMART_WALLET_2_STAGE_4A1.md)):
+> - a scheduled retry keeps its backoff when further triggers coalesce into it;
+> - a superseding job inherits the attempt count (and, after a failure, the backoff);
+> - a dead letter holds back the member's pending job until the cooldown ends;
+> - the worker records a liveness heartbeat for health.
 
 Stage 3 makes a dynamic pass follow the member's entitlement on its own, and makes the state of
 Wallet's device registrations observable. It does not change who may enter, book or pay. Check-in
@@ -129,8 +135,9 @@ Re-running the same job changes nothing and sends no second push.
 ## 3. Reliability
 
 - **Coalescing.** A partial unique index keeps one PENDING job per member. Further triggers
-  coalesce into that row: `run_after` keeps the earliest time and `trigger_count` counts the
-  triggers.
+  coalesce into that row and `trigger_count` counts them. A row that has never run keeps the
+  earliest `run_after`. A row that has already been attempted is a scheduled retry, and its
+  backoff stands (Stage 4A.1).
 - **Claiming.** Workers claim with `FOR UPDATE SKIP LOCKED` and hold a 5-minute lease, so several
   API instances are safe.
 - **One member at a time.** A member with a live RUNNING job is not claimed again. A change that
@@ -145,8 +152,9 @@ Re-running the same job changes nothing and sends no second push.
 - **Permanent failures.** If the stored pass cannot prove its own token or QR, the job
   dead-letters at once. The token is never rotated and nothing is written.
 - **Crash recovery.** RUNNING jobs whose lease has expired go back to PENDING, or to FAILED if
-  their attempts are spent, so a job that kills its worker cannot loop forever. A retry that
-  collides with a newer PENDING row is marked `SUPERSEDED`.
+  their attempts are spent, so a job that kills its worker cannot loop forever. A retry or a
+  recovered job that collides with a newer PENDING row is marked `SUPERSEDED`. Since Stage 4A.1,
+  the PENDING row inherits its attempt count and, after a failed attempt, its backoff.
 - **Single-flight scheduling.** Detection, the sweep and reconciliation each run under
   `pg_try_advisory_xact_lock` inside a short, database-only transaction.
 - **No external call inside a transaction.** Signing happens before the single guarded UPDATE,

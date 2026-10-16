@@ -1,9 +1,12 @@
 # Smart Wallet 2.0 — Stage 4A: local production-readiness hardening
 
-Status: **implemented locally on the Smart Wallet feature branch, on top of `ed53871`. Not pushed,
-not deployed.** It adds one additive migration (`20261016120000_wallet_serials_listed_event`). No
-new environment variable. Production is unchanged and remains NO-GO. The staged launch plan is in
-[`SMART_WALLET_2_PRODUCTION_ROLLOUT.md`](./SMART_WALLET_2_PRODUCTION_ROLLOUT.md).
+Status: **on the Smart Wallet feature branch (`e876500`, on top of `ed53871`), validated on staging
+on 2026-10-16, and hardened by Stage 4A.1** (see
+[`SMART_WALLET_2_STAGE_4A1.md`](./SMART_WALLET_2_STAGE_4A1.md)). Not merged. It adds one additive
+migration (`20261016120000_wallet_serials_listed_event`), which is applied on staging only, and no
+new environment variable. Production is unchanged. The staged launch plan is in
+[`SMART_WALLET_2_PRODUCTION_ROLLOUT.md`](./SMART_WALLET_2_PRODUCTION_ROLLOUT.md), and release and
+recovery procedures are in [`SMART_WALLET_2_RELEASE_RUNBOOK.md`](./SMART_WALLET_2_RELEASE_RUNBOOK.md).
 
 Stage 3 was validated on staging on 2026-10-15. A real entitlement change was detected, the pass
 was rebuilt and pushed, and the iPhone showed VENCIDA → VIGENTE. Stage 4A hardens what that run
@@ -60,7 +63,8 @@ billing-case vocabulary.
 | `NOT_FETCHED_AFTER_PUSH` | LOW | APNs accepted the push, but a device registered at push time has not asked for its changed passes within 30 min. Lists the device hashes |
 | `QUEUE_BACKLOG` | MEDIUM / HIGH | The oldest due job has waited more than 10 / 60 min |
 | `STUCK_JOBS` | HIGH | A RUNNING job is well past its lease and nothing recovered it |
-| `WORKER_IDLE` | HIGH | The worker flag is on but no job completed in 2 h (meaningful from the CLI or cron) |
+| `WORKER_IDLE` | HIGH | **Changed in 4A.1.** The worker is alive, but its first run is overdue (latest first reconciliation + 10 min) or no job has completed for 2 h. Before 4A.1 it fired on every first evaluation after a long disabled period |
+| `WORKER_STOPPED` | HIGH | **New in 4A.1.** The worker flag is on, but the worker's loop has not recorded a heartbeat for 5 min, or ever. Only visible from outside the worker (CLI or cron) |
 | `CERTIFICATE_EXPIRY` | MEDIUM / HIGH / CRITICAL | The signing (and APNs) certificate has less than 30 days left, less than 7 days, or has expired or is unreadable |
 
 **Output.**
@@ -177,14 +181,22 @@ or row changes.
 - the new value is usable after the upgrade;
 - a redeploy is a no-op, and the previous build's `migrate deploy` reports no pending migrations.
 
-**Rollback.**
-- **Code only;** the enum value stays.
+**Rollback (corrected in Stage 4A.1).**
+- **Code only.** The enum value and **every** history row stay; the history is the audit trail.
 - **Verified:** the Stage 3 Prisma client throws `Value 'SERIALS_LISTED' not found in enum` when it
   reads *unfiltered* event history.
 - In that build only the read-only diagnostics CLI does that. Devices, PassKit routes and the worker
-  never read events.
-- After a code rollback, run `DELETE FROM wallet_pass_events WHERE type::text = 'SERIALS_LISTED'`
-  before using those diagnostics.
+  never read events. Production never ran Stage 3; its rollback target (`e365d2d`) has no event
+  model at all.
+- To inspect history after rolling back to Stage 3, use type-agnostic read-only SQL
+  (`SELECT type::text, … FROM wallet_pass_events …`), or run the diagnostics from a build that knows
+  every value.
+- **Do not delete `SERIALS_LISTED` rows as a rollback step.** Archiving and then deleting them is a
+  last resort, separately approved, after an export. See
+  [`SMART_WALLET_2_RELEASE_RUNBOOK.md`](./SMART_WALLET_2_RELEASE_RUNBOOK.md) §5.
+- The header comment of the migration file still suggests that `DELETE`. The file is already
+  applied on staging, so it is immutable: changing a byte changes its checksum. This section and
+  the runbook supersede that comment.
 
 ## 7. Verification (local)
 
