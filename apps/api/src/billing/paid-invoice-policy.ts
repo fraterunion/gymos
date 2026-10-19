@@ -59,6 +59,13 @@ export type PaidInvoiceFacts = {
    * ended row would then double-cover a period someone already paid for.
    */
   entitledSiblingExists?: boolean;
+  /**
+   * Only meaningful when there is no local row: a stored subscription-creating event for this
+   * Stripe subscription (`customer.subscription.*` / `checkout.session.completed`) already FAILED.
+   * Distinguishes a broken first purchase from the benign race where the first invoice simply
+   * arrives before `customer.subscription.created`.
+   */
+  subscriptionCreationFailed?: boolean;
 };
 
 export type PaidInvoiceReasonCode =
@@ -111,19 +118,24 @@ export function decidePaidInvoice(facts: PaidInvoiceFacts): PaidInvoiceDecision 
     // A first-purchase invoice can legitimately race ahead of customer.subscription.created; the
     // nightly detector catches anything that stays unattributed. A RENEWAL invoice with no local
     // row is not a race: the member keeps paying for a membership GymOS does not know about.
+    // Neither is a first purchase whose subscription-creating event already FAILED: the member
+    // paid and the membership was not created (INC-2026-10-19), so it surfaces now, not overnight.
     const renewal = facts.billingReason !== null && RENEWAL_BILLING_REASONS.has(facts.billingReason);
-    return {
-      scenario: 'UNATTRIBUTED',
-      allowEntitlementGrant: true,
-      exception: renewal
-        ? {
-            severity: 'CRITICAL',
-            reasonCode: 'NO_LOCAL_SUBSCRIPTION',
-            paidWithoutAccess: true,
-            explanation: 'Stripe cobró una renovación de una suscripción que no existe en GymOS.',
-          }
-        : null,
-    };
+    if (renewal || facts.subscriptionCreationFailed === true) {
+      return {
+        scenario: 'UNATTRIBUTED',
+        allowEntitlementGrant: true,
+        exception: {
+          severity: 'CRITICAL',
+          reasonCode: 'NO_LOCAL_SUBSCRIPTION',
+          paidWithoutAccess: true,
+          explanation: renewal
+            ? 'Stripe cobró una renovación de una suscripción que no existe en GymOS.'
+            : 'Stripe cobró la primera factura, pero GymOS no pudo crear la membresía.',
+        },
+      };
+    }
+    return { scenario: 'UNATTRIBUTED', allowEntitlementGrant: true, exception: null };
   }
 
   // A payment made while the membership was still live (a replayed or late-delivered

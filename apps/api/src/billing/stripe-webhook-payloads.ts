@@ -16,6 +16,8 @@ export type WebhookSubscriptionPayload = {
   customer: string | { id: string } | null;
   metadata: Record<string, string> | null;
   cancel_at_period_end: boolean;
+  /** The subscription's most recent invoice — its first invoice on `customer.subscription.created`. */
+  latest_invoice?: string | { id: string } | null;
   cancellation_details?: {
     reason?: string | null;
     feedback?: string | null;

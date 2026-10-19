@@ -162,4 +162,12 @@ describe('paid-invoice-policy — late-payment scenarios', () => {
     const renewal = decidePaidInvoice(facts({ subscription: null, billingReason: 'subscription_cycle' }));
     expect(renewal.exception).toMatchObject({ severity: 'CRITICAL', reasonCode: 'NO_LOCAL_SUBSCRIPTION', paidWithoutAccess: true });
   });
+
+  it('UNATTRIBUTED: a first purchase whose subscription creation already FAILED is CRITICAL now, not a benign race (INC-2026-10-19)', () => {
+    const failed = decidePaidInvoice(facts({ subscription: null, billingReason: 'subscription_create', subscriptionCreationFailed: true }));
+    expect(failed).toMatchObject({ scenario: 'UNATTRIBUTED', allowEntitlementGrant: true });
+    expect(failed.exception).toMatchObject({ severity: 'CRITICAL', reasonCode: 'NO_LOCAL_SUBSCRIPTION', paidWithoutAccess: true });
+    expect(failed.exception?.explanation).toMatch(/primera factura/);
+    expect(decidePaidInvoice(facts({ subscription: null, billingReason: 'subscription_create', subscriptionCreationFailed: false })).exception).toBeNull();
+  });
 });

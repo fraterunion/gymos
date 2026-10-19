@@ -47,6 +47,7 @@ import {
   findCreationConflicts,
 } from '../memberships/membership-compatibility';
 import { readInvoiceSubscriptionId } from './stripe-invoice.utils';
+import { decideWebhookCreationConflict } from './webhook-creation-conflict';
 import { parseInvoiceLines } from './stripe-invoice-lines';
 import { readCancellationDetails } from './stripe-renewal-audit.utils';
 import { activateDayPassFromSucceededPaymentIntent } from '../day-passes/day-pass-activation';
@@ -182,12 +183,15 @@ export class StripeWebhookService {
         where: { stripeEventId: event.id, processed: false },
         data: { lastError },
       });
+      await this.observePaidFirstInvoiceAfterFailedCreation(event).catch((observeErr: unknown) =>
+        this.logger.error(`paid-without-subscription detection failed for ${event.id}`, observeErr),
+      );
       // Re-throw: event stays processed=false, resolvedAt=null → actionable dead letter.
       // An operator must inspect and either replay or set resolvedAt.
       throw err;
     }
     // processed=true means the handler ran to completion — including deliberate
-    // business-logic acknowledgments (e.g. handleWebhookActiveConflict Cases B and C).
+    // business-logic acknowledgments (e.g. acknowledgeWebhookCreationConflict).
     // It is NOT the same as resolvedAt: that field covers historical handler failures
     // where the underlying state was reconciled externally without the handler running.
     await markStripeWebhookEventProcessed(this.prisma, event.id);
@@ -415,6 +419,8 @@ export class StripeWebhookService {
       });
       const previousCancelAtPeriodEnd =
         existingRowForThisSub == null ? null : existingRowForThisSub.cancelAtPeriodEnd;
+      /** Expired offline rows superseded in this transaction; linked to the new row once it exists. */
+      const supersededOfflineIds: string[] = [];
 
       // Out-of-order protection, step 2 (under the member lock). A CANCELED row is terminal for
       // this Stripe id: Stripe never un-cancels, so an "alive" event here is either stale or a
@@ -467,6 +473,7 @@ export class StripeWebhookService {
         return {
           row: null,
           previousCancelAtPeriodEnd,
+          conflictCase: null as ObservedIssue | null,
           keepLocalCase: {
           studioId,
           category: 'LOCAL_CANCELED_STRIPE_ALIVE',
@@ -503,37 +510,54 @@ export class StripeWebhookService {
           // through to the upsert below and creates its own local row; it must never be
           // silently dropped/acknowledged as a conflict. With stacking disabled, every
           // renewable row blocks the NEW row (legacy acceptance) — and the conflict
-          // handler below never mutates a live sibling (it only supersedes expired cash).
+          // handling below never mutates a live sibling (it only supersedes expired offline rows).
           const renewableRows = await tx.subscription.findMany({
             where: { studioId, userId, status: { in: RENEWABLE_SUBSCRIPTION_STATUSES } },
             include: { membershipPlan: { select: { exclusiveGroup: true } } },
             orderBy: { createdAt: 'desc' },
           });
-          const conflictingRow = findCreationConflicts(
+          const conflicts = findCreationConflicts(
             renewableRows.map((r) => ({
               row: r,
               membershipPlanId: r.membershipPlanId,
               exclusiveGroupKey: r.exclusiveGroupKey,
             })),
             { id: plan.id, exclusiveGroup: plan.exclusiveGroup },
-          )[0]?.row;
-          if (conflictingRow) {
-            return {
-              row: await this.handleWebhookActiveConflict(tx, {
-                conflictingRow,
-                incomingSub: sub,
-                incomingStatus: status,
-                incomingMembershipPlanId: membershipPlanId,
-                incomingExclusiveGroup: plan.exclusiveGroup,
-                incomingPendingMembershipPlanId: pendingMembershipPlanId,
-                incomingPeriodData: periodData,
-                entitlementEndsAt,
-                studioId,
-                userId,
-                stripeEventType,
-              }),
-              previousCancelAtPeriodEnd,
-            };
+          ).map((c) => c.row);
+          if (conflicts.length > 0) {
+            const decision = decideWebhookCreationConflict(conflicts, { id: plan.id, exclusiveGroup: plan.exclusiveGroup }, new Date());
+            if (decision.action === 'acknowledge') {
+              return {
+                row: null,
+                previousCancelAtPeriodEnd,
+                keepLocalCase: null as ObservedIssue | null,
+                conflictCase: this.acknowledgeWebhookCreationConflict({
+                  blockingRow: decision.blockingRow,
+                  conflictKind: decision.conflictKind,
+                  incomingSub: sub,
+                  customerId,
+                  membershipPlanId,
+                  studioId,
+                  userId,
+                  stripeEventType,
+                  stripeEventId: eventContext?.eventId ?? null,
+                }),
+              };
+            }
+            // INC-2026-10-19: an expired offline row still has status ACTIVE, so the partial unique
+            // indexes count it. It must be superseded BEFORE the Stripe row is inserted (exactly like
+            // the cash-sale path), in this same locked transaction; the new row is created by the
+            // normal path below and linked as the successor right after.
+            for (const { row: stale, endReason } of decision.supersede) {
+              const written = await tx.subscription.updateMany({
+                where: { id: stale.id, status: stale.status, stripeSubscriptionId: null, supersededBySubscriptionId: null },
+                data: { status: SubscriptionStatus.CANCELED, endReason },
+              });
+              if (written.count !== 1) {
+                throw new ConcurrentSubscriptionWriteError(sub.id, stale.status);
+              }
+              supersededOfflineIds.push(stale.id);
+            }
           }
         }
       }
@@ -557,6 +581,32 @@ export class StripeWebhookService {
             ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
           },
         });
+        if (supersededOfflineIds.length > 0) {
+          await tx.subscription.updateMany({
+            where: { id: { in: supersededOfflineIds }, supersededBySubscriptionId: null },
+            data: { supersededBySubscriptionId: row.id },
+          });
+          this.logger.log(
+            JSON.stringify({
+              event: 'webhook_superseded_expired_offline_subscriptions',
+              supersededLocalIds: supersededOfflineIds,
+              supersededBySubscriptionId: row.id,
+              incomingStripeSubId: sub.id,
+              stripeEventType,
+              studioId,
+              userId,
+            }),
+          );
+        }
+        // The first invoice can be paid (and its Payment recorded, unlinked) before this row
+        // exists; attach it now so the payment belongs to the membership it bought.
+        const latestInvoiceId = typeof sub.latest_invoice === 'string' ? sub.latest_invoice : sub.latest_invoice?.id ?? null;
+        if (latestInvoiceId) {
+          await tx.payment.updateMany({
+            where: { stripeInvoiceId: latestInvoiceId, studioId, userId, subscriptionId: null },
+            data: { subscriptionId: row.id },
+          });
+        }
       } else {
         // Fixed-duration rows keep the period of their paid cycle (re-pinned below), so Stripe's
         // billing period is never written to them — writing it would only bump updated_at twice.
@@ -690,11 +740,16 @@ export class StripeWebhookService {
         });
       }
 
-      return { row, previousCancelAtPeriodEnd, keepLocalCase: null as ObservedIssue | null };
+      return { row, previousCancelAtPeriodEnd, keepLocalCase: null as ObservedIssue | null, conflictCase: null as ObservedIssue | null };
     });
 
     if (saved?.keepLocalCase) {
       await this.billingCases.observe(this.prisma, saved.keepLocalCase);
+    }
+    if (saved?.conflictCase) {
+      // Observed after commit, like keepLocalCase: the paid Stripe subscription has no local row,
+      // so the operator sees it now instead of after the nightly reconciliation run.
+      await this.billingCases.observe(this.prisma, saved.conflictCase);
     }
     if (!saved?.row) return;
 
@@ -742,111 +797,38 @@ export class StripeWebhookService {
   }
 
   /**
-   * Called when a new Stripe subscription webhook arrives for a user/studio that already has
-   * an ACTIVE local subscription under a different (or no) stripeSubscriptionId — a state
-   * that would violate the partial unique index on (studio_id, user_id) WHERE status='ACTIVE'.
+   * A new Stripe subscription arrived while the member holds a LIVE renewable row that the
+   * creation gate treats as a conflict (decideWebhookCreationConflict): a different Stripe-backed
+   * subscription (possible duplicate) or an offline row still inside its paid window. Auto-
+   * cancelling either could take away access someone paid for, so nothing local is mutated and
+   * the webhook is acknowledged (no retry storm). Expired offline rows never reach this point:
+   * they are superseded before the insert.
    *
-   * Decision matrix:
-   *
-   *  A. Conflicting row is CASH and its service period has definitively ended
-   *     (source=CASH, currentPeriodEnd < now):
-   *     → Safe supersede. CANCEL the stale CASH row, CREATE the incoming Stripe-backed row.
-   *     → Represents: member purchased a new Stripe subscription after an expired offline period.
-   *
-   *  B. Conflicting row is Stripe-backed (has a different stripeSubscriptionId):
-   *     → Potential duplicate renewable Stripe subscriptions. Auto-cancellation is forbidden.
-   *     → Acknowledge webhook (return null → processed=true), log structured error.
-   *     → The reconciliation service will surface the incoming sub as a stripe_orphan.
-   *
-   *  C. Conflicting row is CASH with an active service period:
-   *     → Cannot auto-supersede without cancelling a member's still-valid access.
-   *     → Acknowledge webhook (return null → processed=true), log structured error.
-   *     → The reconciliation service will surface the incoming sub as a stripe_orphan.
-   *
-   * Returning null commits the outer transaction cleanly — no P2002 is thrown and Stripe
-   * stops retrying. Returning a Subscription row commits the safe supersede.
+   * The paid Stripe subscription now has no local row, so the case is returned for observation
+   * right after commit, keyed exactly like the nightly STRIPE_ORPHAN detector (one case, not two).
    */
-  private async handleWebhookActiveConflict(
-    tx: Prisma.TransactionClient,
-    params: {
-      conflictingRow: Subscription;
-      incomingSub: WebhookSubscriptionPayload;
-      incomingStatus: SubscriptionStatus;
-      incomingMembershipPlanId: string;
-      incomingExclusiveGroup: string | null;
-      incomingPendingMembershipPlanId: string | null;
-      incomingPeriodData: { currentPeriodStart?: Date; currentPeriodEnd?: Date };
-      entitlementEndsAt?: Date;
-      studioId: string;
-      userId: string;
-      stripeEventType: string;
-    },
-  ): Promise<Subscription | null> {
-    const { conflictingRow, incomingSub, studioId, userId, stripeEventType } = params;
-
-    // Case A: the conflicting row is a CASH subscription whose service period has ended.
-    // The member has since purchased a real Stripe subscription — safe to supersede.
-    const isExpiredCash =
-      conflictingRow.source === SubscriptionSource.CASH &&
-      conflictingRow.currentPeriodEnd !== null &&
-      conflictingRow.currentPeriodEnd < new Date();
-
-    if (isExpiredCash) {
-      const created = await tx.subscription.create({
-        data: {
-          studioId,
-          userId,
-          membershipPlanId: params.incomingMembershipPlanId,
-          pendingMembershipPlanId: params.incomingPendingMembershipPlanId,
-          status: params.incomingStatus,
-          stripeSubscriptionId: incomingSub.id,
-          cancelAtPeriodEnd: incomingSub.cancel_at_period_end,
-          exclusiveGroupKey: params.incomingExclusiveGroup,
-          ...params.incomingPeriodData,
-          ...(params.entitlementEndsAt !== undefined ? { entitlementEndsAt: params.entitlementEndsAt } : {}),
-        },
-      });
-      await tx.subscription.update({
-        where: { id: conflictingRow.id },
-        data: {
-          status: SubscriptionStatus.CANCELED,
-          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
-          supersededBySubscriptionId: created.id,
-        },
-      });
-      this.logger.log(
-        JSON.stringify({
-          event: 'webhook_superseded_expired_cash_subscription',
-          canceledLocalId: conflictingRow.id,
-          supersededBySubscriptionId: created.id,
-          incomingStripeSubId: incomingSub.id,
-          stripeEventType,
-          studioId,
-          userId,
-        }),
-      );
-      return created;
-    }
-
-    // Cases B and C: cannot auto-resolve without risking incorrect financial decisions.
-    // Acknowledge the webhook (no throw → no Stripe retry storm) and log for operators.
-    // The incoming Stripe subscription becomes a detectable stripe_orphan for the
-    // reconciliation service to surface on the next reconciliation check.
-    const conflictKind =
-      conflictingRow.stripeSubscriptionId !== null
-        ? 'stripe_backed_conflict'
-        : 'active_cash_conflict';
-
+  private acknowledgeWebhookCreationConflict(params: {
+    blockingRow: Subscription;
+    conflictKind: 'stripe_backed_conflict' | 'active_cash_conflict';
+    incomingSub: WebhookSubscriptionPayload;
+    customerId: string | null;
+    membershipPlanId: string;
+    studioId: string;
+    userId: string;
+    stripeEventType: string;
+    stripeEventId: string | null;
+  }): ObservedIssue {
+    const { blockingRow, conflictKind, incomingSub, studioId, userId, stripeEventType } = params;
     this.logger.error(
       JSON.stringify({
         event: 'webhook_subscription_conflict_acknowledged',
         conflictKind,
         incomingStripeSubId: incomingSub.id,
-        existingLocalId: conflictingRow.id,
-        existingLocalStatus: conflictingRow.status,
-        existingLocalSource: conflictingRow.source,
-        existingLocalStripeSubId: conflictingRow.stripeSubscriptionId ?? null,
-        existingPeriodEnd: conflictingRow.currentPeriodEnd?.toISOString() ?? null,
+        existingLocalId: blockingRow.id,
+        existingLocalStatus: blockingRow.status,
+        existingLocalSource: blockingRow.source,
+        existingLocalStripeSubId: blockingRow.stripeSubscriptionId ?? null,
+        existingPeriodEnd: blockingRow.currentPeriodEnd?.toISOString() ?? null,
         stripeEventType,
         studioId,
         userId,
@@ -854,8 +836,98 @@ export class StripeWebhookService {
         resolution: 'manual_reconciliation_required',
       }),
     );
+    return {
+      studioId,
+      category: 'SUBSCRIPTION_IDENTITY_MISMATCH',
+      severity: 'HIGH',
+      reasonCode: 'STRIPE_ORPHAN',
+      issueRef: incomingSub.id,
+      userId,
+      stripeSubscriptionId: incomingSub.id,
+      stripeCustomerId: params.customerId,
+      stripeEventId: params.stripeEventId,
+      title: 'Stripe cobra una suscripción que GymOS no tiene registrada',
+      summary: `La suscripción ${incomingSub.id} está «${incomingSub.status}» en Stripe, pero GymOS no la registró porque el miembro ya tiene otra membresía vigente (${conflictKind === 'stripe_backed_conflict' ? 'otra suscripción de tarjeta' : 'una membresía en efectivo dentro de su periodo'}).`,
+      suggestedAction: 'Revisa si es un duplicado (cancelar en Stripe) o una membresía real que falta en GymOS (crear/vincular). Nunca cobres de nuevo.',
+      evidence: {
+        stripeStatus: incomingSub.status,
+        metadataPlanId: params.membershipPlanId,
+        conflictKind,
+        blockingLocalSubscriptionId: blockingRow.id,
+        blockingLocalSource: blockingRow.source,
+        blockingLocalPeriodEnd: blockingRow.currentPeriodEnd?.toISOString() ?? null,
+        detectedBy: stripeEventType,
+      },
+    };
+  }
 
-    return null;
+  /**
+   * Whether a stored subscription-creating event for this Stripe subscription already failed
+   * (unprocessed, unresolved, with an error). Read-only; used to tell a broken first purchase from
+   * the benign "first invoice before customer.subscription.created" race.
+   */
+  private async hasFailedSubscriptionCreation(stripeSubscriptionId: string): Promise<boolean> {
+    const failed = await this.prisma.stripeWebhookEvent.findFirst({
+      where: {
+        processed: false,
+        resolvedAt: null,
+        lastError: { not: null },
+        OR: [
+          { eventType: { in: ['customer.subscription.created', 'customer.subscription.updated'] }, payload: { path: ['data', 'object', 'id'], equals: stripeSubscriptionId } },
+          { eventType: 'checkout.session.completed', payload: { path: ['data', 'object', 'subscription'], equals: stripeSubscriptionId } },
+        ],
+      },
+      select: { id: true },
+    });
+    return failed !== null;
+  }
+
+  /**
+   * Failure side of the same detection: a subscription-creating event just failed, and the first
+   * invoice of that subscription is ALREADY recorded as paid with no membership. Opens the same
+   * invoice-keyed PAID_WITHOUT_ENTITLEMENT case the invoice policy and the nightly detector use.
+   * Best effort: never masks the original handler error.
+   */
+  private async observePaidFirstInvoiceAfterFailedCreation(event: VerifiedStripeEvent): Promise<void> {
+    if (!['customer.subscription.created', 'customer.subscription.updated', 'checkout.session.completed'].includes(event.type)) return;
+    const obj = event.data.object as { id?: string; subscription?: unknown; latest_invoice?: unknown; invoice?: unknown };
+    const idOf = (v: unknown): string | null => (typeof v === 'string' ? v : v && typeof v === 'object' && typeof (v as { id?: unknown }).id === 'string' ? (v as { id: string }).id : null);
+    const isCheckout = event.type === 'checkout.session.completed';
+    const stripeSubscriptionId = isCheckout ? idOf(obj.subscription) : obj.id ?? null;
+    const invoiceId = isCheckout ? idOf(obj.invoice) : idOf(obj.latest_invoice);
+    if (!stripeSubscriptionId || !invoiceId) return;
+    const local = await this.prisma.subscription.findUnique({ where: { stripeSubscriptionId }, select: { id: true } });
+    if (local) return;
+    const payment = await this.prisma.payment.findUnique({
+      where: { stripeInvoiceId: invoiceId },
+      select: { id: true, studioId: true, userId: true, status: true, subscriptionId: true, amountCents: true, currency: true, paidAt: true, membershipPlanId: true },
+    });
+    if (!payment || payment.status !== PaymentStatus.SUCCEEDED || payment.subscriptionId !== null) return;
+    const amountText = formatMoney(payment.amountCents, payment.currency);
+    await this.billingCases.observe(this.prisma, {
+      studioId: payment.studioId,
+      category: 'PAID_WITHOUT_ENTITLEMENT',
+      severity: 'CRITICAL',
+      reasonCode: 'NO_LOCAL_SUBSCRIPTION',
+      issueRef: invoiceId,
+      userId: payment.userId,
+      paymentId: payment.id,
+      stripeSubscriptionId,
+      stripeInvoiceId: invoiceId,
+      stripeEventId: event.id,
+      title: `Pago recibido sin acceso: ${amountText} sin membresía en GymOS`,
+      summary: `Stripe cobró la primera factura ${invoiceId}${payment.paidAt ? ` el ${formatDateEs(payment.paidAt)}` : ''}, pero GymOS no pudo crear la membresía de la suscripción ${stripeSubscriptionId} (${event.type} falló).`,
+      suggestedAction: 'No cobres de nuevo. Revisa el error del evento de Stripe y crea/vincula la membresía, o reembolsa en Stripe si el cobro no debió ocurrir.',
+      evidence: {
+        amountCents: payment.amountCents,
+        currency: payment.currency,
+        paidAt: payment.paidAt?.toISOString() ?? null,
+        membershipPlanId: payment.membershipPlanId,
+        entitlementGranted: false,
+        whyNotGranted: 'NO_LOCAL_SUBSCRIPTION',
+        failedEventType: event.type,
+      },
+    });
   }
 
   /**
@@ -1165,6 +1237,9 @@ export class StripeWebhookService {
       entitledSiblingExists = sibling !== null;
     }
 
+    const subscriptionCreationFailed =
+      row === null && stripeSubscriptionId !== null ? await this.hasFailedSubscriptionCreation(stripeSubscriptionId) : false;
+
     const paidAt = invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000) : null;
     const decision = decidePaidInvoice({
       invoiceId: invoice.id,
@@ -1187,6 +1262,7 @@ export class StripeWebhookService {
       paymentPreviouslyFailed: input.priorPaymentStatus === PaymentStatus.FAILED,
       entitledSiblingExists,
       cycleExistsForInvoice,
+      subscriptionCreationFailed,
     });
 
     this.logger.log(
