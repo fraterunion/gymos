@@ -101,6 +101,8 @@ function makeMocks() {
     stripeWebhookEvent: {
       create: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn().mockResolvedValue(null),
+      // No stored subscription-creating event failed for this subscription.
+      findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -1400,17 +1402,12 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       'customer.subscription.created',
     );
 
-    // CASH row must be CANCELED
-    expect(txSubscription.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: expiredCashRow.id },
-        data: expect.objectContaining({
-          status: SubscriptionStatus.CANCELED,
-          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
-          supersededBySubscriptionId: 'sub-local-new',
-        }),
-      }),
-    );
+    // The expired CASH row is CANCELED first — guarded on the status read under the lock —
+    // because it still counts in the renewable unique indexes (INC-2026-10-19).
+    expect(txSubscription.updateMany).toHaveBeenCalledWith({
+      where: { id: expiredCashRow.id, status: SubscriptionStatus.ACTIVE, stripeSubscriptionId: null, supersededBySubscriptionId: null },
+      data: { status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD },
+    });
     // New Stripe-backed row must be CREATED
     expect(createCalls).toHaveLength(1);
     expect(createCalls[0]).toMatchObject({
@@ -1418,16 +1415,21 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       stripeSubscriptionId: activeSub.id,
       membershipPlanId: 'plan-full',
     });
+    // ...and linked as the CASH row's successor.
+    expect(txSubscription.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [expiredCashRow.id] }, supersededBySubscriptionId: null },
+      data: { supersededBySubscriptionId: 'sub-local-new' },
+    });
+    expect(txSubscription.update).not.toHaveBeenCalled();
     // Exactly one row was written for the incoming subscription (the explicit create above).
-    expect(upsertCalls).toHaveLength(1);
-    // Supersede logged
+    expect(upsertCalls.filter((r) => r['stripeSubscriptionId'] === activeSub.id)).toHaveLength(1);
     const supersededLog = logSpy.mock.calls.find(
-      (args) => typeof args[0] === 'string' && (args[0] as string).includes('webhook_superseded_expired_cash_subscription'),
+      (args) => typeof args[0] === 'string' && (args[0] as string).includes('webhook_superseded_expired_offline_subscriptions'),
     );
     expect(supersededLog).toBeDefined();
     expect(JSON.parse(supersededLog![0] as string)).toMatchObject({
-      event: 'webhook_superseded_expired_cash_subscription',
-      canceledLocalId: expiredCashRow.id,
+      supersededLocalIds: [expiredCashRow.id],
+      supersededBySubscriptionId: 'sub-local-new',
       incomingStripeSubId: activeSub.id,
     });
   });
@@ -1449,12 +1451,9 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       'customer.subscription.created',
     );
 
-    expect(txSubscription.update).toHaveBeenCalledWith(
+    expect(txSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          status: SubscriptionStatus.CANCELED,
-          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
-        }),
+        data: { status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD },
       }),
     );
     expect(createCalls).toHaveLength(1);
@@ -1462,7 +1461,7 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
 
   // 4. Active CASH row whose service period is NOT over → must not destroy current access
   it('4. CASH row with still-active period: webhook acknowledged without mutation, error logged', async () => {
-    const { service, subscriptionLifecycle, upsertCalls, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    const { service, subscriptionLifecycle, upsertCalls, createCalls, txSubscription, billingCases } = makeSubscriptionWebhookMocks();
     subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({
       membershipPlanId: 'plan-full',
       pendingMembershipPlanId: null,
@@ -1492,6 +1491,11 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     expect(parsed['conflictKind']).toBe('active_cash_conflict');
     expect(parsed['action']).toBe('acknowledged_no_local_mutation');
     expect(parsed['incomingStripeSubId']).toBe(activeSub.id);
+    // The paid Stripe subscription has no local row: surfaced now, keyed like the nightly detector.
+    expect(billingCases.observe).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ category: 'SUBSCRIPTION_IDENTITY_MISMATCH', reasonCode: 'STRIPE_ORPHAN', issueRef: activeSub.id, severity: 'HIGH' }),
+    );
   });
 
   // 5. Two renewable Stripe subscriptions: no auto-cancel, no auto-winner
@@ -1600,10 +1604,12 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       'customer.subscription.created',
     );
 
-    // New Stripe-backed row is created first, then the expired CASH row is marked superseded.
-    expect(txSubscription.create.mock.invocationCallOrder[0]).toBeLessThan(
-      txSubscription.update.mock.invocationCallOrder[0],
-    );
+    // INC-2026-10-19 regression: cancel the expired CASH row BEFORE inserting the Stripe row
+    // (the reverse order violates subscriptions_one_renewable_per_member_plan_idx), then link.
+    const [cancelOrder, linkOrder] = txSubscription.updateMany.mock.invocationCallOrder;
+    const createOrder = txSubscription.create.mock.invocationCallOrder[0];
+    expect(cancelOrder).toBeLessThan(createOrder);
+    expect(createOrder).toBeLessThan(linkOrder);
     expect(createCalls[0]).toMatchObject({ status: SubscriptionStatus.ACTIVE });
   });
 
@@ -1617,8 +1623,8 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
     txSubscription.findUnique.mockResolvedValue(null);
     txSubscription.findFirst.mockResolvedValue(expiredCashRow);
     txSubscription.findMany.mockResolvedValue([{ ...(expiredCashRow), exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
-    // Simulate DB failure during the CASH row update
-    txSubscription.update.mockRejectedValue(new Error('connection timeout'));
+    // Simulate DB failure during the CASH row supersede
+    txSubscription.updateMany.mockRejectedValueOnce(new Error('connection timeout'));
 
     await expect(
       service.upsertSubscriptionFromStripe(
@@ -1627,6 +1633,43 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
         'customer.subscription.created',
       ),
     ).rejects.toThrow('connection timeout');
+    expect(txSubscription.create).not.toHaveBeenCalled();
+  });
+
+  it('9b. a CASH row changed by a writer outside the lock: supersede writes nothing and the event is retried', async () => {
+    const { service, subscriptionLifecycle, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({ membershipPlanId: 'plan-full', pendingMembershipPlanId: null });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findMany.mockResolvedValue([{ ...expiredCashRow, exclusiveGroupKey: null, membershipPlan: { exclusiveGroup: null } }]);
+    txSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      service.upsertSubscriptionFromStripe(
+        { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+        { userId: 'user_1', studioId: 'studio_1' },
+        'customer.subscription.created',
+      ),
+    ).rejects.toThrow(/changed concurrently/);
+    expect(txSubscription.create).not.toHaveBeenCalled();
+  });
+
+  it('9c. expired CASH row in the same exclusive group but another plan is superseded as a plan change', async () => {
+    const { service, subscriptionLifecycle, createCalls, txSubscription } = makeSubscriptionWebhookMocks();
+    subscriptionLifecycle.reconcileSubscriptionPlansFromStripe.mockResolvedValue({ membershipPlanId: 'plan-full', pendingMembershipPlanId: null });
+    txSubscription.findUnique.mockResolvedValue(null);
+    txSubscription.findMany.mockResolvedValue([{ ...expiredCashRow, membershipPlanId: 'plan-basic', exclusiveGroupKey: 'CORE', membershipPlan: { exclusiveGroup: 'CORE' } }]);
+    (service as unknown as { prisma: { membershipPlan: { findFirst: jest.Mock } } }).prisma.membershipPlan.findFirst.mockImplementation(async () => ({ id: 'plan-full', studioId: 'studio_1', deletedAt: null, exclusiveGroup: 'CORE' }));
+
+    await service.upsertSubscriptionFromStripe(
+      { ...activeSub, metadata: { userId: 'user_1', studioId: 'studio_1' } },
+      { userId: 'user_1', studioId: 'studio_1' },
+      'customer.subscription.created',
+    );
+
+    expect(txSubscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.SUPERSEDED_PLAN_CHANGE } }),
+    );
+    expect(createCalls).toHaveLength(1);
   });
 
   // 10. Acknowledged conflict does not throw → webhook is marked processed=true by the caller
@@ -1739,16 +1782,16 @@ describe('StripeWebhookService — active subscription conflict handling', () =>
       'customer.subscription.created',
     );
 
-    expect(txSubscription.update).toHaveBeenCalledWith(
+    expect(txSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'cmr5e5tl3002hm60r9s2d08cc' },
-        data: expect.objectContaining({
-          status: SubscriptionStatus.CANCELED,
-          endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD,
-          supersededBySubscriptionId: 'sub-local-new',
-        }),
+        where: expect.objectContaining({ id: 'cmr5e5tl3002hm60r9s2d08cc' }),
+        data: { status: SubscriptionStatus.CANCELED, endReason: SubscriptionEndReason.SUPERSEDED_PAYMENT_METHOD },
       }),
     );
+    expect(txSubscription.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['cmr5e5tl3002hm60r9s2d08cc'] }, supersededBySubscriptionId: null },
+      data: { supersededBySubscriptionId: 'sub-local-new' },
+    });
     expect(createCalls).toHaveLength(1);
     expect(createCalls[0]).toMatchObject({
       status: SubscriptionStatus.ACTIVE,
