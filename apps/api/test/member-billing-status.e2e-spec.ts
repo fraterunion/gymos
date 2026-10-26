@@ -234,7 +234,11 @@ describe('Member 360 billing explanations (e2e)', () => {
     const sub = await prisma.subscription.create({
       data: { studioId: s.studio.id, userId: lapsedMember.id, membershipPlanId: plan.id, status: SubscriptionStatus.PAST_DUE, source: SubscriptionSource.STRIPE, stripeSubscriptionId: 'sub_fx0026', endReason: SubscriptionEndReason.MEMBER_CANCELLED, currentPeriodStart: new Date(Date.now() - 24 * DAY), currentPeriodEnd: new Date(Date.now() + 6 * DAY) },
     });
-    await prisma.payment.create({ data: { studioId: s.studio.id, userId: lapsedMember.id, subscriptionId: sub.id, membershipPlanId: plan.id, amountCents: 150000, currency: 'mxn', status: PaymentStatus.FAILED, paymentMethod: PaymentMethod.STRIPE, stripeInvoiceId: 'in_fx0032', createdAt: new Date(Date.now() - 24 * DAY) } });
+    // The Stripe cancellation fixture has a fixed event timestamp. Keep the failed payment before
+    // that event so this test remains deterministic as the wall clock advances.
+    const deletedEventAt = (fixture('dahlia-subscription-deleted-payment-failed').created as number) * 1000;
+    const failedPaymentAt = new Date(deletedEventAt - DAY);
+    await prisma.payment.create({ data: { studioId: s.studio.id, userId: lapsedMember.id, subscriptionId: sub.id, membershipPlanId: plan.id, amountCents: 150000, currency: 'mxn', status: PaymentStatus.FAILED, paymentMethod: PaymentMethod.STRIPE, stripeInvoiceId: 'in_fx0032', createdAt: failedPaymentAt } });
     for (const [name, eventType] of [['dahlia-subscription-deleted-payment-failed', 'customer.subscription.deleted'], ['dahlia-invoice-payment-failed-after-delete', 'invoice.payment_failed']] as const) {
       const payload = fixture(name);
       await prisma.stripeWebhookEvent.create({ data: { stripeEventId: payload['id'] as string, eventType, processed: true, payload: payload as Prisma.InputJsonValue } });
