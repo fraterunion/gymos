@@ -157,7 +157,7 @@ describe('WalletPassService', () => {
       })[key]);
       dynamicPasses.isEnabled.mockReturnValue(true);
       walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: 'raw1' });
-      prisma.walletPassArtifact.findUnique.mockResolvedValue(null);
+      prisma.walletPassArtifact.findUnique.mockResolvedValue({ pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC', templateVersion: APPLE_PASS_TEMPLATE_VERSION });
       appleProvider.buildPkpass.mockResolvedValue(Buffer.from('pkpass-bytes'));
       prisma.walletPassArtifact.upsert.mockResolvedValue({ pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC' });
       googleProvider.ensureClassAndObject.mockResolvedValue({ objectId: 'obj1' });
