@@ -21,3 +21,13 @@ export class FinishSeriesDto {
   @IsBoolean()
   confirmReservations?: boolean;
 }
+
+export class CancelSeriesPermanentlyDto {
+  @IsOptional()
+  @IsString()
+  cancelReason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  confirmReservations?: boolean;
+}

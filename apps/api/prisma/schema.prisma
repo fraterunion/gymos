@@ -218,6 +218,52 @@ enum PaymentMethod {
   TERMINAL
 }
 
+/// How an administrator applied a catalog price change to existing subscriptions.
+enum MembershipPriceChangeScope {
+  ALL_EXISTING
+  FUTURE_ONLY
+  SELECTED
+}
+
+enum MembershipPriceChangeStatus {
+  APPLYING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum MembershipPriceChangeItemStatus {
+  PENDING
+  APPLYING
+  APPLIED
+  FAILED
+  SKIPPED
+}
+
+enum EmailCampaignStatus {
+  DRAFT
+  SENDING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum EmailRecipientStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+  SUPPRESSED
+}
+
+enum EmailSuppressionReason {
+  UNSUBSCRIBE
+  BOUNCE
+  COMPLAINT
+  MANUAL
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
@@ -297,6 +343,10 @@ model Studio {
   walletPassRegistrations    WalletPassRegistration[]
   walletPassRefreshJobs      WalletPassRefreshJob[]
   walletPassEvents           WalletPassEvent[]
+  membershipPriceChanges     MembershipPriceChange[]
+  emailCampaigns             EmailCampaign[]
+  emailCampaignRecipients    EmailCampaignRecipient[]
+  emailSuppressions          EmailSuppression[]
 
   @@map("studios")
 }
@@ -348,6 +398,9 @@ model User {
   billingCasesAcknowledged    BillingReconciliationCase[] @relation("BillingCaseAcknowledgedBy")
   billingCasesResolved        BillingReconciliationCase[] @relation("BillingCaseResolvedBy")
   billingCasesDismissed       BillingReconciliationCase[] @relation("BillingCaseDismissedBy")
+  membershipPriceChanges      MembershipPriceChange[]     @relation("PriceChangeActor")
+  emailCampaignsCreated       EmailCampaign[]             @relation("EmailCampaignAuthor")
+  emailCampaignRecipients     EmailCampaignRecipient[]
 
   @@map("users")
 }
@@ -427,6 +480,7 @@ model MembershipPlan {
   payments             Payment[]
   classTemplateAccess  MembershipPlanClassAccess[]
   entitlementCycles    MembershipEntitlementCycle[]
+  priceChanges         MembershipPriceChange[]
 
   @@index([studioId])
   @@index([studioId, active])
@@ -461,6 +515,10 @@ model Subscription {
   endReason            SubscriptionEndReason? @map("end_reason")
   createdByUserId      String?              @map("created_by_user_id")
   notes                String?
+  /// Recurring price for THIS subscription, in cents. Snapshotted at sale.
+  /// A catalog price change does not rewrite it unless an explicit price-change
+  /// run applies the new price to this row. Null only before backfill.
+  priceCents           Int?                 @map("price_cents")
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
 
@@ -476,6 +534,7 @@ model Subscription {
   attributedBookings    Booking[]    @relation("BookingEntitlementSubscription")
   attributedAttendances Attendance[] @relation("AttendanceEntitlementSubscription")
   billingReconciliationCases BillingReconciliationCase[]
+  priceChangeItems           MembershipPriceChangeItem[]
 
   @@index([studioId])
   @@index([studioId, userId])
@@ -1468,6 +1527,131 @@ model AuditLog {
   @@index([studioId, action])
   @@index([targetUserId])
   @@map("audit_logs")
+}
+
+/// One confirmed catalog price decision. Items record each subscription's result
+/// so a Stripe failure can be retried without applying the new price twice.
+model MembershipPriceChange {
+  id                    String                      @id @default(cuid())
+  studioId              String                      @map("studio_id")
+  membershipPlanId      String                      @map("membership_plan_id")
+  actorUserId           String                      @map("actor_user_id")
+  scope                 MembershipPriceChangeScope
+  oldPriceCents         Int                         @map("old_price_cents")
+  newPriceCents         Int                         @map("new_price_cents")
+  currency              String
+  previousStripePriceId String?                     @map("previous_stripe_price_id")
+  newStripePriceId      String?                     @map("new_stripe_price_id")
+  status                MembershipPriceChangeStatus @default(APPLYING)
+  idempotencyKey        String                      @map("idempotency_key")
+  confirmedAt           DateTime                    @map("confirmed_at")
+  completedAt           DateTime?                   @map("completed_at")
+  createdAt             DateTime                    @default(now()) @map("created_at")
+  updatedAt             DateTime                    @updatedAt @map("updated_at")
+
+  studio         Studio                     @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  membershipPlan MembershipPlan             @relation(fields: [membershipPlanId], references: [id], onDelete: Restrict)
+  actor          User                       @relation("PriceChangeActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  items          MembershipPriceChangeItem[]
+
+  @@unique([studioId, idempotencyKey])
+  @@index([studioId, membershipPlanId, createdAt])
+  @@map("membership_price_changes")
+}
+
+model MembershipPriceChangeItem {
+  id                    String                           @id @default(cuid())
+  priceChangeId         String                           @map("price_change_id")
+  studioId              String                           @map("studio_id")
+  subscriptionId        String                           @map("subscription_id")
+  userId                String                           @map("user_id")
+  source                SubscriptionSource
+  applyNewPrice         Boolean                          @map("apply_new_price")
+  oldPriceCents         Int                              @map("old_price_cents")
+  newPriceCents         Int                              @map("new_price_cents")
+  previousStripePriceId String?                          @map("previous_stripe_price_id")
+  appliedStripePriceId  String?                          @map("applied_stripe_price_id")
+  status                MembershipPriceChangeItemStatus  @default(PENDING)
+  error                 String?
+  appliedAt             DateTime?                        @map("applied_at")
+  createdAt             DateTime                         @default(now()) @map("created_at")
+
+  priceChange  MembershipPriceChange @relation(fields: [priceChangeId], references: [id], onDelete: Restrict)
+  subscription Subscription          @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+
+  @@unique([priceChangeId, subscriptionId])
+  @@index([priceChangeId, status])
+  @@map("membership_price_change_items")
+}
+
+/// Addresses that must not receive non-transactional campaign mail for a studio.
+/// Password reset and other transactional mail do not consult this table.
+model EmailSuppression {
+  id        String                  @id @default(cuid())
+  studioId  String                  @map("studio_id")
+  email     String
+  reason    EmailSuppressionReason
+  createdAt DateTime                @default(now()) @map("created_at")
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Restrict)
+
+  @@unique([studioId, email])
+  @@map("email_suppressions")
+}
+
+model EmailCampaign {
+  id              String              @id @default(cuid())
+  studioId        String              @map("studio_id")
+  createdById     String              @map("created_by_id")
+  subject         String
+  bodyText        String              @map("body_text") @db.Text
+  status          EmailCampaignStatus @default(DRAFT)
+  filters         Json                @default("{}")
+  includeUserIds  String[]            @default([]) @map("include_user_ids")
+  excludeUserIds  String[]            @default([]) @map("exclude_user_ids")
+  allMembers      Boolean             @default(false) @map("all_members")
+  idempotencyKey  String              @map("idempotency_key")
+  confirmedAt     DateTime?           @map("confirmed_at")
+  startedAt       DateTime?           @map("started_at")
+  completedAt     DateTime?           @map("completed_at")
+  recipientCount  Int                 @default(0) @map("recipient_count")
+  sentCount       Int                 @default(0) @map("sent_count")
+  failedCount     Int                 @default(0) @map("failed_count")
+  skippedCount    Int                 @default(0) @map("skipped_count")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  studio     Studio                   @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  createdBy  User                     @relation("EmailCampaignAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+  recipients EmailCampaignRecipient[]
+
+  @@unique([studioId, idempotencyKey])
+  @@index([studioId, createdAt])
+  @@index([status])
+  @@map("email_campaigns")
+}
+
+model EmailCampaignRecipient {
+  id                String               @id @default(cuid())
+  campaignId        String               @map("campaign_id")
+  studioId          String               @map("studio_id")
+  userId            String               @map("user_id")
+  email             String
+  status            EmailRecipientStatus @default(PENDING)
+  providerMessageId String?              @map("provider_message_id")
+  error             String?
+  claimedAt         DateTime?            @map("claimed_at")
+  sentAt            DateTime?            @map("sent_at")
+  createdAt         DateTime             @default(now()) @map("created_at")
+
+  campaign EmailCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  studio   Studio        @relation(fields: [studioId], references: [id], onDelete: Restrict)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([campaignId, userId])
+  @@unique([campaignId, email])
+  @@index([campaignId, status])
+  @@map("email_campaign_recipients")
 }
 
 // ---------------------------------------------------------------------------

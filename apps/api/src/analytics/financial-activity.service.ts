@@ -202,7 +202,7 @@ export class FinancialActivityService {
       WHERE p.studio_id = ${studioId}
         AND p.subscription_id = ANY(${subscriptionIds}::text[])
         AND p.status = 'SUCCEEDED'
-      ORDER BY p.subscription_id, COALESCE(p.paid_at, p.created_at) ASC, p.id ASC
+      ORDER BY p.subscription_id, p.created_at ASC, p.id ASC
     `;
 
     return indexFirstSucceededPayments(rows);

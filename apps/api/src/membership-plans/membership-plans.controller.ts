@@ -20,14 +20,21 @@ import type { RequestWithUser } from '../auth/interfaces/request-with-user.inter
 import { BillingService } from '../billing/billing.service';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { CreateMembershipPlanDto } from './dto/create-membership-plan.dto';
+import {
+  ApplyMembershipPriceChangeDto,
+  PreviewMembershipPriceChangeDto,
+  RetryMembershipPriceChangeDto,
+} from './dto/apply-membership-price-change.dto';
 import { UpdateMembershipPlanDto } from './dto/update-membership-plan.dto';
 import { MembershipPlansService } from './membership-plans.service';
+import { MembershipPriceChangeService } from './membership-price-change.service';
 
 @Controller('studios/:studioId/membership-plans')
 @UseGuards(JwtAuthGuard, StudioMemberGuard)
 export class MembershipPlansController {
   constructor(
     private readonly membershipPlansService: MembershipPlansService,
+    private readonly priceChanges: MembershipPriceChangeService,
     private readonly billingService: BillingService,
     private readonly enrollmentService: EnrollmentService,
   ) {}
@@ -114,6 +121,52 @@ export class MembershipPlansController {
     @Param('planId') planId: string,
   ) {
     return this.membershipPlansService.listPlanConfigurationHistory(studioId, planId);
+  }
+
+  @Post(':planId/price-changes/preview')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  previewPriceChange(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Body() dto: PreviewMembershipPriceChangeDto,
+  ) {
+    return this.priceChanges.preview(studioId, planId, dto.newPriceCents);
+  }
+
+  @Get(':planId/price-changes')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  listPriceChanges(@Param('studioId') studioId: string, @Param('planId') planId: string) {
+    return this.priceChanges.list(studioId, planId);
+  }
+
+  @Post(':planId/price-changes')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  applyPriceChange(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Body() dto: ApplyMembershipPriceChangeDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.priceChanges.apply(studioId, planId, req.user.sub, dto);
+  }
+
+  @Post(':planId/price-changes/:changeId/retry')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  retryPriceChange(
+    @Param('studioId') studioId: string,
+    @Param('planId') planId: string,
+    @Param('changeId') changeId: string,
+    @Body() dto: RetryMembershipPriceChangeDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.priceChanges.retry(studioId, planId, changeId, req.user.sub, dto.confirm);
   }
 
   @Patch(':planId')

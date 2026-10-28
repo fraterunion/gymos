@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   PaymentMethod,
@@ -882,5 +882,52 @@ describe('SalesService', () => {
         }),
       }));
     });
+  });
+
+  it('lets front desk honor a grandfathered price and rejects the catalog price', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-1',
+      studioId: 'studio-1',
+      priceCents: 195000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub-locked', priceCents: 150000 });
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-new',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodEnd: new Date('2026-12-01'),
+      membershipPlan: { id: 'plan-1', name: 'Full', billingInterval: 'MONTHLY', priceCents: 195000, currency: 'mxn' },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-locked' });
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1',
+        amountCents: 195000,
+        paymentMethod: 'CASH',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-1',
+      amountCents: 150000,
+      paymentMethod: 'CASH',
+    });
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priceCents: 150000 }),
+      }),
+    );
   });
 });

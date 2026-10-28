@@ -228,10 +228,21 @@ export class SalesService {
       throw new BadRequestException('Amount must be greater than zero');
     }
 
-    if (dto.amountCents !== plan.priceCents) {
+    const heldSubscription = await this.prisma.subscription.findFirst({
+      where: {
+        studioId,
+        userId: targetUserId,
+        membershipPlanId: plan.id,
+        status: { in: [...RENEWABLE_SUBSCRIPTION_STATUSES, SubscriptionStatus.SCHEDULED] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, priceCents: true },
+    });
+    const authorizedPrice = heldSubscription?.priceCents ?? plan.priceCents;
+    if (dto.amountCents !== authorizedPrice) {
       if (actor.role !== Role.OWNER) {
         throw new BadRequestException(
-          'Amount must match plan price unless overridden by an owner',
+          'Amount must match the member price unless overridden by an owner',
         );
       }
       if (!dto.priceOverrideNote?.trim()) {
@@ -527,6 +538,7 @@ export class SalesService {
               cancelAtPeriodEnd: true,
               createdByUserId: actorUserId,
               notes: combinedNotes,
+              priceCents: heldSubscription?.priceCents ?? plan.priceCents,
               ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
             },
             include: planInclude,

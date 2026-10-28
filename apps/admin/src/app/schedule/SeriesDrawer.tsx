@@ -31,6 +31,7 @@ export function SeriesDrawer({
   onCancelForever,
   onOpenOccurrence,
   refreshKey,
+  cancelBusy = false,
 }: {
   studioId: string;
   seriesId: string;
@@ -42,6 +43,7 @@ export function SeriesDrawer({
   onCancelForever: (detail: SeriesDetail) => void;
   onOpenOccurrence: (occurrenceId: string, startsAt: string) => void;
   refreshKey?: number;
+  cancelBusy?: boolean;
 }) {
   const [detail, setDetail] = useState<SeriesDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -234,10 +236,10 @@ export function SeriesDrawer({
                 <button
                   type="button"
                   className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={!detail.anchorOccurrenceId || detail.status === "ENDED"}
+                  disabled={detail.status === "ENDED" || cancelBusy}
                   onClick={() => onCancelForever(detail)}
                 >
-                  Cancelar permanentemente
+                  {cancelBusy ? "Cancelando…" : "Cancelar permanentemente"}
                 </button>
               </div>
             ) : null}

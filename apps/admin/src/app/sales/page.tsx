@@ -148,6 +148,14 @@ export default function WalkInSalesPage() {
     return () => { cancelled = true; };
   }, [selectedStudioId, selectedMember]);
 
+  const chargeCents = useMemo(() => {
+    if (!selectedPlan) return 0;
+    const option = memberOptions && selectedMember && memberOptions.userId === selectedMember.user.id
+      ? memberOptions.options.find((row) => row.planId === selectedPlan.id)
+      : undefined;
+    return option?.effectivePriceCents ?? selectedPlan.priceCents;
+  }, [selectedPlan, memberOptions, selectedMember]);
+
   const saleRelationship = useMemo(() => {
     if (!selectedPlan || !selectedMember) return null;
     if (!memberOptions || memberOptions.userId !== selectedMember.user.id) return null;
@@ -347,7 +355,7 @@ export default function WalkInSalesPage() {
     setBusy(true);
     setError(null);
     try {
-      const amountCents = selectedPlan.priceCents;
+      const amountCents = chargeCents;
       const periodPayload = resolveCashSalePeriodPayload({
         periodStartDateKey: periodStart,
         periodEndDateKey: periodEnd,
@@ -683,9 +691,14 @@ export default function WalkInSalesPage() {
                 <span className="mb-1 block text-zinc-600">Monto</span>
                 <input
                   readOnly
-                  value={formatMoney(selectedPlan.priceCents, selectedPlan.currency)}
+                  value={formatMoney(chargeCents, selectedPlan.currency)}
                   className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2"
                 />
+                {chargeCents !== selectedPlan.priceCents ? (
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Precio de este miembro. El catálogo ahora es {formatMoney(selectedPlan.priceCents, selectedPlan.currency)}.
+                  </p>
+                ) : null}
               </label>
               {isOwner ? (
                 <label className="text-sm sm:col-span-2">

@@ -7,11 +7,12 @@ import { SalesModule } from '../sales/sales.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { MembershipPlansController } from './membership-plans.controller';
 import { MembershipPlansService } from './membership-plans.service';
+import { MembershipPriceChangeService } from './membership-price-change.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, BillingModule, EnrollmentModule, SalesModule, StripeModule],
   controllers: [MembershipPlansController],
-  providers: [MembershipPlansService],
+  providers: [MembershipPlansService, MembershipPriceChangeService],
   exports: [MembershipPlansService],
 })
 export class MembershipPlansModule {}

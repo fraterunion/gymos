@@ -20,6 +20,19 @@ describe('member-facing benefits reflect editable plan description', () => {
     assert.deepEqual(resolveAresPlanBenefits({ description: '  \n  ' }), []);
   });
 
+  it('splits the stored Basic and Full copy on plus signs without breaking middots', () => {
+    assert.deepEqual(resolveAresPlanBenefits({
+      description: '12 clases al mes + Open Gym · 10:00 a.m. – 5:00 p.m. + 3 guest passes. Créditos no acumulables.',
+    }), [
+      '12 clases al mes',
+      'Open Gym · 10:00 a.m. – 5:00 p.m.',
+      '3 guest passes. Créditos no acumulables.',
+    ]);
+    assert.deepEqual(resolveAresPlanBenefits({
+      description: 'Clases ilimitadas + Open Gym · 10:00 a.m. – 5:00 p.m. + 5 guest passes al mes + tina de hielo + eventos. Sin restricciones de horario.',
+    })[0], 'Clases ilimitadas');
+  });
+
   it('supports an ordinary single-line description', () => {
     assert.deepEqual(resolveAresPlanBenefits({
       description: 'Membresía personalizada',

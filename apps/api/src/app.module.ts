@@ -28,6 +28,7 @@ import { StudioSettingsModule } from './studio-settings/studio-settings.module';
 import { StudiosModule } from './studios/studios.module';
 import { WaiverModule } from './waiver/waiver.module';
 import { SalesModule } from './sales/sales.module';
+import { CommunicationsModule } from './communications/communications.module';
 import { WaitlistModule } from './waitlist/waitlist.module';
 
 function skipThrottleInE2eExceptAuth(context: ExecutionContext): boolean {
@@ -82,6 +83,7 @@ const isE2e = process.env['GYMOS_E2E'] === '1';
     EnrollmentModule,
     WaiverModule,
     SalesModule,
+    CommunicationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

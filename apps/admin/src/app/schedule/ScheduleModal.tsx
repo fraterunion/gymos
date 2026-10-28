@@ -341,12 +341,16 @@ export function ScheduleModal({
     try {
       if (isRecurringEdit) {
         const impact = await previewCancelOccurrence(studioId, modal.cls.id, scope);
-        if (impact.totalReservations > 0) {
-          const ok = window.confirm(
-            `${impact.affectedClassCount} clases serán canceladas · ${impact.totalReservations} reservaciones afectadas. ¿Continuar?`,
-          );
-          if (!ok) return;
-        }
+        const generationNote =
+          scope === "SERIES"
+            ? " No se generarán clases nuevas de esta serie. El historial se conserva."
+            : scope === "FOLLOWING"
+              ? " No se generarán clases después de esta fecha."
+              : "";
+        const ok = window.confirm(
+          `${impact.affectedClassCount} clases serán canceladas · ${impact.totalReservations} reservaciones afectadas.${generationNote} ¿Continuar?`,
+        );
+        if (!ok) return;
         await cancelSeriesOccurrence(studioId, modal.cls.id, {
           scope,
           cancelReason: cancelReason.trim() || undefined,

@@ -535,10 +535,10 @@ export class MembershipPlansService {
    * Must succeed before any GymOS stripePriceId write. Idempotent via Stripe Idempotency-Key.
    * Authoritative rotation primitive shared by financial edit and catalog reconciliation.
    */
-  private async rotateStripeSalePrice(params: {
+  async rotateStripeSalePrice(params: {
     plan: MembershipPlan;
     next: PlanFinancialIdentity;
-    source: 'membership_plan_edit' | 'catalog_reconciliation';
+    source: 'membership_plan_edit' | 'catalog_reconciliation' | 'membership_price_change';
   }): Promise<{
     previousStripePriceId: string | null;
     newStripePriceId: string;

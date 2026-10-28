@@ -170,6 +170,69 @@ export function createMembershipPlan(
   });
 }
 
+export type PriceChangeScope = "ALL_EXISTING" | "FUTURE_ONLY" | "SELECTED";
+
+export type PriceChangeMember = {
+  subscriptionId: string;
+  userId: string;
+  name: string;
+  email: string;
+  source: string;
+  status: string;
+  currentPriceCents: number;
+  nextPriceCents: number;
+  priceUnverified: boolean;
+};
+
+export type PriceChangePreview = {
+  planId: string;
+  planName: string;
+  currency: string;
+  oldPriceCents: number;
+  newPriceCents: number;
+  counts: { total: number; alreadyAtNewPrice: number; wouldChange: number };
+  members: PriceChangeMember[];
+};
+
+export function previewMembershipPriceChange(
+  studioId: string,
+  planId: string,
+  newPriceCents: number,
+): Promise<PriceChangePreview> {
+  return apiRequest(`/studios/${studioId}/membership-plans/${planId}/price-changes/preview`, {
+    method: "POST",
+    body: JSON.stringify({ newPriceCents }),
+  });
+}
+
+export function retryMembershipPriceChange(
+  studioId: string,
+  planId: string,
+  changeId: string,
+): Promise<{ id: string; status: string; counts: { applied: number; skipped: number; failed: number } }> {
+  return apiRequest(`/studios/${studioId}/membership-plans/${planId}/price-changes/${changeId}/retry`, {
+    method: "POST",
+    body: JSON.stringify({ confirm: true }),
+  });
+}
+
+export function applyMembershipPriceChange(
+  studioId: string,
+  planId: string,
+  input: {
+    newPriceCents: number;
+    scope: PriceChangeScope;
+    subscriptionIds?: string[];
+    idempotencyKey: string;
+    confirm: true;
+  },
+): Promise<{ id: string; status: string; counts: { applied: number; skipped: number; failed: number } }> {
+  return apiRequest(`/studios/${studioId}/membership-plans/${planId}/price-changes`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function updateMembershipPlan(
   studioId: string,
   planId: string,

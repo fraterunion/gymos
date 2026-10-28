@@ -25,6 +25,7 @@ import {
   type SubscriptionListItem,
   type SubscriptionStatus,
 } from "@/lib/api/memberships";
+import { PriceChangeDialog } from "@/app/memberships/PriceChangeDialog";
 import {
   fetchClassTemplates,
   updateClassTemplate,
@@ -204,6 +205,7 @@ function PlanModal({
   const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pricePrompt, setPricePrompt] = useState<{ cents: number; key: string; input: MembershipPlanInput } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<PlanConfigurationHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -341,6 +343,11 @@ function PlanModal({
     if (!financialChanged) {
       input.stripeProductId = form.stripeProductId.trim() || null;
       input.stripePriceId = form.stripePriceId.trim() || null;
+    }
+
+    if (editing && cents !== editing.priceCents) {
+      setPricePrompt({ cents, key: crypto.randomUUID(), input });
+      return;
     }
 
     setSaving(true);
@@ -636,9 +643,9 @@ function PlanModal({
               Vinculación de cobro
             </p>
             <p className="text-[11px] text-zinc-500">
-              Si cambias el precio, la moneda o el ciclo de cobro, GymOS sincroniza
-              automáticamente el precio de venta actual con Stripe. Los miembros que ya
-              están suscritos conservan su precio histórico.
+              Si cambias el precio, eliges si aplica a todos, solo a futuros, o a miembros
+              concretos. Stripe no prorratea ni adelanta el cobro. La moneda y el ciclo
+              siguen sincronizando el precio de venta del catálogo.
             </p>
             {editing ? (
               <div className="grid grid-cols-2 gap-2 rounded-lg border border-zinc-200 bg-white p-3 text-xs">
@@ -736,6 +743,26 @@ function PlanModal({
           </div>
         </form>
       </div>
+      {pricePrompt && editing ? (
+        <PriceChangeDialog
+          studioId={studioId}
+          planId={editing.id}
+          planName={editing.name}
+          currency={editing.currency}
+          oldPriceCents={editing.priceCents}
+          newPriceCents={pricePrompt.cents}
+          idempotencyKey={pricePrompt.key}
+          onCancel={() => setPricePrompt(null)}
+          beforeApply={async () => {
+            await updateMembershipPlan(studioId, editing.id, {
+              ...pricePrompt.input,
+              priceCents: editing.priceCents,
+              active: form.active,
+            });
+          }}
+          onApplied={onSaved}
+        />
+      ) : null}
     </div>
   );
 }

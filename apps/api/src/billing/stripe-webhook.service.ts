@@ -388,6 +388,7 @@ export class StripeWebhookService {
           billingInterval: true,
           entitlementDays: true,
           exclusiveGroup: true,
+          priceCents: true,
         },
       });
       if (!plan) {
@@ -576,6 +577,7 @@ export class StripeWebhookService {
             cancelAtPeriodEnd: sub.cancel_at_period_end,
             // MM-1: purchase-time snapshot of the plan's exclusivity group.
             exclusiveGroupKey: plan.exclusiveGroup,
+            priceCents: plan.priceCents,
             ...periodData,
             // entitlementEndsAt is set only at creation — decoupled from Stripe period updates
             ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),
@@ -633,6 +635,11 @@ export class StripeWebhookService {
               membershipPlanId,
               pendingMembershipPlanId,
               ...periodWrite,
+              // A plan change leaves the previous plan's locked price. Same-plan
+              // webhook updates must not touch priceCents (grandfathering).
+              ...(existingRowForThisSub.membershipPlanId !== membershipPlanId
+                ? { priceCents: plan.priceCents }
+                : {}),
               // entitlementEndsAt deliberately omitted from update — never overwritten by Stripe
             },
           });

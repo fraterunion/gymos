@@ -19,7 +19,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
-import { PaymentDatePicker, studioTodayKey } from '@/components/PaymentDatePicker';
+import { PaymentDatePicker, studioDateKey, studioTodayKey } from '@/components/PaymentDatePicker';
 import { Field } from '@/components/Field';
 import { ScreenLoader } from '@/components/StudioScreenChrome';
 import { useAuth } from '@/contexts/AuthContext';
@@ -389,16 +389,10 @@ function SalesPlanCard({
           </Text>
         </View>
 
-        {plan.description ? (
-          <Text style={{ fontSize: 14, lineHeight: 21, color: C.textSub, marginBottom: 16 }}>
-            {plan.description}
-          </Text>
-        ) : null}
-
         {benefits.length > 0 ? (
           <View style={{ gap: 8 }}>
-            {benefits.slice(0, 4).map((b) => (
-              <View key={b} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
+            {benefits.map((b, index) => (
+              <View key={`${index}-${b}`} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
                 <Text style={{ color: C.positive, fontSize: 13, marginTop: 2 }}>✓</Text>
                 <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: C.textSub }}>{b}</Text>
               </View>
@@ -522,6 +516,7 @@ export default function StaffSalesScreen() {
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [cashNotes, setCashNotes] = useState('');
   const [paidOn, setPaidOn] = useState<string | null>(null);
+  const [recordedPaidOn, setRecordedPaidOn] = useState<string | null>(null);
   const [priceOverrideNote, setPriceOverrideNote] = useState('');
   const [activeUntil, setActiveUntil] = useState<string | null>(null);
   const [paymentOutcome, setPaymentOutcome] = useState<PaymentOutcome>(null);
@@ -566,6 +561,12 @@ export default function StaffSalesScreen() {
       memberName: selectedMember ? memberDisplayName(selectedMember) : null,
     });
   }, [selectedPlan, memberOptions, selectedMember]);
+
+  const chargeCents = useMemo(() => {
+    if (!selectedPlan) return 0;
+    const option = memberOptions?.options.find((row) => row.planId === selectedPlan.id);
+    return option?.effectivePriceCents ?? selectedPlan.priceCents;
+  }, [selectedPlan, memberOptions]);
 
   const waiverOk = !waiverStatus?.required || waiverStatus.accepted;
   const cashBlockedByWaiver = paymentMethod === 'cash' && !waiverOk;
@@ -810,7 +811,7 @@ export default function StaffSalesScreen() {
       // queue fixed-duration same-plan early renewals after the current entitlement end.
       const res = await createOfflineSubscription(studioId, selectedMember.user.id, {
         planId: selectedPlan.id,
-        amountCents: selectedPlan.priceCents,
+        amountCents: chargeCents,
         paymentMethod: 'CASH',
         paidOn: paidOn ?? currentStudioDate,
         notes: cashNotes.trim() || undefined,
@@ -820,6 +821,7 @@ export default function StaffSalesScreen() {
       setStripeConflict(null);
       setCheckoutUrl(null);
       setActiveUntil(res.subscription.currentPeriodEnd);
+      setRecordedPaidOn(res.payment.paidAt ? studioDateKey(res.payment.paidAt, studioTimezone) : paidOn ?? currentStudioDate);
       setPaymentOutcome('succeeded');
       setStep(5);
       if (res.subscription.status === 'SCHEDULED') {
@@ -1289,7 +1291,7 @@ export default function StaffSalesScreen() {
                   <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.separator }}>
                     <Text style={{ fontSize: 13, color: C.textMute }}>
                       {selectedPlan.name} ·{' '}
-                      {formatMoneyFromCents(selectedPlan.priceCents, selectedPlan.currency)} /{' '}
+                      {formatMoneyFromCents(chargeCents, selectedPlan.currency)} /{' '}
                       {billingIntervalLabel(selectedPlan.billingInterval)}
                     </Text>
                   </View>
@@ -1298,7 +1300,7 @@ export default function StaffSalesScreen() {
                 <View style={[cardStyle(C), { marginBottom: 20, gap: 12 }]}>
                   <Text style={{ fontSize: 14, color: C.textMute }}>Monto</Text>
                   <Text style={{ fontSize: 28, fontWeight: '800', color: C.text }}>
-                    {formatMoneyFromCents(selectedPlan.priceCents, selectedPlan.currency)}
+                    {formatMoneyFromCents(chargeCents, selectedPlan.currency)}
                   </Text>
                   <Text style={{ fontSize: 13, color: C.textMute }}>
                     Periodo: {cashPeriodPreview?.label ?? '—'}
@@ -1379,7 +1381,7 @@ export default function StaffSalesScreen() {
                 </Text>
                 <Text style={{ fontSize: 15, color: C.textSub }}>{selectedPlan.name}</Text>
                 <Text style={{ fontSize: 14, color: C.textMute }}>
-                  {paymentMethod === 'stripe' ? 'Stripe · link / QR' : `Efectivo · fecha del pago: ${paidOn ?? currentStudioDate}`}
+                  {paymentMethod === 'stripe' ? 'Stripe · link / QR' : `Efectivo · fecha del pago: ${recordedPaidOn ?? paidOn ?? currentStudioDate}`}
                 </Text>
                 <View
                   style={{

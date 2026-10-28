@@ -56,6 +56,7 @@ export type OfflineSubscriptionResult = {
     amountCents: number;
     status: string;
     paymentMethod: string;
+    paidAt?: string | null;
   };
 };
 
@@ -125,6 +126,7 @@ export type StaffPurchaseOptionDto = {
   relatedPlanName: string | null;
   effectiveDate: string | null;
   reasonCode: string | null;
+  effectivePriceCents?: number;
 };
 
 export async function fetchMemberPurchaseOptions(

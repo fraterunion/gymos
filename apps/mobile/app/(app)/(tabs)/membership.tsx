@@ -644,8 +644,8 @@ function PlanCard({
 
           {benefits.length > 0 ? (
             <View style={{ marginBottom: credits ? 14 : 22 }}>
-              {benefits.map((benefit) => (
-                <PlanBenefitRow key={benefit} text={benefit} />
+              {benefits.map((benefit, index) => (
+                <PlanBenefitRow key={`${index}-${benefit}`} text={benefit} />
               ))}
             </View>
           ) : null}

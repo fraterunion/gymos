@@ -48,8 +48,8 @@ import {
   canManageSeries,
 } from "@/lib/scheduleCalendarAccess";
 import {
-  cancelSeriesOccurrence,
-  previewCancelOccurrence,
+  cancelSeriesPermanently,
+  previewCancelSeriesPermanently,
   type SeriesDetail,
 } from "@/lib/api/scheduleSeries";
 import type { BulkOperation } from "@/lib/api/scheduleOperations";
@@ -415,13 +415,11 @@ export default function SchedulePage() {
   const todayKey = useMemo(() => todayKeyInZone(tz), [tz]);
 
   const handleCancelEntireSeries = async (detail: SeriesDetail) => {
-    if (!selectedStudioId || !detail.anchorOccurrenceId || cancelSeriesBusy) return;
+    if (!selectedStudioId || cancelSeriesBusy || detail.status === "ENDED") return;
     setCancelSeriesBusy(true);
     setError(null);
     try {
-      const impact = await previewCancelOccurrence(
-        selectedStudioId, detail.anchorOccurrenceId, "SERIES",
-      );
+      const impact = await previewCancelSeriesPermanently(selectedStudioId, detail.id);
       const approved = window.confirm(
         `¿Cancelar permanentemente esta serie?\n\n` +
         `Se cancelarán ${impact.affectedClassCount} clases futuras y ` +
@@ -430,15 +428,10 @@ export default function SchedulePage() {
         `Esta acción no se puede deshacer automáticamente.`,
       );
       if (!approved) return;
-      const result = await cancelSeriesOccurrence(
-        selectedStudioId,
-        detail.anchorOccurrenceId,
-        {
-          scope: "SERIES",
-          cancelReason: "Serie recurrente cancelada permanentemente desde administración",
-          confirmReservations: true,
-        },
-      );
+      const result = await cancelSeriesPermanently(selectedStudioId, detail.id, {
+        cancelReason: "Serie recurrente cancelada permanentemente desde administración",
+        confirmReservations: true,
+      });
       closeSeriesDrawer();
       setOpsFeedback(`Serie cancelada permanentemente. ${result.cancelledCount} clases futuras canceladas.`);
       refreshSeries();
@@ -764,6 +757,7 @@ export default function SchedulePage() {
           onEdit={(detail) => setEditSeriesDetail(detail)}
           onFinish={(detail) => setFinishSeriesDetail(detail)}
           onCancelForever={(detail) => void handleCancelEntireSeries(detail)}
+          cancelBusy={cancelSeriesBusy}
           onOpenOccurrence={openOccurrenceFromSeries}
         />
       ) : null}

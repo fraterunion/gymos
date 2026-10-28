@@ -23,7 +23,7 @@ import {
   CreateRecurringSeriesDto,
   EditSeriesOccurrenceDto,
 } from './dto/schedule-series.dto';
-import { FinishSeriesDto } from './dto/finish-series.dto';
+import { CancelSeriesPermanentlyDto, FinishSeriesDto } from './dto/finish-series.dto';
 import { ListScheduleSeriesQueryDto } from './dto/list-schedule-series-query.dto';
 
 @Controller('studios/:studioId/schedule-series')
@@ -134,6 +134,36 @@ export class ScheduleSeriesController {
       studioId,
       scheduledClassId,
       dto.scope,
+      actorUserId,
+      dto.cancelReason,
+      dto.confirmReservations,
+    );
+  }
+
+  @Post(':seriesId/cancel-preview')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  cancelSeriesPreview(
+    @Param('studioId') studioId: string,
+    @Param('seriesId') seriesId: string,
+  ) {
+    return this.seriesService.previewCancelSeriesPermanently(studioId, seriesId);
+  }
+
+  @Post(':seriesId/cancel')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  cancelSeries(
+    @Param('studioId') studioId: string,
+    @Param('seriesId') seriesId: string,
+    @Body() dto: CancelSeriesPermanentlyDto,
+    @CurrentUser('sub') actorUserId: string,
+  ) {
+    return this.seriesService.cancelSeriesPermanently(
+      studioId,
+      seriesId,
       actorUserId,
       dto.cancelReason,
       dto.confirmReservations,

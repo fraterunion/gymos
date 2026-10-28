@@ -4,15 +4,20 @@ import { Modal, Pressable, Text, View } from 'react-native';
 import { getColors } from '@/constants/Theme';
 
 /** Local calendar date, independent of the phone's timezone. */
-export function studioTodayKey(timezone: string): string {
+export function studioDateKey(instant: Date | string, timezone: string): string {
+  const date = typeof instant === 'string' ? new Date(instant) : instant;
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const part = (kind: string) => parts.find((p) => p.type === kind)?.value ?? '';
   return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+export function studioTodayKey(timezone: string): string {
+  return studioDateKey(new Date(), timezone);
 }
 
 function shiftMonth(key: string, delta: number) {

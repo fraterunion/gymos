@@ -874,6 +874,36 @@ export class ScheduleSeriesService {
     return this.cancelEntireSeries(studio, occurrence, actorUserId, cancelReason, impact);
   }
 
+  async previewCancelSeriesPermanently(studioId: string, seriesId: string): Promise<MutationImpact> {
+    await this.requireTemplate(studioId, seriesId);
+    return this.permanentCancelImpact(studioId, seriesId);
+  }
+
+  /**
+   * Deactivates the template so the generator stops, even when no future class
+   * is currently materialized. Historical classes and attendance stay.
+   */
+  async cancelSeriesPermanently(
+    studioId: string,
+    seriesId: string,
+    actorUserId: string,
+    cancelReason: string | undefined,
+    confirmReservations?: boolean,
+  ) {
+    const studio = await this.requireStudio(studioId);
+    await this.requireTemplate(studioId, seriesId);
+    const impact = await this.permanentCancelImpact(studioId, seriesId);
+    if (impact.totalReservations > 0 && !confirmReservations) {
+      throw new BadRequestException({
+        message: 'Cancellation affects reservations and requires confirmation.',
+        impact,
+        requiresConfirmation: true,
+      });
+    }
+    const result = await this.deactivateSeries(studio.id, seriesId, actorUserId, cancelReason, impact);
+    return { cancelledCount: result.cancelledCount, alreadyEnded: result.alreadyEnded };
+  }
+
   // ── private helpers ─────────────────────────────────────────────────────
 
   private async requireStudio(studioId: string) {
@@ -1679,6 +1709,19 @@ export class ScheduleSeriesService {
     return { cancelledCount: result.cancelledCount };
   }
 
+  private async permanentCancelImpact(studioId: string, seriesId: string): Promise<MutationImpact> {
+    const rows = await this.prisma.scheduledClass.findMany({
+      where: {
+        studioId,
+        scheduleTemplateId: seriesId,
+        startsAt: { gte: new Date() },
+        status: ClassStatus.SCHEDULED,
+      },
+      select: { id: true },
+    });
+    return this.countReservationImpact(rows.map((row) => row.id));
+  }
+
   private async cancelEntireSeries(
     studio: { id: string; timezone: string },
     occurrence: Awaited<ReturnType<typeof this.requireOccurrence>>,
@@ -1687,19 +1730,35 @@ export class ScheduleSeriesService {
     impact: MutationImpact,
   ) {
     const tpl = occurrence.scheduleTemplate!;
+    return this.deactivateSeries(studio.id, tpl.id, actorUserId, cancelReason, impact);
+  }
+
+  private async deactivateSeries(
+    studioId: string,
+    templateId: string,
+    actorUserId: string,
+    cancelReason: string | undefined,
+    impact: MutationImpact,
+  ) {
     const now = new Date();
+    const template = await this.prisma.scheduleTemplate.findFirst({
+      where: { id: templateId, studioId, deletedAt: null },
+      select: { id: true, active: true },
+    });
+    if (!template) throw new NotFoundException('Schedule series not found');
 
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.scheduleTemplate.update({
-        where: { id: tpl.id },
+        where: { id: template.id },
         data: { active: false, endsAt: now },
       });
 
-      // Explicit entire-series cancellation includes DETACHED future rows intentionally.
+      // Only rows still linked to this template. Off-cadence copies have a null
+      // scheduleTemplateId and are no longer part of the series.
       const toCancel = await tx.scheduledClass.findMany({
         where: {
-          studioId: studio.id,
-          scheduleTemplateId: tpl.id,
+          studioId,
+          scheduleTemplateId: template.id,
           startsAt: { gte: now },
           status: ClassStatus.SCHEDULED,
         },
@@ -1715,7 +1774,7 @@ export class ScheduleSeriesService {
           },
         });
         const cascade = await cascadeClassCancellationInTx(tx, {
-          studioId: studio.id,
+          studioId,
           scheduledClassIds: ids,
         });
         return {
@@ -1728,24 +1787,25 @@ export class ScheduleSeriesService {
     });
 
     await this.audit.log({
-      studioId: studio.id,
+      studioId,
       actorUserId,
       action: 'SCHEDULE_ENTIRE_SERIES_CANCELLED',
       entityType: 'ScheduleTemplate',
-      entityId: tpl.id,
+      entityId: template.id,
       metadata: {
         scope: 'SERIES',
-        previousTemplateId: tpl.id,
-        includesDetachedOccurrences: true,
+        previousTemplateId: template.id,
+        includesDetachedOccurrences: false,
         affectedClassCount: result.cancelledCount,
         affectedReservationCount: impact.totalReservations,
         cancelledBookingCount: result.cancelledBookingCount,
         expiredWaitlistCount: result.expiredWaitlistCount,
         cancelReason: cancelReason ?? null,
+        templateWasActive: template.active,
       },
     });
 
-    return { cancelledCount: result.cancelledCount };
+    return { cancelledCount: result.cancelledCount, alreadyEnded: template.active === false };
   }
 
   private async buildOccurrenceUpdateData(

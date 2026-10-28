@@ -415,6 +415,7 @@ export type MemberPurchaseOption = {
   relatedPlanName: string | null;
   effectiveDate: string | null;
   reasonCode: string | null;
+  effectivePriceCents?: number;
 };
 
 export type MemberCrmProfile = {
