@@ -170,9 +170,31 @@ describe('WalletPassService', () => {
     });
 
     it('enrolls the first Apple artifact when Google is requested first', async () => {
+      let appleBuilt = false;
+      prisma.walletPassArtifact.findUnique.mockImplementation(({ where }: {
+        where: { walletCredentialId_platform: { platform: string } };
+      }) => {
+        if (where.walletCredentialId_platform.platform === 'APPLE') {
+          return appleBuilt
+            ? { pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC', templateVersion: APPLE_PASS_TEMPLATE_VERSION }
+            : null;
+        }
+        return null;
+      });
+      prisma.walletPassArtifact.upsert.mockImplementation(async ({ create }: { create: { platform: string } }) => {
+        if (create.platform === 'APPLE') {
+          appleBuilt = true;
+          return { pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC' };
+        }
+        return { googleObjectId: 'google-obj' };
+      });
       googleProvider.buildSaveUrl.mockReturnValue('https://pay.google.com/gp/v/save/test');
+
       await service.getGooglePass('studio-1', 'user-1');
+
+      expect(appleBuilt).toBe(true);
       expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
+      expect(googleProvider.buildSaveUrl).toHaveBeenCalledWith('google-obj');
     });
 
     it('does not enroll users outside the allowlist', async () => {
