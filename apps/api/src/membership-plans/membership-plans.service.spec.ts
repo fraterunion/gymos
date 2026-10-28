@@ -1,3 +1,59 @@
+describe('MembershipPlansService.updatePlanFromAdmin (public price safety)', () => {
+  const prisma = {
+    membershipPlan: { findFirst: jest.fn() },
+  };
+  const service = new MembershipPlansService(
+    prisma as never,
+    { log: jest.fn() } as never,
+    {} as never,
+  );
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('rejects an unscoped catalog price edit before any Stripe or membership mutation', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({ priceCents: 130000 });
+    const actualUpdate = jest.spyOn(service, 'updatePlan').mockImplementationOnce(async () => {
+      throw new Error('should not call updatePlan');
+    });
+    try {
+      await expect(service.updatePlanFromAdmin(
+        'studio-a', 'basic', { priceCents: 140000, description: 'Benefits' }, 'owner',
+      )).rejects.toThrow('grandfathering');
+      expect(actualUpdate).not.toHaveBeenCalled();
+    } finally {
+      actualUpdate.mockRestore();
+    }
+  });
+
+  it('accepts unchanged price on a metadata edit and strips price before applying it', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({ priceCents: 130000 });
+    const actualUpdate = jest.spyOn(service, 'updatePlan').mockResolvedValueOnce({ id: 'basic' } as never);
+    try {
+      await service.updatePlanFromAdmin(
+        'studio-a', 'basic', { priceCents: 130000, description: 'Updated bullets' }, 'owner',
+      );
+      expect(actualUpdate).toHaveBeenCalledWith(
+        'studio-a', 'basic', { description: 'Updated bullets' }, 'owner',
+      );
+    } finally {
+      actualUpdate.mockRestore();
+    }
+  });
+
+  it('allows description-only edits without reading or overwriting the catalog price', async () => {
+    const actualUpdate = jest.spyOn(service, 'updatePlan').mockResolvedValueOnce({ id: 'basic' } as never);
+    try {
+      await service.updatePlanFromAdmin('studio-a', 'basic', { description: 'New copy' }, 'owner');
+      expect(prisma.membershipPlan.findFirst).not.toHaveBeenCalled();
+      expect(actualUpdate).toHaveBeenCalledWith(
+        'studio-a', 'basic', { description: 'New copy' }, 'owner',
+      );
+    } finally {
+      actualUpdate.mockRestore();
+    }
+  });
+});
+
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BillingInterval } from '@prisma/client';
 import { MembershipPlansService } from './membership-plans.service';

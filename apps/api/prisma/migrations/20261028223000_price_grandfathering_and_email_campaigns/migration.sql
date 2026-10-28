@@ -1,8 +1,12 @@
 -- Additive: per-subscription price lock, explicit price-change ledger, and
 -- studio-scoped email campaigns. Does not rewrite entitlements, periods, or
 -- Stripe subscription ids. Existing rows are backfilled from the latest
--- succeeded payment, otherwise the current catalog price, so a later catalog
--- edit does not silently change what those members are charged.
+-- captured succeeded payment, otherwise the current catalog price, so a later
+-- catalog edit does not silently change what those members are charged.
+-- Backdated paid_at reflects the DATE THE PAYMENT WAS RECEIVED, not the order
+-- captured in GymOS. Use created_at when selecting the latest known transaction.
+-- One-off cash overrides can differ from a recurring member price; review a
+-- production snapshot of recurring Stripe and CASH amounts before deployment.
 --
 -- MERGING TO MAIN WILL APPLY THIS MIGRATION TO PRODUCTION.
 
@@ -22,7 +26,7 @@ SET "price_cents" = COALESCE(
     FROM "payments" p
     WHERE p.subscription_id = s.id
       AND p.status = 'SUCCEEDED'
-    ORDER BY COALESCE(p.paid_at, p.created_at) DESC, p.id DESC
+    ORDER BY p.created_at DESC, p.id DESC
     LIMIT 1
   ),
   (

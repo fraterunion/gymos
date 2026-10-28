@@ -178,7 +178,7 @@ export class MembershipPlansController {
     @Body() dto: UpdateMembershipPlanDto,
     @Req() req: RequestWithUser,
   ) {
-    return this.membershipPlansService.updatePlan(studioId, planId, dto, req.user.sub);
+    return this.membershipPlansService.updatePlanFromAdmin(studioId, planId, dto, req.user.sub);
   }
 
   @Post(':planId/reconcile-stripe-price')

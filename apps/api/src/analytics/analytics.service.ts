@@ -441,7 +441,10 @@ export class AnalyticsService {
         where: {
           studioId,
           status: PaymentStatus.SUCCEEDED,
-          createdAt: { gte: thirtyDaysAgo },
+          OR: [
+            { paidAt: { gte: thirtyDaysAgo } },
+            { paidAt: null, createdAt: { gte: thirtyDaysAgo } },
+          ],
         },
         select: {
           stripePaymentIntentId: true,
@@ -450,12 +453,12 @@ export class AnalyticsService {
       }),
 
       this.prisma.$queryRaw<{ d: Date; amount_cents: bigint }[]>`
-        SELECT date_trunc('day', created_at) AS d,
+        SELECT date_trunc('day', COALESCE(paid_at, created_at)) AS d,
                COALESCE(SUM(amount_cents), 0)::bigint AS amount_cents
         FROM payments
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
-          AND created_at >= ${thirtyDaysAgo}
+          AND COALESCE(paid_at, created_at) >= ${thirtyDaysAgo}
         GROUP BY 1
         ORDER BY 1
       `,
@@ -465,7 +468,7 @@ export class AnalyticsService {
         FROM payments
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
-          AND created_at >= ${thirtyDaysAgo}
+          AND COALESCE(paid_at, created_at) >= ${thirtyDaysAgo}
       `,
 
       this.prisma.$queryRaw<{ c: bigint }[]>`
@@ -529,7 +532,7 @@ export class AnalyticsService {
           FROM payments
           WHERE studio_id = ${studioId}
             AND status = 'SUCCEEDED'
-            AND created_at >= ${thirtyDaysAgo}
+            AND COALESCE(paid_at, created_at) >= ${thirtyDaysAgo}
           GROUP BY user_id
         ),
         sub_pick AS (
@@ -563,7 +566,7 @@ export class AnalyticsService {
           FROM payments
           WHERE studio_id = ${studioId}
             AND status = 'SUCCEEDED'
-            AND created_at >= ${thirtyDaysAgo}
+            AND COALESCE(paid_at, created_at) >= ${thirtyDaysAgo}
           GROUP BY user_id
         ),
         sub_pick AS (
@@ -591,8 +594,8 @@ export class AnalyticsService {
         FROM payments
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
-          AND created_at >= ${todayStart}
-          AND created_at < ${tomorrowStart}
+          AND COALESCE(paid_at, created_at) >= ${todayStart}
+          AND COALESCE(paid_at, created_at) < ${tomorrowStart}
       `,
 
       this.prisma.$queryRaw<{ total_cents: bigint }[]>`
@@ -600,8 +603,8 @@ export class AnalyticsService {
         FROM payments
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
-          AND created_at >= ${yesterdayStart}
-          AND created_at < ${todayStart}
+          AND COALESCE(paid_at, created_at) >= ${yesterdayStart}
+          AND COALESCE(paid_at, created_at) < ${todayStart}
       `,
 
       this.prisma.$queryRaw<{ payment_method: string; total_cents: bigint }[]>`
@@ -609,7 +612,7 @@ export class AnalyticsService {
         FROM payments
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
-          AND created_at >= ${thirtyDaysAgo}
+          AND COALESCE(paid_at, created_at) >= ${thirtyDaysAgo}
         GROUP BY payment_method
       `,
 
@@ -636,7 +639,7 @@ export class AnalyticsService {
          AND dp.studio_id = p.studio_id
         WHERE p.studio_id = ${studioId}
           AND p.status = 'SUCCEEDED'
-          AND p.created_at >= ${thirtyDaysAgo}
+          AND COALESCE(p.paid_at, p.created_at) >= ${thirtyDaysAgo}
       `,
 
       this.prisma.studioMembership.count({
@@ -673,8 +676,8 @@ export class AnalyticsService {
         WHERE studio_id = ${studioId}
           AND status = 'SUCCEEDED'
           AND membership_plan_id IS NOT NULL
-          AND created_at >= ${todayStart}
-          AND created_at < ${tomorrowStart}
+          AND COALESCE(paid_at, created_at) >= ${todayStart}
+          AND COALESCE(paid_at, created_at) < ${tomorrowStart}
       `,
 
       this.prisma.memberEnrollment.count({

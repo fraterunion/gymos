@@ -130,6 +130,9 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
     if (campaign.status !== EmailCampaignStatus.DRAFT) {
       return this.campaignView(campaign.id);
     }
+    // Fail closed before enabling delivery. Every marketing email MUST contain
+    // a working public unsubscribe URL; never ship localhost links.
+    this.unsubscribeBase();
     const now = new Date();
     await this.prisma.emailCampaign.update({
       where: { id: campaign.id },
@@ -491,8 +494,30 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private unsubscribeBase(): string {
-    const configured = this.config.get<string>('EMAIL_UNSUBSCRIBE_URL_BASE', '').trim()
-      || this.config.get<string>('EXPO_PUBLIC_API_URL', '').trim();
-    return (configured || 'http://localhost:3001').replace(/\/$/, '');
+    const configured = (this.config.get<string>('EMAIL_UNSUBSCRIBE_URL_BASE', '') ?? '').trim()
+      || (this.config.get<string>('EXPO_PUBLIC_API_URL', '') ?? '').trim();
+    if (!configured) {
+      throw new BadRequestException(
+        'Configura EMAIL_UNSUBSCRIBE_URL_BASE con el dominio HTTPS público de la API antes de enviar campañas.',
+      );
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(configured);
+    } catch {
+      throw new BadRequestException('La URL pública para cancelar correos no es válida.');
+    }
+    if (
+      parsed.protocol !== 'https:' ||
+      ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname) ||
+      (parsed.pathname !== '/' && parsed.pathname !== '') ||
+      parsed.search !== '' ||
+      parsed.hash !== ''
+    ) {
+      throw new BadRequestException(
+        'EMAIL_UNSUBSCRIBE_URL_BASE debe ser el origen HTTPS público de la API, sin /api/v1 ni parámetros.',
+      );
+    }
+    return parsed.origin;
   }
 }

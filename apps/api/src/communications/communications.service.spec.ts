@@ -99,7 +99,11 @@ describe('CommunicationsService delivery', () => {
       providers: [
         CommunicationsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: (_key: string, fallback?: string) => fallback ?? '', getOrThrow: () => 'secret' } },
+        { provide: ConfigService, useValue: {
+          get: (key: string, fallback?: string) =>
+            key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
+          getOrThrow: () => 'secret',
+        } },
         { provide: EMAIL_PROVIDER, useValue: { send } },
         { provide: AuditService, useValue: { log: jest.fn() } },
       ],
@@ -114,6 +118,8 @@ describe('CommunicationsService delivery', () => {
       to: 'ada@ares.test',
       idempotencyKey: 'campaign-recipient:rec-pending',
     }));
+    expect(send.mock.calls[0][0].html).toContain('https://api.ares.example.test/api/v1/email/unsubscribe?token=');
+    expect(send.mock.calls[0][0].html).not.toContain('localhost');
     expect(send.mock.calls[0][0].html).toContain('&lt;script&gt;');
     expect(send.mock.calls[0][0].html).not.toContain('<script>');
     expect(recipients.find((row) => row.id === 'rec-pending')?.status).toBe(EmailRecipientStatus.SENT);

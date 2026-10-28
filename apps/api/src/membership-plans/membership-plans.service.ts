@@ -221,6 +221,37 @@ export class MembershipPlansService {
     return mapped;
   }
 
+  /**
+   * Public administrative plan update. Never let an ordinary PATCH silently
+   * change the catalog price without a confirmed ALL/FUTURE/SELECTED policy.
+   * The stripped price prevents a concurrent catalog change being overwritten
+   * by an otherwise harmless metadata edit.
+   *
+   * The dedicated price-change service owns catalog mutations and the ledger.
+   */
+  async updatePlanFromAdmin(
+    studioId: string,
+    planId: string,
+    dto: UpdateMembershipPlanDto,
+    actorUserId?: string,
+  ): Promise<MembershipPlan & { classAccess: PlanClassAccessDto }> {
+    if (dto.priceCents !== undefined) {
+      const existing = await this.prisma.membershipPlan.findFirst({
+        where: { id: planId, studioId, deletedAt: null },
+        select: { priceCents: true },
+      });
+      if (!existing) throw new NotFoundException('Membership plan not found');
+      if (dto.priceCents !== existing.priceCents) {
+        throw new BadRequestException(
+          'Para cambiar el precio, utiliza el flujo de grandfathering con selección explícita de miembros.',
+        );
+      }
+    }
+    const safeDto = { ...dto };
+    delete safeDto.priceCents;
+    return this.updatePlan(studioId, planId, safeDto, actorUserId);
+  }
+
   async updatePlan(
     studioId: string,
     planId: string,
