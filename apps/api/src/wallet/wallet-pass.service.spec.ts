@@ -64,6 +64,8 @@ describe('WalletPassService', () => {
   };
   const config = { get: jest.fn(), getOrThrow: jest.fn(() => 'test-jwt-qr-secret-min-32-chars!!') };
 
+  const dynamicPasses = { isEnabled: jest.fn(() => false), enroll: jest.fn() };
+
   const service = new WalletPassService(
     prisma as never,
     config as never,
@@ -72,6 +74,7 @@ describe('WalletPassService', () => {
     appleProvider as never,
     googleProvider as never,
     new WalletAccessSnapshotLoader(prisma as never),
+    dynamicPasses as never,
   );
 
   beforeEach(() => {
