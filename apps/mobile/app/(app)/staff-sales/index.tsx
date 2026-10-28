@@ -19,6 +19,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandButton } from '@/components/BrandButton';
+import { PaymentDatePicker, studioTodayKey } from '@/components/PaymentDatePicker';
 import { Field } from '@/components/Field';
 import { ScreenLoader } from '@/components/StudioScreenChrome';
 import { useAuth } from '@/contexts/AuthContext';
@@ -478,6 +479,7 @@ export default function StaffSalesScreen() {
   const { matched } = useMemberStudio();
   const studioId = matched?.studio.id ?? '';
   const studioTimezone = matched?.studio.timezone ?? 'UTC';
+  const currentStudioDate = studioTodayKey(studioTimezone);
   const role = matched?.role ?? null;
   const isOwner = role === 'OWNER';
 
@@ -519,6 +521,7 @@ export default function StaffSalesScreen() {
 
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [cashNotes, setCashNotes] = useState('');
+  const [paidOn, setPaidOn] = useState<string | null>(null);
   const [priceOverrideNote, setPriceOverrideNote] = useState('');
   const [activeUntil, setActiveUntil] = useState<string | null>(null);
   const [paymentOutcome, setPaymentOutcome] = useState<PaymentOutcome>(null);
@@ -809,6 +812,7 @@ export default function StaffSalesScreen() {
         planId: selectedPlan.id,
         amountCents: selectedPlan.priceCents,
         paymentMethod: 'CASH',
+        paidOn: paidOn ?? currentStudioDate,
         notes: cashNotes.trim() || undefined,
         priceOverrideNote: priceOverrideNote.trim() || undefined,
         stripeResolution,
@@ -879,6 +883,8 @@ export default function StaffSalesScreen() {
     setActiveUntil(null);
     setPaymentOutcome(null);
     setPaymentMethod('stripe');
+    setPaidOn(null);
+    setCashNotes('');
     setCreatedTempPassword(null);
     setShowTempPasswordOnce(false);
     setTempPasswordCopied(false);
@@ -1297,6 +1303,14 @@ export default function StaffSalesScreen() {
                   <Text style={{ fontSize: 13, color: C.textMute }}>
                     Periodo: {cashPeriodPreview?.label ?? '—'}
                   </Text>
+                  <PaymentDatePicker
+                    dateKey={paidOn ?? currentStudioDate}
+                    maxDateKey={currentStudioDate}
+                    onChange={setPaidOn}
+                  />
+                  <Text style={{ fontSize: 12, color: C.textMute, lineHeight: 17 }}>
+                    Fecha real del pago; no cambia las fechas de vigencia de la membresía.
+                  </Text>
                   {isOwner ? (
                     <Field
                       label="Nota override (OWNER)"
@@ -1365,7 +1379,7 @@ export default function StaffSalesScreen() {
                 </Text>
                 <Text style={{ fontSize: 15, color: C.textSub }}>{selectedPlan.name}</Text>
                 <Text style={{ fontSize: 14, color: C.textMute }}>
-                  {paymentMethod === 'stripe' ? 'Stripe · link / QR' : 'Efectivo registrado'}
+                  {paymentMethod === 'stripe' ? 'Stripe · link / QR' : `Efectivo · fecha del pago: ${paidOn ?? currentStudioDate}`}
                 </Text>
                 <View
                   style={{

@@ -101,6 +101,7 @@ export async function createOfflineSubscription(
     amountCents: number;
     periodStart?: string;
     periodEnd?: string;
+    paidOn?: string;
     paymentMethod: 'CASH';
     notes?: string;
     priceOverrideNote?: string;

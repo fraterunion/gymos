@@ -22,6 +22,7 @@ describe('SalesService', () => {
   let service: SalesService;
   let prisma: {
     studioMembership: { findFirst: jest.Mock; create: jest.Mock };
+    studio: { findFirst: jest.Mock };
     user: { findFirst: jest.Mock; create: jest.Mock };
     membershipPlan: { findFirst: jest.Mock };
     subscription: { create: jest.Mock; update: jest.Mock; count: jest.Mock; updateMany: jest.Mock; findFirst: jest.Mock; findMany: jest.Mock };
@@ -55,6 +56,7 @@ describe('SalesService', () => {
 
   beforeEach(async () => {
     prisma = {
+      studio: { findFirst: jest.fn().mockResolvedValue({ timezone: 'America/Mexico_City' }) },
       studioMembership: {
         findFirst: jest.fn(),
         create: jest.fn().mockResolvedValue({
@@ -251,6 +253,62 @@ describe('SalesService', () => {
       expect.objectContaining({ action: 'CASH_SUBSCRIPTION_CREATED' }),
     );
     expect(result.subscription.id).toBe('sub-1');
+  });
+
+  it('records a prior studio-local cash payment date without backdating entitlement or capture', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({ ...defaultSettings, frontDeskCanRecordCash: true });
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-10-28T18:15:00.000Z'));
+    try {
+      prisma.membershipPlan.findFirst.mockResolvedValue({
+        id: 'plan-1', studioId: 'studio-1', priceCents: 150000,
+        currency: 'mxn', billingInterval: 'MONTHLY', name: 'Basic',
+        entitlementDays: null, classCredits: 12,
+      });
+      prisma.subscription.findMany.mockResolvedValue([]);
+      prisma.subscription.create.mockResolvedValue({
+        id: 'sub-1', status: SubscriptionStatus.ACTIVE, source: SubscriptionSource.CASH,
+        currentPeriodStart: new Date('2026-10-28T18:15:00.000Z'),
+        currentPeriodEnd: new Date('2026-11-28T18:15:00.000Z'),
+        membershipPlan: { id: 'plan-1', name: 'Basic' },
+      });
+      prisma.payment.create.mockResolvedValue({ id: 'pay-1' });
+
+      await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-1', amountCents: 150000, paymentMethod: 'CASH', paidOn: '2026-10-25',
+      });
+      expect(prisma.payment.create.mock.calls[0][0].data.paidAt.toISOString())
+        .toBe('2026-10-25T18:00:00.000Z');
+      expect(prisma.subscription.create.mock.calls[0][0].data.currentPeriodStart.toISOString())
+        .toBe('2026-10-28T18:15:00.000Z');
+      expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'CASH_SUBSCRIPTION_CREATED',
+        metadata: expect.objectContaining({ paymentPaidAt: '2026-10-25T18:00:00.000Z' }),
+      }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('rejects future and impossible payment dates before creating cash subscriptions', async () => {
+    mockActor(Role.ADMIN);
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-10-28T18:15:00.000Z'));
+    try {
+      prisma.membershipPlan.findFirst.mockResolvedValue({
+        id: 'plan-1', studioId: 'studio-1', priceCents: 100000, currency: 'mxn',
+        billingInterval: 'MONTHLY', entitlementDays: null,
+      });
+      for (const paidOn of ['2026-10-29', '2026-02-30']) {
+        await expect(service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+          planId: 'plan-1', amountCents: 100000, paymentMethod: 'CASH', paidOn,
+        })).rejects.toThrow('fecha del pago');
+      }
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('omitted periodStart defaults to now (immediate entitlement; no UTC-noon client bug)', async () => {

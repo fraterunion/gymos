@@ -292,6 +292,7 @@ export class StripeToCashTransitionService {
     targetUserId: string;
     plan: MembershipPlan;
     amountCents: number;
+    paidAt?: Date;
     notes: string | null;
     defaultPeriodEnd: (start: Date, interval: MembershipPlan['billingInterval']) => Date;
   }): Promise<ScheduledCashResult> {
@@ -410,7 +411,7 @@ export class StripeToCashTransitionService {
             paymentMethod: PaymentMethod.CASH,
             recordedByUserId: params.actorUserId,
             notes: params.notes,
-            paidAt: new Date(),
+            paidAt: params.paidAt ?? new Date(),
           },
         });
 

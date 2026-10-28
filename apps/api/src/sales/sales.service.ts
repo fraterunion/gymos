@@ -15,6 +15,7 @@ import {
   SubscriptionStatus,
 } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
+import { getStudioLocalDateKey, studioLocalTimeToUtc } from '../common/date/studio-local-date';
 import { BillingService, type MembershipCheckoutResponse } from '../billing/billing.service';
 import { StripeToCashTransitionService } from '../billing/stripe-to-cash-transition.service';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
@@ -244,6 +245,31 @@ export class SalesService {
       [dto.notes?.trim(), dto.priceOverrideNote?.trim()].filter(Boolean).join(' | ') ||
       null;
 
+    // Paid-on is a reporting date ONLY. Never backdate the member's entitlement,
+    // the immutable capture timestamp or an existing Stripe subscription.
+    const capturedAt = new Date();
+    let paidAt = capturedAt;
+    if (dto.paidOn) {
+      const parsed = new Date(`${dto.paidOn}T00:00:00.000Z`);
+      if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== dto.paidOn) {
+        throw new BadRequestException('La fecha del pago no es válida.');
+      }
+      const studio = await this.prisma.studio.findFirst({
+        where: { id: studioId, deletedAt: null },
+        select: { timezone: true },
+      });
+      if (!studio) throw new NotFoundException('Studio not found');
+      const today = getStudioLocalDateKey(capturedAt, studio.timezone);
+      if (dto.paidOn > today) {
+        throw new BadRequestException('La fecha del pago no puede ser futura.');
+      }
+      // Noon avoids cross-day reporting and midnight DST edge cases. For
+      // "today" keep the actual receipt time, rather than inventing noon.
+      if (dto.paidOn !== today) {
+        paidAt = studioLocalTimeToUtc(dto.paidOn, '12:00', studio.timezone);
+      }
+    }
+
     // Missed-webhook safety: activate any due scheduled cash before new assignment.
     await this.stripeToCash.reconcileScheduledCashForMember(studioId, targetUserId);
 
@@ -282,6 +308,7 @@ export class SalesService {
           targetUserId,
           plan,
           amountCents: dto.amountCents,
+          paidAt,
           notes: combinedNotes,
           defaultPeriodEnd: (start, interval) => this.defaultPeriodEnd(start, interval),
         });
@@ -304,6 +331,7 @@ export class SalesService {
             stripeSubscriptionId: scheduled.stripe.stripeSubscriptionId,
             effectiveAt: scheduled.subscription.currentPeriodStart?.toISOString() ?? null,
             amountCents: dto.amountCents,
+            paymentPaidAt: paidAt.toISOString(),
             paymentId: scheduled.payment.id,
             origin: 'GYMOS',
             sourceSurface: 'STRIPE_TO_CASH_TRANSITION',
@@ -567,7 +595,7 @@ export class SalesService {
             paymentMethod: PaymentMethod.CASH,
             recordedByUserId: actorUserId,
             notes: dto.notes?.trim() || null,
-            paidAt: new Date(),
+            paidAt,
           },
         });
 
@@ -596,6 +624,7 @@ export class SalesService {
         planId: plan.id,
         amountCents: dto.amountCents,
         paymentId: result.payment.id,
+        paymentPaidAt: paidAt.toISOString(),
         ...(dto.stripeResolution === 'cancel_immediately'
           ? {
               resolution: 'immediate',
