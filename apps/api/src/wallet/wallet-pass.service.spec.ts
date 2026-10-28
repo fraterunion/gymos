@@ -79,6 +79,9 @@ describe('WalletPassService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    config.get.mockReset();
+    dynamicPasses.isEnabled.mockReturnValue(false);
+    prisma.walletPassArtifact.findUnique.mockReset();
     prisma.studioMembership.findFirst.mockResolvedValue({ user: { deletedAt: null } });
     prisma.user.findUniqueOrThrow.mockResolvedValue({ firstName: 'Ivonne', lastName: 'Araujo' });
     prisma.subscription.findMany.mockResolvedValue([subscriptionRow()]);
