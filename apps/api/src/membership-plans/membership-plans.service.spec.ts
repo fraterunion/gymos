@@ -1,3 +1,7 @@
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BillingInterval } from '@prisma/client';
+import { MembershipPlansService } from './membership-plans.service';
+
 describe('MembershipPlansService.updatePlanFromAdmin (public price safety)', () => {
   const prisma = {
     membershipPlan: { findFirst: jest.fn() },
@@ -54,9 +58,6 @@ describe('MembershipPlansService.updatePlanFromAdmin (public price safety)', () 
   });
 });
 
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { BillingInterval } from '@prisma/client';
-import { MembershipPlansService } from './membership-plans.service';
 
 describe('MembershipPlansService class access', () => {
   const prisma = {
