@@ -604,9 +604,10 @@ export class WalletPassService {
         update: { pkpassData: pkpassBytes, templateVersion: APPLE_PASS_TEMPLATE_VERSION },
       });
     } catch (error) {
+      // P2002: concurrent creation; P2025: conditional STATIC write lost to DYNAMIC.
       // A concurrent request created or converted this pass. Serve its stored bytes;
       // do not rotate the credential, token, or re-sign an installed pass as STATIC.
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
+      if (error && typeof error === 'object' && 'code' in error && (error.code === 'P2002' || error.code === 'P2025')) {
         const winningArtifact = await this.findArtifact(walletCredentialId, WalletPassPlatform.APPLE);
         if (winningArtifact?.pkpassData) return winningArtifact;
       }
