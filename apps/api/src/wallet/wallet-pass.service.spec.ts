@@ -169,6 +169,12 @@ describe('WalletPassService', () => {
       expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
     });
 
+    it('enrolls the first Apple artifact when Google is requested first', async () => {
+      googleProvider.buildSaveUrl.mockReturnValue('https://pay.google.com/gp/v/save/test');
+      await service.getGooglePass('studio-1', 'user-1');
+      expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
+    });
+
     it('does not enroll users outside the allowlist', async () => {
       await service.getBarcode('studio-1', 'user-other');
       expect(dynamicPasses.enroll).not.toHaveBeenCalled();
