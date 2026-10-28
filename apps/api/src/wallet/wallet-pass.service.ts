@@ -585,16 +585,33 @@ export class WalletPassService {
     const pkpassBytes = Uint8Array.from(pkpassData);
     // Upsert keyed on (walletCredentialId, platform) — a refresh replaces the row's bytes in
     // place rather than adding a second artifact for the same credential.
-    const artifact = await this.prisma.walletPassArtifact.upsert({
-      where: { walletCredentialId_platform: { walletCredentialId, platform: WalletPassPlatform.APPLE } },
-      create: {
-        walletCredentialId,
-        platform: WalletPassPlatform.APPLE,
-        pkpassData: pkpassBytes,
-        templateVersion: APPLE_PASS_TEMPLATE_VERSION,
-      },
-      update: { pkpassData: pkpassBytes, templateVersion: APPLE_PASS_TEMPLATE_VERSION },
-    });
+    // A concurrent first-install request may enroll the STATIC artifact while another
+    // request is still rendering its static bytes. Guard the UPSERT on passMode so the
+    // late static write can NEVER overwrite the dynamic pkpass/token combination.
+    let artifact: WalletPassArtifact;
+    try {
+      artifact = await this.prisma.walletPassArtifact.upsert({
+        where: {
+          walletCredentialId_platform: { walletCredentialId, platform: WalletPassPlatform.APPLE },
+          passMode: WalletPassMode.STATIC,
+        },
+        create: {
+          walletCredentialId,
+          platform: WalletPassPlatform.APPLE,
+          pkpassData: pkpassBytes,
+          templateVersion: APPLE_PASS_TEMPLATE_VERSION,
+        },
+        update: { pkpassData: pkpassBytes, templateVersion: APPLE_PASS_TEMPLATE_VERSION },
+      });
+    } catch (error) {
+      // A concurrent request created or converted this pass. Serve its stored bytes;
+      // do not rotate the credential, token, or re-sign an installed pass as STATIC.
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
+        const winningArtifact = await this.findArtifact(walletCredentialId, WalletPassPlatform.APPLE);
+        if (winningArtifact?.pkpassData) return winningArtifact;
+      }
+      throw error;
+    }
     this.logger.log(
       JSON.stringify({ event: 'wallet.apple.pass_generated', studioId, walletCredentialId }),
     );
