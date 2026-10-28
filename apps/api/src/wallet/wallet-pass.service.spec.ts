@@ -190,7 +190,7 @@ describe('WalletPassService', () => {
       let reads = 0;
       prisma.walletPassArtifact.findUnique.mockImplementation(async () => {
         reads += 1;
-        return reads > 1 ? { pkpassData: Buffer.from('dynamic'), passMode: 'DYNAMIC' } : null;
+        return reads === 1 ? null : reads === 2 ? { pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC' } : { pkpassData: Buffer.from('dynamic'), passMode: 'DYNAMIC' };
       });
       await expect(service.getApplePass('studio-1', 'user-1')).resolves.toEqual(Buffer.from('dynamic'));
       expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
