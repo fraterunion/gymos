@@ -46,6 +46,8 @@ describe('CommunicationsService delivery', () => {
   let service: CommunicationsService;
   let send: jest.Mock;
   let recipients: Array<typeof pending>;
+  let configGet: jest.Mock;
+  let campaignUpdate: jest.Mock;
 
   beforeEach(async () => {
     recipients = [
@@ -53,6 +55,10 @@ describe('CommunicationsService delivery', () => {
       { ...suppressedRecipient },
     ];
     send = jest.fn().mockResolvedValue({ providerMessageId: 'msg-1', delivered: true });
+    configGet = jest.fn((key: string, fallback?: string) =>
+      key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
+    );
+    campaignUpdate = jest.fn(async ({ data }: { data: Partial<typeof campaign> }) => Object.assign(campaign, data));
     const prisma = {
       emailCampaignRecipient: {
         findFirst: jest.fn(async ({ where }: { where: { status: string } }) =>
@@ -80,7 +86,8 @@ describe('CommunicationsService delivery', () => {
         }),
       },
       emailCampaign: {
-        update: jest.fn(async ({ data }: { data: Partial<typeof campaign> }) => Object.assign(campaign, data)),
+        findFirst: jest.fn().mockResolvedValue({ ...campaign, status: EmailCampaignStatus.DRAFT }),
+        update: campaignUpdate,
       },
       emailSuppression: {
         findUnique: jest.fn(async ({ where }: { where: { studioId_email: { email: string } } }) =>
@@ -100,8 +107,7 @@ describe('CommunicationsService delivery', () => {
         CommunicationsService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: {
-          get: (key: string, fallback?: string) =>
-            key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
+          get: configGet,
           getOrThrow: () => 'secret',
         } },
         { provide: EMAIL_PROVIDER, useValue: { send } },
@@ -109,6 +115,25 @@ describe('CommunicationsService delivery', () => {
       ],
     }).compile();
     service = moduleRef.get(CommunicationsService);
+  });
+
+  it('refuses to confirm a marketing campaign without a real HTTPS unsubscribe origin', async () => {
+    configGet.mockImplementation((_key: string, fallback?: string) => fallback ?? '');
+    await expect(
+      service.confirm('studio-1', 'camp-1', 'admin-1', { confirm: true }),
+    ).rejects.toThrow('EMAIL_UNSUBSCRIBE_URL_BASE');
+    expect(campaignUpdate).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('refuses to confirm campaigns with localhost as unsubscribe origin', async () => {
+    configGet.mockImplementation((key: string, fallback?: string) =>
+      key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'http://localhost:3001' : fallback ?? '',
+    );
+    await expect(
+      service.confirm('studio-1', 'camp-1', 'admin-1', { confirm: true }),
+    ).rejects.toThrow('origen HTTPS público');
+    expect(campaignUpdate).not.toHaveBeenCalled();
   });
 
   it('sends once with an idempotency key and skips a suppressed address', async () => {
