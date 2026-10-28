@@ -430,7 +430,7 @@ describe('Membership plan Stripe price sync (e2e)', () => {
     await app.close();
   });
 
-  it('allows OWNER to rotate sale Price on financial edit; STAFF is forbidden', async () => {
+  it('rejects unscoped price edits for OWNER and STAFF; catalog remains unchanged', async () => {
     const studio = await createStudio(prisma);
     const plan = await prisma.membershipPlan.create({
       data: {
@@ -443,16 +443,6 @@ describe('Membership plan Stripe price sync (e2e)', () => {
         stripeProductId: 'prod_e2e_basic',
         stripePriceId: 'price_old_1300',
       },
-    });
-
-    (stripe.createRecurringPrice as jest.Mock).mockResolvedValue({
-      id: 'price_new_1000',
-      object: 'price',
-      unit_amount: 100000,
-      currency: 'mxn',
-      active: true,
-      product: 'prod_e2e_basic',
-      recurring: { interval: 'month', interval_count: 1 },
     });
 
     const owner = await createUserWithPassword(prisma, {
@@ -475,22 +465,18 @@ describe('Membership plan Stripe price sync (e2e)', () => {
       .send({ priceCents: 100000 })
       .expect(403);
 
-    const res = await request(app.getHttpServer())
+    const rejected = await request(app.getHttpServer())
       .patch(`/api/v1/studios/${studio.id}/membership-plans/${plan.id}`)
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ priceCents: 100000 })
-      .expect(200);
+      .expect(400);
+    expect((rejected.body as { message: string }).message).toContain('grandfathering');
 
-    expect((res.body as { stripePriceId: string; priceCents: number }).stripePriceId).toBe(
-      'price_new_1000',
-    );
-    expect((res.body as { priceCents: number }).priceCents).toBe(100000);
-    expect(stripe.createRecurringPrice).toHaveBeenCalled();
-    expect(stripe.deactivatePrice).toHaveBeenCalledWith('price_old_1300');
-
-    const persisted = await prisma.membershipPlan.findUniqueOrThrow({ where: { id: plan.id } });
-    expect(persisted.stripePriceId).toBe('price_new_1000');
-    expect(persisted.priceCents).toBe(100000);
+    const unchanged = await prisma.membershipPlan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(unchanged.priceCents).toBe(130000);
+    expect(unchanged.stripePriceId).toBe('price_old_1300');
+    expect(stripe.createRecurringPrice).not.toHaveBeenCalled();
+    expect(stripe.deactivatePrice).not.toHaveBeenCalled();
   });
 
   it('rejects checkout when catalog priceCents mismatches linked Stripe Price', async () => {
