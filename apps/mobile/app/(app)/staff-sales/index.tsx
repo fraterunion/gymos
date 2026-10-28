@@ -319,7 +319,7 @@ function SalesPlanCard({
   const C = getColors();
   const { primaryColor } = useBranding();
   const accent = primaryColor;
-  const benefits = resolveAresPlanBenefits(plan.name);
+  const benefits = resolveAresPlanBenefits(plan);
   const perClass = resolveAresPricePerClassLabel(plan);
   const priceLabel = formatMoneyFromCents(plan.priceCents, plan.currency);
 

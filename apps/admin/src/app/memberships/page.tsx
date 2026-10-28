@@ -407,14 +407,17 @@ function PlanModal({
 
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600">
-              Descripción para miembros
+              Beneficios que se muestran en la app
             </label>
+            <p className="mb-2 text-xs text-zinc-500">
+              Escribe un beneficio por línea. El orden y los cambios se mostrarán como viñetas en la app.
+            </p>
             <textarea
-              rows={2}
+              rows={6}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
-              placeholder="Qué incluye este plan…"
+              placeholder={"Clases incluidas\nAcceso a Open Gym\nBeneficios adicionales"}
             />
           </div>
 

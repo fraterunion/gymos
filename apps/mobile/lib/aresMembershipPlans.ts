@@ -13,53 +13,8 @@ type PlanPricingInput = {
   classCredits: number | null;
 };
 
-/** Vertical benefit bullets for ARES membership cards. */
-export function resolveAresPlanBenefits(planName: string): string[] {
-  const lower = planName.toLowerCase();
-
-  if (lower.includes('elite')) {
-    return [
-      'Clases ilimitadas',
-      'Sesiones Hyrox incluidas',
-      OPEN_GYM_HOURS_LABEL,
-      'Tina de hielo y eventos',
-      'Programa de running',
-      'Guest passes ilimitados',
-    ];
-  }
-  if (lower.includes('hyrox') && !lower.includes('elite')) {
-    return [
-      '3 sesiones Hyrox por semana',
-      'Plan de carrera semanal',
-      'Running club',
-      OPEN_GYM_HOURS_LABEL,
-      'Tina de hielo',
-      'No incluye clases regulares',
-    ];
-  }
-  if (lower.includes('full') || lower.includes('unlimited') || lower.includes('all access')) {
-    return [
-      'Clases ilimitadas',
-      OPEN_GYM_HOURS_LABEL,
-      '5 guest passes al mes',
-      'Tina de hielo',
-      'Eventos sin restricción de horario',
-    ];
-  }
-  if (lower.includes('basic') || lower.includes('starter') || lower.includes('essential')) {
-    return [
-      '12 clases al mes',
-      OPEN_GYM_HOURS_LABEL,
-      '3 guest passes',
-      'Créditos no acumulables',
-    ];
-  }
-  if (lower.includes('pro')) {
-    return ['5 clases por período', 'Regaderas incluidas'];
-  }
-
-  return [];
-}
+/** Card benefits come from the membership's editable description in GymOS. */
+export { resolveAresPlanBenefits } from './membershipBenefits';
 
 /** Marketing price-per-class overrides (cents) for known ARES plans. */
 const PER_CLASS_OVERRIDES_CENTS: Record<string, number> = {

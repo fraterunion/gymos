@@ -47,7 +47,11 @@ import {
   canManageCalendarOperations,
   canManageSeries,
 } from "@/lib/scheduleCalendarAccess";
-import type { SeriesDetail } from "@/lib/api/scheduleSeries";
+import {
+  cancelSeriesOccurrence,
+  previewCancelOccurrence,
+  type SeriesDetail,
+} from "@/lib/api/scheduleSeries";
 import type { BulkOperation } from "@/lib/api/scheduleOperations";
 
 function formatTime(iso: string, tz: string): string {
@@ -235,6 +239,7 @@ export default function SchedulePage() {
   const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(null);
   const [sessionClassId, setSessionClassId] = useState<string | null>(null);
   const [opsFeedback, setOpsFeedback] = useState<string | null>(null);
+  const [cancelSeriesBusy, setCancelSeriesBusy] = useState(false);
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
   const [createSeriesOpen, setCreateSeriesOpen] = useState(false);
   const [editSeriesDetail, setEditSeriesDetail] = useState<SeriesDetail | null>(null);
@@ -408,6 +413,41 @@ export default function SchedulePage() {
   }, [activeClasses, tz]);
 
   const todayKey = useMemo(() => todayKeyInZone(tz), [tz]);
+
+  const handleCancelEntireSeries = async (detail: SeriesDetail) => {
+    if (!selectedStudioId || !detail.anchorOccurrenceId || cancelSeriesBusy) return;
+    setCancelSeriesBusy(true);
+    setError(null);
+    try {
+      const impact = await previewCancelOccurrence(
+        selectedStudioId, detail.anchorOccurrenceId, "SERIES",
+      );
+      const approved = window.confirm(
+        `¿Cancelar permanentemente esta serie?\n\n` +
+        `Se cancelarán ${impact.affectedClassCount} clases futuras y ` +
+        `${impact.totalReservations} reservaciones. No se generarán clases nuevas ` +
+        `de esta serie. El historial de clases anteriores se conservará.\n\n` +
+        `Esta acción no se puede deshacer automáticamente.`,
+      );
+      if (!approved) return;
+      const result = await cancelSeriesOccurrence(
+        selectedStudioId,
+        detail.anchorOccurrenceId,
+        {
+          scope: "SERIES",
+          cancelReason: "Serie recurrente cancelada permanentemente desde administración",
+          confirmReservations: true,
+        },
+      );
+      closeSeriesDrawer();
+      setOpsFeedback(`Serie cancelada permanentemente. ${result.cancelledCount} clases futuras canceladas.`);
+      refreshSeries();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No fue posible cancelar la serie.");
+    } finally {
+      setCancelSeriesBusy(false);
+    }
+  };
 
   const handleModalDone = () => {
     setModal({ type: "closed" });
@@ -723,6 +763,7 @@ export default function SchedulePage() {
           onClose={closeSeriesDrawer}
           onEdit={(detail) => setEditSeriesDetail(detail)}
           onFinish={(detail) => setFinishSeriesDetail(detail)}
+          onCancelForever={(detail) => void handleCancelEntireSeries(detail)}
           onOpenOccurrence={openOccurrenceFromSeries}
         />
       ) : null}
