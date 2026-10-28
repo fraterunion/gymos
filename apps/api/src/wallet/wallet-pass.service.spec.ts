@@ -144,6 +144,56 @@ describe('WalletPassService', () => {
     });
   });
 
+  describe('Stage 4B allowlisted first issuance', () => {
+    beforeEach(() => {
+      config.get.mockImplementation((key: string) => ({
+        WALLET_AUTO_ENROLL_ENABLED: 'true',
+        WALLET_AUTO_ENROLL_STUDIO_ID: 'studio-1',
+        WALLET_AUTO_ENROLL_USER_IDS: 'user-1',
+        WALLET_AUTO_ENROLL_STUDIO_CAP: '1',
+      })[key]);
+      dynamicPasses.isEnabled.mockReturnValue(true);
+      walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: 'raw1' });
+      prisma.walletPassArtifact.findUnique.mockResolvedValue(null);
+      appleProvider.buildPkpass.mockResolvedValue(Buffer.from('pkpass-bytes'));
+      prisma.walletPassArtifact.upsert.mockResolvedValue({ pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC' });
+      googleProvider.ensureClassAndObject.mockResolvedValue({ objectId: 'obj1' });
+      dynamicPasses.enroll.mockResolvedValue({ outcome: 'enrolled' });
+    });
+
+    it('enrolls an allowed newly issued credential before Mi Pase completes', async () => {
+      await service.getBarcode('studio-1', 'user-1');
+      expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
+    });
+
+    it('does not enroll users outside the allowlist', async () => {
+      await service.getBarcode('studio-1', 'user-other');
+      expect(dynamicPasses.enroll).not.toHaveBeenCalled();
+    });
+
+    it('does not upgrade an existing static pass on ordinary re-download', async () => {
+      walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: null });
+      prisma.walletPassArtifact.findUnique.mockResolvedValue({ pkpassData: Buffer.from('existing'), passMode: 'STATIC', templateVersion: APPLE_PASS_TEMPLATE_VERSION });
+      await expect(service.getApplePass('studio-1', 'user-1')).resolves.toEqual(Buffer.from('existing'));
+      expect(dynamicPasses.enroll).not.toHaveBeenCalled();
+    });
+
+    it('keeps the valid static barcode if enrollment fails', async () => {
+      dynamicPasses.enroll.mockRejectedValue(new Error('transient'));
+      await expect(service.getBarcode('studio-1', 'user-1')).resolves.toEqual(expect.objectContaining({ isNew: true }));
+    });
+
+    it('returns a freshly enrolled dynamic pass for direct Apple-first requests', async () => {
+      let reads = 0;
+      prisma.walletPassArtifact.findUnique.mockImplementation(async () => {
+        reads += 1;
+        return reads > 1 ? { pkpassData: Buffer.from('dynamic'), passMode: 'DYNAMIC' } : null;
+      });
+      await expect(service.getApplePass('studio-1', 'user-1')).resolves.toEqual(Buffer.from('dynamic'));
+      expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
+    });
+  });
+
   describe('re-download (existing credential, artifact already provisioned)', () => {
     it('re-serves the stored .pkpass without calling issue() a second raw-generating time or re-signing', async () => {
       walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: null });
