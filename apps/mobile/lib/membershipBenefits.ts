@@ -9,7 +9,7 @@ export function resolveAresPlanBenefits(plan: { description?: string | null }): 
   const description = plan.description?.trim();
   if (!description) return [];
   return description
-    .split(/\r?\n|[•·]\s*(?=\S)/g)
+    .split(/\r?\n|•\s*(?=\S)/g)
     .map((line) => line.trim().replace(/^(?:[-*•·]\s*|\d+[.)]\s*)/, '').trim())
     .filter((line) => line.length > 0);
 }
