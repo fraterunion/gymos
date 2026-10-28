@@ -453,13 +453,13 @@ describe('WalletPassService', () => {
       );
     });
 
-    it('never overwrites a dynamic pass if another request wins the enrollment race', async () => {
+    it.each(['P2002', 'P2025'])('never overwrites a dynamic pass when a concurrent update yields %s', async (code) => {
       walletCredentials.issue.mockResolvedValue({ credential: CRED, rawCredential: 'raw1' });
       prisma.walletPassArtifact.findUnique
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ pkpassData: Buffer.from('dynamic-winner'), passMode: 'DYNAMIC' });
       appleProvider.buildPkpass.mockResolvedValue(Buffer.from('late-static'));
-      prisma.walletPassArtifact.upsert.mockRejectedValue({ code: 'P2002' });
+      prisma.walletPassArtifact.upsert.mockRejectedValue({ code });
 
       const result = await service.getApplePass('studio-1', 'user-1');
 
