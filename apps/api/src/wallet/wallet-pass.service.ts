@@ -356,6 +356,8 @@ export class WalletPassService {
 
     if (rawCredential) {
       await this.tryProvisionApple(credential.id, rawCredential, studioId, userId);
+      // Even if Google is requested first, do not leave an allowlisted new Apple pass static.
+      await this.tryFirstIssuanceDynamicEnrollment(credential.id, studioId, userId);
     }
 
     return { saveUrl: this.googleProvider.buildSaveUrl(artifact.googleObjectId!) };
