@@ -43,8 +43,9 @@ async function main() {
   assertSafeRehearsalQaTarget(process.env);
 
   const prismaModule = await import('@prisma/client');
-  const { PrismaClient, Role, BillingInterval, SubscriptionSource, SubscriptionStatus } =
-    prismaModule.default ?? prismaModule;
+  const {
+    PrismaClient, Role, BillingInterval, SubscriptionSource, SubscriptionStatus, ClassStatus,
+  } = prismaModule.default ?? prismaModule;
   const bcryptModule = await import('bcrypt');
   const bcrypt = bcryptModule.default ?? bcryptModule;
   const prisma = new PrismaClient();
@@ -89,6 +90,67 @@ async function main() {
       }
       await addIdentity('owner', Role.OWNER, passwords.OWNER);
       await addIdentity('reception', Role.FRONT_DESK, passwords.FRONT_DESK);
+
+      // No active subscription: used ONLY to test the real CASH sale path.
+      // Registration/payment can be simulated by OWNER without billing a person.
+      await addIdentity('member-cash-new', Role.MEMBER, passwords.MEMBER);
+
+      // All classes belong to this synthetic studio and start in the future.
+      // A recurring schedule rule and its three occurrences let QA exercise
+      // single-cancellation vs future-series-cancellation boundaries.
+      const classTemplate = await tx.classTemplate.create({
+        data: {
+          studioId: studio.id,
+          name: 'QA Functional Training — synthetic',
+          durationMinutes: 60,
+          defaultCapacity: 8,
+          tags: ['synthetic', 'qa-only'],
+          equipment: [],
+        },
+      });
+      const firstClass = new Date(now);
+      firstClass.setUTCDate(firstClass.getUTCDate() + 3);
+      firstClass.setUTCHours(18, 0, 0, 0); // 12:00 local (Mexico City)
+      const recurring = await tx.scheduleTemplate.create({
+        data: {
+          studioId: studio.id,
+          classTemplateId: classTemplate.id,
+          dayOfWeek: firstClass.getUTCDay(),
+          startTime: '12:00',
+          startsAt: firstClass,
+          intervalWeeks: 1,
+          capacity: 8,
+          active: true,
+        },
+      });
+      const recurringClasses = [];
+      for (let week = 0; week < 3; week++) {
+        const startsAt = new Date(firstClass.getTime() + week * 7 * 86_400_000);
+        const klass = await tx.scheduledClass.create({
+          data: {
+            studioId: studio.id,
+            classTemplateId: classTemplate.id,
+            scheduleTemplateId: recurring.id,
+            startsAt,
+            endsAt: new Date(startsAt.getTime() + 60 * 60_000),
+            capacity: 8,
+            status: ClassStatus.SCHEDULED,
+          },
+        });
+        recurringClasses.push(klass.id);
+      }
+      const oneOffStartsAt = new Date(firstClass.getTime() + 2 * 86_400_000);
+      const oneOff = await tx.scheduledClass.create({
+        data: {
+          studioId: studio.id,
+          classTemplateId: classTemplate.id,
+          startsAt: oneOffStartsAt,
+          endsAt: new Date(oneOffStartsAt.getTime() + 60 * 60_000),
+          capacity: 8,
+          status: ClassStatus.SCHEDULED,
+        },
+      });
+
       const seeded = [];
       for (const price of prices) {
         const plan = await tx.membershipPlan.create({
@@ -124,7 +186,13 @@ async function main() {
         }
         seeded.push({ plan: price.label, planId: plan.id, syntheticMemberCount: 2 });
       }
-      return { studioId: studio.id, slug: studio.slug, plans: seeded };
+      return {
+        studioId: studio.id, slug: studio.slug, plans: seeded,
+        cashSaleTestMember: 'member-cash-new@pr5-rehearsal.invalid',
+        recurringScheduleTemplateId: recurring.id,
+        futureRecurringClassIds: recurringClasses,
+        futureOneOffClassId: oneOff.id,
+      };
     }, { timeout: 30_000 });
 
     // Output excludes passwords, hashes, Stripe IDs and token material.
