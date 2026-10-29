@@ -1,5 +1,5 @@
 import { SubscriptionSource, SubscriptionStatus } from '@prisma/client';
-import { resolveCampaignRecipients, type RecipientCandidate } from './campaign-recipients';
+import { campaignAudienceSignature, resolveCampaignRecipients, type RecipientCandidate } from './campaign-recipients';
 
 function member(partial: Partial<RecipientCandidate> & Pick<RecipientCandidate, 'userId' | 'email'>): RecipientCandidate {
   return {
@@ -90,5 +90,34 @@ describe('campaign recipient resolution', () => {
     });
     expect(result.recipients).toHaveLength(0);
     expect(result.suppressed).toEqual([{ email: 'full@ares.test', userId: 'u-full' }]);
+  });
+});
+
+
+describe('campaign idempotency audience signature', () => {
+  it('is identical for equivalent filters and member selections regardless of order', () => {
+    const one = campaignAudienceSignature({
+      filters: { planIds: ['basic', 'pro'], statuses: ['ACTIVE'], paymentSources: ['CASH'] },
+      includeUserIds: ['u2', 'u1'],
+      excludeUserIds: ['u5', 'u5'],
+    });
+    const same = campaignAudienceSignature({
+      filters: { planIds: ['pro', 'basic', 'basic'], statuses: ['ACTIVE'], paymentSources: ['CASH'] },
+      includeUserIds: ['u1', 'u2'],
+      excludeUserIds: ['u5'],
+      allMembers: false,
+    });
+    expect(same).toBe(one);
+  });
+
+  it('distinguishes changed audiences with the same campaign content', () => {
+    const original = campaignAudienceSignature({ filters: { planIds: ['basic'] } });
+    const changedPlan = campaignAudienceSignature({ filters: { planIds: ['full'] } });
+    const changedInclude = campaignAudienceSignature({ filters: { planIds: ['basic'] }, includeUserIds: ['u2'] });
+    const changedExclude = campaignAudienceSignature({ filters: { planIds: ['basic'] }, excludeUserIds: ['u1'] });
+    const all = campaignAudienceSignature({ filters: { planIds: ['basic'] }, allMembers: true });
+    for (const other of [changedPlan, changedInclude, changedExclude, all]) {
+      expect(other).not.toBe(original);
+    }
   });
 });

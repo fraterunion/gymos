@@ -8,6 +8,31 @@ export type CampaignFilters = {
   paymentSources?: Array<SubscriptionSource | 'NONE'>;
 };
 
+/**
+ * Idempotency keys protect both the message and its audience. A replay with the
+ * same key but different filters/selection must never silently reuse the old
+ * recipient snapshot and send to a group the admin did not just confirm.
+ * Treat arrays as sets so equivalent selections can safely retry.
+ */
+export function campaignAudienceSignature(input: {
+  filters?: CampaignFilters | null;
+  includeUserIds?: string[] | null;
+  excludeUserIds?: string[] | null;
+  allMembers?: boolean | null;
+}): string {
+  const normalized = (ids?: string[] | null) => [...new Set(ids ?? [])].sort();
+  return JSON.stringify({
+    allMembers: input.allMembers === true,
+    filters: {
+      planIds: normalized(input.filters?.planIds),
+      statuses: normalized(input.filters?.statuses),
+      paymentSources: normalized(input.filters?.paymentSources),
+    },
+    includeUserIds: normalized(input.includeUserIds),
+    excludeUserIds: normalized(input.excludeUserIds),
+  });
+}
+
 export type RecipientSubscription = {
   membershipPlanId: string;
   planName: string;

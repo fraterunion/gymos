@@ -22,7 +22,7 @@ import { resolveEmailBranding, type PlatformEmailDefaults } from '../email/email
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
 import { normalizeCampaignContent, renderCampaignEmail } from './campaign-email.template';
-import { resolveCampaignRecipients, type CampaignFilters, type RecipientCandidate } from './campaign-recipients';
+import { campaignAudienceSignature, resolveCampaignRecipients, type CampaignFilters, type RecipientCandidate } from './campaign-recipients';
 import type { ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto/campaign.dto';
 import { readUnsubscribeToken, signUnsubscribeToken } from './unsubscribe-token';
 
@@ -74,8 +74,19 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
       where: { studioId_idempotencyKey: { studioId, idempotencyKey: dto.idempotencyKey } },
     });
     if (existing) {
-      if (existing.subject !== content.subject || existing.bodyText !== content.bodyText) {
-        throw new ConflictException('Esta clave de idempotencia ya se usó para otra campaña.');
+      if (
+        existing.subject !== content.subject ||
+        existing.bodyText !== content.bodyText ||
+        campaignAudienceSignature({
+          filters: existing.filters as CampaignFilters,
+          includeUserIds: existing.includeUserIds,
+          excludeUserIds: existing.excludeUserIds,
+          allMembers: existing.allMembers,
+        }) !== campaignAudienceSignature(dto)
+      ) {
+        throw new ConflictException(
+          'Esta clave de idempotencia ya se usó para otra campaña o selección de destinatarios.',
+        );
       }
       return this.campaignView(existing.id);
     }
