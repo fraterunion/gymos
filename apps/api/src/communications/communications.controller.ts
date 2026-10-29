@@ -76,7 +76,11 @@ export class CommunicationsController {
     @Body() dto: ConfirmCampaignDto,
     @Req() req: RequestWithUser,
   ) {
-    return this.communications.retryFailed(studioId, campaignId, req.user.sub, dto.confirm)@Controller('email')
+    return this.communications.retryFailed(studioId, campaignId, req.user.sub, dto.confirm);
+  }
+}
+
+@Controller('email')
 export class EmailUnsubscribeController {
   constructor(private readonly communications: CommunicationsService) {}
 
