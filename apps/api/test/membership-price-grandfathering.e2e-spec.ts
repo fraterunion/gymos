@@ -232,4 +232,72 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect((await prisma.membershipPlan.findUniqueOrThrow({ where: { id: other.id } })).priceCents).toBe(250000);
     expect(stripePriceUpdate).not.toHaveBeenCalled();
   });
+  it('Stripe SELECTED uses a mocked unprorated item swap and preserves billing dates', async () => {
+    const f = await seed('Basic Access');
+    await prisma.membershipPlan.update({
+      where: { id: f.plan.id },
+      data: { stripeProductId: 'prod_mock_ares', stripePriceId: 'price_old_ares' },
+    });
+    const stripeSub = await prisma.subscription.update({
+      where: { id: f.subA.id },
+      data: { source: SubscriptionSource.STRIPE, stripeSubscriptionId: 'sub_mock_ares' },
+    });
+    const periodStartBefore = stripeSub.currentPeriodStart?.getTime();
+    const periodEndBefore = stripeSub.currentPeriodEnd?.getTime();
+
+    jest.mocked(stripe.retrieveSubscription).mockResolvedValue({
+      id: 'sub_mock_ares',
+      items: {
+        data: [{
+          id: 'si_mock_ares',
+          price: { id: 'price_old_ares', unit_amount: 100000 },
+        }],
+      },
+    } as never);
+
+    const result = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.SELECTED,
+        subscriptionIds: [f.subA.id],
+        newPriceCents: 125000,
+        idempotencyKey: 'stripe-selected-isolated-test',
+        confirm: true,
+      })
+      .expect(200);
+    expect(result.body.status).toBe('COMPLETED');
+    expect(stripePriceUpdate).toHaveBeenCalledTimes(1);
+    expect(stripePriceUpdate).toHaveBeenCalledWith(
+      'sub_mock_ares',
+      {
+        items: [{ id: 'si_mock_ares', price: 'price_e2e_test' }],
+        proration_behavior: 'none',
+      },
+      { idempotencyKey: expect.stringMatching(/^membership-price-change:/) },
+    );
+    const after = await prices(f.plan.id);
+    expect(after.catalog).toBe(125000);
+    expect(after.locks.get(f.subA.id)).toBe(125000);
+    expect(after.locks.get(f.subB.id)).toBe(100000);
+    const updated = await prisma.subscription.findUniqueOrThrow({ where: { id: f.subA.id } });
+    expect(updated.currentPeriodStart?.getTime()).toBe(periodStartBefore);
+    expect(updated.currentPeriodEnd?.getTime()).toBe(periodEndBefore);
+
+    const replay = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.SELECTED,
+        subscriptionIds: [f.subA.id],
+        newPriceCents: 125000,
+        idempotencyKey: 'stripe-selected-isolated-test',
+        confirm: true,
+      })
+      .expect(200);
+    expect(replay.body.idempotentReplay).toBe(true);
+    expect(stripePriceUpdate).toHaveBeenCalledTimes(1);
+    expect(await prisma.membershipPriceChange.count()).toBe(1);
+  });
+
 });
