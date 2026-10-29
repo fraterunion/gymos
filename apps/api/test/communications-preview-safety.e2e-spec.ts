@@ -113,6 +113,49 @@ describe('ARES communications preview + unsubscribe safety (e2e)', () => {
     expect(await prisma.emailCampaignRecipient.count({ where: { campaignId: id, status: 'SENT' } })).toBe(0);
   });
 
+  it('rejects MEMBER, FRONT_DESK and cross-studio campaign previews and creates', async () => {
+    const f = await seed();
+    const memberLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: f.memberA.email, password: f.memberA.password })
+      .expect(201);
+    const memberToken = (memberLogin.body as { accessToken: string }).accessToken;
+    const frontDesk = await createUserWithPassword(prisma);
+    await createMembership(prisma, frontDesk.id, f.studio.id, Role.FRONT_DESK);
+    const frontDeskLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: frontDesk.email, password: frontDesk.password })
+      .expect(201);
+    const deskToken = (frontDeskLogin.body as { accessToken: string }).accessToken;
+    const otherStudio = await createStudio(prisma);
+
+    const payload = {
+      allMembers: true,
+      subject: 'Mensaje de prueba',
+      bodyText: 'Texto que no debe enviarse.',
+      idempotencyKey: 'unauthorized-campaign-test',
+      previewFingerprint: '0'.repeat(64),
+    };
+    await request(app.getHttpServer())
+      .post(`${f.base}/preview`).send({ allMembers: true }).expect(401);
+    for (const jwt of [memberToken, deskToken]) {
+      await request(app.getHttpServer())
+        .post(`${f.base}/preview`)
+        .set('Authorization', `Bearer ${jwt}`)
+        .send({ allMembers: true }).expect(403);
+      await request(app.getHttpServer())
+        .post(`${f.base}/campaigns`)
+        .set('Authorization', `Bearer ${jwt}`)
+        .send(payload).expect(403);
+    }
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${otherStudio.id}/communications/campaigns`)
+      .set('Authorization', `Bearer ${f.token}`)
+      .send(payload).expect(403);
+    expect(await prisma.emailCampaign.count()).toBe(0);
+    expect(await prisma.emailCampaignRecipient.count()).toBe(0);
+  });
+
   it('rejects a snapshot if new members joined after preview', async () => {
     const f = await seed();
     const preview = await request(app.getHttpServer())
