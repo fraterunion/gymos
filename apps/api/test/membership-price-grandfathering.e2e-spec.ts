@@ -162,6 +162,32 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect(stripePriceUpdate).not.toHaveBeenCalled();
   });
 
+  it('ordinary plan PATCH cannot bypass the pricing policy, but can edit benefits without repricing', async () => {
+    const f = await seed('Basic Access');
+    const planUrl = `/api/v1/studios/${f.studio.id}/membership-plans/${f.plan.id}`;
+
+    await request(app.getHttpServer())
+      .patch(planUrl)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({ priceCents: 150000 })
+      .expect(400);
+    expect((await prices(f.plan.id)).catalog).toBe(100000);
+    expect(await prisma.membershipPriceChange.count()).toBe(0);
+
+    const edited = await request(app.getHttpServer())
+      .patch(planUrl)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({ description: 'Incluye clases y acceso a gimnasio de ARES' })
+      .expect(200);
+    expect(edited.body.description).toContain('clases');
+    expect(edited.body.priceCents).toBe(100000);
+    const after = await prices(f.plan.id);
+    expect(after.locks.get(f.subA.id)).toBe(100000);
+    expect(after.locks.get(f.subB.id)).toBe(100000);
+    expect(await prisma.membershipPriceChange.count()).toBe(0);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
   it('Basic FUTURE_ONLY changes the catalog, never existing members or Stripe', async () => {
     const f = await seed('Basic Access');
     const result = await request(app.getHttpServer())
