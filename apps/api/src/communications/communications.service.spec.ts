@@ -49,6 +49,7 @@ describe('CommunicationsService delivery', () => {
   let recipients: Array<typeof pending>;
   let configGet: jest.Mock;
   let campaignUpdate: jest.Mock;
+  let findCampaign: jest.Mock;
 
   beforeEach(async () => {
     recipients = [
@@ -60,6 +61,7 @@ describe('CommunicationsService delivery', () => {
       key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
     );
     campaignUpdate = jest.fn(async ({ data }: { data: Partial<typeof campaign> }) => Object.assign(campaign, data));
+    findCampaign = jest.fn().mockResolvedValue(null);
     const prisma = {
       emailCampaignRecipient: {
         findFirst: jest.fn(async ({ where }: { where: { status: string } }) =>
@@ -87,6 +89,7 @@ describe('CommunicationsService delivery', () => {
         }),
       },
       emailCampaign: {
+        findUnique: findCampaign,
         findFirst: jest.fn().mockResolvedValue({ ...campaign, status: EmailCampaignStatus.DRAFT }),
         update: campaignUpdate,
       },
@@ -135,6 +138,23 @@ describe('CommunicationsService delivery', () => {
       service.confirm('studio-1', 'camp-1', 'admin-1', { confirm: true }),
     ).rejects.toThrow('origen HTTPS público');
     expect(campaignUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects reusing a campaign key for a different recipient selection', async () => {
+    findCampaign.mockResolvedValue({
+      ...campaign,
+      filters: { planIds: ['basic'] },
+      includeUserIds: [],
+      excludeUserIds: [],
+      allMembers: false,
+    });
+    await expect(service.create('studio-1', 'admin-1', {
+      subject: 'Aviso',
+      bodyText: 'Hola <script>',
+      idempotencyKey: 'ares-campaign-0001',
+      filters: { planIds: ['full'] },
+    })).rejects.toThrow('selección de destinatarios');
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('validates unsubscribe token without writing suppression', () => {
