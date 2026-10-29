@@ -65,6 +65,9 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/feat/ares-ops-payments-and-memberships-20261028'
         run: node apps/api/scripts/smoke-ares-rehearsal-public.mjs
 
+      - name: ARES rehearsal fixture safety guards (pure Node, no DB writes)
+        run: node --test apps/api/scripts/provision-pr5-qa.test.mjs
+
       # Pure Node env-precedence + release-contract unit tests (no Expo CLI).
       - name: Mobile env precedence tests
         run: pnpm --filter mobile test:env
