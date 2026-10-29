@@ -39,3 +39,34 @@ Set `WALLET_AUTO_ENROLL_ENABLED=false` and redeploy, or roll back to the precedi
 - Default OFF; exact studio/user match; invalid, duplicate and wildcard identifiers; cap enforcement; required feature flags.
 - First-issuance dynamic enrollment; unauthorized user stays static; existing credential stays static; transient enrollment failure keeps usable QR; direct Apple-first issuance returns newly converted bytes.
 - Before release, execute full Wallet unit and API e2e, Prisma migration status and production fingerprint verification; no production DB mutation as part of these tests.
+
+## Staging validation — synthetic member C (first issue, then one device)
+
+Staging only (`smart-wallet-staging`; the staging CLI refuses any other environment or a database
+off Railway's private network). Members A and B are never touched: `seed` never creates C, and C's
+commands accept only `--member c`.
+
+1. **Prepare C without a credential** — `node apps/api/dist/cli/wallet-staging.cli.js prepare-first-issue --member c`
+   creates C's synthetic user, studio membership and active synthetic subscription in the seeded
+   studio, issues **no** wallet credential, and prints C's user id, the studio id and the exact
+   allowlist for C only (`WALLET_AUTO_ENROLL_ENABLED=true`, studio id, C's user id, cap `1`). The
+   allowlist is checked with the API's own boot validator and eligibility policy before it is
+   printed: no wildcard, cap 1, and no other user in the database admitted. Refuses once C holds
+   any credential.
+2. **Activate** — set exactly those four variables on staging (dynamic passes and PassKit routes
+   on; refresh worker off) and redeploy; boot validation re-checks them.
+3. **First issue** — `wallet-staging.cli.js issue-first --member c` refuses unless the LIVE
+   allowlist is exactly C (synthetic studio, cap 1, no wildcard, no user holding a credential,
+   dynamic + routes on, worker off) and C has no credential. It then calls
+   `WalletPassService.getBarcode` — the "Mi Pase" path — and proves C's Apple pass is DYNAMIC with a
+   web service URL, serial = credential id, zero registrations, and every pre-existing pass artifact
+   byte-identical. It sends no push and is one-shot.
+4. **Export** — `wallet-staging.cli.js export --member c` (pass bytes on stdout between markers).
+   Install on the single test iPhone only, with iCloud Wallet sync prevented from reaching any other
+   device.
+5. **Prove one device** — `wallet-diagnostics.cli.js pass --credential <C>` must show exactly one
+   active registration, the intended iPhone's device hash, before any entitlement change or push.
+6. **Single update** — `wallet-staging.cli.js set-entitlement --member c --state expired`, then
+   `wallet-dynamic-pass.cli.js refresh --credential <C> --confirm` and, only after every gate passes,
+   one `push --credential <C> --confirm`. Note: the push service prunes a registration APNs reports
+   as permanently invalid (410).
