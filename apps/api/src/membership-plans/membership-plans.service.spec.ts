@@ -38,6 +38,31 @@ describe('MembershipPlansService.updatePlanFromAdmin (public price safety)', () 
     }
   });
 
+  it('rejects arbitrary Stripe Price or Product relinking through the ordinary admin PATCH', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      priceCents: 130000,
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      entitlementDays: null,
+      stripeProductId: 'prod_existing',
+      stripePriceId: 'price_existing',
+    });
+    const update = jest.spyOn(service, 'updatePlan');
+    try {
+      for (const modification of [
+        { stripePriceId: 'price_different' },
+        { stripeProductId: 'prod_different' },
+      ]) {
+        await expect(service.updatePlanFromAdmin(
+          'studio-a', 'basic', modification, 'owner',
+        )).rejects.toThrow('identificadores de cobro');
+      }
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      update.mockRestore();
+    }
+  });
+
   it('allows no-op billing terms in a benefits form without forwarding any financial field', async () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       priceCents: 130000,

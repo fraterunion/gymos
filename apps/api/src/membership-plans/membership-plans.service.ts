@@ -243,16 +243,29 @@ export class MembershipPlansService {
       dto.priceCents !== undefined ||
       dto.currency !== undefined ||
       dto.billingInterval !== undefined ||
-      dto.entitlementDays !== undefined;
+      dto.entitlementDays !== undefined ||
+      dto.stripePriceId !== undefined ||
+      dto.stripeProductId !== undefined;
     if (financialFieldProvided) {
       const existing = await this.prisma.membershipPlan.findFirst({
         where: { id: planId, studioId, deletedAt: null },
-        select: { priceCents: true, currency: true, billingInterval: true, entitlementDays: true },
+        select: {
+          priceCents: true, currency: true, billingInterval: true, entitlementDays: true,
+          stripePriceId: true, stripeProductId: true,
+        },
       });
       if (!existing) throw new NotFoundException('Membership plan not found');
       if (dto.priceCents !== undefined && dto.priceCents !== existing.priceCents) {
         throw new BadRequestException(
           'Para cambiar el precio, utiliza el flujo de grandfathering con selección explícita de miembros.',
+        );
+      }
+      if (
+        (dto.stripePriceId !== undefined && dto.stripePriceId !== existing.stripePriceId) ||
+        (dto.stripeProductId !== undefined && dto.stripeProductId !== existing.stripeProductId)
+      ) {
+        throw new BadRequestException(
+          'No puedes modificar directamente los identificadores de cobro de Stripe desde el editor del plan.',
         );
       }
       if (
@@ -270,6 +283,8 @@ export class MembershipPlansService {
     delete safeDto.currency;
     delete safeDto.billingInterval;
     delete safeDto.entitlementDays;
+    delete safeDto.stripePriceId;
+    delete safeDto.stripeProductId;
     return this.updatePlan(studioId, planId, safeDto, actorUserId);
   }
 

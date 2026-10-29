@@ -178,6 +178,8 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
       { currency: 'usd' },
       { billingInterval: BillingInterval.YEARLY },
       { entitlementDays: 45 },
+      { stripeProductId: 'prod_forbidden_ares' },
+      { stripePriceId: 'price_forbidden_ares' },
     ]) {
       await request(app.getHttpServer())
         .patch(planUrl)
