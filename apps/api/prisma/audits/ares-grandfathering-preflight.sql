@@ -2,7 +2,9 @@
 -- Safe to run on a production READ-ONLY connection or a fresh Neon branch.
 -- Do not execute mutation statements; no Stripe API calls from this file.
 -- Re-run immediately before the price-lock migration and review the output.
--- The production migration reads the latest *captured* succeeded payment.
+-- The production migration initializes CASH locks from current catalog to
+-- preserve existing renewal behavior; STRIPE uses the latest captured
+-- succeeded payment (fallback catalog), verified against live Stripe prices.
 --
 -- 1. Inventory by payment source/status and fallback risk.
 WITH latest AS (
@@ -23,16 +25,17 @@ LEFT JOIN latest ON latest.subscription_id = s.id
 GROUP BY s.source,s.status
 ORDER BY s.source,s.status;
 
--- 2. CASH recurring amount REVIEW: latest paid is not always the recurring
---    contracted price (e.g. one-off owner override). Review these groups with
---    studio OWNER before accepting the migration's proposed locks.
+-- 2. CASH history diagnostics ONLY: one-off or overridden payments can differ
+--    from the catalog. The migration does NOT use historical CASH payment
+--    values as the new recurring price. The initial CASH lock is catalog.
+--    Fer will choose a scope only when she changes catalog prices later.
 WITH latest AS (
   SELECT DISTINCT ON (subscription_id) subscription_id, amount_cents
   FROM payments WHERE status='SUCCEEDED' AND subscription_id IS NOT NULL
   ORDER BY subscription_id, created_at DESC, id DESC
 )
 SELECT mp.name AS plan, mp.currency, mp.price_cents AS catalog_cents,
-       latest.amount_cents AS proposed_cash_lock_cents,
+       latest.amount_cents AS historical_cash_payment_cents,
        COUNT(*)::bigint AS active_cash_members
 FROM subscriptions s
 JOIN membership_plans mp ON mp.id = s.membership_plan_id
@@ -40,7 +43,7 @@ JOIN latest ON latest.subscription_id = s.id
 WHERE s.source = 'CASH' AND s.status='ACTIVE'
   AND latest.amount_cents <> mp.price_cents
 GROUP BY mp.name,mp.currency,mp.price_cents,latest.amount_cents
-ORDER BY mp.name,proposed_cash_lock_cents;
+ORDER BY mp.name,historical_cash_payment_cents;
 
 -- 3. Stripe subscriptions requiring a live Stripe subscription-price lookup.
 SELECT s.status::text AS status,

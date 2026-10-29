@@ -189,6 +189,20 @@ describe('MembershipPriceChangeService', () => {
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
+  it('does not interpret a one-off historical cash payment as a legacy renewal price', async () => {
+    prisma.subscription.findMany.mockResolvedValueOnce([
+      { ...cash, priceCents: null, payments: [{ amountCents: 195000 }] },
+      stripeSub,
+    ]);
+    const preview = await service.preview('studio-1', 'plan-full', 200000);
+    const legacyCash = preview.members.find((m) => m.subscriptionId === 'sub-cash');
+    expect(legacyCash?.currentPriceCents).toBe(150000);
+    expect(legacyCash?.nextPriceCents).toBe(200000);
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
+  });
+
   it('future-only rotates the catalog and does not update Stripe subscriptions', async () => {
     createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
     const result = await service.apply('studio-1', 'plan-full', 'owner', {

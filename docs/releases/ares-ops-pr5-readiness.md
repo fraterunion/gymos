@@ -2,6 +2,12 @@
 
 **Status: DRAFT / NO PRODUCTION APPROVAL.**
 
+**Scope rule clarified by owner:** Do not apply any price changes ourselves.
+All existing charges and catalog values remain as-is. Fer alone chooses
+ALL_EXISTING, FUTURE_ONLY, or SELECTED for Basic, Pro and Full when she
+*later* explicitly edits a price, reviews a preview and confirms the change.
+Installing the feature cannot silently alter existing renewal amounts.
+
 This is a no-PII read-only audit summary. The feature branch includes manual
 payment dates, member-specific pricing for Basic/Pro/Full, editable benefit
 bullets, admin email campaigns, and permanent class-series cancellation.
@@ -26,19 +32,24 @@ ARES Training Club **live Stripe account** were compared; no writes were made.
 - 8 locally ACTIVE Stripe records lack a local successful payment: 6 matching
   live records have the same price as their current catalogs; 2 lack a live
   Stripe match.
-- 6 ACTIVE CASH Full Access records have latest succeeded payments of
+- 6 ACTIVE CASH Full Access records have historical succeeded payments of
   195,000 cents (MXN 1,950), versus current catalog price of 150,000 cents
-  (MXN 1,500). Each has only one successful payment; **verify the contracted
-  recurring amount with the studio owner before accepting price-lock backfill.**
-  This could represent a legitimate legacy price or a one-off charge.
+  (MXN 1,500). Each has only one successful payment. **No price change
+  is authorized.** The corrected initial CASH lock uses the catalog 150,000
+  cents, preserving the existing default renewal amount. The 195,000 cents
+  remains an unchanged historical payment; it is not a recurring price.
+  No owner decision or automatic repricing is required at installation.
 - Current production capture-order versus effective-date backfill price
   differences: zero. The updated migration uses capture order to protect
   future backdated entries.
 
 ## Required gates before merging to main
 
-1. Obtain studio-owner confirmation for the six CASH Full Access renewal
-   amounts. Review the two orphan/placeholder Stripe references.
+1. Preserve every member's current billed amount when enabling the feature;
+   in particular, ensure the six historical MXN 1,950 CASH payments do NOT
+   become MXN 1,950 recurring charges merely due to migration. All CASH
+   initial locks follow current catalog. Review two orphan/placeholder Stripe
+   references without changing, deleting or reassigning them.
 2. Re-run `apps/api/prisma/audits/ares-grandfathering-preflight.sql` on a
    **read-only** production connection or fresh Neon branch just before merge.
 3. Confirm CI is green for the precise latest PR head after every commit.

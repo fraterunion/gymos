@@ -1,12 +1,19 @@
 -- Additive: per-subscription price lock, explicit price-change ledger, and
 -- studio-scoped email campaigns. Does not rewrite entitlements, periods, or
 -- Stripe subscription ids. Existing rows are backfilled from the latest
--- captured succeeded payment, otherwise the current catalog price, so a later
--- catalog edit does not silently change what those members are charged.
--- Backdated paid_at reflects the DATE THE PAYMENT WAS RECEIVED, not the order
--- captured in GymOS. Use created_at when selecting the latest known transaction.
--- One-off cash overrides can differ from a recurring member price; review a
--- production snapshot of recurring Stripe and CASH amounts before deployment.
+-- IMPORTANT: installing this feature MUST NOT silently reprice existing members.
+-- CASH renewals previously used the current catalog amount, not the latest
+-- payment amount. Preserve that existing behavior by using catalog for initial
+-- CASH locks. A prior cash payment might include a one-time OWNER override,
+-- signup charge or different promotional amount: it is NOT an agreed recurring
+-- price without an explicit grandfathering action by the studio administrator.
+-- STRIPE bills from each live subscription item, independently of catalog.
+-- Seed Stripe from the latest captured successful payment where available, with
+-- catalog as fallback. Reconcile live Stripe items read-only before release.
+-- No payment, Stripe Price, membership entitlement, or subscription is modified.
+-- Only a future explicitly confirmed price-change action can alter a lock.
+-- Backdated paid_at reflects the date received, not capture order: choose
+-- latest payment by created_at, never by paid_at.
 --
 -- MERGING TO MAIN WILL APPLY THIS MIGRATION TO PRODUCTION.
 
@@ -20,21 +27,28 @@ CREATE TYPE "EmailSuppressionReason" AS ENUM ('UNSUBSCRIBE', 'BOUNCE', 'COMPLAIN
 ALTER TABLE "subscriptions" ADD COLUMN "price_cents" INTEGER;
 
 UPDATE "subscriptions" s
-SET "price_cents" = COALESCE(
-  (
-    SELECT p.amount_cents
-    FROM "payments" p
-    WHERE p.subscription_id = s.id
-      AND p.status = 'SUCCEEDED'
-    ORDER BY p.created_at DESC, p.id DESC
-    LIMIT 1
-  ),
-  (
+SET "price_cents" = CASE
+  WHEN s.source = 'CASH' THEN (
     SELECT mp.price_cents
     FROM "membership_plans" mp
     WHERE mp.id = s.membership_plan_id
   )
-)
+  ELSE COALESCE(
+    (
+      SELECT p.amount_cents
+      FROM "payments" p
+      WHERE p.subscription_id = s.id
+        AND p.status = 'SUCCEEDED'
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT 1
+    ),
+    (
+      SELECT mp.price_cents
+      FROM "membership_plans" mp
+      WHERE mp.id = s.membership_plan_id
+    )
+  )
+END
 WHERE s.price_cents IS NULL;
 
 CREATE TABLE "membership_price_changes" (

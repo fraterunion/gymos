@@ -430,7 +430,7 @@ export class MembershipPriceChangeService {
         user: { select: { id: true, firstName: true, lastName: true, email: true } },
         payments: {
           where: { status: PaymentStatus.SUCCEEDED },
-          orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: 1,
           select: { amountCents: true },
         },
@@ -438,7 +438,13 @@ export class MembershipPriceChangeService {
     });
     const resolved: ResolvedSubscription[] = [];
     for (const row of rows) {
-      let currentPriceCents = row.priceCents ?? row.payments[0]?.amountCents ?? plan.priceCents;
+      // A historical CASH payment is not proof of a contracted recurring
+      // rate. Legacy CASH renewals use catalog until Fer explicitly opts into
+      // grandfathering; Stripe preserves the live subscription item amount.
+      let currentPriceCents = row.priceCents ??
+        (row.source === SubscriptionSource.CASH
+          ? plan.priceCents
+          : (row.payments[0]?.amountCents ?? plan.priceCents));
       let stripePriceId: string | null = null;
       let stripeItemId: string | null = null;
       let priceUnverified = false;
