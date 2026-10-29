@@ -124,6 +124,7 @@ export class ExecutiveDashboardService {
         select: {
           status: true,
           cancelAtPeriodEnd: true,
+          priceCents: true,
           membershipPlan: { select: { name: true, priceCents: true, billingInterval: true } },
         },
       }),
@@ -569,7 +570,7 @@ export class ExecutiveDashboardService {
         memberUserId: s.user.id,
         memberName: fullName(s.user.firstName, s.user.lastName),
         planName: s.membershipPlan.name,
-        amountCents: s.membershipPlan.priceCents,
+        amountCents: s.priceCents ?? s.membershipPlan.priceCents,
         renewalDate: end.toISOString(),
         bucket,
         isEstimated: true as const,

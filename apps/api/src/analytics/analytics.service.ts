@@ -429,6 +429,7 @@ export class AnalyticsService {
           status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING] },
         },
         select: {
+          priceCents: true,
           membershipPlan: { select: { priceCents: true, billingInterval: true } },
         },
       }),
@@ -795,7 +796,7 @@ export class AnalyticsService {
     let estimatedMrrCents = 0;
     for (const s of mrrSubscriptions) {
       estimatedMrrCents += monthlyEquivalentCents(
-        s.membershipPlan.priceCents,
+        s.priceCents ?? s.membershipPlan.priceCents,
         s.membershipPlan.billingInterval,
       );
     }
@@ -877,7 +878,7 @@ export class AnalyticsService {
     const averageMembershipPriceCents =
       mrrSubscriptions.length > 0
         ? Math.round(
-            mrrSubscriptions.reduce((sum, s) => sum + s.membershipPlan.priceCents, 0) /
+            mrrSubscriptions.reduce((sum, s) => sum + (s.priceCents ?? s.membershipPlan.priceCents), 0) /
               mrrSubscriptions.length,
           )
         : 0;

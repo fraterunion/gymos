@@ -31,6 +31,19 @@ describe('computeEstimatedMrrCents', () => {
     ).toBe(120000);
   });
 
+  it('uses grandfathered per-member price for MRR rather than the catalog', () => {
+    expect(computeEstimatedMrrCents([
+      { status: SubscriptionStatus.ACTIVE, cancelAtPeriodEnd: false, priceCents: 130000, membershipPlan: { priceCents: 100000, billingInterval: BillingInterval.MONTHLY } },
+      { status: SubscriptionStatus.ACTIVE, cancelAtPeriodEnd: false, priceCents: 150000, membershipPlan: { priceCents: 150000, billingInterval: BillingInterval.MONTHLY } },
+    ])).toBe(280000);
+  });
+
+  it('retains catalog fallback for legacy rows without a locked price', () => {
+    expect(computeEstimatedMrrCents([
+      { status: SubscriptionStatus.ACTIVE, cancelAtPeriodEnd: false, priceCents: null, membershipPlan: plan },
+    ])).toBe(120000);
+  });
+
   it('excludes TRIALING from paid MRR', () => {
     expect(
       computeEstimatedMrrCents([

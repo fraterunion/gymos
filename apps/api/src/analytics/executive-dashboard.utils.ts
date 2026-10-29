@@ -1,7 +1,7 @@
 import { BillingInterval, SubscriptionStatus } from '@prisma/client';
 import type { SubscriptionStatus as SubStatus } from '@prisma/client';
 
-/** Normalizes plan catalog price to monthly cents. */
+/** Normalizes the effective per-subscription recurring price to monthly cents. */
 export function monthlyEquivalentCents(priceCents: number, interval: BillingInterval): number {
   switch (interval) {
     case BillingInterval.MONTHLY:
@@ -17,12 +17,15 @@ export function monthlyEquivalentCents(priceCents: number, interval: BillingInte
 
 export type MrrSubscriptionRow = {
   status: SubStatus;
+  /** Snapshot of the member's agreed renewal price; null on pre-migration rows. */
+  priceCents?: number | null;
   cancelAtPeriodEnd: boolean;
   membershipPlan: { priceCents: number; billingInterval: BillingInterval };
 };
 
 /**
- * Phase 1 MRR: catalog price of ACTIVE subscriptions only, normalized to monthly.
+ * Estimated MRR: locked member price for ACTIVE subscriptions, normalized to monthly.
+ * Legacy null locks fall back to catalog, not to historic one-off cash overrides.
  * TRIALING, PAST_DUE, PAUSED, CANCELED excluded.
  * cancelAtPeriodEnd ACTIVE subs included (still contracted until period end).
  * Review/test accounts must be filtered before calling.
@@ -32,7 +35,7 @@ export function computeEstimatedMrrCents(subscriptions: MrrSubscriptionRow[]): n
   for (const s of subscriptions) {
     if (s.status !== SubscriptionStatus.ACTIVE) continue;
     total += monthlyEquivalentCents(
-      s.membershipPlan.priceCents,
+      s.priceCents ?? s.membershipPlan.priceCents,
       s.membershipPlan.billingInterval,
     );
   }
@@ -127,9 +130,9 @@ export function paymentMethodOwnerLabel(method: string | null | undefined): stri
 }
 
 export const MRR_DEFINITION = {
-  kind: 'estimated_catalog' as const,
+  kind: 'estimated_member_price' as const,
   description:
-    'Suma del precio de catálogo de suscripciones ACTIVE, normalizado a equivalente mensual. Excluye TRIALING, PAST_DUE, PAUSED y CANCELED.',
+    'Suma del precio individual de suscripciones ACTIVE, normalizado a equivalente mensual. Usa catálogo solo si falta precio individual. Excluye TRIALING, PAST_DUE, PAUSED y CANCELED.',
   includesStatuses: ['ACTIVE'] as const,
   includesCancelAtPeriodEnd: true,
   excludesStatuses: ['TRIALING', 'PAST_DUE', 'PAUSED', 'CANCELED'] as const,
@@ -139,7 +142,7 @@ export const MRR_DEFINITION = {
 export const UPCOMING_REVENUE_DEFINITION = {
   kind: 'estimated_renewals' as const,
   description:
-    'Precio de catálogo del plan en la fecha de renovación local. No son facturas de Stripe.',
+    'Precio individual de la membresía en la fecha de renovación. Usa catálogo solo si falta el precio individual. No son facturas de Stripe.',
   eligibleStatuses: ['ACTIVE'] as const,
   excludesCancelAtPeriodEnd: true,
   excludesTrialing: true,
