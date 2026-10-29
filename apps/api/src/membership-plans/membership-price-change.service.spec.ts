@@ -252,6 +252,36 @@ describe('MembershipPriceChangeService', () => {
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
+  it('never changes a Stripe member price locally when their Stripe subscription ID is missing', async () => {
+    const change = createdChange(MembershipPriceChangeScope.ALL_EXISTING);
+    prisma.subscription.findFirst.mockImplementation(async ({ where }: { where: { id: string } }) => (
+      where.id === 'sub-stripe'
+        ? { ...stripeSub, stripeSubscriptionId: null }
+        : cash
+    ));
+    await service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.ALL_EXISTING,
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    });
+    const stripePriceWrite = prisma.subscription.update.mock.calls.find(
+      (call: [{ where: { id: string } }]) => call[0].where.id === 'sub-stripe',
+    );
+    expect(stripePriceWrite).toBeUndefined();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(prisma.membershipPriceChangeItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'item-stripe' },
+        data: expect.objectContaining({
+          status: MembershipPriceChangeItemStatus.FAILED,
+          error: expect.stringContaining('identificador'),
+        }),
+      }),
+    );
+    expect(change.items.find((item) => item.id === 'item-stripe')?.applyNewPrice).toBe(true);
+  });
+
   it('records a Stripe failure without changing that subscription price', async () => {
     const change = createdChange(MembershipPriceChangeScope.ALL_EXISTING);
     stripe.updateSubscription.mockRejectedValue(new Error('stripe down'));

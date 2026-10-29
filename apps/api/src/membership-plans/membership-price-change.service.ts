@@ -345,7 +345,18 @@ export class MembershipPriceChangeService {
         return;
       }
 
-      if (subscription.source === SubscriptionSource.STRIPE && subscription.stripeSubscriptionId) {
+      if (subscription.source === SubscriptionSource.STRIPE) {
+        // Never treat a Stripe-backed subscription without a valid Stripe ID
+        // as a CASH subscription. It would silently change only the local
+        // renewal amount while the actual billed price stays unchanged.
+        if (!subscription.stripeSubscriptionId) {
+          await this.markItem(
+            item.id,
+            MembershipPriceChangeItemStatus.FAILED,
+            'La membresía Stripe no tiene un identificador de suscripción válido. No se modificó el cobro ni el precio local.',
+          );
+          return;
+        }
         if (!targetPriceId) {
           await this.markItem(item.id, MembershipPriceChangeItemStatus.FAILED, 'El plan no tiene un precio de Stripe para aplicar. No se modificó el cobro.');
           return;
