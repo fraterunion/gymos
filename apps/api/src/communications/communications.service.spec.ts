@@ -5,6 +5,7 @@ import { EMAIL_PROVIDER } from '../email/email-provider';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
 import { CommunicationsService } from './communications.service';
+import { signUnsubscribeToken } from './unsubscribe-token';
 
 describe('CommunicationsService delivery', () => {
   const campaign = {
@@ -137,7 +138,6 @@ describe('CommunicationsService delivery', () => {
   });
 
   it('validates unsubscribe token without writing suppression', () => {
-    const { signUnsubscribeToken } = require('./unsubscribe-token') as typeof import('./unsubscribe-token');
     const token = signUnsubscribeToken({ studioId: 'studio-1', email: 'ada@ares.test' }, 'secret');
     expect(service.validateUnsubscribeToken(token)).toEqual({
       studioId: 'studio-1', email: 'ada@ares.test',
