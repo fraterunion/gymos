@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   Equals,
   IsArray,
+  IsDefined,
   IsBoolean,
   IsIn,
   IsOptional,
@@ -71,11 +72,11 @@ export class PreviewCampaignDto {
 }
 
 export class CreateCampaignDto extends PreviewCampaignDto {
-  /** Fingerprint of the exact previewed recipient snapshot (new admin clients). */
-  @IsOptional()
+  /** Mandatory fingerprint from a preview of the exact recipient snapshot. */
+  @IsDefined()
   @IsString()
   @Matches(/^[a-f0-9]{64}$/)
-  previewFingerprint?: string;
+  previewFingerprint!: string;
 
   @IsString()
   @MinLength(1)

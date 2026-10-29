@@ -166,9 +166,22 @@ describe('CommunicationsService delivery', () => {
       subject: 'Aviso',
       bodyText: 'Hola <script>',
       idempotencyKey: 'ares-campaign-0001',
+      previewFingerprint: recipientSnapshotFingerprint([{ userId: 'user-1', email: 'ada@ares.test' }]),
       filters: { planIds: ['full'] },
     })).rejects.toThrow('selección de destinatarios');
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('requires a valid server-side preview fingerprint before creating a campaign', async () => {
+    await expect(service.create('studio-1', 'admin-1', {
+      allMembers: true,
+      subject: 'Aviso',
+      bodyText: 'Mensaje',
+      idempotencyKey: 'missing-preview-key',
+      previewFingerprint: '',
+    })).rejects.toThrow('vista previa válida');
+    expect(findCampaign).not.toHaveBeenCalled();
+    expect(campaignCreate).not.toHaveBeenCalled();
   });
 
   it('rejects an idempotent campaign replay when the stored snapshot differs', async () => {

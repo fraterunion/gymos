@@ -70,6 +70,9 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
 
   async create(studioId: string, actorUserId: string, dto: CreateCampaignDto) {
     this.assertAudience(dto);
+    if (!dto.previewFingerprint || !/^[a-f0-9]{64}$/.test(dto.previewFingerprint)) {
+      throw new BadRequestException('Genera una vista previa válida de destinatarios antes de crear la campaña.');
+    }
     const content = this.parseContent(dto.subject, dto.bodyText);
     const existing = await this.prisma.emailCampaign.findUnique({
       where: { studioId_idempotencyKey: { studioId, idempotencyKey: dto.idempotencyKey } },
@@ -89,7 +92,7 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
           'Esta clave de idempotencia ya se usó para otra campaña o selección de destinatarios.',
         );
       }
-      if (dto.previewFingerprint) {
+      {
         const recorded = await this.prisma.emailCampaignRecipient.findMany({
           where: { campaignId: existing.id },
           select: { userId: true, email: true },
@@ -106,7 +109,7 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
     // A preview authorizes a particular set of destination addresses, not an
     // arbitrary later result of the same filters. Any membership/consent change
     // between preview and creation must force a fresh review before sending.
-    if (dto.previewFingerprint && recipientSnapshotFingerprint(resolved.recipients) !== dto.previewFingerprint) {
+    if (recipientSnapshotFingerprint(resolved.recipients) !== dto.previewFingerprint) {
       throw new ConflictException('Los destinatarios cambiaron desde la vista previa. Actualiza la vista previa antes de enviar.');
     }
     if (resolved.recipients.length === 0) {
