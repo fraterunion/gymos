@@ -126,6 +126,7 @@ export class MembershipPlansService {
       ...(includeInactive ? {} : { active: true }),
     };
 
+    const entitledWhere = currentlyEntitledSubscriptionWhere(new Date());
     const plans = await this.prisma.membershipPlan.findMany({
       where,
       orderBy: [{ active: 'desc' }, { createdAt: 'asc' }],
@@ -133,22 +134,44 @@ export class MembershipPlansService {
         ...classAccessInclude,
         _count: {
           select: {
-            subscriptions: {
-              where: currentlyEntitledSubscriptionWhere(new Date()),
-            },
+            subscriptions: { where: entitledWhere },
           },
         },
       },
     });
 
+    if (plans.length === 0) return [];
+
+    // A future-only price increase must NEVER make grandfathered members look
+    // more expensive in admin revenue projections. Aggregate the actual
+    // subscription locks, not the plan's new-customer catalog price.
+    // Legacy null locks fall back to the catalog until backfilled.
+    const priceGroups = await this.prisma.subscription.groupBy({
+      by: ['membershipPlanId', 'priceCents'],
+      where: {
+        studioId,
+        membershipPlanId: { in: plans.map((plan) => plan.id) },
+        ...entitledWhere,
+      },
+      _count: { _all: true },
+    });
+    const planById = new Map(plans.map((plan) => [plan.id, plan]));
+    const mrrByPlan = new Map<string, number>();
+    for (const group of priceGroups) {
+      const plan = planById.get(group.membershipPlanId);
+      if (!plan) continue;
+      const lockedPrice = group.priceCents ?? plan.priceCents;
+      const contribution = computeMrr(lockedPrice, plan.billingInterval, group._count._all);
+      mrrByPlan.set(plan.id, (mrrByPlan.get(plan.id) ?? 0) + contribution);
+    }
+
     return plans.map((p) => {
       const { _count, ...plan } = p;
       const mapped = mapPlanWithClassAccess(plan);
-      const count = _count.subscriptions;
       return {
         ...mapped,
-        activeSubscriberCount: count,
-        mrrCents: computeMrr(mapped.priceCents, mapped.billingInterval, count),
+        activeSubscriberCount: _count.subscriptions,
+        mrrCents: mrrByPlan.get(plan.id) ?? 0,
       };
     });
   }

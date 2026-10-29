@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { BillingInterval, MembershipPriceChangeScope, Role, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { MembershipPlansService } from '../src/membership-plans/membership-plans.service';
 import { StripeService } from '../src/stripe/stripe.service';
 import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
@@ -16,12 +17,14 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let stripe: StripeService;
+  let plansService: MembershipPlansService;
   const stripePriceUpdate = jest.fn();
 
   beforeAll(async () => {
     app = await createTestApp();
     prisma = app.get(PrismaService);
     stripe = app.get(StripeService);
+    plansService = app.get(MembershipPlansService);
     // The shared e2e mock intentionally omits price-update writes by default.
     // An explicit spy turns any unexpected attempt into an observable failure.
     Object.assign(stripe, { updateSubscription: stripePriceUpdate });
@@ -227,6 +230,52 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect(items).toHaveLength(2);
     expect(items.every((item) => !item.applyNewPrice && item.status === 'SKIPPED')).toBe(true);
     expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('FUTURE_ONLY MRR uses grandfathered prices, never the new catalog price for existing members', async () => {
+    const f = await seed('Basic Access');
+    const before = await plansService.listAllPlans(f.studio.id);
+    const old = before.find((p) => p.id === f.plan.id);
+    expect(old?.activeSubscriberCount).toBe(2);
+    expect(old?.mrrCents).toBe(200000);
+
+    await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.FUTURE_ONLY,
+        newPriceCents: 150000,
+        idempotencyKey: 'future-only-mrr-contract',
+        confirm: true,
+      })
+      .expect(200);
+
+    const after = await plansService.listAllPlans(f.studio.id);
+    const revised = after.find((p) => p.id === f.plan.id);
+    expect(revised?.priceCents).toBe(150000);
+    expect(revised?.activeSubscriberCount).toBe(2);
+    expect(revised?.mrrCents).toBe(200000);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('SELECTED MRR combines each member\'s locked price instead of multiplying the new catalog price', async () => {
+    const f = await seed('Full Access');
+    await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.SELECTED,
+        newPriceCents: 150000,
+        subscriptionIds: [f.subA.id],
+        idempotencyKey: 'selected-mrr-contract',
+        confirm: true,
+      })
+      .expect(200);
+    const rows = await plansService.listAllPlans(f.studio.id);
+    const updated = rows.find((p) => p.id === f.plan.id);
+    expect(updated?.priceCents).toBe(150000);
+    expect(updated?.mrrCents).toBe(250000);
+    expect(updated?.activeSubscriberCount).toBe(2);
   });
 
   it('Full SELECTED changes only chosen member and denies altered idempotent replay', async () => {
