@@ -53,8 +53,11 @@ jobs:
       - name: Prisma migrate deploy
         run: pnpm --filter api exec prisma migrate deploy
 
-      - name: Lint, typecheck, test, e2e, build
-        run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api
+      # Build may regenerate Prisma Client; concurrent Jest/typecheck can import
+      # its temporarily missing #main-entry-point. Serialize these tasks to
+      # eliminate this nondeterministic CI-only race without touching runtime.
+      - name: Lint, typecheck, test, e2e, build (serialized Prisma client)
+        run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api --concurrency=1
 
       # Read-only external smoke against the *isolated* release-rehearsal API.
       # This job cannot create accounts, change prices or send messages.
