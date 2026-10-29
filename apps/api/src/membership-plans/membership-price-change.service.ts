@@ -115,6 +115,23 @@ export class MembershipPriceChangeService {
       if (existing.membershipPlanId !== planId || existing.newPriceCents !== dto.newPriceCents || existing.scope !== dto.scope) {
         throw new ConflictException('Esta clave de idempotencia ya se usó para otro cambio de precio.');
       }
+      // A selected-member change is also defined by WHO was selected, not just
+      // plan, price and scope. Never silently reuse a prior selection when an
+      // administrator resubmits the same key with a different member list.
+      if (existing.scope === MembershipPriceChangeScope.SELECTED) {
+        const recordedSelection = new Set(
+          existing.items.filter((item) => item.applyNewPrice).map((item) => item.subscriptionId),
+        );
+        const attemptedSelection = new Set(dto.subscriptionIds ?? []);
+        if (
+          recordedSelection.size !== attemptedSelection.size ||
+          [...attemptedSelection].some((id) => !recordedSelection.has(id))
+        ) {
+          throw new ConflictException(
+            'Esta clave de idempotencia ya se usó con una selección diferente de miembros.',
+          );
+        }
+      }
       if (existing.status === MembershipPriceChangeStatus.APPLYING) {
         return this.finish(await this.executePending(existing));
       }
@@ -127,6 +144,11 @@ export class MembershipPriceChangeService {
     }
     const affected = await this.resolveAffected(studioId, plan);
     const selected = new Set(dto.subscriptionIds ?? []);
+    if (dto.scope !== MembershipPriceChangeScope.SELECTED && selected.size > 0) {
+      throw new BadRequestException(
+        'Solo puedes seleccionar miembros cuando eliges la opción personalizada.',
+      );
+    }
     if (dto.scope === MembershipPriceChangeScope.SELECTED) {
       if (selected.size === 0) {
         throw new BadRequestException('Selecciona al menos un miembro, o elige aplicar el precio solo a futuros.');

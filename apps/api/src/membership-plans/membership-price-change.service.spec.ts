@@ -266,6 +266,50 @@ describe('MembershipPriceChangeService', () => {
     expect(stripePriceWrite).toBeUndefined();
   });
 
+  it('rejects replaying a personalized price-change key with different member selection', async () => {
+    const recorded = createdChange(MembershipPriceChangeScope.SELECTED);
+    prisma.membershipPriceChange.findUnique.mockResolvedValueOnce(recorded);
+    await expect(service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.SELECTED,
+      subscriptionIds: ['sub-cash'],
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    })).rejects.toThrow('selección diferente');
+    expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
+  it('replays the same personalized price-change key and exact selection safely', async () => {
+    const recorded = createdChange(MembershipPriceChangeScope.SELECTED);
+    recorded.status = MembershipPriceChangeStatus.COMPLETED;
+    prisma.membershipPriceChange.findUnique.mockResolvedValueOnce(recorded);
+    const result = await service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.SELECTED,
+      subscriptionIds: ['sub-stripe', 'sub-stripe'],
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    });
+    expect(result.status).toBe(MembershipPriceChangeStatus.COMPLETED);
+    expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a member selection with a non-personalized scope', async () => {
+    await expect(service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.FUTURE_ONLY,
+      subscriptionIds: ['sub-cash'],
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    })).rejects.toThrow('opción personalizada');
+    expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
   it('refuses an unconfirmed change', async () => {
     await expect(
       service.apply('studio-1', 'plan-full', 'owner', {
