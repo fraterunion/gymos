@@ -235,20 +235,41 @@ export class MembershipPlansService {
     dto: UpdateMembershipPlanDto,
     actorUserId?: string,
   ): Promise<MembershipPlan & { classAccess: PlanClassAccessDto }> {
-    if (dto.priceCents !== undefined) {
+    // Currency, interval and fixed-duration windows are also financial terms:
+    // altering them under the regular metadata editor could silently change
+    // what the same nominal amount buys or when a Stripe renewal occurs.
+    // Only exact no-op values may be sent by a form that includes these fields.
+    const financialFieldProvided =
+      dto.priceCents !== undefined ||
+      dto.currency !== undefined ||
+      dto.billingInterval !== undefined ||
+      dto.entitlementDays !== undefined;
+    if (financialFieldProvided) {
       const existing = await this.prisma.membershipPlan.findFirst({
         where: { id: planId, studioId, deletedAt: null },
-        select: { priceCents: true },
+        select: { priceCents: true, currency: true, billingInterval: true, entitlementDays: true },
       });
       if (!existing) throw new NotFoundException('Membership plan not found');
-      if (dto.priceCents !== existing.priceCents) {
+      if (dto.priceCents !== undefined && dto.priceCents !== existing.priceCents) {
         throw new BadRequestException(
           'Para cambiar el precio, utiliza el flujo de grandfathering con selección explícita de miembros.',
+        );
+      }
+      if (
+        (dto.currency !== undefined && dto.currency !== existing.currency) ||
+        (dto.billingInterval !== undefined && dto.billingInterval !== existing.billingInterval) ||
+        (dto.entitlementDays !== undefined && dto.entitlementDays !== existing.entitlementDays)
+      ) {
+        throw new BadRequestException(
+          'La moneda, periodicidad y duración afectan la facturación. Requieren una migración financiera separada; no se modificaron las membresías.',
         );
       }
     }
     const safeDto = { ...dto };
     delete safeDto.priceCents;
+    delete safeDto.currency;
+    delete safeDto.billingInterval;
+    delete safeDto.entitlementDays;
     return this.updatePlan(studioId, planId, safeDto, actorUserId);
   }
 

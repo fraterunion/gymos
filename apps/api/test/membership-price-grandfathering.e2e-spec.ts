@@ -174,6 +174,20 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect((await prices(f.plan.id)).catalog).toBe(100000);
     expect(await prisma.membershipPriceChange.count()).toBe(0);
 
+    for (const terms of [
+      { currency: 'usd' },
+      { billingInterval: BillingInterval.YEARLY },
+      { entitlementDays: 45 },
+    ]) {
+      await request(app.getHttpServer())
+        .patch(planUrl)
+        .set('Authorization', `Bearer ${f.ownerToken}`)
+        .send(terms)
+        .expect(400);
+    }
+    expect((await prisma.membershipPlan.findUniqueOrThrow({ where: { id: f.plan.id } })).billingInterval)
+      .toBe(BillingInterval.MONTHLY);
+
     const edited = await request(app.getHttpServer())
       .patch(planUrl)
       .set('Authorization', `Bearer ${f.ownerToken}`)
