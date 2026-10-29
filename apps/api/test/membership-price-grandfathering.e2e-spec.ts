@@ -123,6 +123,45 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect(stripePriceUpdate).not.toHaveBeenCalled();
   });
 
+  it('denies missing JWT, MEMBER, FRONT_DESK and cross-studio owners before any price write', async () => {
+    const f = await seed('Basic Access');
+    const memberLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: f.memberA.email, password: f.memberA.password })
+      .expect(201);
+    const memberToken = (memberLogin.body as { accessToken: string }).accessToken;
+    const frontDesk = await createUserWithPassword(prisma);
+    await createMembership(prisma, frontDesk.id, f.studio.id, Role.FRONT_DESK);
+    const deskLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: frontDesk.email, password: frontDesk.password })
+      .expect(201);
+    const deskToken = (deskLogin.body as { accessToken: string }).accessToken;
+    const otherStudio = await createStudio(prisma);
+
+    const data = {
+      scope: MembershipPriceChangeScope.ALL_EXISTING,
+      newPriceCents: 195000,
+      idempotencyKey: 'forbidden-price-change-test',
+      confirm: true,
+    };
+    await request(app.getHttpServer()).post(f.url).send(data).expect(401);
+    await request(app.getHttpServer())
+      .post(f.url).set('Authorization', `Bearer ${memberToken}`).send(data).expect(403);
+    await request(app.getHttpServer())
+      .post(f.url).set('Authorization', `Bearer ${deskToken}`).send(data).expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${otherStudio.id}/membership-plans/${f.plan.id}/price-changes`)
+      .set('Authorization', `Bearer ${f.ownerToken}`).send(data).expect(403);
+
+    const unchanged = await prices(f.plan.id);
+    expect(unchanged.catalog).toBe(100000);
+    expect(unchanged.locks.get(f.subA.id)).toBe(100000);
+    expect(unchanged.locks.get(f.subB.id)).toBe(100000);
+    expect(await prisma.membershipPriceChange.count()).toBe(0);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
   it('Basic FUTURE_ONLY changes the catalog, never existing members or Stripe', async () => {
     const f = await seed('Basic Access');
     const result = await request(app.getHttpServer())
