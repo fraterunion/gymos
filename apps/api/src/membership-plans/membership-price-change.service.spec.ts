@@ -235,6 +235,23 @@ describe('MembershipPriceChangeService', () => {
     expect(cashWrite).toBeUndefined();
   });
 
+  it('leaves unselected member prices untouched even if the saved price differs from the preview', async () => {
+    createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
+    prisma.subscription.findFirst.mockImplementation(async ({ where }: { where: { id: string } }) => (
+      where.id === 'sub-stripe'
+        ? { ...stripeSub, priceCents: 123456 }
+        : { ...cash, priceCents: 110000 }
+    ));
+    await service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.FUTURE_ONLY,
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
   it('records a Stripe failure without changing that subscription price', async () => {
     const change = createdChange(MembershipPriceChangeScope.ALL_EXISTING);
     stripe.updateSubscription.mockRejectedValue(new Error('stripe down'));

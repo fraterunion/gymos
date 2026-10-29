@@ -337,12 +337,10 @@ export class MembershipPriceChangeService {
       }
 
       if (!item.applyNewPrice) {
-        if (subscription.priceCents !== item.oldPriceCents) {
-          await this.prisma.subscription.update({
-            where: { id: subscription.id },
-            data: { priceCents: item.oldPriceCents },
-          });
-        }
+        // Fer explicitly excluded this member (or chose FUTURE_ONLY).
+        // Never rewrite their effective price from a potentially stale preview
+        // snapshot. This path is intentionally ledger-only and never touches
+        // the subscription or Stripe billing.
         await this.markItem(item.id, MembershipPriceChangeItemStatus.SKIPPED, null);
         return;
       }
