@@ -89,6 +89,17 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
           'Esta clave de idempotencia ya se usó para otra campaña o selección de destinatarios.',
         );
       }
+      if (dto.previewFingerprint) {
+        const recorded = await this.prisma.emailCampaignRecipient.findMany({
+          where: { campaignId: existing.id },
+          select: { userId: true, email: true },
+        });
+        if (recipientSnapshotFingerprint(recorded) !== dto.previewFingerprint) {
+          throw new ConflictException(
+            'Esta campaña ya tiene otros destinatarios confirmados. Genera una nueva campaña y vista previa.',
+          );
+        }
+      }
       return this.campaignView(existing.id);
     }
     const resolved = await this.resolve(studioId, dto);

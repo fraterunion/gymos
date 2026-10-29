@@ -5,6 +5,7 @@ import { EMAIL_PROVIDER } from '../email/email-provider';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
 import { CommunicationsService } from './communications.service';
+import { recipientSnapshotFingerprint } from './campaign-recipients';
 import { signUnsubscribeToken } from './unsubscribe-token';
 
 describe('CommunicationsService delivery', () => {
@@ -52,6 +53,7 @@ describe('CommunicationsService delivery', () => {
   let findCampaign: jest.Mock;
   let audienceMembers: Array<{ user: { id: string; email: string; firstName: string; lastName: string } }>;
   let campaignCreate: jest.Mock;
+  let storedRecipients: jest.Mock;
 
   beforeEach(async () => {
     recipients = [
@@ -60,6 +62,7 @@ describe('CommunicationsService delivery', () => {
     ];
     audienceMembers = [{ user: { id: 'user-1', email: 'ada@ares.test', firstName: 'Ada', lastName: 'Lovelace' } }];
     campaignCreate = jest.fn();
+    storedRecipients = jest.fn().mockResolvedValue([{ userId: 'user-1', email: 'ada@ares.test' }]);
     send = jest.fn().mockResolvedValue({ providerMessageId: 'msg-1', delivered: true });
     configGet = jest.fn((key: string, fallback?: string) =>
       key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
@@ -68,6 +71,7 @@ describe('CommunicationsService delivery', () => {
     findCampaign = jest.fn().mockResolvedValue(null);
     const prisma = {
       emailCampaignRecipient: {
+        findMany: storedRecipients,
         findFirst: jest.fn(async ({ where }: { where: { status: string } }) =>
           recipients.find((row) => row.campaignId === 'camp-1' && row.status === where.status) ?? null,
         ),
@@ -164,6 +168,32 @@ describe('CommunicationsService delivery', () => {
       idempotencyKey: 'ares-campaign-0001',
       filters: { planIds: ['full'] },
     })).rejects.toThrow('selección de destinatarios');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects an idempotent campaign replay when the stored snapshot differs', async () => {
+    findCampaign.mockResolvedValue({
+      ...campaign,
+      filters: {},
+      includeUserIds: [],
+      excludeUserIds: [],
+      allMembers: true,
+      subject: 'Aviso',
+      bodyText: 'Hola <script>',
+    });
+    await expect(service.create('studio-1', 'admin-1', {
+      allMembers: true,
+      subject: 'Aviso',
+      bodyText: 'Hola <script>',
+      idempotencyKey: 'ares-campaign-0001',
+      previewFingerprint: recipientSnapshotFingerprint([
+        { userId: 'different-user', email: 'different@ares.test' },
+      ]),
+    })).rejects.toThrow('otros destinatarios');
+    expect(storedRecipients).toHaveBeenCalledWith(expect.objectContaining({
+      where: { campaignId: 'camp-1' },
+    }));
+    expect(campaignCreate).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
 
