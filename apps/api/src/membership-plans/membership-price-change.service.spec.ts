@@ -328,6 +328,27 @@ describe('MembershipPriceChangeService', () => {
     expect(prisma.subscription.update).not.toHaveBeenCalled();
   });
 
+  it('resumes an APPLYING change with the same public response shape and no catalog rotation', async () => {
+    const recorded = createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
+    prisma.membershipPriceChange.findUnique.mockResolvedValueOnce(recorded);
+    const result = await service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.FUTURE_ONLY,
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      id: 'change-1',
+      status: MembershipPriceChangeStatus.COMPLETED,
+      idempotentReplay: true,
+      counts: expect.objectContaining({ applied: 2, failed: 0 }),
+    }));
+    expect(prisma.membershipPriceChange.update).toHaveBeenCalledTimes(1);
+    expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(prisma.membershipPlan.update).not.toHaveBeenCalled();
+  });
+
   it('replays the same personalized price-change key and exact selection safely', async () => {
     const recorded = {
       ...createdChange(MembershipPriceChangeScope.SELECTED),

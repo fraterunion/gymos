@@ -133,7 +133,10 @@ export class MembershipPriceChangeService {
         }
       }
       if (existing.status === MembershipPriceChangeStatus.APPLYING) {
-        return this.finish(await this.executePending(existing));
+        // executePending already finalizes the ledger; return the same public
+        // DTO shape as a new change, without double-finalizing or rotating the
+        // catalog Price again on an idempotent request.
+        return this.toResult(await this.executePending(existing), true);
       }
       return this.toResult(existing, true);
     }
