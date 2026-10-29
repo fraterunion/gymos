@@ -22,7 +22,7 @@ import { resolveEmailBranding, type PlatformEmailDefaults } from '../email/email
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
 import { normalizeCampaignContent, renderCampaignEmail } from './campaign-email.template';
-import { campaignAudienceSignature, resolveCampaignRecipients, type CampaignFilters, type RecipientCandidate } from './campaign-recipients';
+import { campaignAudienceSignature, recipientSnapshotFingerprint, resolveCampaignRecipients, type CampaignFilters, type RecipientCandidate } from './campaign-recipients';
 import type { ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto/campaign.dto';
 import { readUnsubscribeToken, signUnsubscribeToken } from './unsubscribe-token';
 
@@ -60,6 +60,7 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
     const resolved = await this.resolve(studioId, dto);
     return {
       recipientCount: resolved.recipients.length,
+      previewFingerprint: recipientSnapshotFingerprint(resolved.recipients),
       suppressedCount: resolved.suppressed.length,
       invalidEmails: resolved.invalidEmails,
       recipients: resolved.recipients,
@@ -91,6 +92,12 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
       return this.campaignView(existing.id);
     }
     const resolved = await this.resolve(studioId, dto);
+    // A preview authorizes a particular set of destination addresses, not an
+    // arbitrary later result of the same filters. Any membership/consent change
+    // between preview and creation must force a fresh review before sending.
+    if (dto.previewFingerprint && recipientSnapshotFingerprint(resolved.recipients) !== dto.previewFingerprint) {
+      throw new ConflictException('Los destinatarios cambiaron desde la vista previa. Actualiza la vista previa antes de enviar.');
+    }
     if (resolved.recipients.length === 0) {
       throw new BadRequestException('No hay destinatarios con los filtros seleccionados.');
     }

@@ -1,5 +1,5 @@
 import { SubscriptionSource, SubscriptionStatus } from '@prisma/client';
-import { campaignAudienceSignature, resolveCampaignRecipients, type RecipientCandidate } from './campaign-recipients';
+import { campaignAudienceSignature, recipientSnapshotFingerprint, resolveCampaignRecipients, type RecipientCandidate } from './campaign-recipients';
 
 function member(partial: Partial<RecipientCandidate> & Pick<RecipientCandidate, 'userId' | 'email'>): RecipientCandidate {
   return {
@@ -119,5 +119,24 @@ describe('campaign idempotency audience signature', () => {
     for (const other of [changedPlan, changedInclude, changedExclude, all]) {
       expect(other).not.toBe(original);
     }
+  });
+});
+
+describe('campaign recipient snapshot safety', () => {
+  it('normalizes order/case but changes when one destination is added, removed or changed', () => {
+    const a = recipientSnapshotFingerprint([
+      { userId: 'u2', email: 'TWO@ares.test' },
+      { userId: 'u1', email: 'one@ares.test' },
+    ]);
+    expect(a).toMatch(/^[a-f0-9]{64}$/);
+    expect(a).toBe(recipientSnapshotFingerprint([
+      { userId: 'u1', email: 'one@ares.test' },
+      { userId: 'u2', email: 'two@ares.test' },
+    ]));
+    expect(a).not.toBe(recipientSnapshotFingerprint([{ userId: 'u1', email: 'one@ares.test' }]));
+    expect(a).not.toBe(recipientSnapshotFingerprint([
+      { userId: 'u1', email: 'one@ares.test' },
+      { userId: 'u2', email: 'changed@ares.test' },
+    ]));
   });
 });

@@ -10,6 +10,7 @@ import {
   IsString,
   MaxLength,
   MinLength,
+  Matches,
   ValidateNested,
 } from 'class-validator';
 
@@ -70,6 +71,12 @@ export class PreviewCampaignDto {
 }
 
 export class CreateCampaignDto extends PreviewCampaignDto {
+  /** Fingerprint of the exact previewed recipient snapshot (new admin clients). */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-f0-9]{64}$/)
+  previewFingerprint?: string;
+
   @IsString()
   @MinLength(1)
   @MaxLength(200)

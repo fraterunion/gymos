@@ -50,12 +50,16 @@ describe('CommunicationsService delivery', () => {
   let configGet: jest.Mock;
   let campaignUpdate: jest.Mock;
   let findCampaign: jest.Mock;
+  let audienceMembers: Array<{ user: { id: string; email: string; firstName: string; lastName: string } }>;
+  let campaignCreate: jest.Mock;
 
   beforeEach(async () => {
     recipients = [
       { ...pending },
       { ...suppressedRecipient },
     ];
+    audienceMembers = [{ user: { id: 'user-1', email: 'ada@ares.test', firstName: 'Ada', lastName: 'Lovelace' } }];
+    campaignCreate = jest.fn();
     send = jest.fn().mockResolvedValue({ providerMessageId: 'msg-1', delivered: true });
     configGet = jest.fn((key: string, fallback?: string) =>
       key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
@@ -88,12 +92,18 @@ describe('CommunicationsService delivery', () => {
           return [...counts.entries()].map(([status, count]) => ({ status, _count: { _all: count } }));
         }),
       },
+      studioMembership: {
+        findMany: jest.fn(async () => audienceMembers),
+      },
+      subscription: { findMany: jest.fn().mockResolvedValue([]) },
       emailCampaign: {
+        create: campaignCreate,
         findUnique: findCampaign,
         findFirst: jest.fn().mockResolvedValue({ ...campaign, status: EmailCampaignStatus.DRAFT }),
         update: campaignUpdate,
       },
       emailSuppression: {
+        findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(async ({ where }: { where: { studioId_email: { email: string } } }) =>
           where.studioId_email.email === 'gone@ares.test' ? { reason: 'UNSUBSCRIBE' } : null,
         ),
@@ -154,6 +164,21 @@ describe('CommunicationsService delivery', () => {
       idempotencyKey: 'ares-campaign-0001',
       filters: { planIds: ['full'] },
     })).rejects.toThrow('selección de destinatarios');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rejects a changed recipient snapshot between preview and create without sending', async () => {
+    const before = await service.preview('studio-1', { allMembers: true });
+    expect(before.recipientCount).toBe(1);
+    audienceMembers = [{ user: { id: 'user-2', email: 'different@ares.test', firstName: 'Grace', lastName: 'Hopper' } }];
+    await expect(service.create('studio-1', 'admin-1', {
+      allMembers: true,
+      subject: 'Aviso',
+      bodyText: 'Mensaje',
+      idempotencyKey: 'preview-lock-test-1',
+      previewFingerprint: before.previewFingerprint,
+    })).rejects.toThrow('destinatarios cambiaron');
+    expect(campaignCreate).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
 

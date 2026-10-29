@@ -37,6 +37,8 @@ export default function CommunicationsPage() {
   const [search, setSearch] = useState("");
   const [found, setFound] = useState<MemberListItem[]>([]);
   const [preview, setPreview] = useState<CampaignRecipient[] | null>(null);
+  const [previewSignature, setPreviewSignature] = useState<string | null>(null);
+  const [previewFingerprint, setPreviewFingerprint] = useState<string | null>(null);
   const [previewCount, setPreviewCount] = useState(0);
   const [history, setHistory] = useState<CampaignSummary[]>([]);
   const [open, setOpen] = useState<CampaignDetail | null>(null);
@@ -70,14 +72,31 @@ export default function CommunicationsPage() {
     };
   }
 
+  // When Fer changes any targeting input after preview, the old snapshot no
+  // longer grants permission to send. Re-preview even if the displayed count
+  // happens to be equal: the actual recipients might be different.
+  const audienceSignature = JSON.stringify({
+    studioId: selectedStudioId,
+    allMembers,
+    plans: [...planIds].sort(),
+    statuses: [...statuses].sort(),
+    paymentSources: [...paymentSources].sort(),
+    includeUserIds: [...includeUserIds].sort(),
+    excludeUserIds: [...excludeUserIds].sort(),
+  });
+  const previewIsCurrent = preview !== null && previewSignature === audienceSignature && previewFingerprint !== null;
+
   async function onPreview() {
     if (!selectedStudioId) return;
     setBusy(true);
     setError(null);
+    const requestedSignature = audienceSignature;
     try {
       const result = await previewCampaign(selectedStudioId, audience());
       setPreview(result.recipients);
       setPreviewCount(result.recipientCount);
+      setPreviewSignature(requestedSignature);
+      setPreviewFingerprint(result.previewFingerprint);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No se pudo calcular la audiencia.");
     } finally {
@@ -86,7 +105,10 @@ export default function CommunicationsPage() {
   }
 
   async function onSend() {
-    if (!selectedStudioId || !preview) return;
+    if (!selectedStudioId || !previewIsCurrent || !previewFingerprint) {
+      setError('La audiencia cambió. Actualiza la vista previa antes de confirmar.');
+      return;
+    }
     const approved = window.confirm(`¿Enviar este correo a ${previewCount} personas? Esta acción despacha la campaña.`);
     if (!approved) return;
     setBusy(true);
@@ -96,12 +118,15 @@ export default function CommunicationsPage() {
         subject,
         bodyText,
         idempotencyKey,
+        previewFingerprint,
         ...audience(),
       });
       await confirmCampaign(selectedStudioId, created.id);
       setSubject("");
       setBodyText("");
       setPreview(null);
+      setPreviewSignature(null);
+      setPreviewFingerprint(null);
       setIdempotencyKey(crypto.randomUUID());
       await loadHistory();
     } catch (e) {
@@ -190,11 +215,14 @@ export default function CommunicationsPage() {
           {error ? <p className="text-sm text-red-700">{error}</p> : null}
           <div className="flex gap-2">
             <button type="button" className={adminSecondaryBtn} disabled={busy} onClick={() => void onPreview()}>Vista previa</button>
-            <button type="button" className={adminPrimaryBtn} disabled={busy || !preview || !subject.trim() || !bodyText.trim()} onClick={() => void onSend()}>
+            <button type="button" className={adminPrimaryBtn} disabled={busy || !previewIsCurrent || !subject.trim() || !bodyText.trim()} onClick={() => void onSend()}>
               Confirmar envío
             </button>
           </div>
-          {preview ? (
+          {preview && !previewIsCurrent ? (
+            <p className="text-sm text-amber-700">Los filtros o miembros seleccionados cambiaron. Vuelve a generar la vista previa antes de enviar.</p>
+          ) : null}
+          {preview && previewIsCurrent ? (
             <div>
               <p className="mb-2 text-sm font-medium">{previewCount} destinatarios</p>
               <ul className="max-h-64 overflow-y-auto text-sm text-zinc-700">

@@ -41,6 +41,7 @@ export function previewCampaign(studioId: string, input: {
 }) {
   return apiRequest<{
     recipientCount: number;
+    previewFingerprint: string;
     suppressedCount: number;
     recipients: CampaignRecipient[];
   }>(`/studios/${studioId}/communications/preview`, {
@@ -53,6 +54,7 @@ export function createCampaign(studioId: string, input: {
   subject: string;
   bodyText: string;
   idempotencyKey: string;
+  previewFingerprint?: string;
   filters?: CampaignFilters;
   includeUserIds?: string[];
   excludeUserIds?: string[];

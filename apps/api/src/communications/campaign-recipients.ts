@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { SubscriptionSource, SubscriptionStatus } from '@prisma/client';
 import { deriveMembershipLifecycle } from '../memberships/membership-entitlement';
 import { matchesLifecycleFilter, matchesPaymentSource, type MemberLifecycleFilter } from '../members/member-operations';
@@ -60,6 +61,13 @@ export type ResolvedRecipient = {
   lifecycleStatus: string | null;
   paymentSource: string | null;
 };
+
+/** Stable identifier for the EXACT (user,email) delivery snapshot, regardless of order. */
+export function recipientSnapshotFingerprint(recipients: ReadonlyArray<Pick<ResolvedRecipient, 'userId' | 'email'>>): string {
+  const normalized = recipients.map((r) => [r.userId, r.email.trim().toLowerCase()] as const);
+  normalized.sort((a,b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+  return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
 
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
