@@ -27,7 +27,7 @@ const prisma = new PrismaClient();
 const DRY_RUN = process.env.DRY_RUN === 'true';
 
 const ARES_SLUG = 'ares-fitness';
-const REVIEW_PASSWORD = 'Review2026!';
+const REVIEW_PASSWORD = process.env['ARES_REVIEW_ACCOUNT_PASSWORD'] ?? '';
 
 const MEMBER_EMAIL = 'apple.review@fraterunion.com';
 const STAFF_EMAIL = 'staff.review@fraterunion.com';
@@ -190,6 +190,7 @@ async function upsertStaffProfile(params: {
 }
 
 async function main(): Promise<void> {
+  if (REVIEW_PASSWORD.length < 16) throw new Error('Set ARES_REVIEW_ACCOUNT_PASSWORD securely (16+ characters); no default is allowed.');
   if (DRY_RUN) {
     console.log('════════════════════════════════════════════════');
     console.log('  DRY RUN — zero writes will occur');
@@ -278,7 +279,7 @@ async function main(): Promise<void> {
         accounts: [
           {
             email: MEMBER_EMAIL,
-            password: REVIEW_PASSWORD,
+            passwordProvidedBy: 'ARES_REVIEW_ACCOUNT_PASSWORD',
             role: 'MEMBER',
             subscription: {
               plan: FULL_ACCESS_PLAN_NAME,
@@ -289,7 +290,7 @@ async function main(): Promise<void> {
           },
           {
             email: STAFF_EMAIL,
-            password: REVIEW_PASSWORD,
+            passwordProvidedBy: 'ARES_REVIEW_ACCOUNT_PASSWORD',
             role: 'STAFF',
             staffType: 'FRONT_DESK',
           },

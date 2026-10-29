@@ -10,20 +10,16 @@ This document describes the **Prisma seed** in `apps/api/prisma/seed.ts`: two wh
 
 ## Security warnings
 
-- **Do not** expose a database seeded with these accounts on a **public URL** without network access controls. The demo password is documented below and is trivial to guess.
+- **Do not** expose demo accounts on public URLs. Passwords come from a private environment variable; no password is stored in this repository.
 - **Do not** use demo Stripe IDs (`cus_demo_*`, `sub_demo_*`, `pi_demo_*`, etc.) in **live** Stripe Dashboard or production API env expecting real webhooks to reconcile.
 - **Do not** confuse this seed with **Stripe test mode** — for real `sk_test_` Checkout + webhooks, follow [`STRIPE_TEST_MODE_PILOT.md`](./STRIPE_TEST_MODE_PILOT.md) on a suitable database/env.
 - **Do not** run `prisma migrate reset` or re-seed against **production** or any database containing real member data.
 
 ---
 
-## Shared demo password
+## Local demo password and safety gate
 
-All seeded users share the same password (bcrypt-hashed in the database):
-
-**`DemoGymOS2026!`**
-
-This is **intentionally weak** and **public** — suitable only for local dev, CI, or a **private** demo environment behind VPN / IP allowlist.
+Set a unique 16+ character secret in `GYMOS_DEMO_PASSWORD` before running the seed. Never commit, print or reuse production credentials. The destructive seed only accepts local database hosts (`localhost`, `127.0.0.1`, `::1`) and explicitly named disposable databases (`gymos_test`, `gymos_dev`, `gymos_demo`). It refuses `NODE_ENV=production` and all remote hosts.
 
 ---
 
@@ -38,7 +34,7 @@ Branding includes display name, primary/secondary colors, support contacts, plac
 
 ---
 
-## Demo accounts (password: `DemoGymOS2026!`)
+## Demo accounts (password supplied through `GYMOS_DEMO_PASSWORD`)
 
 ### Ares Training Club (`ares-fitness`)
 
