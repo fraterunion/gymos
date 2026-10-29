@@ -299,8 +299,10 @@ describe('MembershipPriceChangeService', () => {
   });
 
   it('replays the same personalized price-change key and exact selection safely', async () => {
-    const recorded = createdChange(MembershipPriceChangeScope.SELECTED);
-    recorded.status = MembershipPriceChangeStatus.COMPLETED;
+    const recorded = {
+      ...createdChange(MembershipPriceChangeScope.SELECTED),
+      status: MembershipPriceChangeStatus.COMPLETED,
+    };
     prisma.membershipPriceChange.findUnique.mockResolvedValueOnce(recorded);
     const result = await service.apply('studio-1', 'plan-full', 'owner', {
       newPriceCents: 195000,
