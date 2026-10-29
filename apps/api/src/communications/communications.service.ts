@@ -188,10 +188,20 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
     return this.campaignView(campaignId);
   }
 
-  async unsubscribe(token: string) {
+  /**
+   * GET must only validate and display a confirmation page: mailbox scanners
+   * routinely GET every link, and must never silently unsubscribe a member.
+   * Actual suppression is POST only (including RFC 8058 one-click mail clients).
+   */
+  validateUnsubscribeToken(token: string) {
     const secret = this.config.getOrThrow<string>('JWT_SECRET');
     const payload = readUnsubscribeToken(token, secret);
     if (!payload) throw new BadRequestException('El enlace para cancelar la suscripción no es válido.');
+    return payload;
+  }
+
+  async unsubscribe(token: string) {
+    const payload = this.validateUnsubscribeToken(token);
     await this.prisma.emailSuppression.upsert({
       where: { studioId_email: { studioId: payload.studioId, email: payload.email } },
       create: { studioId: payload.studioId, email: payload.email, reason: EmailSuppressionReason.UNSUBSCRIBE },

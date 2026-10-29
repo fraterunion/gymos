@@ -136,6 +136,15 @@ describe('CommunicationsService delivery', () => {
     expect(campaignUpdate).not.toHaveBeenCalled();
   });
 
+  it('validates unsubscribe token without writing suppression', () => {
+    const { signUnsubscribeToken } = require('./unsubscribe-token') as typeof import('./unsubscribe-token');
+    const token = signUnsubscribeToken({ studioId: 'studio-1', email: 'ada@ares.test' }, 'secret');
+    expect(service.validateUnsubscribeToken(token)).toEqual({
+      studioId: 'studio-1', email: 'ada@ares.test',
+    });
+    expect(() => service.validateUnsubscribeToken('garbage')).toThrow('enlace');
+  });
+
   it('sends once with an idempotency key and skips a suppressed address', async () => {
     await service.deliver('camp-1', { maxSends: 5 });
     expect(send).toHaveBeenCalledTimes(1);
