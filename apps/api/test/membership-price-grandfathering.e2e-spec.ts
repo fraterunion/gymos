@@ -16,11 +16,15 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let stripe: StripeService;
+  const stripePriceUpdate = jest.fn();
 
   beforeAll(async () => {
     app = await createTestApp();
     prisma = app.get(PrismaService);
     stripe = app.get(StripeService);
+    // The shared e2e mock intentionally omits price-update writes by default.
+    // An explicit spy turns any unexpected attempt into an observable failure.
+    Object.assign(stripe, { updateSubscription: stripePriceUpdate });
   });
 
   beforeEach(async () => {
@@ -116,7 +120,7 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect(after.catalog).toBe(initial.catalog);
     expect([...after.locks]).toEqual([...initial.locks]);
     expect(await prisma.membershipPriceChange.count()).toBe(0);
-    expect(jest.mocked(stripe.updateSubscription)).not.toHaveBeenCalled();
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
   });
 
   it('Basic FUTURE_ONLY changes the catalog, never existing members or Stripe', async () => {
@@ -141,7 +145,7 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     });
     expect(items).toHaveLength(2);
     expect(items.every((item) => !item.applyNewPrice && item.status === 'SKIPPED')).toBe(true);
-    expect(jest.mocked(stripe.updateSubscription)).not.toHaveBeenCalled();
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
   });
 
   it('Full SELECTED changes only chosen member and denies altered idempotent replay', async () => {
@@ -181,7 +185,7 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect(unchanged.locks.get(f.subA.id)).toBe(195000);
     expect(unchanged.locks.get(f.subB.id)).toBe(100000);
     expect(await prisma.membershipPriceChange.count()).toBe(1);
-    expect(jest.mocked(stripe.updateSubscription)).not.toHaveBeenCalled();
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
   });
 
   it('Pro ALL_EXISTING changes only the confirmed plan and no unrelated plan', async () => {
@@ -226,6 +230,6 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect(after.locks.get(f.subB.id)).toBe(125000);
     expect((await prisma.subscription.findUniqueOrThrow({ where: { id: otherSub.id } })).priceCents).toBe(250000);
     expect((await prisma.membershipPlan.findUniqueOrThrow({ where: { id: other.id } })).priceCents).toBe(250000);
-    expect(jest.mocked(stripe.updateSubscription)).not.toHaveBeenCalled();
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
   });
 });
