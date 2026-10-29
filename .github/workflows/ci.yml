@@ -56,6 +56,12 @@ jobs:
       - name: Lint, typecheck, test, e2e, build
         run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api
 
+      # Read-only external smoke against the *isolated* release-rehearsal API.
+      # This job cannot create accounts, change prices or send messages.
+      - name: ARES PR5 rehearsal public HTTP and auth boundary smoke
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/ares-ops-payments-and-memberships-20261028'
+        run: node apps/api/scripts/smoke-ares-rehearsal-public.mjs
+
       # Pure Node env-precedence + release-contract unit tests (no Expo CLI).
       - name: Mobile env precedence tests
         run: pnpm --filter mobile test:env
