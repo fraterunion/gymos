@@ -30,7 +30,10 @@ approval it needs; stop at every gate. Read with
 All must be PASS on the exact commit to be merged (see the readiness report for current status):
 CI green on that SHA (API, admin, mobile config); migration preflight re-run read-only the same
 day; Stripe test-mode validation of the three scopes; rehearsal series-cancellation walkthrough;
-Communications rollout prerequisites; owner sign-off on known scope gaps.
+Communications rollout prerequisites. Configurable expiration alerts and member push messaging are
+**required deliverables not included in PR #5** (see
+[`ares-open-requirements-expiration-alerts-and-push.md`](./ares-open-requirements-expiration-alerts-and-push.md));
+the owner decides explicitly whether PR #5 may ship before them.
 
 ## Stage 1 — Backup and baseline (owner action in Neon; read-only elsewhere)
 
