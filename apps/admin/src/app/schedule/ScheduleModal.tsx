@@ -25,6 +25,7 @@ import {
   type SeriesPreviewResult,
 } from "@/lib/api/scheduleSeries";
 import type { ClassTemplateDto } from "@/lib/api/classTemplates";
+import { classHasStarted } from "@/lib/classCancellation";
 import type { StaffInstructorDto } from "@/lib/api/staff";
 
 const WEEKDAY_LABELS = [
@@ -688,7 +689,7 @@ export function ScheduleModal({
 
             <div className="flex items-center justify-between gap-3 pt-1">
               <div>
-                {modal.type === "edit" && !isCancelled ? (
+                {modal.type === "edit" && !isCancelled && !classHasStarted(modal.cls.startsAt) ? (
                   <button
                     type="button"
                     onClick={() => {

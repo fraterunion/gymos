@@ -32,6 +32,7 @@ import {
 } from './schedule-materialization';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
 import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
+import { assertClassNotStarted, cancellableClassWhere } from './class-cancellation-guard';
 import { assertStartsBeforeEnds } from './occurrence-interval';
 import {
   deriveSeriesStatus,
@@ -1661,6 +1662,7 @@ export class ScheduleSeriesService {
           scheduleTemplateId: tpl.id,
           startsAt: { gte: occurrence.startsAt },
           status: ClassStatus.SCHEDULED,
+          AND: [cancellableClassWhere(new Date())],
         },
         select: { id: true },
       });
@@ -1714,8 +1716,8 @@ export class ScheduleSeriesService {
       where: {
         studioId,
         scheduleTemplateId: seriesId,
-        startsAt: { gte: new Date() },
         status: ClassStatus.SCHEDULED,
+        ...cancellableClassWhere(new Date()),
       },
       select: { id: true },
     });
@@ -1759,8 +1761,8 @@ export class ScheduleSeriesService {
         where: {
           studioId,
           scheduleTemplateId: template.id,
-          startsAt: { gte: now },
           status: ClassStatus.SCHEDULED,
+          ...cancellableClassWhere(now),
         },
         select: { id: true },
       });
@@ -1897,16 +1899,21 @@ export class ScheduleSeriesService {
     occurrence: Awaited<ReturnType<typeof this.requireOccurrence>>,
     scope: SeriesMutationScope,
   ): Promise<MutationImpact> {
+    const now = new Date();
     let ids: string[];
     if (scope === 'SINGLE') {
+      assertClassNotStarted(occurrence, now);
       ids = [occurrence.id];
     } else if (scope === 'FOLLOWING') {
+      // The boundary must be a class that has not started; protected classes after it stay.
+      assertClassNotStarted(occurrence, now);
       const rows = await this.prisma.scheduledClass.findMany({
         where: {
           studioId,
           scheduleTemplateId: occurrence.scheduleTemplateId ?? undefined,
           startsAt: { gte: occurrence.startsAt },
           status: ClassStatus.SCHEDULED,
+          AND: [cancellableClassWhere(now)],
         },
         select: { id: true },
       });
@@ -1916,8 +1923,8 @@ export class ScheduleSeriesService {
         where: {
           studioId,
           scheduleTemplateId: occurrence.scheduleTemplateId ?? undefined,
-          startsAt: { gte: new Date() },
           status: ClassStatus.SCHEDULED,
+          ...cancellableClassWhere(now),
         },
         select: { id: true },
       });
