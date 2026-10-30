@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -19,6 +19,9 @@ import { fetchMyWaiverStatus, type WaiverStatusDto } from '@/lib/api/waiverApi';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
 
 const CARD_BG = '#141416';
+const ARES_PRIVACY_URL = 'https://www.arestrainingclub.com/privacy';
+const ACCOUNT_DELETION_URL = 'https://www.arestrainingclub.com/account-deletion';
+const IS_ARES_PROFILE = process.env.EXPO_PUBLIC_STUDIO_SLUG === 'ares-fitness';
 
 function premiumCardStyle(C: ThemeColors) {
   return {
@@ -167,6 +170,14 @@ function GuestProfileWall({ primaryColor }: { primaryColor: string }) {
             accentColor={primaryColor}
             onPress={() => router.push('/(auth)/login')}
           />
+          {IS_ARES_PROFILE ? (
+            <BrandButton
+              label="Política de privacidad"
+              variant="ghost"
+              accentColor={primaryColor}
+              onPress={() => void Linking.openURL(ARES_PRIVACY_URL)}
+            />
+          ) : null}
         </Animated.View>
       </ScrollView>
     </SafeAreaView>
@@ -484,6 +495,26 @@ export default function ProfileScreen() {
               onPress={() => router.push('/(app)/security' as Href)}
             />
           </View>
+          {IS_ARES_PROFILE ? (
+            <>
+              <View style={{ marginBottom: 12 }}>
+                <BrandButton
+                  label="Política de privacidad"
+                  variant="ghost"
+                  accentColor={primaryColor}
+                  onPress={() => void Linking.openURL(ARES_PRIVACY_URL)}
+                />
+              </View>
+              <View style={{ marginBottom: 12 }}>
+                <BrandButton
+                  label="Solicitar eliminación de cuenta"
+                  variant="ghost"
+                  accentColor={primaryColor}
+                  onPress={() => void Linking.openURL(ACCOUNT_DELETION_URL)}
+                />
+              </View>
+            </>
+          ) : null}
           <BrandButton
             label="Cerrar sesión"
             variant="ghost"
