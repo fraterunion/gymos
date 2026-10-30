@@ -64,6 +64,8 @@ describe('WalletPassService', () => {
   };
   const config = { get: jest.fn(), getOrThrow: jest.fn(() => 'test-jwt-qr-secret-min-32-chars!!') };
 
+  const dynamicPasses = { isEnabled: jest.fn(() => false), enroll: jest.fn() };
+
   const service = new WalletPassService(
     prisma as never,
     config as never,
@@ -72,10 +74,14 @@ describe('WalletPassService', () => {
     appleProvider as never,
     googleProvider as never,
     new WalletAccessSnapshotLoader(prisma as never),
+    dynamicPasses as never,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
+    config.get.mockReset();
+    dynamicPasses.isEnabled.mockReturnValue(false);
+    prisma.walletPassArtifact.findUnique.mockReset();
     prisma.studioMembership.findFirst.mockResolvedValue({ user: { deletedAt: null } });
     prisma.user.findUniqueOrThrow.mockResolvedValue({ firstName: 'Ivonne', lastName: 'Araujo' });
     prisma.subscription.findMany.mockResolvedValue([subscriptionRow()]);
@@ -138,6 +144,84 @@ describe('WalletPassService', () => {
       googleProvider.isConfigured.mockReturnValue(false);
       await service.getApplePass('studio-1', 'user-1');
       expect(googleProvider.ensureClassAndObject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Stage 4B allowlisted first issuance', () => {
+    beforeEach(() => {
+      config.get.mockImplementation((key: string) => ({
+        WALLET_AUTO_ENROLL_ENABLED: 'true',
+        WALLET_AUTO_ENROLL_STUDIO_ID: 'studio-1',
+        WALLET_AUTO_ENROLL_USER_IDS: 'user-1',
+        WALLET_AUTO_ENROLL_STUDIO_CAP: '1',
+      })[key]);
+      dynamicPasses.isEnabled.mockReturnValue(true);
+      walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: 'raw1' });
+      prisma.walletPassArtifact.findUnique.mockResolvedValue({ pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC', templateVersion: APPLE_PASS_TEMPLATE_VERSION });
+      appleProvider.buildPkpass.mockResolvedValue(Buffer.from('pkpass-bytes'));
+      prisma.walletPassArtifact.upsert.mockResolvedValue({ pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC' });
+      googleProvider.ensureClassAndObject.mockResolvedValue({ objectId: 'obj1' });
+      dynamicPasses.enroll.mockResolvedValue({ outcome: 'enrolled' });
+    });
+
+    it('enrolls an allowed newly issued credential before Mi Pase completes', async () => {
+      await service.getBarcode('studio-1', 'user-1');
+      expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
+    });
+
+    it('enrolls the first Apple artifact when Google is requested first', async () => {
+      let appleBuilt = false;
+      prisma.walletPassArtifact.findUnique.mockImplementation(({ where }: {
+        where: { walletCredentialId_platform: { platform: string } };
+      }) => {
+        if (where.walletCredentialId_platform.platform === 'APPLE') {
+          return appleBuilt
+            ? { pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC', templateVersion: APPLE_PASS_TEMPLATE_VERSION }
+            : null;
+        }
+        return null;
+      });
+      prisma.walletPassArtifact.upsert.mockImplementation(async ({ create }: { create: { platform: string } }) => {
+        if (create.platform === 'APPLE') {
+          appleBuilt = true;
+          return { pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC' };
+        }
+        return { googleObjectId: 'google-obj' };
+      });
+      googleProvider.buildSaveUrl.mockReturnValue('https://pay.google.com/gp/v/save/test');
+
+      await service.getGooglePass('studio-1', 'user-1');
+
+      expect(appleBuilt).toBe(true);
+      expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
+      expect(googleProvider.buildSaveUrl).toHaveBeenCalledWith('google-obj');
+    });
+
+    it('does not enroll users outside the allowlist', async () => {
+      await service.getBarcode('studio-1', 'user-other');
+      expect(dynamicPasses.enroll).not.toHaveBeenCalled();
+    });
+
+    it('does not upgrade an existing static pass on ordinary re-download', async () => {
+      walletCredentials.issue.mockResolvedValue({ credential: { id: 'wc1' }, rawCredential: null });
+      prisma.walletPassArtifact.findUnique.mockResolvedValue({ pkpassData: Buffer.from('existing'), passMode: 'STATIC', templateVersion: APPLE_PASS_TEMPLATE_VERSION });
+      await expect(service.getApplePass('studio-1', 'user-1')).resolves.toEqual(Buffer.from('existing'));
+      expect(dynamicPasses.enroll).not.toHaveBeenCalled();
+    });
+
+    it('keeps the valid static barcode if enrollment fails', async () => {
+      dynamicPasses.enroll.mockRejectedValue(new Error('transient'));
+      await expect(service.getBarcode('studio-1', 'user-1')).resolves.toEqual(expect.objectContaining({ isNew: true }));
+    });
+
+    it('returns a freshly enrolled dynamic pass for direct Apple-first requests', async () => {
+      let reads = 0;
+      prisma.walletPassArtifact.findUnique.mockImplementation(async () => {
+        reads += 1;
+        return reads === 1 ? null : reads === 2 ? { pkpassData: Buffer.from('pkpass-bytes'), passMode: 'STATIC' } : { pkpassData: Buffer.from('dynamic'), passMode: 'DYNAMIC' };
+      });
+      await expect(service.getApplePass('studio-1', 'user-1')).resolves.toEqual(Buffer.from('dynamic'));
+      expect(dynamicPasses.enroll).toHaveBeenCalledWith('wc1');
     });
   });
 
@@ -363,8 +447,25 @@ describe('WalletPassService', () => {
         expect.objectContaining({
           where: {
             walletCredentialId_platform: { walletCredentialId: 'wc1', platform: WalletPassPlatform.APPLE },
+            passMode: 'STATIC',
           },
         }),
+      );
+    });
+
+    it.each(['P2002', 'P2025'])('never overwrites a dynamic pass when a concurrent update yields %s', async (code) => {
+      walletCredentials.issue.mockResolvedValue({ credential: CRED, rawCredential: 'raw1' });
+      prisma.walletPassArtifact.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ pkpassData: Buffer.from('dynamic-winner'), passMode: 'DYNAMIC' });
+      appleProvider.buildPkpass.mockResolvedValue(Buffer.from('late-static'));
+      prisma.walletPassArtifact.upsert.mockRejectedValue({ code });
+
+      const result = await service.getApplePass('studio-1', 'user-1');
+
+      expect(result).toEqual(Buffer.from('dynamic-winner'));
+      expect(prisma.walletPassArtifact.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ passMode: 'STATIC' }) }),
       );
     });
 

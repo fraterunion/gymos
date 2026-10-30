@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { BillingInterval, Role, SubscriptionSource, SubscriptionStatus, WalletPassPlatform } from '@prisma/client';
+import { BillingInterval, Role, SubscriptionSource, SubscriptionStatus, WalletPassMode, WalletPassPlatform } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { AppleWalletProvider } from '../wallet/apple/apple-wallet-provider.service';
-import { extractBarcodeMessageFromPkpass } from '../wallet/apple/pkpass-reader';
+import { extractBarcodeMessageFromPkpass, extractPassJsonFromPkpass } from '../wallet/apple/pkpass-reader';
 import type { WalletPassService } from '../wallet/wallet-pass.service';
+import { checkLiveFirstIssueGate, type ConfigGetter, firstIssueAllowlistConfig, validateProposedAllowlist } from './wallet-staging-first-issue';
 
 /**
  * Commands behind wallet-staging.cli.ts, kept separate so they can be exercised against the
@@ -17,7 +18,18 @@ export const MEMBERS = {
   a: { email: 'sw-staging-a@staging.invalid', firstName: 'Staging', lastName: 'Uno' },
   b: { email: 'sw-staging-b@staging.invalid', firstName: 'Staging', lastName: 'Dos' },
 } as const;
+/**
+ * Stage 4B: members whose FIRST credential is issued later, by the production first-issuance
+ * path (WalletPassService.getBarcode) with the auto-enrollment allowlist on. seed() never
+ * iterates these, so preparing or issuing C can never touch A or B.
+ */
+export const FIRST_ISSUE_MEMBERS = {
+  c: { email: 'sw-staging-c@staging.invalid', firstName: 'Staging', lastName: 'Tres' },
+} as const;
 export type MemberLabel = keyof typeof MEMBERS;
+export type FirstIssueLabel = keyof typeof FIRST_ISSUE_MEMBERS;
+export type AnyMemberLabel = MemberLabel | FirstIssueLabel;
+const ALL_MEMBERS: Record<AnyMemberLabel, { email: string; firstName: string; lastName: string }> = { ...MEMBERS, ...FIRST_ISSUE_MEMBERS };
 const DAY = 24 * 60 * 60 * 1000;
 /** A database with more than this many users is not the empty staging database. */
 const MAX_USERS_IN_STAGING_DB = 10;
@@ -34,9 +46,15 @@ export function arg(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
-export function memberLabel(args: string[]): MemberLabel {
+export function memberLabel(args: string[]): AnyMemberLabel {
   const v = arg(args, '--member');
-  if (v !== 'a' && v !== 'b') throw new Refusal('MEMBER_MUST_BE_a_OR_b');
+  if (v !== 'a' && v !== 'b' && v !== 'c') throw new Refusal('MEMBER_MUST_BE_a_b_OR_c');
+  return v;
+}
+
+export function firstIssueLabel(args: string[]): FirstIssueLabel {
+  const v = arg(args, '--member');
+  if (v !== 'c') throw new Refusal('FIRST_ISSUE_MEMBER_MUST_BE_c');
   return v;
 }
 
@@ -53,9 +71,9 @@ async function qrFingerprint(pkpass: Uint8Array | null): Promise<string | null> 
   }
 }
 
-async function findMember(prisma: PrismaService, label: MemberLabel) {
+async function findMember(prisma: PrismaService, label: AnyMemberLabel) {
   const studio = await prisma.studio.findUnique({ where: { slug: STUDIO_SLUG }, select: { id: true } });
-  const user = await prisma.user.findUnique({ where: { email: MEMBERS[label].email }, select: { id: true } });
+  const user = await prisma.user.findUnique({ where: { email: ALL_MEMBERS[label].email }, select: { id: true } });
   if (!studio || !user) throw new Refusal('NOT_SEEDED');
   const credential = await prisma.walletCredential.findFirst({
     where: { studioId: studio.id, userId: user.id, revokedAt: null },
@@ -64,13 +82,16 @@ async function findMember(prisma: PrismaService, label: MemberLabel) {
   return { studioId: studio.id, userId: user.id, walletCredentialId: credential?.id ?? null };
 }
 
-export async function seed(prisma: PrismaService, passes: WalletPassService, apple: AppleWalletProvider): Promise<void> {
-  if (!apple.isConfigured()) throw new Refusal('APPLE_SIGNING_NOT_CONFIGURED');
-
-  // Only an empty database, or one holding nothing but this tool's own synthetic data.
+/** Only an empty database, or one holding nothing but this tool's own synthetic data. */
+async function assertSyntheticStagingDatabase(prisma: PrismaService): Promise<void> {
   const foreignStudios = await prisma.studio.count({ where: { slug: { not: STUDIO_SLUG } } });
   const users = await prisma.user.count();
   if (foreignStudios > 0 || users > MAX_USERS_IN_STAGING_DB) throw new Refusal('DATABASE_IS_NOT_THE_EMPTY_STAGING_DATABASE');
+}
+
+export async function seed(prisma: PrismaService, passes: WalletPassService, apple: AppleWalletProvider): Promise<void> {
+  if (!apple.isConfigured()) throw new Refusal('APPLE_SIGNING_NOT_CONFIGURED');
+  await assertSyntheticStagingDatabase(prisma);
 
   const studio =
     (await prisma.studio.findUnique({ where: { slug: STUDIO_SLUG } })) ??
@@ -153,7 +174,7 @@ export async function seed(prisma: PrismaService, passes: WalletPassService, app
   out('seeded', { studioId: studio.id, planId: plan.id, members: results });
 }
 
-export async function setEntitlement(prisma: PrismaService, label: MemberLabel, state: string | undefined): Promise<void> {
+export async function setEntitlement(prisma: PrismaService, label: AnyMemberLabel, state: string | undefined): Promise<void> {
   if (state !== 'active' && state !== 'expired') throw new Refusal('STATE_MUST_BE_active_OR_expired');
   const { studioId, userId } = await findMember(prisma, label);
   const sub = await prisma.subscription.findFirst({ where: { studioId, userId }, orderBy: { createdAt: 'asc' } });
@@ -167,7 +188,7 @@ export async function setEntitlement(prisma: PrismaService, label: MemberLabel, 
   out('entitlement_set', { member: label, state, subscriptionId: sub.id, ...period });
 }
 
-export async function exportPass(prisma: PrismaService, label: MemberLabel): Promise<void> {
+export async function exportPass(prisma: PrismaService, label: AnyMemberLabel): Promise<void> {
   const { walletCredentialId } = await findMember(prisma, label);
   if (!walletCredentialId) throw new Refusal('NO_ACTIVE_CREDENTIAL');
   const artifact = await prisma.walletPassArtifact.findUnique({
@@ -194,7 +215,7 @@ export async function exportPass(prisma: PrismaService, label: MemberLabel): Pro
 
 export async function status(prisma: PrismaService): Promise<void> {
   const members: Record<string, unknown>[] = [];
-  for (const label of Object.keys(MEMBERS) as MemberLabel[]) {
+  for (const label of Object.keys(ALL_MEMBERS) as AnyMemberLabel[]) {
     let found: Awaited<ReturnType<typeof findMember>>;
     try {
       found = await findMember(prisma, label);
@@ -240,3 +261,177 @@ export async function status(prisma: PrismaService): Promise<void> {
   out('status', { members });
 }
 
+async function createSyntheticSubscription(prisma: PrismaService, studioId: string, userId: string, planId: string): Promise<void> {
+  const existingSub = await prisma.subscription.findFirst({ where: { studioId, userId } });
+  if (existingSub) return;
+  const now = Date.now();
+  await prisma.subscription.create({
+    data: {
+      studioId,
+      userId,
+      membershipPlanId: planId,
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodStart: new Date(now - DAY),
+      currentPeriodEnd: new Date(now + 29 * DAY),
+      cancelAtPeriodEnd: true,
+      exclusiveGroupKey: 'CORE',
+      notes: 'Smart Wallet staging synthetic membership',
+    },
+  });
+}
+
+/**
+ * Stage 4B phase 1: create the first-issue member's synthetic user, studio membership and
+ * subscription in the already-seeded staging studio — and NO wallet credential. Prints the ids
+ * and the exact, pre-validated allowlist for this member only. Never prints a password, token,
+ * QR value or secret. Refuses (writing nothing) once the member holds any credential.
+ */
+export async function prepareFirstIssue(prisma: PrismaService, label: FirstIssueLabel): Promise<void> {
+  await assertSyntheticStagingDatabase(prisma);
+  const studio = await prisma.studio.findUnique({ where: { slug: STUDIO_SLUG }, select: { id: true } });
+  const plan = studio ? await prisma.membershipPlan.findFirst({ where: { studioId: studio.id, name: PLAN_NAME }, select: { id: true } }) : null;
+  if (!studio || !plan) throw new Refusal('STAGING_NOT_SEEDED');
+  const m = FIRST_ISSUE_MEMBERS[label];
+  const existing = await prisma.user.findUnique({ where: { email: m.email }, select: { id: true } });
+  if (existing && (await prisma.walletCredential.count({ where: { userId: existing.id } })) > 0) {
+    throw new Refusal('FIRST_ISSUE_MEMBER_ALREADY_HAS_A_CREDENTIAL');
+  }
+  const user =
+    existing ??
+    (await prisma.user.create({
+      data: {
+        email: m.email,
+        firstName: m.firstName,
+        lastName: m.lastName,
+        // Nobody knows this password: the synthetic member never logs in.
+        passwordHash: await bcrypt.hash(randomBytes(32).toString('base64url'), 10),
+      },
+      select: { id: true },
+    }));
+  await prisma.studioMembership.upsert({
+    where: { userId_studioId: { userId: user.id, studioId: studio.id } },
+    create: { userId: user.id, studioId: studio.id, role: Role.MEMBER },
+    update: {},
+  });
+  await createSyntheticSubscription(prisma, studio.id, user.id, plan.id);
+
+  const otherUserIds = (await prisma.user.findMany({ where: { id: { not: user.id } }, select: { id: true } })).map((u) => u.id);
+  const autoEnrollConfig = firstIssueAllowlistConfig(studio.id, user.id);
+  const problems = validateProposedAllowlist(autoEnrollConfig, { studioId: studio.id, firstIssueUserId: user.id, otherUserIds });
+  if (problems.length > 0) {
+    out('first_issue_config_invalid', { member: label, problems });
+    throw new Refusal('PROPOSED_ALLOWLIST_INVALID');
+  }
+  const sub = await prisma.subscription.findFirst({
+    where: { studioId: studio.id, userId: user.id },
+    select: { status: true, currentPeriodStart: true, currentPeriodEnd: true },
+  });
+  out('first_issue_prepared', {
+    member: label,
+    studioId: studio.id,
+    userId: user.id,
+    walletCredentials: 0,
+    subscription: sub,
+    autoEnrollConfig,
+    configValidation: 'PASSED',
+    otherUsersAdmitted: 0,
+  });
+}
+
+type ArtifactFingerprint = { walletCredentialId: string; platform: string; passMode: string; passVersion: number; templateVersion: number | null; sha256: string | null };
+
+async function artifactFingerprints(prisma: PrismaService): Promise<Map<string, ArtifactFingerprint>> {
+  const rows = await prisma.walletPassArtifact.findMany({
+    select: { id: true, walletCredentialId: true, platform: true, passMode: true, passVersion: true, templateVersion: true, pkpassData: true },
+  });
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      {
+        walletCredentialId: r.walletCredentialId,
+        platform: r.platform,
+        passMode: r.passMode,
+        passVersion: r.passVersion,
+        templateVersion: r.templateVersion,
+        sha256: r.pkpassData ? createHash('sha256').update(Buffer.from(r.pkpassData)).digest('hex') : null,
+      },
+    ]),
+  );
+}
+
+/**
+ * Stage 4B phase 2: the member's FIRST credential, issued through the production first-issuance
+ * path (WalletPassService.getBarcode — what "Mi Pase" calls), never by writing pass rows here.
+ * Gated on the live allowlist being exactly this member; refuses if the member already holds a
+ * credential. Afterwards it proves the pass is DYNAMIC with no device registration and that every
+ * pre-existing pass artifact is byte-identical. Sends no push.
+ */
+export async function issueFirst(
+  prisma: PrismaService,
+  passes: WalletPassService,
+  apple: AppleWalletProvider,
+  config: ConfigGetter,
+  label: FirstIssueLabel,
+): Promise<void> {
+  if (!apple.isConfigured()) throw new Refusal('APPLE_SIGNING_NOT_CONFIGURED');
+  await assertSyntheticStagingDatabase(prisma);
+  const { studioId, userId } = await findMember(prisma, label);
+  if ((await prisma.walletCredential.count({ where: { userId } })) > 0) throw new Refusal('FIRST_ISSUE_ALREADY_DONE');
+  const credentialedUserIds = (await prisma.walletCredential.findMany({ distinct: ['userId'], select: { userId: true } })).map((c) => c.userId);
+  const problems = checkLiveFirstIssueGate(config, { studioId, firstIssueUserId: userId, credentialedUserIds });
+  out('first_issue_gate', { member: label, passed: problems.length === 0, problems });
+  if (problems.length > 0) throw new Refusal('FIRST_ISSUE_GATE_FAILED');
+
+  const before = await artifactFingerprints(prisma);
+  // Same call the member app makes; the returned barcode is deliberately discarded.
+  await passes.getBarcode(studioId, userId);
+  const after = await artifactFingerprints(prisma);
+  const othersChanged = [...before.entries()].filter(([id, fp]) => JSON.stringify(after.get(id)) !== JSON.stringify(fp)).map(([id]) => id);
+
+  const { walletCredentialId } = await findMember(prisma, label);
+  const artifact = walletCredentialId
+    ? await prisma.walletPassArtifact.findUnique({
+        where: { walletCredentialId_platform: { walletCredentialId, platform: WalletPassPlatform.APPLE } },
+        select: {
+          pkpassData: true,
+          passMode: true,
+          passVersion: true,
+          templateVersion: true,
+          dynamicTemplateVersion: true,
+          _count: { select: { registrations: true } },
+        },
+      })
+    : null;
+  let webServiceUrlPresent = false;
+  let serialMatchesCredential = false;
+  if (artifact?.pkpassData) {
+    const passJson = (await extractPassJsonFromPkpass(Buffer.from(artifact.pkpassData))) as { webServiceURL?: string; serialNumber?: string };
+    webServiceUrlPresent = typeof passJson.webServiceURL === 'string' && passJson.webServiceURL.length > 0;
+    serialMatchesCredential = passJson.serialNumber === walletCredentialId;
+  }
+  const result = {
+    member: label,
+    studioId,
+    userId,
+    walletCredentialId,
+    passMode: artifact?.passMode ?? null,
+    passVersion: artifact?.passVersion ?? null,
+    templateVersion: artifact?.templateVersion ?? null,
+    dynamicTemplateVersion: artifact?.dynamicTemplateVersion ?? null,
+    registrations: artifact?._count.registrations ?? null,
+    webServiceUrlPresent,
+    serialMatchesCredential,
+    qrFingerprint: await qrFingerprint(artifact?.pkpassData ?? null),
+    preExistingArtifacts: before.size,
+    preExistingArtifactsChanged: othersChanged,
+  };
+  const ok =
+    artifact?.passMode === WalletPassMode.DYNAMIC &&
+    result.registrations === 0 &&
+    webServiceUrlPresent &&
+    serialMatchesCredential &&
+    othersChanged.length === 0;
+  out(ok ? 'first_issued' : 'first_issue_postcondition_failed', result);
+  if (!ok) throw new Error('FIRST_ISSUE_POSTCONDITION_FAILED');
+}
