@@ -1,6 +1,7 @@
 import type { MemberProfile, MemberRole, MembershipSummary, PaymentSource, PrimaryLifecycleStatus } from "@/lib/api/members";
 
-export type Member360Action = { id: "membership" | "billing" | "notes"; label: string; emphasis: "primary" | "secondary" };
+/** "sales" opens the existing sales flow for this member (no membership yet); the others open a tab. */
+export type Member360Action = { id: "membership" | "billing" | "notes" | "sales"; label: string; emphasis: "primary" | "secondary" };
 
 /**
  * True when staff must NOT take a renewal/cash-sale action: the card subscription is still being
@@ -28,7 +29,8 @@ export function member360Actions(
   const canManage = studioRole === "OWNER" || studioRole === "ADMIN";
   const canReadOperations = canManage || studioRole === "STAFF" || studioRole === "FRONT_DESK";
   if (!canReadOperations) return [];
-  if (!membership) return canManage ? [{ id: "membership", label: "Asignar membresía", emphasis: "primary" }] : [];
+  // Nothing to manage in the membership tab yet: assigning one is a sale (cash or payment link).
+  if (!membership) return canManage ? [{ id: "sales", label: "Asignar membresía", emphasis: "primary" }] : [];
   const actions: Member360Action[] = [];
   if (membership.primaryStatus === "EXPIRED" && renewalRequiresBillingReview(membership)) {
     actions.push({ id: "billing", label: "Revisar cobro antes de renovar", emphasis: "primary" });

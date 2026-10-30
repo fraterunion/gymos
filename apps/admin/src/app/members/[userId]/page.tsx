@@ -44,6 +44,8 @@ import { subscriptionTransitionPresentation } from "@/lib/membershipPlanSummary"
 import { allowedClassPresentation, billingOperationalState, cyclePayment, member360Actions, nextChargePresentation, paymentSourceLabel, renewalBehavior, usagePresentation , membershipRowRenewalActions, currentMembershipRows, membershipUsageLine, attentionItemTitle } from "@/lib/member360";
 import { buildMembershipCards, lastPaymentLine, membershipCardRows, pageAttentionItems, paymentsKpi, timelineDetail, timelineTitle, type MembershipCard, type Tone } from "@/lib/membershipBilling";
 import { OpenBillingCasesBanner } from "@/components/OpenBillingCasesBanner";
+import { canAccessWalkInSales } from "@/lib/deskRoles";
+import { salesHrefForMember } from "@/lib/salesMemberHandoff";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -1148,6 +1150,11 @@ function MembershipTab({
         {subs.length === 0 && !loading && (
           <div className="rounded-xl border border-zinc-200 bg-white px-6 py-10 text-center shadow-sm">
             <p className="text-sm text-zinc-500">No hay membresías registradas.</p>
+            {canAccessWalkInSales(studioRole) ? (
+              <Link href={salesHrefForMember(userId)} className="mt-4 inline-block rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700">
+                Asignar membresía
+              </Link>
+            ) : null}
           </div>
         )}
         {subs.map((s) => {
@@ -1744,6 +1751,20 @@ export default function MemberProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const billingRequest = useRef(0);
+  const tabsRef = useRef<HTMLDivElement>(null);
+
+  // Header, card, banner and attention actions sit well above the tab panel: switch the tab,
+  // bring the tab bar into view and focus the selected tab so the change is visible.
+  const openTab = useCallback((tab: Tab) => {
+    setActiveTab(tab);
+    requestAnimationFrame(() => {
+      const bar = tabsRef.current;
+      if (!bar) return;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      bar.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+      bar.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)?.focus({ preventScroll: true });
+    });
+  }, []);
 
   const load = useCallback(async () => {
     if (!selectedStudioId || !userId) return;
@@ -1833,25 +1854,30 @@ export default function MemberProfilePage() {
             </div>
             <section className="mt-6 border-t border-zinc-100 pt-5">
               <p className="text-xs uppercase tracking-wide text-zinc-400">{membershipCards.length > 1 ? `Membresías (${membershipCards.length})` : "Membresía"}</p>
-              <MembershipCards cards={membershipCards} fallbackName={profile.currentMembership?.plan.name ?? "Sin membresía"} onAction={setActiveTab} />
+              <MembershipCards cards={membershipCards} fallbackName={profile.currentMembership?.plan.name ?? "Sin membresía"} onAction={openTab} />
             </section>
             <div className="mt-5 grid gap-x-6 gap-y-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 lg:grid-cols-3">
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Última visita</p><p className="mt-1 text-sm font-semibold text-zinc-900">{profileVisit.title}</p><p className="text-xs text-zinc-500">{profileVisit.detail}</p></div>
               <div><p className="text-xs uppercase tracking-wide text-zinc-400">Próxima clase</p><p className="mt-1 truncate text-sm font-semibold text-zinc-900">{profile.operations.nextBooking?.scheduledClass.classTemplate.name ?? "—"}</p><p className="text-xs text-zinc-500">{nextClassPresentation(profile.operations.nextBooking?.scheduledClass.startsAt)}</p></div>
-              <div className="flex flex-wrap items-end gap-2 lg:justify-end">{profileActions.map((action) => <button key={action.id} type="button" onClick={() => setActiveTab(action.id)} className={action.emphasis === "primary" ? "rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700" : "rounded-lg border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"}>{action.label}</button>)}</div>
+              <div className="flex flex-wrap items-end gap-2 lg:justify-end">{profileActions.map((action) => {
+                const className = action.emphasis === "primary" ? "rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700" : "rounded-lg border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50";
+                if (action.id === "sales") return <Link key={action.id} href={salesHrefForMember(profile.user.id)} className={className}>{action.label}</Link>;
+                const tab = action.id;
+                return <button key={tab} type="button" onClick={() => openTab(tab)} className={className}>{action.label}</button>;
+              })}</div>
             </div>
           </div>
 
           <WaiverStatusCard studioId={selectedStudioId} userId={userId!} />
 
-          {billing?.openCases?.length ? <OpenBillingCasesBanner cases={billing.openCases} onReview={() => setActiveTab("billing")} /> : null}
+          {billing?.openCases?.length ? <OpenBillingCasesBanner cases={billing.openCases} onReview={() => openTab("billing")} /> : null}
 
           {/* ── KPI stats ── */}
           {attentionItems.length > 0 ? (
             <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-amber-900">Atención requerida</h2>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{attentionItemTitle(item.code === "PAID_WITHOUT_ENTITLEMENT" ? "Pago sin acceso" : item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado", ["INACTIVE", "NO_SHOWS", "PAID_WITHOUT_ENTITLEMENT"].includes(item.code) ? null : profile.currentMembership?.plan.name ?? null, currentMembershipRows(profile.memberships).length)}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining && !profile.currentMembership.paidWithoutEntitlement ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => setActiveTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
+                {attentionItems.map((item) => <div key={item.code} className="flex items-start justify-between gap-4 rounded-lg border border-amber-100 bg-white px-3 py-3"><div><p className="text-sm font-medium text-zinc-900">{attentionItemTitle(item.code === "PAID_WITHOUT_ENTITLEMENT" ? "Pago sin acceso" : item.code === "EXPIRED" ? "Membresía vencida" : item.code === "ENDING" ? "Membresía termina pronto" : item.code === "PAST_DUE" ? "Cobro pendiente" : item.code === "CANCELLATION_SCHEDULED" ? "Renovación desactivada" : item.code === "INACTIVE" ? "Sin actividad reciente" : item.code === "ZERO_CREDITS" ? "Sin créditos" : "Seguimiento recomendado", ["INACTIVE", "NO_SHOWS", "PAID_WITHOUT_ENTITLEMENT"].includes(item.code) ? null : profile.currentMembership?.plan.name ?? null, currentMembershipRows(profile.memberships).length)}</p><p className="mt-0.5 text-xs text-zinc-500">{item.code === "EXPIRED" ? item.message.replace("Membresía vencida", "La membresía venció") : item.message}{item.code === "EXPIRED" && profile.currentMembership?.creditsRemaining && !profile.currentMembership.paidWithoutEntitlement ? `. ${profile.currentMembership.creditsRemaining} créditos quedaron sin utilizar y ya no otorgan acceso.` : "."}</p></div>{item.action ? <button type="button" onClick={() => openTab(item.action === "REVIEW_BILLING" ? "billing" : "membership")} className="shrink-0 text-xs font-semibold text-zinc-900 underline">{item.action === "REVIEW_BILLING" ? "Revisar" : "Renovar"}</button> : null}</div>)}
               </div>
             </section>
           ) : null}
@@ -1864,11 +1890,12 @@ export default function MemberProfilePage() {
           </div>
 
           {/* ── Tabs ── */}
-          <div className="border-b border-zinc-200">
+          <div ref={tabsRef} className="scroll-mt-4 border-b border-zinc-200">
             <nav className="-mb-px flex gap-1 overflow-x-auto">
               {TABS.map((t) => (
                 <button
                   key={t.id}
+                  data-tab={t.id}
                   onClick={() => setActiveTab(t.id)}
                   className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
                     activeTab === t.id

@@ -106,6 +106,40 @@ test("Member 360 action center is lifecycle and RBAC aware", () => {
   assert.deepEqual(member360Actions("INSTRUCTOR", activeStripe), []);
 });
 
+test("a member without a membership is sent to the sales flow, managers only", () => {
+  const actions = (role: string) => member360Actions(role, null).map((action) => [action.id, action.label]);
+  assert.deepEqual(actions("OWNER"), [["sales", "Asignar membresía"]]);
+  assert.deepEqual(actions("ADMIN"), [["sales", "Asignar membresía"]]);
+  assert.deepEqual(actions("STAFF"), []);
+  assert.deepEqual(actions("FRONT_DESK"), []);
+  assert.deepEqual(actions("INSTRUCTOR"), []);
+  // Existing memberships keep the membership-management tab.
+  assert.equal(member360Actions("OWNER", { primaryStatus: "ACTIVE", source: "CASH", cancelAtPeriodEnd: false }).at(0)?.id, "membership");
+});
+
+test("Member 360 wiring: Asignar membresía opens Ventas; remote tab actions scroll to the tabs", () => {
+  const source = readFileSync(new URL("../app/members/[userId]/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /if \(action\.id === "sales"\) return <Link key=\{action\.id\} href=\{salesHrefForMember\(profile\.user\.id\)\}/);
+  assert.match(source, /canAccessWalkInSales\(studioRole\) \? \(\s*<Link href=\{salesHrefForMember\(userId\)\}/);
+  assert.match(source, /scrollIntoView\(/);
+  assert.match(source, /onAction=\{openTab\}/);
+  assert.match(source, /onClick=\{\(\) => openTab\(tab\)\}/);
+  assert.match(source, /onReview=\{\(\) => openTab\("billing"\)\}/);
+});
+
+test("Ventas wiring: handoff is studio-scoped, cash sends paidOn through the request builder", () => {
+  const source = readFileSync(new URL("../app/sales/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /<Suspense fallback=/);
+  assert.match(source, /fetchMemberProfile\(studioId, requestedMemberId\)/);
+  assert.match(source, /salesMemberFromProfile\(profile, requestedMemberId\)/);
+  assert.match(source, /createOfflineSubscription\(selectedStudioId, selectedMember\.user\.id, built\.request\)/);
+  assert.match(source, /paidOn: submittedPaidOn,/);
+  assert.match(source, /max=\{studioTodayKey\}/);
+  assert.match(source, /cashBlockedByWaiver \|\| !paidOnCheck\.ok/);
+  // Stripe path is untouched: still a checkout session for the same member + plan.
+  assert.match(source, /createStaffCheckoutSession\(\s*selectedStudioId,\s*selectedMember\.user\.id,\s*selectedPlanId,\s*\)/);
+});
+
 test("Member 360 distinguishes credit, unlimited, and no-membership usage", () => {
   const creditProfile = { currentMembership: { plan: { classCredits: 12 }, creditsUsed: 8, creditsRemaining: 4 }, engagement: { visitsCurrentPeriod: 5, visitsLast30Days: 7 } } as never;
   assert.deepEqual(usagePresentation(creditProfile), { label: "Créditos del periodo", value: "8 / 12", detail: "4 restantes" });

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageHeader } from "@/components/shell/PageHeader";
 import { SurfaceCard } from "@/components/shell/SurfaceCard";
@@ -12,7 +13,7 @@ import {
   adminPrimaryBtn,
   adminSecondaryBtn,
 } from "@/lib/adminSurface";
-import { fetchMembers, fetchMemberPurchaseOptions, type MemberListItem, type MemberPurchaseOption } from "@/lib/api/members";
+import { fetchMemberProfile, fetchMembers, fetchMemberPurchaseOptions, type MemberListItem, type MemberPurchaseOption } from "@/lib/api/members";
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 import {
   createOfflineSubscription,
@@ -21,8 +22,11 @@ import {
   fetchSalesSettings,
   formatMoney,
   memberDisplayName,
+  type OfflineSubscriptionResult,
   type SalesSettings,
 } from "@/lib/api/sales";
+import { buildCashSaleRequest, cashReceiptRows, checkCashPaidOn } from "@/lib/cashPaymentDate";
+import { parseSalesMemberParam, salesMemberFromProfile, SALES_MEMBER_PARAM } from "@/lib/salesMemberHandoff";
 import {
   attestMemberWaiver,
   fetchMemberWaiverStatus,
@@ -86,9 +90,20 @@ function qrImageUrl(url: string): string {
 }
 
 export default function WalkInSalesPage() {
+  // useSearchParams (member handoff) needs a Suspense boundary for prerendering.
+  return (
+    <Suspense fallback={<p className="p-6 text-sm text-zinc-500">Cargando…</p>}>
+      <WalkInSalesFlow />
+    </Suspense>
+  );
+}
+
+function WalkInSalesFlow() {
   const { user: authUser } = useAuth();
   const { selectedStudioId, selected, studioRole, loading: studioLoading } = useDeskStudio();
   const studioTimezone = selected?.studio.timezone ?? "UTC";
+  const requestedMemberId = parseSalesMemberParam(useSearchParams().get(SALES_MEMBER_PARAM));
+  const handoffKey = useRef<string | null>(null);
 
   const [step, setStep] = useState<Step>(1);
   const [memberMode, setMemberMode] = useState<MemberMode>("search");
@@ -124,7 +139,9 @@ export default function WalkInSalesPage() {
   const [priceOverrideNote, setPriceOverrideNote] = useState("");
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
-  const [activeUntil, setActiveUntil] = useState<string | null>(null);
+  // Cash receipt day. null = "today" in the studio, re-read at submit so it never goes stale.
+  const [paidOn, setPaidOn] = useState<string | null>(null);
+  const [cashResult, setCashResult] = useState<{ result: OfflineSubscriptionResult; paidOn: string } | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -240,6 +257,41 @@ export default function WalkInSalesPage() {
     }
   }, []);
 
+  // Member 360 "Asignar membresía" → /sales?member=<userId>. Resolved only through the selected
+  // studio's member endpoint, once per studio + member; any failure leaves the search step.
+  useEffect(() => {
+    if (!selectedStudioId || !requestedMemberId) return;
+    const key = `${selectedStudioId}:${requestedMemberId}`;
+    if (handoffKey.current === key) return;
+    handoffKey.current = key;
+    const studioId = selectedStudioId;
+    let cancelled = false;
+    let settled = false;
+    fetchMemberProfile(studioId, requestedMemberId)
+      .finally(() => {
+        settled = true;
+      })
+      .then((profile) => {
+        if (cancelled) return;
+        const member = salesMemberFromProfile(profile, requestedMemberId);
+        if (!member) {
+          setError("Este usuario no es un miembro al que se le pueda vender una membresía. Busca al cliente.");
+          return;
+        }
+        setSelectedMember(member);
+        void loadWaiver(studioId, member.user.id);
+        setStep(2);
+      })
+      .catch(() => {
+        if (!cancelled) setError("No se encontró a este miembro en el estudio seleccionado. Búscalo por nombre o correo.");
+      });
+    return () => {
+      cancelled = true;
+      // Interrupted before an answer (studio switch, Strict Mode remount): allow a fresh attempt.
+      if (!settled && handoffKey.current === key) handoffKey.current = null;
+    };
+  }, [selectedStudioId, requestedMemberId, loadWaiver]);
+
   const runSearch = useCallback(async () => {
     if (!selectedStudioId || !search.trim()) return;
     setSearchLoading(true);
@@ -352,29 +404,30 @@ export default function WalkInSalesPage() {
 
   async function handleRecordCash() {
     if (!selectedStudioId || !selectedMember || !selectedPlan) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const amountCents = chargeCents;
-      const periodPayload = resolveCashSalePeriodPayload({
+    const todayKey = todayKeyInZone(studioTimezone);
+    const submittedPaidOn = paidOn ?? todayKey;
+    const built = buildCashSaleRequest({
+      planId: selectedPlan.id,
+      amountCents: chargeCents,
+      period: resolveCashSalePeriodPayload({
         periodStartDateKey: periodStart,
         periodEndDateKey: periodEnd,
         timeZone: studioTimezone,
-      });
-      const res = await createOfflineSubscription(selectedStudioId, selectedMember.user.id, {
-        planId: selectedPlan.id,
-        amountCents,
-        ...(periodPayload.omitPeriod
-          ? {}
-          : {
-              periodStart: periodPayload.periodStartIso,
-              periodEnd: periodPayload.periodEndIso,
-            }),
-        paymentMethod: "CASH",
-        notes: cashNotes.trim() || undefined,
-        priceOverrideNote: priceOverrideNote.trim() || undefined,
-      });
-      setActiveUntil(res.subscription.currentPeriodEnd);
+      }),
+      paidOn: submittedPaidOn,
+      todayKey,
+      notes: cashNotes,
+      priceOverrideNote,
+    });
+    if (!built.ok) {
+      setError(built.message);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await createOfflineSubscription(selectedStudioId, selectedMember.user.id, built.request);
+      setCashResult({ result: res, paidOn: submittedPaidOn });
       setStep(5);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No se pudo registrar el pago en efectivo");
@@ -389,17 +442,22 @@ export default function WalkInSalesPage() {
     setWaiverStatus(null);
     setSelectedPlanId("");
     setCheckoutUrl(null);
-    setActiveUntil(null);
+    setCashResult(null);
     setPaymentMethod("stripe");
     setError(null);
     setPeriodStart(todayKeyInZone(studioTimezone));
     setPeriodEnd("");
+    setPaidOn(null);
   }
 
   const waiverOk =
     !waiverStatus?.required || waiverStatus.accepted;
 
   const cashBlockedByWaiver = paymentMethod === "cash" && !waiverOk;
+
+  const studioTodayKey = todayKeyInZone(studioTimezone);
+  const paidOnValue = paidOn ?? studioTodayKey;
+  const paidOnCheck = checkCashPaidOn(paidOnValue, studioTodayKey);
 
   if (studioLoading) {
     return <p className="p-6 text-sm text-zinc-500">Cargando estudio…</p>;
@@ -661,8 +719,25 @@ export default function WalkInSalesPage() {
             </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-sm sm:col-span-2">
+                <span className="mb-1 block text-zinc-600">Fecha del pago</span>
+                <input
+                  type="date"
+                  value={paidOnValue}
+                  max={studioTodayKey}
+                  onChange={(e) => setPaidOn(e.target.value)}
+                  aria-invalid={!paidOnCheck.ok}
+                  className={adminInput}
+                />
+                <span className="mt-1 block text-xs text-zinc-500">
+                  Día en que se recibió el efectivo. Solo para reportes: no cambia la vigencia de la membresía.
+                </span>
+                {!paidOnCheck.ok ? (
+                  <span className="mt-1 block text-xs font-medium text-red-700">{paidOnCheck.message}</span>
+                ) : null}
+              </label>
               <label className="text-sm">
-                <span className="mb-1 block text-zinc-600">Inicio del periodo</span>
+                <span className="mb-1 block text-zinc-600">Inicio de la membresía</span>
                 <input
                   type="date"
                   value={periodStart}
@@ -671,7 +746,7 @@ export default function WalkInSalesPage() {
                 />
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-zinc-600">Fin del periodo</span>
+                <span className="mb-1 block text-zinc-600">Fin de la membresía</span>
                 <input
                   type="date"
                   value={periodEnd}
@@ -681,7 +756,7 @@ export default function WalkInSalesPage() {
               </label>
               {cashPeriodPreviewLabel ? (
                 <p className="text-xs text-zinc-500 sm:col-span-2">
-                  Periodo efectivo: {cashPeriodPreviewLabel}
+                  Vigencia de la membresía: {cashPeriodPreviewLabel}
                   {periodStart === todayKeyInZone(studioTimezone)
                     ? " (inicia al registrar el pago)"
                     : ""}
@@ -733,7 +808,7 @@ export default function WalkInSalesPage() {
             </button>
             <button
               type="button"
-              disabled={busy || (paymentMethod === "cash" && cashBlockedByWaiver)}
+              disabled={busy || (paymentMethod === "cash" && (cashBlockedByWaiver || !paidOnCheck.ok))}
               onClick={() =>
                 void (paymentMethod === "stripe" ? handleGenerateCheckout() : handleRecordCash())
               }
@@ -782,17 +857,18 @@ export default function WalkInSalesPage() {
               </div>
             </div>
           ) : null}
-          {activeUntil ? (
-            <p className="text-sm">
-              Membresía activa hasta{" "}
-              <strong>
-                {new Date(activeUntil).toLocaleDateString("es-MX", {
-                  day: "numeric",
-                  month: "long",
-                  year: "numeric",
-                })}
-              </strong>
-            </p>
+          {cashResult ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Pago en efectivo registrado</p>
+              <dl className="grid gap-x-6 gap-y-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 sm:grid-cols-2">
+                {cashReceiptRows(cashResult.result, cashResult.paidOn, studioTimezone).map((row) => (
+                  <div key={row.label}>
+                    <dt className="text-xs text-zinc-500">{row.label}</dt>
+                    <dd className="text-sm font-semibold text-zinc-900">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
           ) : null}
           <button
             type="button"
