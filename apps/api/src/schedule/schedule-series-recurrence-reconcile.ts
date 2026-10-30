@@ -222,17 +222,24 @@ export function planFinishSeriesBoundary(
   cancelledCount: number;
   bookedCancellationCount: number;
   skippedDetachedCount: number;
+  skippedProtectedCount: number;
 } {
   const cancelIds: string[] = [];
   let cancelledCount = 0;
   let bookedCancellationCount = 0;
   let skippedDetachedCount = 0;
+  let skippedProtectedCount = 0;
 
   for (const row of futureRows) {
     if (row.startsAt < at) continue;
     if (row.status !== ClassStatus.SCHEDULED) continue;
     const dateKey = getStudioLocalDateKey(row.startsAt, timezone);
     if (dateKey <= boundaryDateKey) continue;
+    // Early check-in already recorded: keep the class, its bookings and its attendance.
+    if (row.attendanceCount > 0) {
+      skippedProtectedCount++;
+      continue;
+    }
     if (row.exceptionKind === ScheduleOccurrenceExceptionKind.DETACHED) {
       skippedDetachedCount++;
     }
@@ -247,6 +254,7 @@ export function planFinishSeriesBoundary(
     cancelledCount,
     bookedCancellationCount,
     skippedDetachedCount,
+    skippedProtectedCount,
   };
 }
 

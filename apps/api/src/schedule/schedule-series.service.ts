@@ -32,7 +32,13 @@ import {
 } from './schedule-materialization';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
 import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
-import { assertClassNotStarted, cancellableClassWhere } from './class-cancellation-guard';
+import {
+  assertClassCancellable,
+  assertNotProtected,
+  attendedFutureClassWhere,
+  cancellableClassWhere,
+  protectedClassReason,
+} from './class-cancellation-guard';
 import { assertStartsBeforeEnds } from './occurrence-interval';
 import {
   deriveSeriesStatus,
@@ -104,6 +110,8 @@ export type FinishSeriesPreview = {
   cancelledCount: number;
   bookedOccurrencesAffected: number;
   skippedDetachedCount: number;
+  /** Future occurrences kept because they already have attendance (early check-in). */
+  skippedProtectedCount: number;
 };
 
 export type SeriesPreviewResult = {
@@ -118,6 +126,8 @@ export type MutationImpact = {
   affectedClassCount: number;
   classesWithReservations: number;
   totalReservations: number;
+  /** Range cancellations only: future occurrences kept because they already have attendance. */
+  protectedClassCount?: number;
 };
 
 export type SeriesListFilter = {
@@ -615,6 +625,7 @@ export class ScheduleSeriesService {
       cancelledCount: plan.cancelledCount,
       bookedOccurrencesAffected: plan.bookedCancellationCount,
       skippedDetachedCount: plan.skippedDetachedCount,
+      skippedProtectedCount: plan.skippedProtectedCount,
     };
   }
 
@@ -687,12 +698,13 @@ export class ScheduleSeriesService {
         cancelledBookingCount: result.cancelledBookingCount,
         expiredWaitlistCount: result.expiredWaitlistCount,
         skippedDetachedCount: plan.skippedDetachedCount,
+        skippedProtectedCount: plan.skippedProtectedCount,
         affectedReservationCount: preview.impact.totalReservations,
         cancelReason: input.cancelReason ?? null,
       },
     });
 
-    return { boundaryDateKey, cancelledCount: result.cancelledCount };
+    return { boundaryDateKey, cancelledCount: result.cancelledCount, skippedProtectedCount: plan.skippedProtectedCount };
   }
 
   async getOccurrenceSeriesContext(studioId: string, scheduledClassId: string) {
@@ -902,7 +914,11 @@ export class ScheduleSeriesService {
       });
     }
     const result = await this.deactivateSeries(studio.id, seriesId, actorUserId, cancelReason, impact);
-    return { cancelledCount: result.cancelledCount, alreadyEnded: result.alreadyEnded };
+    return {
+      cancelledCount: result.cancelledCount,
+      alreadyEnded: result.alreadyEnded,
+      skippedProtectedCount: result.skippedProtectedCount,
+    };
   }
 
   // ── private helpers ─────────────────────────────────────────────────────
@@ -1656,16 +1672,19 @@ export class ScheduleSeriesService {
 
       // No successor template — soft-cancel materialized future rows only.
       // Includes DETACHED rows: explicit cancellation from boundary forward.
+      // Occurrences with early check-in are kept (and reported), never cancelled.
+      const now = new Date();
+      const range: Prisma.ScheduledClassWhereInput = {
+        studioId: studio.id,
+        scheduleTemplateId: tpl.id,
+        startsAt: { gte: occurrence.startsAt },
+        status: ClassStatus.SCHEDULED,
+      };
       const toCancel = await tx.scheduledClass.findMany({
-        where: {
-          studioId: studio.id,
-          scheduleTemplateId: tpl.id,
-          startsAt: { gte: occurrence.startsAt },
-          status: ClassStatus.SCHEDULED,
-          AND: [cancellableClassWhere(new Date())],
-        },
+        where: { AND: [range, cancellableClassWhere(now)] },
         select: { id: true },
       });
+      const skippedProtectedCount = await tx.scheduledClass.count({ where: { AND: [range, attendedFutureClassWhere(now)] } });
       const ids = toCancel.map((row) => row.id);
       if (ids.length > 0) {
         await tx.scheduledClass.updateMany({
@@ -1683,9 +1702,10 @@ export class ScheduleSeriesService {
           cancelledCount: ids.length,
           cancelledBookingCount: cascade.cancelledBookingCount,
           expiredWaitlistCount: cascade.expiredWaitlistCount,
+          skippedProtectedCount,
         };
       }
-      return { cancelledCount: 0, cancelledBookingCount: 0, expiredWaitlistCount: 0 };
+      return { cancelledCount: 0, cancelledBookingCount: 0, expiredWaitlistCount: 0, skippedProtectedCount };
     });
 
     await this.audit.log({
@@ -1704,24 +1724,26 @@ export class ScheduleSeriesService {
         affectedReservationCount: impact.totalReservations,
         cancelledBookingCount: result.cancelledBookingCount,
         expiredWaitlistCount: result.expiredWaitlistCount,
+        skippedProtectedCount: result.skippedProtectedCount,
         cancelReason: cancelReason ?? null,
       },
     });
 
-    return { cancelledCount: result.cancelledCount };
+    return { cancelledCount: result.cancelledCount, skippedProtectedCount: result.skippedProtectedCount };
   }
 
   private async permanentCancelImpact(studioId: string, seriesId: string): Promise<MutationImpact> {
-    const rows = await this.prisma.scheduledClass.findMany({
-      where: {
-        studioId,
-        scheduleTemplateId: seriesId,
-        status: ClassStatus.SCHEDULED,
-        ...cancellableClassWhere(new Date()),
-      },
-      select: { id: true },
-    });
-    return this.countReservationImpact(rows.map((row) => row.id));
+    return this.rangeCancelImpact({ studioId, scheduleTemplateId: seriesId, status: ClassStatus.SCHEDULED }, new Date());
+  }
+
+  /** Impact of cancelling a range: cancellable classes, plus the attended ones that will be kept. */
+  private async rangeCancelImpact(range: Prisma.ScheduledClassWhereInput, now: Date): Promise<MutationImpact> {
+    const [rows, protectedClassCount] = await Promise.all([
+      this.prisma.scheduledClass.findMany({ where: { AND: [range, cancellableClassWhere(now)] }, select: { id: true } }),
+      this.prisma.scheduledClass.count({ where: { AND: [range, attendedFutureClassWhere(now)] } }),
+    ]);
+    const impact = await this.countReservationImpact(rows.map((row) => row.id));
+    return { ...impact, protectedClassCount };
   }
 
   private async cancelEntireSeries(
@@ -1756,16 +1778,18 @@ export class ScheduleSeriesService {
       });
 
       // Only rows still linked to this template. Off-cadence copies have a null
-      // scheduleTemplateId and are no longer part of the series.
+      // scheduleTemplateId and are no longer part of the series. Occurrences with
+      // early check-in are kept (and reported), never cancelled.
+      const range: Prisma.ScheduledClassWhereInput = {
+        studioId,
+        scheduleTemplateId: template.id,
+        status: ClassStatus.SCHEDULED,
+      };
       const toCancel = await tx.scheduledClass.findMany({
-        where: {
-          studioId,
-          scheduleTemplateId: template.id,
-          status: ClassStatus.SCHEDULED,
-          ...cancellableClassWhere(now),
-        },
+        where: { AND: [range, cancellableClassWhere(now)] },
         select: { id: true },
       });
+      const skippedProtectedCount = await tx.scheduledClass.count({ where: { AND: [range, attendedFutureClassWhere(now)] } });
       const ids = toCancel.map((row) => row.id);
       if (ids.length > 0) {
         await tx.scheduledClass.updateMany({
@@ -1783,9 +1807,10 @@ export class ScheduleSeriesService {
           cancelledCount: ids.length,
           cancelledBookingCount: cascade.cancelledBookingCount,
           expiredWaitlistCount: cascade.expiredWaitlistCount,
+          skippedProtectedCount,
         };
       }
-      return { cancelledCount: 0, cancelledBookingCount: 0, expiredWaitlistCount: 0 };
+      return { cancelledCount: 0, cancelledBookingCount: 0, expiredWaitlistCount: 0, skippedProtectedCount };
     });
 
     await this.audit.log({
@@ -1802,12 +1827,17 @@ export class ScheduleSeriesService {
         affectedReservationCount: impact.totalReservations,
         cancelledBookingCount: result.cancelledBookingCount,
         expiredWaitlistCount: result.expiredWaitlistCount,
+        skippedProtectedCount: result.skippedProtectedCount,
         cancelReason: cancelReason ?? null,
         templateWasActive: template.active,
       },
     });
 
-    return { cancelledCount: result.cancelledCount, alreadyEnded: template.active === false };
+    return {
+      cancelledCount: result.cancelledCount,
+      alreadyEnded: template.active === false,
+      skippedProtectedCount: result.skippedProtectedCount,
+    };
   }
 
   private async buildOccurrenceUpdateData(
@@ -1900,37 +1930,22 @@ export class ScheduleSeriesService {
     scope: SeriesMutationScope,
   ): Promise<MutationImpact> {
     const now = new Date();
-    let ids: string[];
     if (scope === 'SINGLE') {
-      assertClassNotStarted(occurrence, now);
-      ids = [occurrence.id];
-    } else if (scope === 'FOLLOWING') {
-      // The boundary must be a class that has not started; protected classes after it stay.
-      assertClassNotStarted(occurrence, now);
-      const rows = await this.prisma.scheduledClass.findMany({
-        where: {
-          studioId,
-          scheduleTemplateId: occurrence.scheduleTemplateId ?? undefined,
-          startsAt: { gte: occurrence.startsAt },
-          status: ClassStatus.SCHEDULED,
-          AND: [cancellableClassWhere(now)],
-        },
-        select: { id: true },
-      });
-      ids = rows.map((r) => r.id);
-    } else {
-      const rows = await this.prisma.scheduledClass.findMany({
-        where: {
-          studioId,
-          scheduleTemplateId: occurrence.scheduleTemplateId ?? undefined,
-          status: ClassStatus.SCHEDULED,
-          ...cancellableClassWhere(now),
-        },
-        select: { id: true },
-      });
-      ids = rows.map((r) => r.id);
+      // A directly chosen class: refuse with the reason when it is protected.
+      await assertClassCancellable(this.prisma, studioId, occurrence, now);
+      return this.countReservationImpact([occurrence.id]);
     }
-    return this.countReservationImpact(ids);
+    if (scope === 'FOLLOWING') {
+      // The boundary must not have started; attended occurrences in the range are kept.
+      assertNotProtected(protectedClassReason({ ...occurrence, attendanceCount: 0 }, now));
+    }
+    const range: Prisma.ScheduledClassWhereInput = {
+      studioId,
+      scheduleTemplateId: occurrence.scheduleTemplateId ?? undefined,
+      status: ClassStatus.SCHEDULED,
+      ...(scope === 'FOLLOWING' ? { startsAt: { gte: occurrence.startsAt } } : {}),
+    };
+    return this.rangeCancelImpact(range, now);
   }
 
   private async countReservationImpact(scheduledClassIds: string[]): Promise<MutationImpact> {

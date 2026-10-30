@@ -229,7 +229,7 @@ describe('Schedule series permanent cancellation (e2e)', () => {
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ confirmReservations: true })
       .expect(200);
-    expect(retry.body).toEqual({ cancelledCount: 0, alreadyEnded: true });
+    expect(retry.body).toEqual({ cancelledCount: 0, alreadyEnded: true, skippedProtectedCount: 0 });
     expect((await prisma.booking.findUniqueOrThrow({ where: { id: f.startedBooking.id } })).status).toBe(BookingStatus.CONFIRMED);
     expect(await counts(f.studio.id)).toEqual(before);
   });

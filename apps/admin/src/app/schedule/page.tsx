@@ -8,6 +8,7 @@ import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import { adminPrimaryBtn, adminSecondaryBtn } from "@/lib/adminSurface";
+import { protectedClassesNote } from "@/lib/classCancellation";
 import { fetchStudioSchedule, type ScheduledClassDto } from "@/lib/api/schedule";
 import { fetchClassTemplates, type ClassTemplateDto } from "@/lib/api/classTemplates";
 import { fetchStaffInstructors, type StaffInstructorDto } from "@/lib/api/staff";
@@ -423,7 +424,7 @@ export default function SchedulePage() {
       const approved = window.confirm(
         `¿Cancelar permanentemente esta serie?\n\n` +
         `Se cancelarán ${impact.affectedClassCount} clases futuras y ` +
-        `${impact.totalReservations} reservaciones. No se generarán clases nuevas ` +
+        `${impact.totalReservations} reservaciones.${protectedClassesNote(impact.protectedClassCount)} No se generarán clases nuevas ` +
         `de esta serie. El historial de clases anteriores se conservará.\n\n` +
         `Esta acción no se puede deshacer automáticamente.`,
       );
@@ -433,7 +434,9 @@ export default function SchedulePage() {
         confirmReservations: true,
       });
       closeSeriesDrawer();
-      setOpsFeedback(`Serie cancelada permanentemente. ${result.cancelledCount} clases futuras canceladas.`);
+      setOpsFeedback(
+        `Serie cancelada permanentemente. ${result.cancelledCount} clases futuras canceladas.${protectedClassesNote(result.skippedProtectedCount)}`,
+      );
       refreshSeries();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No fue posible cancelar la serie.");

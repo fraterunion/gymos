@@ -22,7 +22,7 @@ import type {
 import type { StudioLocalDateTimeDto } from './dto/studio-local-datetime.dto';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
 import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
-import { assertClassNotStarted } from './class-cancellation-guard';
+import { assertClassCancellable } from './class-cancellation-guard';
 import { assertStartsBeforeEnds } from './occurrence-interval';
 import {
   acquireOccurrenceSlotLock,
@@ -444,6 +444,7 @@ export class ScheduleService {
       dto.status === ClassStatus.CANCELLED && existing.status !== ClassStatus.CANCELLED;
 
     if (transitioningToCancelled) {
+      await assertClassCancellable(this.prisma, studioId, existing);
       return this.prisma.$transaction(async (tx) => {
         const updated = await tx.scheduledClass.update({
           where: { id: scheduledClassId },
@@ -477,7 +478,7 @@ export class ScheduleService {
     if (existing.status === ClassStatus.CANCELLED) {
       return;
     }
-    assertClassNotStarted(existing);
+    await assertClassCancellable(this.prisma, studioId, existing);
     await this.prisma.$transaction(async (tx) => {
       await tx.scheduledClass.update({
         where: { id: scheduledClassId },

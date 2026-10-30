@@ -95,7 +95,7 @@ describe('Member experience reliability hardening (e2e)', () => {
   }
 
   describe('cancelled-class booking lifecycle', () => {
-    it('cancelling a class cancels CONFIRMED bookings, expires WAITING, and keeps attendance', async () => {
+    async function cancelFixture(label: string) {
       const studio = await createStudio(prisma);
       const plan = await createMembershipPlanForStudio(prisma, studio.id);
       const tpl = await createClassTemplate(prisma, studio.id);
@@ -105,21 +105,13 @@ describe('Member experience reliability hardening (e2e)', () => {
         endsAt: end,
         capacity: 1,
       });
-      const holder = await createUserWithPassword(prisma, { email: 'hold-cancel@e2e.local' });
-      const waiter = await createUserWithPassword(prisma, { email: 'wait-cancel@e2e.local' });
+      const holder = await createUserWithPassword(prisma, { email: `hold-${label}@e2e.local` });
+      const waiter = await createUserWithPassword(prisma, { email: `wait-${label}@e2e.local` });
       await createMembership(prisma, holder.id, studio.id, Role.MEMBER);
       await createMembership(prisma, waiter.id, studio.id, Role.MEMBER);
       await createActiveSubscription(prisma, studio.id, holder.id, plan.id);
       await createActiveSubscription(prisma, studio.id, waiter.id, plan.id);
       const booking = await createConfirmedBooking(prisma, studio.id, cls.id, holder.id);
-      await prisma.attendance.create({
-        data: {
-          studioId: studio.id,
-          scheduledClassId: cls.id,
-          userId: holder.id,
-          method: CheckInMethod.MANUAL,
-        },
-      });
       await prisma.waitlistEntry.create({
         data: {
           studioId: studio.id,
@@ -131,32 +123,61 @@ describe('Member experience reliability hardening (e2e)', () => {
       });
       const admin = await seedAdmin(studio.id);
       const adminTok = await loginAccessToken(app, admin.email, admin.password);
+      return { studio, cls, holder, waiter, booking, adminTok };
+    }
+
+    it('cancelling a future class without attendance cancels CONFIRMED bookings and expires WAITING', async () => {
+      const f = await cancelFixture('cancel');
 
       await request(app.getHttpServer())
-        .delete(`/api/v1/studios/${studio.id}/schedule/${cls.id}`)
-        .set('Authorization', `Bearer ${adminTok}`)
+        .delete(`/api/v1/studios/${f.studio.id}/schedule/${f.cls.id}`)
+        .set('Authorization', `Bearer ${f.adminTok}`)
         .expect(204);
 
-      const classRow = await prisma.scheduledClass.findUniqueOrThrow({ where: { id: cls.id } });
+      const classRow = await prisma.scheduledClass.findUniqueOrThrow({ where: { id: f.cls.id } });
       expect(classRow.status).toBe(ClassStatus.CANCELLED);
-
-      const bookingRow = await prisma.booking.findUniqueOrThrow({ where: { id: booking.id } });
+      const bookingRow = await prisma.booking.findUniqueOrThrow({ where: { id: f.booking.id } });
       expect(bookingRow.status).toBe(BookingStatus.CANCELLED);
-
       const waitRow = await prisma.waitlistEntry.findFirstOrThrow({
-        where: { scheduledClassId: cls.id, userId: waiter.id },
+        where: { scheduledClassId: f.cls.id, userId: f.waiter.id },
       });
       expect(waitRow.status).toBe(WaitlistStatus.EXPIRED);
 
-      const attendance = await prisma.attendance.findMany({ where: { scheduledClassId: cls.id } });
-      expect(attendance).toHaveLength(1);
-
-      const holderTok = await loginAccessToken(app, holder.email, holder.password);
+      const holderTok = await loginAccessToken(app, f.holder.email, f.holder.password);
       const me = await request(app.getHttpServer())
-        .get(`/api/v1/studios/${studio.id}/bookings/me`)
+        .get(`/api/v1/studios/${f.studio.id}/bookings/me`)
         .set('Authorization', `Bearer ${holderTok}`)
         .expect(200);
-      expect((me.body as { id: string }[]).some((row) => row.id === booking.id)).toBe(false);
+      expect((me.body as { id: string }[]).some((row) => row.id === f.booking.id)).toBe(false);
+    });
+
+    // Business rule (2026-10-30): a future class that already has an early check-in cannot be
+    // cancelled. Previously the booking was cancelled while the attendance stayed, leaving an
+    // attendance without its booking. Now the cancel is refused and nothing changes.
+    it('a future class with an early check-in cannot be cancelled; booking, waitlist and attendance stay', async () => {
+      const f = await cancelFixture('checked-in');
+      await prisma.attendance.create({
+        data: {
+          studioId: f.studio.id,
+          scheduledClassId: f.cls.id,
+          userId: f.holder.id,
+          method: CheckInMethod.MANUAL,
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .delete(`/api/v1/studios/${f.studio.id}/schedule/${f.cls.id}`)
+        .set('Authorization', `Bearer ${f.adminTok}`)
+        .expect(400);
+      expect((res.body as { message: string }).message).toContain('asistencias registradas');
+
+      expect((await prisma.scheduledClass.findUniqueOrThrow({ where: { id: f.cls.id } })).status).toBe(ClassStatus.SCHEDULED);
+      expect((await prisma.booking.findUniqueOrThrow({ where: { id: f.booking.id } })).status).toBe(BookingStatus.CONFIRMED);
+      const waitRow = await prisma.waitlistEntry.findFirstOrThrow({
+        where: { scheduledClassId: f.cls.id, userId: f.waiter.id },
+      });
+      expect(waitRow.status).toBe(WaitlistStatus.WAITING);
+      expect(await prisma.attendance.count({ where: { scheduledClassId: f.cls.id } })).toBe(1);
     });
 
     it('series SINGLE cancellation applies the same booking/waitlist invariant', async () => {
