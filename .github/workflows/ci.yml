@@ -59,6 +59,11 @@ jobs:
       - name: Lint, typecheck, test, e2e, build (serialized Prisma client)
         run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api --concurrency=1
 
+      # Admin web: pure-Node unit tests, typecheck and production build (no API or DB).
+      # Lint is not gated yet: existing react-hooks compiler-rule errors predate this step.
+      - name: Admin typecheck, unit tests, build
+        run: pnpm exec turbo run typecheck test build --filter=admin --concurrency=1
+
       # Read-only external smoke against the *isolated* release-rehearsal API.
       # This job cannot create accounts, change prices or send messages.
       - name: ARES PR5 rehearsal public HTTP and auth boundary smoke
