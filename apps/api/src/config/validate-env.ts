@@ -1,4 +1,5 @@
 import { APPLE_WALLET_ENV_KEYS } from '../wallet/apple/apple-wallet.constants';
+import { validateAutoEnrollmentEnv } from '../wallet/dynamic/wallet-auto-enrollment.config';
 
 const NODE_ENVS = ['development', 'test', 'production'] as const;
 type NodeEnv = (typeof NODE_ENVS)[number];
@@ -148,6 +149,7 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
   assertExpoBuildWebhookEnv(out, nodeEnv);
   assertDayPassEnv(out);
   assertWalletPassEnv(out, nodeEnv);
+  validateAutoEnrollmentEnv(out);
 
   return out;
 }

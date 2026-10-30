@@ -19,6 +19,8 @@ import { GoogleWalletProvider } from './google/google-wallet-provider.service';
 import { WALLET_GOOGLE_NOT_CONFIGURED_MESSAGE } from './google/google-wallet.constants';
 import { resolveEntitledPrimaryPlanName } from './access/wallet-access-snapshot';
 import { WalletAccessSnapshotLoader } from './access/wallet-access-snapshot.loader';
+import { WalletDynamicPassService } from './dynamic/wallet-dynamic-pass.service';
+import { isAutoEnrollmentEligible } from './dynamic/wallet-auto-enrollment.config';
 
 type MemberContext = { memberName: string; planName: string | null };
 
@@ -68,6 +70,7 @@ export class WalletPassService {
     private readonly appleProvider: AppleWalletProvider,
     private readonly googleProvider: GoogleWalletProvider,
     private readonly accessLoader: WalletAccessSnapshotLoader,
+    private readonly dynamicPasses: WalletDynamicPassService,
   ) {}
 
   /**
@@ -94,6 +97,7 @@ export class WalletPassService {
         this.tryProvisionApple(credential.id, rawCredential, studioId, userId),
         this.tryProvisionGoogle(credential.id, rawCredential, studioId, userId),
       ]);
+      await this.tryFirstIssuanceDynamicEnrollment(credential.id, studioId, userId);
       return { barcode: buildWalletCredentialBarcode(rawCredential), isNew: true };
     }
 
@@ -318,6 +322,9 @@ export class WalletPassService {
         throw new ConflictException(WALLET_PASS_REISSUE_REQUIRED_MESSAGE);
       }
       artifact = await this.provisionApple(credential.id, rawCredential, studioId, userId);
+      // Direct Apple request as first contact: enroll before returning installable bytes.
+      await this.tryFirstIssuanceDynamicEnrollment(credential.id, studioId, userId);
+      artifact = (await this.findArtifact(credential.id, WalletPassPlatform.APPLE)) ?? artifact;
     } else if (isStaleAppleArtifact(artifact)) {
       artifact = await this.refreshStaleAppleArtifact(artifact, credential, rawCredential, studioId, userId);
     }
@@ -349,6 +356,8 @@ export class WalletPassService {
 
     if (rawCredential) {
       await this.tryProvisionApple(credential.id, rawCredential, studioId, userId);
+      // Even if Google is requested first, do not leave an allowlisted new Apple pass static.
+      await this.tryFirstIssuanceDynamicEnrollment(credential.id, studioId, userId);
     }
 
     return { saveUrl: this.googleProvider.buildSaveUrl(artifact.googleObjectId!) };
@@ -412,6 +421,31 @@ export class WalletPassService {
       applePkpassAvailable: !!appleArtifact?.pkpassData,
       googleWalletAvailable: !!googleArtifact?.googleObjectId,
     };
+  }
+
+  /**
+   * Stage 4B is opt-in for explicitly allowlisted first issuances ONLY.
+   * Never rewrite an existing Apple pass when an old credential is re-opened.
+   * If enrolling fails, preserve and serve the already-valid static pass.
+   */
+  private async tryFirstIssuanceDynamicEnrollment(
+    walletCredentialId: string,
+    studioId: string,
+    userId: string,
+  ): Promise<void> {
+    if (!isAutoEnrollmentEligible(this.config, studioId, userId) || !this.dynamicPasses.isEnabled()) return;
+    try {
+      const artifact = await this.findArtifact(walletCredentialId, WalletPassPlatform.APPLE);
+      if (!artifact || artifact.passMode === WalletPassMode.DYNAMIC) return;
+      await this.dynamicPasses.enroll(walletCredentialId);
+    } catch (error) {
+      this.logger.warn(JSON.stringify({
+        event: 'wallet.auto_enroll.fallback_static',
+        studioId,
+        walletCredentialId,
+        errorCode: error instanceof Error ? error.name : 'UNKNOWN',
+      }));
+    }
   }
 
   private async resolveIssuableCredential(studioId: string, userId: string) {
@@ -551,16 +585,34 @@ export class WalletPassService {
     const pkpassBytes = Uint8Array.from(pkpassData);
     // Upsert keyed on (walletCredentialId, platform) — a refresh replaces the row's bytes in
     // place rather than adding a second artifact for the same credential.
-    const artifact = await this.prisma.walletPassArtifact.upsert({
-      where: { walletCredentialId_platform: { walletCredentialId, platform: WalletPassPlatform.APPLE } },
-      create: {
-        walletCredentialId,
-        platform: WalletPassPlatform.APPLE,
-        pkpassData: pkpassBytes,
-        templateVersion: APPLE_PASS_TEMPLATE_VERSION,
-      },
-      update: { pkpassData: pkpassBytes, templateVersion: APPLE_PASS_TEMPLATE_VERSION },
-    });
+    // A concurrent first-install request may enroll the STATIC artifact while another
+    // request is still rendering its static bytes. Guard the UPSERT on passMode so the
+    // late static write can NEVER overwrite the dynamic pkpass/token combination.
+    let artifact: WalletPassArtifact;
+    try {
+      artifact = await this.prisma.walletPassArtifact.upsert({
+        where: {
+          walletCredentialId_platform: { walletCredentialId, platform: WalletPassPlatform.APPLE },
+          passMode: WalletPassMode.STATIC,
+        },
+        create: {
+          walletCredentialId,
+          platform: WalletPassPlatform.APPLE,
+          pkpassData: pkpassBytes,
+          templateVersion: APPLE_PASS_TEMPLATE_VERSION,
+        },
+        update: { pkpassData: pkpassBytes, templateVersion: APPLE_PASS_TEMPLATE_VERSION },
+      });
+    } catch (error) {
+      // P2002: concurrent creation; P2025: conditional STATIC write lost to DYNAMIC.
+      // A concurrent request created or converted this pass. Serve its stored bytes;
+      // do not rotate the credential, token, or re-sign an installed pass as STATIC.
+      if (error && typeof error === 'object' && 'code' in error && (error.code === 'P2002' || error.code === 'P2025')) {
+        const winningArtifact = await this.findArtifact(walletCredentialId, WalletPassPlatform.APPLE);
+        if (winningArtifact?.pkpassData) return winningArtifact;
+      }
+      throw error;
+    }
     this.logger.log(
       JSON.stringify({ event: 'wallet.apple.pass_generated', studioId, walletCredentialId }),
     );
