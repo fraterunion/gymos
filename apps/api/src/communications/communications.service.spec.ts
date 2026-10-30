@@ -144,6 +144,17 @@ describe('CommunicationsService delivery', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('never falls back to EXPO_PUBLIC_API_URL (defaults to the admin CORS origin) for unsubscribe links', async () => {
+    configGet.mockImplementation((key: string, fallback?: string) =>
+      key === 'EXPO_PUBLIC_API_URL' ? 'https://gymos-admin.example.test' : fallback ?? '',
+    );
+    await expect(
+      service.confirm('studio-1', 'camp-1', 'admin-1', { confirm: true }),
+    ).rejects.toThrow('EMAIL_UNSUBSCRIBE_URL_BASE');
+    expect(campaignUpdate).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('refuses to confirm campaigns with localhost as unsubscribe origin', async () => {
     configGet.mockImplementation((key: string, fallback?: string) =>
       key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'http://localhost:3001' : fallback ?? '',

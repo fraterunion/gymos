@@ -44,6 +44,16 @@ Dynamic Apple Wallet passes and the PassKit web service. Every flag is normalise
 
 Any of these flags on also requires the full `WALLET_APPLE_*` signing configuration; the API refuses to boot otherwise.
 
+### Email and Communications campaigns
+
+| Variable | Purpose |
+|----------|---------|
+| `RESEND_API_KEY` | Resend API key. Without it the API uses a logging provider that delivers nothing (campaign rows end `SKIPPED`). Required in production when `PASSWORD_RECOVERY_ENABLED=true`. |
+| `EMAIL_FROM_ADDRESS` | Sender address on a Resend-verified domain (default `no-reply@gymos.app`). |
+| `EMAIL_CAMPAIGN_WORKER` | Campaign delivery worker inside the API process. **On unless exactly `0`.** Set `0` before deploying campaigns to an environment and until an internal delivery test passes. Setting `0` pauses (rows stay `PENDING` and resume when re-enabled); it does not cancel. |
+| `EMAIL_UNSUBSCRIBE_URL_BASE` | Public HTTPS **origin** of the API (no path, e.g. `https://api.example.com`) used in campaign unsubscribe links and `List-Unsubscribe` headers (`/api/v1/email/unsubscribe`). Required to confirm a campaign; there is no fallback. |
+| `EMAIL_CAMPAIGN_SEND_DELAY_MS` | Delay between campaign sends within a worker tick (default `200`). |
+
 Future (document when implemented):
 
 - `REDIS_URL` — if caching or rate limits require it.

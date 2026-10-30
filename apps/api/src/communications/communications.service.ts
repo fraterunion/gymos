@@ -536,8 +536,9 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private unsubscribeBase(): string {
-    const configured = (this.config.get<string>('EMAIL_UNSUBSCRIBE_URL_BASE', '') ?? '').trim()
-      || (this.config.get<string>('EXPO_PUBLIC_API_URL', '') ?? '').trim();
+    // Explicit only. No fallback to EXPO_PUBLIC_API_URL: validateEnv defaults that to the first
+    // CORS origin (the admin site), which has no unsubscribe route — links would 404.
+    const configured = (this.config.get<string>('EMAIL_UNSUBSCRIBE_URL_BASE', '') ?? '').trim();
     if (!configured) {
       throw new BadRequestException(
         'Configura EMAIL_UNSUBSCRIBE_URL_BASE con el dominio HTTPS público de la API antes de enviar campañas.',
