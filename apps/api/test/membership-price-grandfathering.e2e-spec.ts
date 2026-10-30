@@ -375,15 +375,20 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     const periodStartBefore = stripeSub.currentPeriodStart?.getTime();
     const periodEndBefore = stripeSub.currentPeriodEnd?.getTime();
 
+    // Real Stripe prices carry currency and cadence; the swap is refused unless both match.
+    const monthlyMxn = { currency: 'mxn', recurring: { interval: 'month', interval_count: 1 } };
     jest.mocked(stripe.retrieveSubscription).mockResolvedValue({
       id: 'sub_mock_ares',
       items: {
         data: [{
           id: 'si_mock_ares',
-          price: { id: 'price_old_ares', unit_amount: 100000 },
+          price: { id: 'price_old_ares', unit_amount: 100000, ...monthlyMxn },
         }],
       },
     } as never);
+    jest.mocked(stripe.retrievePrice).mockResolvedValue(
+      { id: 'price_e2e_test', unit_amount: 125000, ...monthlyMxn } as never,
+    );
 
     const result = await request(app.getHttpServer())
       .post(f.url)

@@ -14,6 +14,7 @@ import { MembershipPlansService } from './membership-plans.service';
 import {
   MembershipPriceChangeService,
   STRIPE_UNPRORATED_PRICE_UPDATE,
+  stripeSwapBlockReason,
 } from './membership-price-change.service';
 
 describe('MembershipPriceChangeService', () => {
@@ -39,6 +40,7 @@ describe('MembershipPriceChangeService', () => {
     user: { id: 'user-cash', firstName: 'Ana', lastName: 'Cash', email: 'ana@test.com', deletedAt: null },
     payments: [{ amountCents: 150000 }],
   };
+  const monthly = { currency: 'mxn', recurring: { interval: 'month', interval_count: 1 } };
   const stripeSub = {
     id: 'sub-stripe',
     userId: 'user-stripe',
@@ -53,7 +55,7 @@ describe('MembershipPriceChangeService', () => {
   let service: MembershipPriceChangeService;
   let prisma: {
     membershipPlan: { findFirst: jest.Mock; update: jest.Mock };
-    subscription: { findMany: jest.Mock; findFirst: jest.Mock; update: jest.Mock };
+    subscription: { findMany: jest.Mock; findFirst: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     membershipPriceChange: {
       findUnique: jest.Mock;
       findFirst: jest.Mock;
@@ -80,6 +82,7 @@ describe('MembershipPriceChangeService', () => {
           where.id === 'sub-stripe' ? stripeSub : cash,
         ),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       membershipPriceChange: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -98,9 +101,9 @@ describe('MembershipPriceChangeService', () => {
     };
     stripe = {
       retrieveSubscription: jest.fn().mockResolvedValue({
-        items: { data: [{ id: 'si_1', price: { id: 'price_old', unit_amount: 150000 } }] },
+        items: { data: [{ id: 'si_1', price: { id: 'price_old', unit_amount: 150000, ...monthly } }] },
       }),
-      retrievePrice: jest.fn(),
+      retrievePrice: jest.fn(async (id: string) => ({ id, unit_amount: id === 'price_new' ? 195000 : 150000, ...monthly })),
       updateSubscription: jest.fn().mockResolvedValue({ id: 'sub_stripe' }),
       deactivatePrice: jest.fn().mockResolvedValue({}),
     };
@@ -249,6 +252,7 @@ describe('MembershipPriceChangeService', () => {
       confirm: true,
     });
     expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
@@ -280,6 +284,54 @@ describe('MembershipPriceChangeService', () => {
       }),
     );
     expect(change.items.find((item) => item.id === 'item-stripe')?.applyNewPrice).toBe(true);
+  });
+
+  it('never swaps a Stripe item whose live cadence differs from the new price (Stripe would invoice now)', async () => {
+    createdChange(MembershipPriceChangeScope.SELECTED);
+    stripe.retrieveSubscription.mockResolvedValue({
+      items: { data: [{ id: 'si_1', price: { id: 'price_45d', unit_amount: 150000, currency: 'mxn', recurring: { interval: 'day', interval_count: 45 } } }] },
+    });
+    await service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.SELECTED,
+      subscriptionIds: ['sub-stripe'],
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    });
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    const stripePriceWrite = prisma.subscription.update.mock.calls.find(
+      (call: [{ where: { id: string } }]) => call[0].where.id === 'sub-stripe',
+    );
+    expect(stripePriceWrite).toBeUndefined();
+    expect(prisma.membershipPriceChangeItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'item-stripe' },
+        data: expect.objectContaining({
+          status: MembershipPriceChangeItemStatus.FAILED,
+          error: expect.stringContaining('ciclo de cobro'),
+        }),
+      }),
+    );
+  });
+
+  it('pins an excluded member without any price lock to the price they had before the change', async () => {
+    createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
+    prisma.subscription.findFirst.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === 'sub-stripe' ? stripeSub : { ...cash, priceCents: null },
+    );
+    await service.apply('studio-1', 'plan-full', 'owner', {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.FUTURE_ONLY,
+      idempotencyKey: 'idem-12345678',
+      confirm: true,
+    });
+    expect(prisma.subscription.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+      where: { id: 'sub-cash', priceCents: null },
+      data: { priceCents: 150000 },
+    });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 
   it('records a Stripe failure without changing that subscription price', async () => {
@@ -378,6 +430,24 @@ describe('MembershipPriceChangeService', () => {
     })).rejects.toThrow('opción personalizada');
     expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  describe('stripeSwapBlockReason', () => {
+    const shape = { unitAmount: 150000, currency: 'mxn', interval: 'month', intervalCount: 1 };
+    const live = { ...shape, itemCount: 1 };
+    it('allows a same-currency, same-cadence, non-zero swap', () => {
+      expect(stripeSwapBlockReason(live, { ...shape, unitAmount: 195000 })).toBeNull();
+    });
+    it.each([
+      ['several items', { ...live, itemCount: 2 }, shape, 'varios conceptos'],
+      ['a free live price', { ...live, unitAmount: 0 }, shape, '$0'],
+      ['a free target price', live, { ...shape, unitAmount: 0 }, '$0'],
+      ['another currency', live, { ...shape, currency: 'usd' }, 'moneda'],
+      ['another interval', live, { ...shape, interval: 'day', intervalCount: 45 }, 'ciclo de cobro'],
+      ['another interval count', live, { ...shape, intervalCount: 3 }, 'ciclo de cobro'],
+    ])('blocks %s', (_label, l, t, message) => {
+      expect(stripeSwapBlockReason(l, t)).toContain(message);
+    });
   });
 
   it('refuses an unconfirmed change', async () => {

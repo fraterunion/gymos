@@ -14,6 +14,7 @@ import {
   type MembershipPriceChange,
   type MembershipPriceChangeItem,
 } from '@prisma/client';
+import type Stripe from 'stripe';
 import { RENEWABLE_SUBSCRIPTION_STATUSES } from '../billing/subscription-lifecycle.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
@@ -36,6 +37,44 @@ const AFFECTED_STATUSES: SubscriptionStatus[] = [
 export const STRIPE_UNPRORATED_PRICE_UPDATE = {
   proration_behavior: 'none' as const,
 };
+
+export type StripePriceShape = {
+  unitAmount: number | null;
+  currency: string | null;
+  interval: string | null;
+  intervalCount: number | null;
+};
+
+/**
+ * Even with proration_behavior 'none', Stripe resets the billing anchor and invoices immediately
+ * when an item moves to a price with a different interval, or between a free and a paid price.
+ * Only a single-item subscription whose live price has the same currency and cadence as the
+ * target, both non-zero, is swapped; anything else fails closed and Stripe is not touched.
+ */
+export function stripeSwapBlockReason(live: StripePriceShape & { itemCount: number }, target: StripePriceShape): string | null {
+  if (live.itemCount !== 1) {
+    return 'La suscripción de Stripe tiene varios conceptos. No se modificó el cobro.';
+  }
+  if (!live.unitAmount || !target.unitAmount) {
+    return 'Cambiar desde o hacia un precio de $0 haría que Stripe cobre de inmediato. No se modificó el cobro.';
+  }
+  if (!live.currency || live.currency.toLowerCase() !== target.currency?.toLowerCase()) {
+    return 'La moneda del cobro actual en Stripe no coincide con el nuevo precio. No se modificó el cobro.';
+  }
+  if (live.interval !== target.interval || (live.intervalCount ?? 1) !== (target.intervalCount ?? 1)) {
+    return `El ciclo de cobro actual en Stripe (${live.intervalCount ?? 1} ${live.interval ?? '?'}) no coincide con el nuevo precio (${target.intervalCount ?? 1} ${target.interval ?? '?'}). Stripe facturaría de inmediato. No se modificó el cobro.`;
+  }
+  return null;
+}
+
+function priceShape(price: Stripe.Price | null | undefined): StripePriceShape {
+  return {
+    unitAmount: price?.unit_amount ?? null,
+    currency: price?.currency ?? null,
+    interval: price?.recurring?.interval ?? null,
+    intervalCount: price?.recurring?.interval_count ?? null,
+  };
+}
 
 type PriceChangeWithItems = MembershipPriceChange & { items: MembershipPriceChangeItem[] };
 
@@ -303,6 +342,12 @@ export class MembershipPriceChangeService {
 
   private async executePending(change: PriceChangeWithItems): Promise<PriceChangeWithItems> {
     const targetPriceId = change.newStripePriceId;
+    // Read the target price at most once per run, and only if a Stripe item actually needs a swap.
+    let targetShape: Promise<StripePriceShape> | null = null;
+    const loadTargetShape = () => {
+      targetShape ??= this.stripe.retrievePrice(targetPriceId!).then(priceShape);
+      return targetShape;
+    };
     for (const item of change.items) {
       if (
         item.status === MembershipPriceChangeItemStatus.APPLIED ||
@@ -310,7 +355,7 @@ export class MembershipPriceChangeService {
       ) {
         continue;
       }
-      await this.executeItem(change, item, targetPriceId);
+      await this.executeItem(change, item, targetPriceId, loadTargetShape);
     }
     return this.finish(change);
   }
@@ -319,6 +364,7 @@ export class MembershipPriceChangeService {
     change: MembershipPriceChange,
     item: MembershipPriceChangeItem,
     targetPriceId: string | null,
+    loadTargetShape: () => Promise<StripePriceShape>,
   ) {
     const claimed = await this.prisma.membershipPriceChangeItem.updateMany({
       where: {
@@ -342,8 +388,16 @@ export class MembershipPriceChangeService {
       if (!item.applyNewPrice) {
         // Fer explicitly excluded this member (or chose FUTURE_ONLY).
         // Never rewrite their effective price from a potentially stale preview
-        // snapshot. This path is intentionally ledger-only and never touches
-        // the subscription or Stripe billing.
+        // snapshot. This path never touches Stripe billing or an existing lock.
+        // A row without any lock (created by a build that predates price locks,
+        // e.g. during the deploy window) is pinned to the price it had before
+        // this change, so being excluded can never mean renewing at the new price.
+        if (subscription.priceCents == null) {
+          await this.prisma.subscription.updateMany({
+            where: { id: subscription.id, priceCents: null },
+            data: { priceCents: item.oldPriceCents },
+          });
+        }
         await this.markItem(item.id, MembershipPriceChangeItemStatus.SKIPPED, null);
         return;
       }
@@ -374,6 +428,11 @@ export class MembershipPriceChangeService {
           return;
         }
         if (live.priceId !== targetPriceId) {
+          const blocked = stripeSwapBlockReason(live, await loadTargetShape());
+          if (blocked) {
+            await this.markItem(item.id, MembershipPriceChangeItemStatus.FAILED, blocked);
+            return;
+          }
           await this.stripe.updateSubscription(
             subscription.stripeSubscriptionId,
             {
@@ -507,28 +566,29 @@ export class MembershipPriceChangeService {
     return resolved;
   }
 
-  private async readStripePrice(stripeSubscriptionId: string): Promise<{
+  private async readStripePrice(stripeSubscriptionId: string): Promise<StripePriceShape & {
     itemId: string | null;
     priceId: string | null;
-    unitAmount: number | null;
+    itemCount: number;
     error?: string;
   }> {
     try {
       const subscription = await this.stripe.retrieveSubscription(stripeSubscriptionId);
-      const item = subscription.items?.data?.[0];
-      const price = item?.price;
+      const items = subscription.items?.data ?? [];
+      const item = items[0];
+      const price = item?.price as Stripe.Price | string | undefined;
       const priceId = typeof price === 'string' ? price : price?.id ?? null;
-      let unitAmount = typeof price === 'string' ? null : price?.unit_amount ?? null;
-      if (unitAmount == null && priceId) {
-        const fetched = await this.stripe.retrievePrice(priceId);
-        unitAmount = fetched.unit_amount ?? null;
+      let expanded = typeof price === 'string' ? null : price ?? null;
+      if (expanded?.unit_amount == null && priceId) {
+        expanded = await this.stripe.retrievePrice(priceId);
       }
-      return { itemId: item?.id ?? null, priceId, unitAmount };
+      return { itemId: item?.id ?? null, priceId, itemCount: items.length, ...priceShape(expanded) };
     } catch (error) {
       return {
         itemId: null,
         priceId: null,
-        unitAmount: null,
+        itemCount: 0,
+        ...priceShape(null),
         error: error instanceof Error ? error.message : 'Stripe no respondió',
       };
     }
