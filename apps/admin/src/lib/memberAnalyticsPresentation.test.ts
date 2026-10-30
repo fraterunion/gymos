@@ -4,7 +4,7 @@ import {
   ENGAGEMENT_STATUS_LABELS,
   formatLastVisit,
   formatTrendPct,
-} from "@/lib/memberAnalyticsPresentation";
+} from "./memberAnalyticsPresentation.ts";
 
 test("formatTrendPct handles null and directions", () => {
   assert.equal(formatTrendPct(null), "—");
@@ -13,8 +13,12 @@ test("formatTrendPct handles null and directions", () => {
 });
 
 test("formatLastVisit shows relative labels", () => {
-  const now = new Date("2026-08-21T12:00:00.000Z");
-  assert.equal(formatLastVisit(now.toISOString()), "Hoy");
+  // formatLastVisit compares against the real clock, so the inputs must be relative to now.
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  assert.equal(formatLastVisit(hoursAgo(1)), "Hoy");
+  assert.equal(formatLastVisit(hoursAgo(30)), "Ayer");
+  assert.equal(formatLastVisit(hoursAgo(3 * 24 + 1)), "Hace 3 d");
+  assert.equal(formatLastVisit(null), "Sin visitas");
 });
 
 test("engagement labels are Spanish", () => {
