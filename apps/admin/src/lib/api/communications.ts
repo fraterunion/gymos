@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api/client";
+import type { CampaignDeliveryState } from "@/lib/campaignDelivery";
 
 export type CampaignFilters = {
   planIds?: string[];
@@ -26,7 +27,35 @@ export type CampaignSummary = {
   createdAt: string;
   confirmedAt: string | null;
   completedAt: string | null;
+  startedAt?: string | null;
+  pendingCount?: number;
+  deliveryState?: CampaignDeliveryState | null;
 };
+
+export type CommunicationsStatus = {
+  delivery: { active: boolean; message: string | null };
+  sender: {
+    source: "CAMPAIGN_SENDER" | "PLATFORM_DEFAULT" | "INVALID";
+    fromName: string | null;
+    fromAddress: string | null;
+    replyTo: string | null;
+    error: string | null;
+  };
+  unsubscribeConfigured: boolean;
+  staleAfterMinutes: number;
+};
+
+export function fetchCommunicationsStatus(studioId: string) {
+  return apiRequest<CommunicationsStatus>(`/studios/${studioId}/communications/status`);
+}
+
+/** Re-queues failed recipients and/or resumes a stopped campaign. Requires explicit confirmation. */
+export function retryCampaign(studioId: string, campaignId: string) {
+  return apiRequest<CampaignDetail>(`/studios/${studioId}/communications/campaigns/${campaignId}/retry`, {
+    method: "POST",
+    body: JSON.stringify({ confirm: true }),
+  });
+}
 
 export type CampaignDetail = CampaignSummary & {
   bodyText: string;

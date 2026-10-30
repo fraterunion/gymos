@@ -17,14 +17,20 @@ import {
   BulkScheduleOperationDto,
   DuplicateClassDto,
   DuplicateWeekDto,
+  RangeCancelExecuteDto,
+  RangeCancelPreviewDto,
 } from './dto/schedule-operations.dto';
 import { ScheduleOperationsService } from './schedule-operations.service';
+import { ScheduleRangeCancellationService } from './schedule-range-cancellation.service';
 
 @Controller('studios/:studioId/schedule-operations')
 @UseGuards(JwtAuthGuard, StudioMemberGuard, RolesGuard)
 @Roles(Role.OWNER, Role.ADMIN)
 export class ScheduleOperationsController {
-  constructor(private readonly operations: ScheduleOperationsService) {}
+  constructor(
+    private readonly operations: ScheduleOperationsService,
+    private readonly rangeCancellation: ScheduleRangeCancellationService,
+  ) {}
 
   @Post('duplicate-week/preview')
   previewDuplicateWeek(
@@ -85,5 +91,24 @@ export class ScheduleOperationsController {
     @CurrentUser('sub') actorUserId: string,
   ) {
     return this.operations.executeBulk(studioId, dto, actorUserId);
+  }
+
+  @Post('range-cancel/preview')
+  @HttpCode(HttpStatus.OK)
+  previewRangeCancel(
+    @Param('studioId') studioId: string,
+    @Body() dto: RangeCancelPreviewDto,
+  ) {
+    return this.rangeCancellation.preview(studioId, dto);
+  }
+
+  @Post('range-cancel')
+  @HttpCode(HttpStatus.OK)
+  executeRangeCancel(
+    @Param('studioId') studioId: string,
+    @Body() dto: RangeCancelExecuteDto,
+    @CurrentUser('sub') actorUserId: string,
+  ) {
+    return this.rangeCancellation.execute(studioId, dto, actorUserId);
   }
 }

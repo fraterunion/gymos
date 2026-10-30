@@ -154,3 +154,65 @@ export async function executeBulkOperation(
 export function newIdempotencyKey(): string {
   return crypto.randomUUID();
 }
+
+export type RangeCancelClass = {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  localDate: string;
+  localTime: string;
+  classTemplateId: string;
+  className: string;
+  instructorId: string | null;
+  instructorName: string | null;
+  seriesId: string | null;
+  bookings: number;
+  waitlist: number;
+};
+
+export type RangeCancelProtectedClass = RangeCancelClass & { reason: "STARTED" | "ATTENDED"; attendances: number };
+
+export type RangeCancelFilters = {
+  fromDate: string;
+  toDate: string;
+  instructorIds?: string[];
+  classTemplateIds?: string[];
+};
+
+export type RangeCancelPreview = {
+  timezone: string;
+  fromDate: string;
+  toDate: string;
+  weekCount: number;
+  classes: RangeCancelClass[];
+  protectedClasses: RangeCancelProtectedClass[];
+  alreadyCancelledCount: number;
+  totals: { classes: number; bookings: number; waitlist: number; protected: number };
+  previewFingerprint: string;
+};
+
+export type RangeCancelResult = {
+  cancelledCount: number;
+  cancelledBookingCount: number;
+  expiredWaitlistCount: number;
+  cancelledClassIds: string[];
+  protectedClasses: RangeCancelProtectedClass[];
+  idempotentReplay?: boolean;
+};
+
+export async function previewRangeCancel(studioId: string, body: RangeCancelFilters): Promise<RangeCancelPreview> {
+  return apiRequest(`/studios/${studioId}/schedule-operations/range-cancel/preview`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function executeRangeCancel(
+  studioId: string,
+  body: RangeCancelFilters & { previewFingerprint: string; cancelReason?: string; idempotencyKey: string },
+): Promise<RangeCancelResult> {
+  return apiRequest(`/studios/${studioId}/schedule-operations/range-cancel`, {
+    method: "POST",
+    body: JSON.stringify({ ...body, confirm: true }),
+  });
+}

@@ -28,6 +28,12 @@ import { ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto
 export class CommunicationsController {
   constructor(private readonly communications: CommunicationsService) {}
 
+  /** Delivery paused/active and the exact From / Reply-To campaigns will use. */
+  @Get('status')
+  status(@Param('studioId') studioId: string) {
+    return this.communications.status(studioId);
+  }
+
   @Post('preview')
   @HttpCode(HttpStatus.OK)
   preview(

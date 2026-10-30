@@ -21,6 +21,7 @@ describe('CommunicationsService delivery', () => {
     failedCount: 0,
     skippedCount: 0,
     confirmedAt: new Date(),
+    startedAt: new Date() as Date | null,
     completedAt: null,
     createdAt: new Date(),
   };
@@ -54,6 +55,7 @@ describe('CommunicationsService delivery', () => {
   let audienceMembers: Array<{ user: { id: string; email: string; firstName: string; lastName: string } }>;
   let campaignCreate: jest.Mock;
   let storedRecipients: jest.Mock;
+  let campaignFindFirst: jest.Mock;
 
   beforeEach(async () => {
     recipients = [
@@ -62,13 +64,18 @@ describe('CommunicationsService delivery', () => {
     ];
     audienceMembers = [{ user: { id: 'user-1', email: 'ada@ares.test', firstName: 'Ada', lastName: 'Lovelace' } }];
     campaignCreate = jest.fn();
+    campaignFindFirst = jest.fn().mockResolvedValue({ ...campaign, status: EmailCampaignStatus.DRAFT });
     storedRecipients = jest.fn().mockResolvedValue([{ userId: 'user-1', email: 'ada@ares.test' }]);
     send = jest.fn().mockResolvedValue({ providerMessageId: 'msg-1', delivered: true });
     configGet = jest.fn((key: string, fallback?: string) =>
       key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
     );
     campaignUpdate = jest.fn(async ({ data }: { data: Partial<typeof campaign> }) => Object.assign(campaign, data));
-    findCampaign = jest.fn().mockResolvedValue(null);
+    campaign.status = EmailCampaignStatus.SENDING;
+    campaign.startedAt = new Date();
+    delete process.env['EMAIL_CAMPAIGN_WORKER'];
+    // deliver() reads the campaign by id; create() looks it up by idempotency key (none yet).
+    findCampaign = jest.fn(async ({ where }: { where: { id?: string } }) => (where.id === 'camp-1' ? { ...campaign } : null));
     const prisma = {
       emailCampaignRecipient: {
         findMany: storedRecipients,
@@ -103,7 +110,7 @@ describe('CommunicationsService delivery', () => {
       emailCampaign: {
         create: campaignCreate,
         findUnique: findCampaign,
-        findFirst: jest.fn().mockResolvedValue({ ...campaign, status: EmailCampaignStatus.DRAFT }),
+        findFirst: campaignFindFirst,
         update: campaignUpdate,
       },
       emailSuppression: {
@@ -260,5 +267,75 @@ describe('CommunicationsService delivery', () => {
     send.mockClear();
     await service.deliver('camp-1', { maxSends: 5 });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  const ARES_SENDERS = JSON.stringify({
+    ares: {
+      fromName: 'ARES Training Club',
+      fromAddress: 'fernando@arestrainingclub.com',
+      replyTo: 'fernando@arestrainingclub.com',
+    },
+  });
+  const withConfig = (values: Record<string, string>) =>
+    configGet.mockImplementation((key: string, fallback?: string) =>
+      key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : values[key] ?? fallback ?? '',
+    );
+
+  it('sends campaigns as "ARES Training Club <fernando@…>" with Reply-To Fernando when configured', async () => {
+    withConfig({ EMAIL_CAMPAIGN_SENDERS: ARES_SENDERS, EMAIL_FROM_ADDRESS: 'no-reply@arestrainingclub.com' });
+    await service.deliver('camp-1', { maxSends: 5 });
+    expect(send).toHaveBeenCalledTimes(1);
+    const message = send.mock.calls[0][0];
+    expect(message.from).toEqual({ email: 'fernando@arestrainingclub.com', name: 'ARES Training Club' });
+    expect(message.replyTo).toBe('fernando@arestrainingclub.com');
+    expect(message.headers['List-Unsubscribe']).toMatch(/^<https:\/\/api\.ares\.example\.test\/api\/v1\/email\/unsubscribe\?token=/);
+    expect(message.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+  });
+
+  it('keeps the previous platform sender and studio support Reply-To for studios without a campaign sender', async () => {
+    withConfig({
+      EMAIL_CAMPAIGN_SENDERS: JSON.stringify({ 'other-studio': JSON.parse(ARES_SENDERS).ares }),
+      EMAIL_FROM_ADDRESS: 'no-reply@arestrainingclub.com',
+    });
+    await service.deliver('camp-1', { maxSends: 5 });
+    const message = send.mock.calls[0][0];
+    expect(message.from).toEqual({ email: 'no-reply@arestrainingclub.com', name: 'ARES' });
+    expect(message.replyTo).toBe('desk@ares.test');
+  });
+
+  it('fails closed on a campaign sender outside the verified sending domain: nothing is sent', async () => {
+    withConfig({
+      EMAIL_CAMPAIGN_SENDERS: JSON.stringify({ ares: { fromName: 'ARES', fromAddress: 'fernando@gmail.com' } }),
+      EMAIL_FROM_ADDRESS: 'no-reply@arestrainingclub.com',
+    });
+    await service.deliver('camp-1', { maxSends: 5 });
+    expect(send).not.toHaveBeenCalled();
+    expect(recipients.find((row) => row.id === 'rec-pending')?.status).toBe(EmailRecipientStatus.FAILED);
+    expect(recipients.find((row) => row.id === 'rec-pending')?.error).toContain('campaign_sender_invalid');
+    await expect(service.confirm('studio-1', 'camp-1', 'admin-1', { confirm: true })).rejects.toThrow('dominio verificado');
+  });
+
+  it('refuses to confirm or retry while delivery is paused; the campaign stays a draft', async () => {
+    process.env['EMAIL_CAMPAIGN_WORKER'] = '0';
+    try {
+      await expect(service.confirm('studio-1', 'camp-1', 'admin-1', { confirm: true })).rejects.toThrow('pausados');
+      expect(campaignUpdate).not.toHaveBeenCalled();
+      campaignFindFirst.mockResolvedValueOnce({ ...campaign, status: EmailCampaignStatus.PARTIAL });
+      await expect(service.retryFailed('studio-1', 'camp-1', 'admin-1', true)).rejects.toThrow('pausados');
+      expect(campaignUpdate).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      delete process.env['EMAIL_CAMPAIGN_WORKER'];
+    }
+  });
+
+  it('never auto-sends a campaign left queued past the stale window', async () => {
+    campaign.startedAt = new Date(Date.now() - 7 * 60 * 60_000);
+    await service.deliver('camp-1', { maxSends: 5 });
+    expect(send).not.toHaveBeenCalled();
+    expect(recipients.find((row) => row.id === 'rec-pending')?.status).toBe(EmailRecipientStatus.PENDING);
+    withConfig({ EMAIL_CAMPAIGN_STALE_AFTER_MINUTES: '600' });
+    await service.deliver('camp-1', { maxSends: 5 });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

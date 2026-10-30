@@ -104,12 +104,28 @@ describe('ARES communications preview + unsubscribe safety (e2e)', () => {
       .expect(400);
     expect((await prisma.emailCampaign.findUniqueOrThrow({ where: { id } })).status).toBe('DRAFT');
 
-    const queued = await request(app.getHttpServer())
+    // Delivery is paused on this server (EMAIL_CAMPAIGN_WORKER=0): confirming is refused and
+    // the campaign stays a draft, so nothing can be sent unexpectedly once delivery is enabled.
+    const paused = await request(app.getHttpServer())
       .post(`${f.base}/campaigns/${id}/confirm`)
       .set('Authorization', `Bearer ${f.token}`)
       .send({ confirm: true })
-      .expect(200);
-    expect(queued.body.status).toBe('SENDING');
+      .expect(409);
+    expect(paused.body.message).toContain('pausados');
+    expect((await prisma.emailCampaign.findUniqueOrThrow({ where: { id } })).status).toBe('DRAFT');
+
+    // With delivery active the explicit confirmation queues it (the e2e app runs no delivery timer).
+    delete process.env['EMAIL_CAMPAIGN_WORKER'];
+    try {
+      const queued = await request(app.getHttpServer())
+        .post(`${f.base}/campaigns/${id}/confirm`)
+        .set('Authorization', `Bearer ${f.token}`)
+        .send({ confirm: true })
+        .expect(200);
+      expect(queued.body.status).toBe('SENDING');
+    } finally {
+      process.env['EMAIL_CAMPAIGN_WORKER'] = '0';
+    }
     expect(await prisma.emailCampaignRecipient.count({ where: { campaignId: id, status: 'SENT' } })).toBe(0);
   });
 

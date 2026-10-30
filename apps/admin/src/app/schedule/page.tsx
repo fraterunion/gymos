@@ -21,6 +21,7 @@ import {
 import { CreateSeriesModal } from "@/app/schedule/CreateSeriesModal";
 import { EditSeriesModal } from "@/app/schedule/EditSeriesModal";
 import { FinishSeriesModal } from "@/app/schedule/FinishSeriesModal";
+import { RangeCancelModal } from "@/app/schedule/RangeCancelModal";
 import { SeriesDrawer } from "@/app/schedule/SeriesDrawer";
 import { SeriesView } from "@/app/schedule/SeriesView";
 import { SessionDrawer } from "@/app/schedule/SessionDrawer";
@@ -73,11 +74,13 @@ function formatDayHeader(dayKey: string, tz: string): { weekday: string; day: st
 function CalendarOverflowMenu({
   canManage,
   onDuplicateWeek,
+  onRangeCancel,
   onToggleSelect,
   selectMode,
 }: {
   canManage: boolean;
   onDuplicateWeek: () => void;
+  onRangeCancel: () => void;
   onToggleSelect: () => void;
   selectMode: boolean;
 }) {
@@ -117,6 +120,16 @@ function CalendarOverflowMenu({
               }}
             >
               {selectMode ? "Salir de selección" : "Seleccionar clases"}
+            </button>
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-zinc-50"
+              onClick={() => {
+                setOpen(false);
+                onRangeCancel();
+              }}
+            >
+              Cancelar clases por rango de fechas
             </button>
           </div>
         </>
@@ -236,6 +249,7 @@ export default function SchedulePage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [duplicateWeekOpen, setDuplicateWeekOpen] = useState(false);
+  const [rangeCancelOpen, setRangeCancelOpen] = useState(false);
   const [duplicateClass, setDuplicateClass] = useState<ScheduledClassDto | null>(null);
   const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(null);
   const [sessionClassId, setSessionClassId] = useState<string | null>(null);
@@ -452,6 +466,7 @@ export default function SchedulePage() {
 
   const handleOpsDone = (message?: string) => {
     setDuplicateWeekOpen(false);
+    setRangeCancelOpen(false);
     setDuplicateClass(null);
     setBulkOperation(null);
     setSelectMode(false);
@@ -534,6 +549,7 @@ export default function SchedulePage() {
                     canManage={canManage}
                     selectMode={selectMode}
                     onDuplicateWeek={() => setDuplicateWeekOpen(true)}
+                    onRangeCancel={() => setRangeCancelOpen(true)}
                     onToggleSelect={() => {
                       setSelectMode((v) => !v);
                       setSelectedIds(new Set());
@@ -697,6 +713,18 @@ export default function SchedulePage() {
           sourceWeekStart={weekBounds.startKey}
           timezone={tz}
           onClose={() => setDuplicateWeekOpen(false)}
+          onDone={handleOpsDone}
+        />
+      ) : null}
+
+      {rangeCancelOpen ? (
+        <RangeCancelModal
+          studioId={selectedStudioId}
+          timezone={tz}
+          defaultFromDate={weekBounds.startKey}
+          templates={templates}
+          instructors={members}
+          onClose={() => setRangeCancelOpen(false)}
           onDone={handleOpsDone}
         />
       ) : null}

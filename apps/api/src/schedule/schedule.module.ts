@@ -4,6 +4,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { SalesModule } from '../sales/sales.module';
 import { ScheduleOperationsController } from './schedule-operations.controller';
 import { ScheduleOperationsService } from './schedule-operations.service';
+import { ScheduleRangeCancellationService } from './schedule-range-cancellation.service';
 import { ScheduleController } from './schedule.controller';
 import { ScheduleConflictsService } from './schedule-conflicts.service';
 import { ScheduleSeriesController } from './schedule-series.controller';
@@ -20,6 +21,7 @@ import { ScheduleSessionService } from './schedule-session.service';
     ScheduleSeriesService,
     ScheduleConflictsService,
     ScheduleOperationsService,
+    ScheduleRangeCancellationService,
   ],
   exports: [
     ScheduleService,
