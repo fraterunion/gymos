@@ -12,8 +12,11 @@ import { AuditService } from '../sales/audit.service';
 import { StripeService } from '../stripe/stripe.service';
 import { MembershipPlansService } from './membership-plans.service';
 import {
+  CONCURRENT_PRICE_CHANGE_MESSAGE,
   MembershipPriceChangeService,
+  STALE_MEMBER_PRICE_MESSAGE,
   STRIPE_UNPRORATED_PRICE_UPDATE,
+  SUPERSEDED_PRICE_CHANGE_MESSAGE,
   stripeSwapBlockReason,
 } from './membership-price-change.service';
 
@@ -54,7 +57,7 @@ describe('MembershipPriceChangeService', () => {
 
   let service: MembershipPriceChangeService;
   let prisma: {
-    membershipPlan: { findFirst: jest.Mock; update: jest.Mock };
+    membershipPlan: { findFirst: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     subscription: { findMany: jest.Mock; findFirst: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     membershipPriceChange: {
       findUnique: jest.Mock;
@@ -63,6 +66,7 @@ describe('MembershipPriceChangeService', () => {
       findUniqueOrThrow: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
+      count: jest.Mock;
     };
     membershipPriceChangeItem: { updateMany: jest.Mock; update: jest.Mock; findMany: jest.Mock };
     $transaction: jest.Mock;
@@ -75,6 +79,7 @@ describe('MembershipPriceChangeService', () => {
       membershipPlan: {
         findFirst: jest.fn().mockResolvedValue(plan),
         update: jest.fn().mockResolvedValue({ ...plan, priceCents: 195000, stripePriceId: 'price_new' }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       subscription: {
         findMany: jest.fn().mockResolvedValue([cash, stripeSub]),
@@ -86,11 +91,12 @@ describe('MembershipPriceChangeService', () => {
       },
       membershipPriceChange: {
         findUnique: jest.fn().mockResolvedValue(null),
-        findFirst: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
         findMany: jest.fn(),
         findUniqueOrThrow: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
       },
       membershipPriceChangeItem: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -289,7 +295,7 @@ describe('MembershipPriceChangeService', () => {
   it('never swaps a Stripe item whose live cadence differs from the new price (Stripe would invoice now)', async () => {
     createdChange(MembershipPriceChangeScope.SELECTED);
     stripe.retrieveSubscription.mockResolvedValue({
-      items: { data: [{ id: 'si_1', price: { id: 'price_45d', unit_amount: 150000, currency: 'mxn', recurring: { interval: 'day', interval_count: 45 } } }] },
+      items: { data: [{ id: 'si_1', price: { id: 'price_old', unit_amount: 150000, currency: 'mxn', recurring: { interval: 'day', interval_count: 45 } } }] },
     });
     await service.apply('studio-1', 'plan-full', 'owner', {
       newPriceCents: 195000,
@@ -430,6 +436,151 @@ describe('MembershipPriceChangeService', () => {
     })).rejects.toThrow('opción personalizada');
     expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  describe('retry', () => {
+    function partialChange() {
+      const change = createdChange(MembershipPriceChangeScope.ALL_EXISTING);
+      const stored = {
+        ...change,
+        status: MembershipPriceChangeStatus.PARTIAL,
+        items: change.items.map((item) => ({
+          ...item,
+          status: item.id === 'item-stripe' ? MembershipPriceChangeItemStatus.FAILED : MembershipPriceChangeItemStatus.APPLIED,
+        })),
+      };
+      prisma.membershipPriceChange.findFirst.mockResolvedValueOnce(stored); // load
+      prisma.membershipPriceChange.findUniqueOrThrow.mockResolvedValue({
+        ...stored,
+        status: MembershipPriceChangeStatus.APPLYING,
+        items: stored.items.map((item) => ({ ...item, status: item.id === 'item-stripe' ? MembershipPriceChangeItemStatus.PENDING : item.status })),
+      });
+      return stored;
+    }
+
+    it('re-applies only the failed member with the same Stripe idempotency key', async () => {
+      partialChange();
+      prisma.membershipPriceChange.findFirst.mockResolvedValueOnce(null); // no newer change
+      await service.retry('studio-1', 'plan-full', 'change-1', 'owner', true);
+      expect(prisma.membershipPriceChangeItem.updateMany).toHaveBeenCalledWith({
+        where: { priceChangeId: 'change-1', status: MembershipPriceChangeItemStatus.FAILED },
+        data: { status: MembershipPriceChangeItemStatus.PENDING, error: null },
+      });
+      expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+      expect(stripe.updateSubscription).toHaveBeenCalledWith(
+        'sub_stripe',
+        { items: [{ id: 'si_1', price: 'price_new' }], ...STRIPE_UNPRORATED_PRICE_UPDATE },
+        { idempotencyKey: 'membership-price-change:item-stripe' },
+      );
+      // The already-applied CASH member is not touched again.
+      const cashWrite = prisma.subscription.update.mock.calls.find((call: [{ where: { id: string } }]) => call[0].where.id === 'sub-cash');
+      expect(cashWrite).toBeUndefined();
+    });
+
+    it('refuses to retry a change that a newer price change for the plan superseded', async () => {
+      partialChange();
+      prisma.membershipPriceChange.findFirst.mockResolvedValueOnce({ id: 'change-2' }); // newer change exists
+      await expect(service.retry('studio-1', 'plan-full', 'change-1', 'owner', true)).rejects.toThrow(SUPERSEDED_PRICE_CHANGE_MESSAGE);
+      expect(prisma.membershipPriceChangeItem.updateMany).not.toHaveBeenCalled();
+      expect(prisma.membershipPriceChange.update).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+    });
+
+    it('returns a completed change without re-executing anything', async () => {
+      const change = createdChange(MembershipPriceChangeScope.ALL_EXISTING);
+      prisma.membershipPriceChange.findFirst.mockResolvedValueOnce({ ...change, status: MembershipPriceChangeStatus.COMPLETED });
+      const result = await service.retry('studio-1', 'plan-full', 'change-1', 'owner', true);
+      expect(result.idempotentReplay).toBe(true);
+      expect(prisma.membershipPriceChangeItem.updateMany).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('stale members', () => {
+    it('never moves a Stripe member whose live price changed after the preview', async () => {
+      createdChange(MembershipPriceChangeScope.SELECTED);
+      stripe.retrieveSubscription.mockResolvedValue({
+        items: { data: [{ id: 'si_1', price: { id: 'price_newer_decision', unit_amount: 170000, ...monthly } }] },
+      });
+      await service.apply('studio-1', 'plan-full', 'owner', {
+        newPriceCents: 195000,
+        scope: MembershipPriceChangeScope.SELECTED,
+        subscriptionIds: ['sub-stripe'],
+        idempotencyKey: 'idem-12345678',
+        confirm: true,
+      });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(prisma.membershipPriceChangeItem.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'item-stripe' },
+        data: expect.objectContaining({ status: MembershipPriceChangeItemStatus.FAILED, error: STALE_MEMBER_PRICE_MESSAGE }),
+      }));
+    });
+
+    it('never overwrites a CASH lock that changed after the preview', async () => {
+      createdChange(MembershipPriceChangeScope.ALL_EXISTING);
+      prisma.subscription.findFirst.mockImplementation(async ({ where }: { where: { id: string } }) =>
+        where.id === 'sub-stripe' ? stripeSub : { ...cash, priceCents: 170000 },
+      );
+      await service.apply('studio-1', 'plan-full', 'owner', {
+        newPriceCents: 195000,
+        scope: MembershipPriceChangeScope.ALL_EXISTING,
+        idempotencyKey: 'idem-12345678',
+        confirm: true,
+      });
+      const cashWrite = prisma.subscription.update.mock.calls.find((call: [{ where: { id: string } }]) => call[0].where.id === 'sub-cash');
+      expect(cashWrite).toBeUndefined();
+      expect(prisma.membershipPriceChangeItem.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'item-cash' },
+        data: expect.objectContaining({ status: MembershipPriceChangeItemStatus.FAILED, error: STALE_MEMBER_PRICE_MESSAGE }),
+      }));
+    });
+  });
+
+  describe('concurrent administrator submissions', () => {
+    const request = {
+      newPriceCents: 195000,
+      scope: MembershipPriceChangeScope.FUTURE_ONLY,
+      idempotencyKey: 'idem-12345678',
+      confirm: true as const,
+    };
+
+    it('refuses while another change for the plan is still applying', async () => {
+      createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
+      prisma.membershipPriceChange.count.mockResolvedValue(1);
+      await expect(service.apply('studio-1', 'plan-full', 'owner', request)).rejects.toThrow(CONCURRENT_PRICE_CHANGE_MESSAGE);
+      expect(prisma.membershipPlan.updateMany).not.toHaveBeenCalled();
+      expect(prisma.membershipPriceChange.create).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    it('a different decision that lost the race gets 409 and its unused Stripe price is archived', async () => {
+      createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
+      prisma.membershipPlan.updateMany.mockResolvedValue({ count: 0 }); // plan price moved under us
+      prisma.membershipPlan.findFirst
+        .mockResolvedValueOnce(plan) // requirePlan
+        .mockResolvedValueOnce({ stripePriceId: 'price_winner' }); // after losing
+      await expect(service.apply('studio-1', 'plan-full', 'owner', request)).rejects.toThrow(CONCURRENT_PRICE_CHANGE_MESSAGE);
+      expect(prisma.membershipPriceChange.create).not.toHaveBeenCalled();
+      expect(stripe.deactivatePrice).toHaveBeenCalledWith('price_new');
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    });
+
+    it('a double submit of the same request returns the recorded change without executing it twice', async () => {
+      const change = createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
+      prisma.membershipPlan.updateMany.mockResolvedValue({ count: 0 });
+      prisma.membershipPlan.findFirst
+        .mockResolvedValueOnce(plan)
+        .mockResolvedValueOnce({ stripePriceId: 'price_new' }); // the winner uses the same Price
+      prisma.membershipPriceChange.findUnique
+        .mockResolvedValueOnce(null) // first lookup: nothing yet
+        .mockResolvedValueOnce(change); // after losing: the winner's change, still APPLYING
+      const result = await service.apply('studio-1', 'plan-full', 'owner', request);
+      expect(result.id).toBe('change-1');
+      expect(result.idempotentReplay).toBe(true);
+      expect(stripe.deactivatePrice).not.toHaveBeenCalled();
+      expect(prisma.membershipPriceChangeItem.updateMany).not.toHaveBeenCalled(); // not re-executed
+    });
   });
 
   describe('stripeSwapBlockReason', () => {

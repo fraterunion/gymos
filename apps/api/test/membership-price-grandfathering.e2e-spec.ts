@@ -435,4 +435,71 @@ describe('ARES / optional price grandfathering (e2e, isolated)', () => {
     expect(await prisma.membershipPriceChange.count()).toBe(1);
   });
 
+  describe('concurrent administrators and stale retries', () => {
+    const submit = (url: string, token: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer()).post(url).set('Authorization', `Bearer ${token}`).send({ confirm: true, ...body });
+
+    it('a double submit of the same request records one change and applies it once', async () => {
+      const f = await seed('Basic Access');
+      const body = { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 120000, idempotencyKey: 'double-submit-same-key' };
+      const [a, b] = await Promise.all([submit(f.url, f.ownerToken, body), submit(f.url, f.ownerToken, body)]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+      expect(a.body.id).toBe(b.body.id);
+      expect(await prisma.membershipPriceChange.count()).toBe(1);
+      expect(await prisma.membershipPriceChangeItem.count()).toBe(2);
+      const after = await prices(f.plan.id);
+      expect(after.catalog).toBe(120000);
+      expect(after.locks.get(f.subA.id)).toBe(120000);
+      expect(after.locks.get(f.subB.id)).toBe(120000);
+    });
+
+    it('two different decisions never leave a change with a stale old price', async () => {
+      const f = await seed('Pro');
+      const [a, b] = await Promise.all([
+        submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 120000, idempotencyKey: 'admin-one-decision' }),
+        submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 130000, idempotencyKey: 'admin-two-decision' }),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      const changes = await prisma.membershipPriceChange.findMany({ orderBy: { createdAt: 'asc' } });
+      const after = await prices(f.plan.id);
+      if (statuses[1] === 409) {
+        // They overlapped: exactly one decision is recorded and applied.
+        expect(statuses).toEqual([200, 409]);
+        expect(changes).toHaveLength(1);
+        expect(changes[0]!.oldPriceCents).toBe(100000);
+      } else {
+        // They ran one after the other: the second saw the first's price as the old price.
+        expect(statuses).toEqual([200, 200]);
+        expect(changes).toHaveLength(2);
+        expect(changes[0]!.oldPriceCents).toBe(100000);
+        expect(changes[1]!.oldPriceCents).toBe(changes[0]!.newPriceCents);
+      }
+      const last = changes[changes.length - 1]!;
+      expect(after.catalog).toBe(last.newPriceCents);
+      expect(after.locks.get(f.subA.id)).toBe(last.newPriceCents);
+      expect(after.locks.get(f.subB.id)).toBe(last.newPriceCents);
+    });
+
+    it('refuses to retry an older partial change once a newer change exists', async () => {
+      const f = await seed('Full Access');
+      // A Stripe-sourced member with no Stripe subscription id fails, so the change ends PARTIAL.
+      await prisma.subscription.update({ where: { id: f.subA.id }, data: { source: SubscriptionSource.STRIPE, stripeSubscriptionId: null } });
+      const first = await submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 120000, idempotencyKey: 'older-partial-change' }).expect(200);
+      expect(first.body.status).toBe('PARTIAL');
+      await submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.FUTURE_ONLY, newPriceCents: 140000, idempotencyKey: 'newer-decision' }).expect(200);
+      const before = await prices(f.plan.id);
+
+      const retry = await request(app.getHttpServer())
+        .post(`${f.url}/${first.body.id}/retry`)
+        .set('Authorization', `Bearer ${f.ownerToken}`)
+        .send({ confirm: true })
+        .expect(409);
+      expect(retry.body.message).toContain('reemplazado');
+      const after = await prices(f.plan.id);
+      expect(after.catalog).toBe(140000);
+      expect([...after.locks]).toEqual([...before.locks]);
+      const failed = await prisma.membershipPriceChangeItem.findFirstOrThrow({ where: { priceChangeId: first.body.id, subscriptionId: f.subA.id } });
+      expect(failed.status).toBe('FAILED');
+    });
+  });
 });

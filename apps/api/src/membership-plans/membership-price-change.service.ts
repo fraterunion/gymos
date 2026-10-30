@@ -9,6 +9,7 @@ import {
   MembershipPriceChangeScope,
   MembershipPriceChangeStatus,
   PaymentStatus,
+  Prisma,
   SubscriptionSource,
   SubscriptionStatus,
   type MembershipPriceChange,
@@ -78,6 +79,13 @@ function priceShape(price: Stripe.Price | null | undefined): StripePriceShape {
 
 type PriceChangeWithItems = MembershipPriceChange & { items: MembershipPriceChangeItem[] };
 
+export const SUPERSEDED_PRICE_CHANGE_MESSAGE =
+  'Este cambio de precio fue reemplazado por uno más reciente para este plan. No se reintenta para no sobrescribir la decisión nueva.';
+export const CONCURRENT_PRICE_CHANGE_MESSAGE =
+  'El precio de este plan cambió o hay otro cambio en curso. Recarga y revisa antes de confirmar.';
+export const STALE_MEMBER_PRICE_MESSAGE =
+  'El precio de este miembro cambió después de la vista previa. No se modificó su precio ni su cobro.';
+
 type ResolvedSubscription = {
   id: string;
   userId: string;
@@ -146,39 +154,8 @@ export class MembershipPriceChangeService {
     if (dto.confirm !== true) {
       throw new BadRequestException('Confirma el cambio de precio antes de aplicarlo.');
     }
-    const existing = await this.prisma.membershipPriceChange.findUnique({
-      where: { studioId_idempotencyKey: { studioId, idempotencyKey: dto.idempotencyKey } },
-      include: { items: true },
-    });
-    if (existing) {
-      if (existing.membershipPlanId !== planId || existing.newPriceCents !== dto.newPriceCents || existing.scope !== dto.scope) {
-        throw new ConflictException('Esta clave de idempotencia ya se usó para otro cambio de precio.');
-      }
-      // A selected-member change is also defined by WHO was selected, not just
-      // plan, price and scope. Never silently reuse a prior selection when an
-      // administrator resubmits the same key with a different member list.
-      if (existing.scope === MembershipPriceChangeScope.SELECTED) {
-        const recordedSelection = new Set(
-          existing.items.filter((item) => item.applyNewPrice).map((item) => item.subscriptionId),
-        );
-        const attemptedSelection = new Set(dto.subscriptionIds ?? []);
-        if (
-          recordedSelection.size !== attemptedSelection.size ||
-          [...attemptedSelection].some((id) => !recordedSelection.has(id))
-        ) {
-          throw new ConflictException(
-            'Esta clave de idempotencia ya se usó con una selección diferente de miembros.',
-          );
-        }
-      }
-      if (existing.status === MembershipPriceChangeStatus.APPLYING) {
-        // executePending already finalizes the ledger; return the same public
-        // DTO shape as a new change, without double-finalizing or rotating the
-        // catalog Price again on an idempotent request.
-        return this.toResult(await this.executePending(existing), true);
-      }
-      return this.toResult(existing, true);
-    }
+    const existing = await this.findByKey(studioId, dto.idempotencyKey);
+    if (existing) return this.replay(existing, planId, dto, { resume: true });
 
     const plan = await this.requirePlan(studioId, planId);
     if (dto.newPriceCents === plan.priceCents) {
@@ -217,9 +194,18 @@ export class MembershipPriceChangeService {
     }
 
     const now = new Date();
-    const created = await this.prisma.$transaction(async (tx) => {
-      await tx.membershipPlan.update({
-        where: { id: plan.id },
+    let created: PriceChangeWithItems;
+    try {
+      created = await this.prisma.$transaction(async (tx) => {
+      // Two administrators (or a double submit) racing on one plan: only one change may be in
+      // flight, and the plan must still hold the price this request previewed. The conditional
+      // update takes the plan row lock, so a concurrent transaction re-checks it after commit.
+      const inFlight = await tx.membershipPriceChange.count({
+        where: { studioId, membershipPlanId: plan.id, status: MembershipPriceChangeStatus.APPLYING },
+      });
+      if (inFlight > 0) throw new ConflictException(CONCURRENT_PRICE_CHANGE_MESSAGE);
+      const claimed = await tx.membershipPlan.updateMany({
+        where: { id: plan.id, priceCents: plan.priceCents, stripePriceId: plan.stripePriceId },
         data: {
           priceCents: dto.newPriceCents,
           ...(rotated
@@ -227,6 +213,7 @@ export class MembershipPriceChangeService {
             : {}),
         },
       });
+      if (claimed.count !== 1) throw new ConflictException(CONCURRENT_PRICE_CHANGE_MESSAGE);
       return tx.membershipPriceChange.create({
         data: {
           studioId,
@@ -262,7 +249,18 @@ export class MembershipPriceChangeService {
         },
         include: { items: true },
       });
-    });
+      });
+    } catch (error) {
+      const lostRace =
+        error instanceof ConflictException ||
+        (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002');
+      if (!lostRace) throw error;
+      await this.retireUnusedRotatedPrice(plan.id, rotated);
+      // A double submit of the same request: answer with the change the other request recorded.
+      const winner = await this.findByKey(studioId, dto.idempotencyKey);
+      if (winner) return this.replay(winner, planId, dto, { resume: false });
+      throw error instanceof ConflictException ? error : new ConflictException(CONCURRENT_PRICE_CHANGE_MESSAGE);
+    }
 
     if (rotated?.previousStripePriceId && rotated.previousStripePriceId !== rotated.newStripePriceId) {
       try {
@@ -305,6 +303,9 @@ export class MembershipPriceChangeService {
     });
     if (!change) throw new NotFoundException('Price change not found');
     if (change.status === MembershipPriceChangeStatus.COMPLETED) return this.toResult(change, true);
+    // A retry re-applies this change's price to its failed members. Once a newer change exists
+    // for the plan, that would overwrite the newer decision for those members.
+    if (await this.isSuperseded(change)) throw new ConflictException(SUPERSEDED_PRICE_CHANGE_MESSAGE);
     await this.prisma.membershipPriceChangeItem.updateMany({
       where: { priceChangeId: change.id, status: MembershipPriceChangeItemStatus.FAILED },
       data: { status: MembershipPriceChangeItemStatus.PENDING, error: null },
@@ -327,6 +328,74 @@ export class MembershipPriceChangeService {
       metadata: { priceChangeId: finished.id, status: finished.status },
     });
     return this.toResult(finished, false);
+  }
+
+  private findByKey(studioId: string, idempotencyKey: string) {
+    return this.prisma.membershipPriceChange.findUnique({
+      where: { studioId_idempotencyKey: { studioId, idempotencyKey } },
+      include: { items: true },
+    });
+  }
+
+  private async isSuperseded(change: MembershipPriceChange): Promise<boolean> {
+    const newer = await this.prisma.membershipPriceChange.findFirst({
+      where: { studioId: change.studioId, membershipPlanId: change.membershipPlanId, createdAt: { gt: change.createdAt } },
+      select: { id: true },
+    });
+    return Boolean(newer);
+  }
+
+  /** Idempotent replay of an already-recorded change for the same key. */
+  private async replay(
+    existing: PriceChangeWithItems,
+    planId: string,
+    dto: ApplyMembershipPriceChangeDto,
+    { resume }: { resume: boolean },
+  ) {
+    if (existing.membershipPlanId !== planId || existing.newPriceCents !== dto.newPriceCents || existing.scope !== dto.scope) {
+      throw new ConflictException('Esta clave de idempotencia ya se usó para otro cambio de precio.');
+    }
+    // A selected-member change is also defined by WHO was selected, not just
+    // plan, price and scope. Never silently reuse a prior selection when an
+    // administrator resubmits the same key with a different member list.
+    if (existing.scope === MembershipPriceChangeScope.SELECTED) {
+      const recordedSelection = new Set(
+        existing.items.filter((item) => item.applyNewPrice).map((item) => item.subscriptionId),
+      );
+      const attemptedSelection = new Set(dto.subscriptionIds ?? []);
+      if (
+        recordedSelection.size !== attemptedSelection.size ||
+        [...attemptedSelection].some((id) => !recordedSelection.has(id))
+      ) {
+        throw new ConflictException(
+          'Esta clave de idempotencia ya se usó con una selección diferente de miembros.',
+        );
+      }
+    }
+    // Resume an interrupted change, unless a newer change for the plan exists (resuming would
+    // overwrite it) or the other request is still executing it (resume: false).
+    if (resume && existing.status === MembershipPriceChangeStatus.APPLYING && !(await this.isSuperseded(existing))) {
+      // executePending already finalizes the ledger; return the same public
+      // DTO shape as a new change, without double-finalizing or rotating the
+      // catalog Price again on an idempotent request.
+      return this.toResult(await this.executePending(existing), true);
+    }
+    return this.toResult(existing, true);
+  }
+
+  /** A request that lost a race may have created a new catalog Price nobody uses; archive it. */
+  private async retireUnusedRotatedPrice(
+    planId: string,
+    rotated: { previousStripePriceId: string | null; newStripePriceId: string } | null,
+  ) {
+    if (!rotated || rotated.newStripePriceId === rotated.previousStripePriceId) return;
+    const current = await this.prisma.membershipPlan.findFirst({ where: { id: planId }, select: { stripePriceId: true } });
+    if (current?.stripePriceId === rotated.newStripePriceId) return;
+    try {
+      await this.stripe.deactivatePrice(rotated.newStripePriceId);
+    } catch {
+      // Best effort: an unused active Price bills nobody; reconciliation can archive it.
+    }
   }
 
   async list(studioId: string, planId: string) {
@@ -427,6 +496,12 @@ export class MembershipPriceChangeService {
           );
           return;
         }
+        // The member moved to another price after this change was previewed (a newer decision or
+        // a manual change): never overwrite it from this older change.
+        if (item.previousStripePriceId && live.priceId !== item.previousStripePriceId && live.priceId !== targetPriceId) {
+          await this.markItem(item.id, MembershipPriceChangeItemStatus.FAILED, STALE_MEMBER_PRICE_MESSAGE);
+          return;
+        }
         if (live.priceId !== targetPriceId) {
           const blocked = stripeSwapBlockReason(live, await loadTargetShape());
           if (blocked) {
@@ -458,6 +533,14 @@ export class MembershipPriceChangeService {
         return;
       }
 
+      if (
+        subscription.priceCents != null &&
+        subscription.priceCents !== item.oldPriceCents &&
+        subscription.priceCents !== item.newPriceCents
+      ) {
+        await this.markItem(item.id, MembershipPriceChangeItemStatus.FAILED, STALE_MEMBER_PRICE_MESSAGE);
+        return;
+      }
       await this.prisma.subscription.update({
         where: { id: subscription.id },
         data: { priceCents: item.newPriceCents },
