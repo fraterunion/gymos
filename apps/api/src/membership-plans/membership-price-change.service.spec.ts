@@ -566,6 +566,26 @@ describe('MembershipPriceChangeService', () => {
       expect(stripe.updateSubscription).not.toHaveBeenCalled();
     });
 
+    it('a double submit that reads the plan after its twin committed replays instead of failing as a no-op', async () => {
+      const change = createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce({ ...plan, priceCents: 195000 }); // already the new price
+      prisma.membershipPriceChange.findUnique
+        .mockResolvedValueOnce(null) // first lookup: twin not committed yet
+        .mockResolvedValueOnce(change); // re-check after reading the plan: twin committed
+      const result = await service.apply('studio-1', 'plan-full', 'owner', request);
+      expect(result.id).toBe('change-1');
+      expect(result.idempotentReplay).toBe(true);
+      expect(plans.rotateStripeSalePrice).not.toHaveBeenCalled();
+      expect(prisma.membershipPriceChange.create).not.toHaveBeenCalled();
+      expect(prisma.membershipPriceChangeItem.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('a genuinely unchanged price is still rejected', async () => {
+      prisma.membershipPlan.findFirst.mockResolvedValueOnce({ ...plan, priceCents: 195000 });
+      await expect(service.apply('studio-1', 'plan-full', 'owner', request)).rejects.toThrow('igual al precio actual');
+      expect(prisma.membershipPriceChange.create).not.toHaveBeenCalled();
+    });
+
     it('a double submit of the same request returns the recorded change without executing it twice', async () => {
       const change = createdChange(MembershipPriceChangeScope.FUTURE_ONLY);
       prisma.membershipPlan.updateMany.mockResolvedValue({ count: 0 });

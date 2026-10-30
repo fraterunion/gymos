@@ -159,6 +159,10 @@ export class MembershipPriceChangeService {
 
     const plan = await this.requirePlan(studioId, planId);
     if (dto.newPriceCents === plan.priceCents) {
+      // A double submit can read the plan right after its twin committed this very change:
+      // answer with that change instead of rejecting the request as a no-op.
+      const committed = await this.findByKey(studioId, dto.idempotencyKey);
+      if (committed) return this.replay(committed, planId, dto, { resume: false });
       throw new BadRequestException('El precio nuevo es igual al precio actual del catálogo.');
     }
     const affected = await this.resolveAffected(studioId, plan);
