@@ -28,8 +28,10 @@ export function SeriesDrawer({
   onClose,
   onEdit,
   onFinish,
+  onCancelForever,
   onOpenOccurrence,
   refreshKey,
+  cancelBusy = false,
 }: {
   studioId: string;
   seriesId: string;
@@ -38,8 +40,10 @@ export function SeriesDrawer({
   onClose: () => void;
   onEdit: (detail: SeriesDetail) => void;
   onFinish: (detail: SeriesDetail) => void;
+  onCancelForever: (detail: SeriesDetail) => void;
   onOpenOccurrence: (occurrenceId: string, startsAt: string) => void;
   refreshKey?: number;
+  cancelBusy?: boolean;
 }) {
   const [detail, setDetail] = useState<SeriesDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -212,7 +216,7 @@ export function SeriesDrawer({
             </div>
 
             {canManage ? (
-              <div className="flex gap-2 border-t border-zinc-100 px-5 py-4">
+              <div className="flex flex-wrap gap-2 border-t border-zinc-100 px-5 py-4">
                 <button
                   type="button"
                   className={`${adminPrimaryBtn} flex-1`}
@@ -228,6 +232,14 @@ export function SeriesDrawer({
                   onClick={() => onFinish(detail)}
                 >
                   Finalizar serie
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={detail.status === "ENDED" || cancelBusy}
+                  onClick={() => onCancelForever(detail)}
+                >
+                  {cancelBusy ? "Cancelando…" : "Cancelar permanentemente"}
                 </button>
               </div>
             ) : null}

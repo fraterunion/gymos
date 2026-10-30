@@ -46,6 +46,11 @@ export type PurchaseOption = {
   /** SCHEDULED only: when the already-scheduled successor starts. */
   effectiveDate: Date | null;
   reasonCode: PurchaseOptionReason;
+  /**
+   * Price the desk should charge for this plan. Same-plan renewals use the
+   * subscription's locked price; a new plan uses the catalog price.
+   */
+  effectivePriceCents?: number;
 };
 
 export type PurchaseOptionPlan = {

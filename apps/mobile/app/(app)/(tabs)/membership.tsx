@@ -507,7 +507,7 @@ function PlanCard({
   const priceStr = formatMoneyFromCents(plan.priceCents, plan.currency);
   const intervalStr = billingIntervalLabel(plan.billingInterval);
   const credits = creditsLabel(plan.classCredits);
-  const benefits = resolveAresPlanBenefits(plan.name);
+  const benefits = resolveAresPlanBenefits(plan);
   const pricePerClass = resolveAresPricePerClassLabel(plan);
 
   return (
@@ -644,22 +644,10 @@ function PlanCard({
 
           {benefits.length > 0 ? (
             <View style={{ marginBottom: credits ? 14 : 22 }}>
-              {benefits.map((benefit) => (
-                <PlanBenefitRow key={benefit} text={benefit} />
+              {benefits.map((benefit, index) => (
+                <PlanBenefitRow key={`${index}-${benefit}`} text={benefit} />
               ))}
             </View>
-          ) : plan.description ? (
-            <Text
-              style={{
-                fontSize: 14,
-                lineHeight: 22,
-                color: C.textSub,
-                marginBottom: 14,
-                letterSpacing: -0.1,
-              }}
-            >
-              {plan.description}
-            </Text>
           ) : null}
 
           {credits ? (

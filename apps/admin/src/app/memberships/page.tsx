@@ -25,6 +25,7 @@ import {
   type SubscriptionListItem,
   type SubscriptionStatus,
 } from "@/lib/api/memberships";
+import { PriceChangeDialog } from "@/app/memberships/PriceChangeDialog";
 import {
   fetchClassTemplates,
   updateClassTemplate,
@@ -204,6 +205,7 @@ function PlanModal({
   const [templates, setTemplates] = useState<ClassTemplateDto[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pricePrompt, setPricePrompt] = useState<{ cents: number; key: string; input: MembershipPlanInput } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<PlanConfigurationHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -343,6 +345,11 @@ function PlanModal({
       input.stripePriceId = form.stripePriceId.trim() || null;
     }
 
+    if (editing && cents !== editing.priceCents) {
+      setPricePrompt({ cents, key: crypto.randomUUID(), input });
+      return;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -407,14 +414,17 @@ function PlanModal({
 
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-600">
-              Descripción para miembros
+              Beneficios que se muestran en la app
             </label>
+            <p className="mb-2 text-xs text-zinc-500">
+              Escribe un beneficio por línea. El orden y los cambios se mostrarán como viñetas en la app.
+            </p>
             <textarea
-              rows={2}
+              rows={6}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
-              placeholder="Qué incluye este plan…"
+              placeholder={"Clases incluidas\nAcceso a Open Gym\nBeneficios adicionales"}
             />
           </div>
 
@@ -452,6 +462,7 @@ function PlanModal({
                 Moneda
               </label>
               <select
+                disabled={!!editing}
                 value={form.currency}
                 onChange={(e) => set("currency", e.target.value)}
                 className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
@@ -466,12 +477,22 @@ function PlanModal({
             </div>
           </div>
 
+          {editing ? (
+            <p className="text-xs text-zinc-500">
+              La moneda y el ciclo de cobro están protegidos en planes existentes.
+              Puedes cambiar el precio usando la confirmación con alcance
+              Todos, Solo nuevos o Personalizado; los cambios de moneda o ciclo
+              requieren una migración financiera separada.
+            </p>
+          ) : null}
+
           <SectionHeader>Ciclo</SectionHeader>
           <div className="space-y-3">
             <label className="flex items-center gap-2 text-sm text-zinc-700">
               <input
                 type="checkbox"
                 checked={form.fixedDuration}
+                disabled={!!editing}
                 onChange={(e) => set("fixedDuration", e.target.checked)}
                 className="rounded"
               />
@@ -489,6 +510,7 @@ function PlanModal({
                     type="number"
                     min="1"
                     value={form.entitlementDays}
+                    disabled={!!editing}
                     onChange={(e) => set("entitlementDays", e.target.value)}
                     className="w-20 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
                   />
@@ -511,6 +533,7 @@ function PlanModal({
                 </label>
                 <select
                   value={form.billingInterval}
+                  disabled={!!editing}
                   onChange={(e) => set("billingInterval", e.target.value as BillingInterval)}
                   className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
                 >
@@ -633,9 +656,9 @@ function PlanModal({
               Vinculación de cobro
             </p>
             <p className="text-[11px] text-zinc-500">
-              Si cambias el precio, la moneda o el ciclo de cobro, GymOS sincroniza
-              automáticamente el precio de venta actual con Stripe. Los miembros que ya
-              están suscritos conservan su precio histórico.
+              Si cambias el precio, eliges si aplica a todos, solo a futuros, o a miembros
+              concretos. Stripe no prorratea ni adelanta el cobro. La moneda y el ciclo
+              permanecen protegidos en planes existentes.
             </p>
             {editing ? (
               <div className="grid grid-cols-2 gap-2 rounded-lg border border-zinc-200 bg-white p-3 text-xs">
@@ -679,10 +702,17 @@ function PlanModal({
             </button>
             {showStripeTechnical ? (
               <div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-3">
+                {editing ? (
+                  <p className="text-xs text-zinc-500">
+                    Identificadores de Stripe de solo lectura. No se pueden reemplazar
+                    desde el editor de un plan existente.
+                  </p>
+                ) : null}
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">Stripe Product ID</label>
                   <input
                     value={form.stripeProductId}
+                    readOnly={!!editing}
                     onChange={(e) => set("stripeProductId", e.target.value)}
                     className="w-full rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs font-mono"
                     placeholder="prod_…"
@@ -692,6 +722,7 @@ function PlanModal({
                   <label className="mb-1 block text-xs text-zinc-500">Stripe Price ID</label>
                   <input
                     value={form.stripePriceId}
+                    readOnly={!!editing}
                     onChange={(e) => set("stripePriceId", e.target.value)}
                     className="w-full rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs font-mono"
                     placeholder="price_…"
@@ -733,6 +764,26 @@ function PlanModal({
           </div>
         </form>
       </div>
+      {pricePrompt && editing ? (
+        <PriceChangeDialog
+          studioId={studioId}
+          planId={editing.id}
+          planName={editing.name}
+          currency={editing.currency}
+          oldPriceCents={editing.priceCents}
+          newPriceCents={pricePrompt.cents}
+          idempotencyKey={pricePrompt.key}
+          onCancel={() => setPricePrompt(null)}
+          beforeApply={async () => {
+            await updateMembershipPlan(studioId, editing.id, {
+              ...pricePrompt.input,
+              priceCents: editing.priceCents,
+              active: form.active,
+            });
+          }}
+          onApplied={onSaved}
+        />
+      ) : null}
     </div>
   );
 }

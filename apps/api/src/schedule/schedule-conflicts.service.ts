@@ -6,7 +6,9 @@ import { occurrenceDedupKey } from './schedule-occurrence-key';
 export type ScheduleConflictKind =
   | 'DUPLICATE_OCCURRENCE'
   | 'INSTRUCTOR_OVERLAP'
-  | 'CAPACITY_BELOW_BOOKINGS';
+  | 'CAPACITY_BELOW_BOOKINGS'
+  /** Cancelling a class that started, ended or already has attendance (see class-cancellation-guard). */
+  | 'PROTECTED_CLASS';
 
 export type ScheduleConflictSeverity = 'BLOCKING' | 'WARNING';
 

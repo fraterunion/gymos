@@ -17,6 +17,9 @@ export type EmailMessage = {
   text: string;
   /** Free-form tags for provider dashboards. Never include credentials or tokens. */
   tags?: Record<string, string>;
+  /** Provider idempotency key. A retry of the same recipient must not deliver twice. */
+  idempotencyKey?: string;
+  headers?: Record<string, string>;
 };
 
 export type EmailSendResult = {

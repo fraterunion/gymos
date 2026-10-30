@@ -8,6 +8,7 @@ import { SurfaceCard } from "@/components/shell/SurfaceCard";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
 import { ApiError } from "@/lib/api/errors";
 import { adminPrimaryBtn, adminSecondaryBtn } from "@/lib/adminSurface";
+import { protectedClassesNote } from "@/lib/classCancellation";
 import { fetchStudioSchedule, type ScheduledClassDto } from "@/lib/api/schedule";
 import { fetchClassTemplates, type ClassTemplateDto } from "@/lib/api/classTemplates";
 import { fetchStaffInstructors, type StaffInstructorDto } from "@/lib/api/staff";
@@ -47,7 +48,11 @@ import {
   canManageCalendarOperations,
   canManageSeries,
 } from "@/lib/scheduleCalendarAccess";
-import type { SeriesDetail } from "@/lib/api/scheduleSeries";
+import {
+  cancelSeriesPermanently,
+  previewCancelSeriesPermanently,
+  type SeriesDetail,
+} from "@/lib/api/scheduleSeries";
 import type { BulkOperation } from "@/lib/api/scheduleOperations";
 
 function formatTime(iso: string, tz: string): string {
@@ -235,6 +240,7 @@ export default function SchedulePage() {
   const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(null);
   const [sessionClassId, setSessionClassId] = useState<string | null>(null);
   const [opsFeedback, setOpsFeedback] = useState<string | null>(null);
+  const [cancelSeriesBusy, setCancelSeriesBusy] = useState(false);
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
   const [createSeriesOpen, setCreateSeriesOpen] = useState(false);
   const [editSeriesDetail, setEditSeriesDetail] = useState<SeriesDetail | null>(null);
@@ -408,6 +414,36 @@ export default function SchedulePage() {
   }, [activeClasses, tz]);
 
   const todayKey = useMemo(() => todayKeyInZone(tz), [tz]);
+
+  const handleCancelEntireSeries = async (detail: SeriesDetail) => {
+    if (!selectedStudioId || cancelSeriesBusy || detail.status === "ENDED") return;
+    setCancelSeriesBusy(true);
+    setError(null);
+    try {
+      const impact = await previewCancelSeriesPermanently(selectedStudioId, detail.id);
+      const approved = window.confirm(
+        `¿Cancelar permanentemente esta serie?\n\n` +
+        `Se cancelarán ${impact.affectedClassCount} clases futuras y ` +
+        `${impact.totalReservations} reservaciones.${protectedClassesNote(impact.protectedClassCount)} No se generarán clases nuevas ` +
+        `de esta serie. El historial de clases anteriores se conservará.\n\n` +
+        `Esta acción no se puede deshacer automáticamente.`,
+      );
+      if (!approved) return;
+      const result = await cancelSeriesPermanently(selectedStudioId, detail.id, {
+        cancelReason: "Serie recurrente cancelada permanentemente desde administración",
+        confirmReservations: true,
+      });
+      closeSeriesDrawer();
+      setOpsFeedback(
+        `Serie cancelada permanentemente. ${result.cancelledCount} clases futuras canceladas.${protectedClassesNote(result.skippedProtectedCount)}`,
+      );
+      refreshSeries();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No fue posible cancelar la serie.");
+    } finally {
+      setCancelSeriesBusy(false);
+    }
+  };
 
   const handleModalDone = () => {
     setModal({ type: "closed" });
@@ -723,6 +759,8 @@ export default function SchedulePage() {
           onClose={closeSeriesDrawer}
           onEdit={(detail) => setEditSeriesDetail(detail)}
           onFinish={(detail) => setFinishSeriesDetail(detail)}
+          onCancelForever={(detail) => void handleCancelEntireSeries(detail)}
+          cancelBusy={cancelSeriesBusy}
           onOpenOccurrence={openOccurrenceFromSeries}
         />
       ) : null}

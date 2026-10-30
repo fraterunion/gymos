@@ -1,0 +1,505 @@
+import type { INestApplication } from '@nestjs/common';
+import { BillingInterval, MembershipPriceChangeScope, Role, SubscriptionSource, SubscriptionStatus } from '@prisma/client';
+import request from 'supertest';
+import { PrismaService } from '../src/prisma/prisma.service';
+import { MembershipPlansService } from '../src/membership-plans/membership-plans.service';
+import { StripeService } from '../src/stripe/stripe.service';
+import { createTestApp } from './helpers/create-app';
+import { truncateAll } from './helpers/db';
+import { createMembership, createStudio, createUserWithPassword } from './helpers/factories';
+
+/**
+ * Exercise the real HTTP guards, real Postgres transactions and the full
+ * grandfathering service against the disposable gymos_test e2e database.
+ * The shared test app mocks StripeService: absolutely no live Stripe writes.
+ */
+describe('ARES / optional price grandfathering (e2e, isolated)', () => {
+  let app: INestApplication;
+  let prisma: PrismaService;
+  let stripe: StripeService;
+  let plansService: MembershipPlansService;
+  const stripePriceUpdate = jest.fn();
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    prisma = app.get(PrismaService);
+    stripe = app.get(StripeService);
+    plansService = app.get(MembershipPlansService);
+    // The shared e2e mock intentionally omits price-update writes by default.
+    // An explicit spy turns any unexpected attempt into an observable failure.
+    Object.assign(stripe, { updateSubscription: stripePriceUpdate });
+  });
+
+  beforeEach(async () => {
+    await truncateAll(prisma);
+    jest.clearAllMocks();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  async function seed(planName: string) {
+    const studio = await createStudio(prisma, { timezone: 'America/Mexico_City' });
+    const owner = await createUserWithPassword(prisma);
+    const memberA = await createUserWithPassword(prisma);
+    const memberB = await createUserWithPassword(prisma);
+    await createMembership(prisma, owner.id, studio.id, Role.OWNER);
+    await createMembership(prisma, memberA.id, studio.id, Role.MEMBER);
+    await createMembership(prisma, memberB.id, studio.id, Role.MEMBER);
+    const login = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: owner.email, password: owner.password })
+      .expect(201);
+    const ownerToken = (login.body as { accessToken: string }).accessToken;
+
+    const plan = await prisma.membershipPlan.create({
+      data: {
+        studioId: studio.id,
+        name: planName,
+        priceCents: 100000,
+        currency: 'mxn',
+        billingInterval: BillingInterval.MONTHLY,
+        active: true,
+      },
+    });
+    const startsAt = new Date(Date.now() - 86_400_000);
+    const endsAt = new Date(Date.now() + 30 * 86_400_000);
+    const createCash = (userId: string) => prisma.subscription.create({
+      data: {
+        studioId: studio.id,
+        userId,
+        membershipPlanId: plan.id,
+        status: SubscriptionStatus.ACTIVE,
+        source: SubscriptionSource.CASH,
+        priceCents: 100000,
+        currentPeriodStart: startsAt,
+        currentPeriodEnd: endsAt,
+      },
+    });
+    const [subA, subB] = await Promise.all([
+      createCash(memberA.id),
+      createCash(memberB.id),
+    ]);
+    const url = `/api/v1/studios/${studio.id}/membership-plans/${plan.id}/price-changes`;
+    return { studio, owner, memberA, memberB, plan, subA, subB, ownerToken, url };
+  }
+
+  async function prices(planId: string) {
+    const [plan, subscriptions] = await Promise.all([
+      prisma.membershipPlan.findUniqueOrThrow({ where: { id: planId } }),
+      prisma.subscription.findMany({
+        where: { membershipPlanId: planId },
+        orderBy: { id: 'asc' },
+        select: { id: true, priceCents: true },
+      }),
+    ]);
+    return { catalog: plan.priceCents, locks: new Map(subscriptions.map((row) => [row.id, row.priceCents])) };
+  }
+
+  it('preview and missing confirmation cannot modify existing Basic memberships', async () => {
+    const f = await seed('Basic Access');
+    const initial = await prices(f.plan.id);
+    const preview = await request(app.getHttpServer())
+      .post(`${f.url}/preview`)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({ newPriceCents: 150000 })
+      .expect(200);
+    expect(preview.body.counts).toMatchObject({ total: 2, wouldChange: 2 });
+    expect(preview.body.members).toHaveLength(2);
+
+    await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.ALL_EXISTING,
+        newPriceCents: 150000,
+        idempotencyKey: 'unconfirmed-basic-ares',
+        confirm: false,
+      })
+      .expect(400);
+
+    const after = await prices(f.plan.id);
+    expect(after.catalog).toBe(initial.catalog);
+    expect([...after.locks]).toEqual([...initial.locks]);
+    expect(await prisma.membershipPriceChange.count()).toBe(0);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('denies missing JWT, MEMBER, FRONT_DESK and cross-studio owners before any price write', async () => {
+    const f = await seed('Basic Access');
+    const memberLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: f.memberA.email, password: f.memberA.password })
+      .expect(201);
+    const memberToken = (memberLogin.body as { accessToken: string }).accessToken;
+    const frontDesk = await createUserWithPassword(prisma);
+    await createMembership(prisma, frontDesk.id, f.studio.id, Role.FRONT_DESK);
+    const deskLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: frontDesk.email, password: frontDesk.password })
+      .expect(201);
+    const deskToken = (deskLogin.body as { accessToken: string }).accessToken;
+    const otherStudio = await createStudio(prisma);
+
+    const data = {
+      scope: MembershipPriceChangeScope.ALL_EXISTING,
+      newPriceCents: 195000,
+      idempotencyKey: 'forbidden-price-change-test',
+      confirm: true,
+    };
+    await request(app.getHttpServer()).post(f.url).send(data).expect(401);
+    await request(app.getHttpServer())
+      .post(f.url).set('Authorization', `Bearer ${memberToken}`).send(data).expect(403);
+    await request(app.getHttpServer())
+      .post(f.url).set('Authorization', `Bearer ${deskToken}`).send(data).expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/studios/${otherStudio.id}/membership-plans/${f.plan.id}/price-changes`)
+      .set('Authorization', `Bearer ${f.ownerToken}`).send(data).expect(403);
+
+    const unchanged = await prices(f.plan.id);
+    expect(unchanged.catalog).toBe(100000);
+    expect(unchanged.locks.get(f.subA.id)).toBe(100000);
+    expect(unchanged.locks.get(f.subB.id)).toBe(100000);
+    expect(await prisma.membershipPriceChange.count()).toBe(0);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('ordinary plan PATCH cannot bypass the pricing policy, but can edit benefits without repricing', async () => {
+    const f = await seed('Basic Access');
+    const planUrl = `/api/v1/studios/${f.studio.id}/membership-plans/${f.plan.id}`;
+
+    await request(app.getHttpServer())
+      .patch(planUrl)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({ priceCents: 150000 })
+      .expect(400);
+    expect((await prices(f.plan.id)).catalog).toBe(100000);
+    expect(await prisma.membershipPriceChange.count()).toBe(0);
+
+    for (const terms of [
+      { currency: 'usd' },
+      { billingInterval: BillingInterval.YEARLY },
+      { entitlementDays: 45 },
+      { stripeProductId: 'prod_forbidden_ares' },
+      { stripePriceId: 'price_forbidden_ares' },
+    ]) {
+      await request(app.getHttpServer())
+        .patch(planUrl)
+        .set('Authorization', `Bearer ${f.ownerToken}`)
+        .send(terms)
+        .expect(400);
+    }
+    expect((await prisma.membershipPlan.findUniqueOrThrow({ where: { id: f.plan.id } })).billingInterval)
+      .toBe(BillingInterval.MONTHLY);
+
+    const edited = await request(app.getHttpServer())
+      .patch(planUrl)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({ description: 'Incluye clases y acceso a gimnasio de ARES' })
+      .expect(200);
+    expect(edited.body.description).toContain('clases');
+    expect(edited.body.priceCents).toBe(100000);
+    const after = await prices(f.plan.id);
+    expect(after.locks.get(f.subA.id)).toBe(100000);
+    expect(after.locks.get(f.subB.id)).toBe(100000);
+    expect(await prisma.membershipPriceChange.count()).toBe(0);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('Basic FUTURE_ONLY changes the catalog, never existing members or Stripe', async () => {
+    const f = await seed('Basic Access');
+    const result = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.FUTURE_ONLY,
+        newPriceCents: 150000,
+        idempotencyKey: 'basic-future-only',
+        confirm: true,
+      })
+      .expect(200);
+    expect(result.body.status).toBe('COMPLETED');
+    const after = await prices(f.plan.id);
+    expect(after.catalog).toBe(150000);
+    expect(after.locks.get(f.subA.id)).toBe(100000);
+    expect(after.locks.get(f.subB.id)).toBe(100000);
+    const items = await prisma.membershipPriceChangeItem.findMany({
+      where: { priceChangeId: result.body.id as string },
+    });
+    expect(items).toHaveLength(2);
+    expect(items.every((item) => !item.applyNewPrice && item.status === 'SKIPPED')).toBe(true);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('FUTURE_ONLY MRR uses grandfathered prices, never the new catalog price for existing members', async () => {
+    const f = await seed('Basic Access');
+    const before = await plansService.listAllPlans(f.studio.id);
+    const old = before.find((p) => p.id === f.plan.id);
+    expect(old?.activeSubscriberCount).toBe(2);
+    expect(old?.mrrCents).toBe(200000);
+
+    await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.FUTURE_ONLY,
+        newPriceCents: 150000,
+        idempotencyKey: 'future-only-mrr-contract',
+        confirm: true,
+      })
+      .expect(200);
+
+    const after = await plansService.listAllPlans(f.studio.id);
+    const revised = after.find((p) => p.id === f.plan.id);
+    expect(revised?.priceCents).toBe(150000);
+    expect(revised?.activeSubscriberCount).toBe(2);
+    expect(revised?.mrrCents).toBe(200000);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('SELECTED MRR combines each member\'s locked price instead of multiplying the new catalog price', async () => {
+    const f = await seed('Full Access');
+    await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.SELECTED,
+        newPriceCents: 150000,
+        subscriptionIds: [f.subA.id],
+        idempotencyKey: 'selected-mrr-contract',
+        confirm: true,
+      })
+      .expect(200);
+    const rows = await plansService.listAllPlans(f.studio.id);
+    const updated = rows.find((p) => p.id === f.plan.id);
+    expect(updated?.priceCents).toBe(150000);
+    expect(updated?.mrrCents).toBe(250000);
+    expect(updated?.activeSubscriberCount).toBe(2);
+  });
+
+  it('Full SELECTED changes only chosen member and denies altered idempotent replay', async () => {
+    const f = await seed('Full Access');
+    const requestBody = {
+      scope: MembershipPriceChangeScope.SELECTED,
+      newPriceCents: 195000,
+      subscriptionIds: [f.subA.id],
+      idempotencyKey: 'full-custom-selected',
+      confirm: true,
+    };
+    const first = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send(requestBody)
+      .expect(200);
+    expect(first.body.status).toBe('COMPLETED');
+    const after = await prices(f.plan.id);
+    expect(after.catalog).toBe(195000);
+    expect(after.locks.get(f.subA.id)).toBe(195000);
+    expect(after.locks.get(f.subB.id)).toBe(100000);
+
+    const replay = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send(requestBody)
+      .expect(200);
+    expect(replay.body.id).toBe(first.body.id);
+    expect(replay.body.idempotentReplay).toBe(true);
+
+    await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({ ...requestBody, subscriptionIds: [f.subB.id] })
+      .expect(409);
+    const unchanged = await prices(f.plan.id);
+    expect(unchanged.locks.get(f.subA.id)).toBe(195000);
+    expect(unchanged.locks.get(f.subB.id)).toBe(100000);
+    expect(await prisma.membershipPriceChange.count()).toBe(1);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('Pro ALL_EXISTING changes only the confirmed plan and no unrelated plan', async () => {
+    const f = await seed('Pro Access');
+    const other = await prisma.membershipPlan.create({
+      data: {
+        studioId: f.studio.id,
+        name: 'Full Access',
+        priceCents: 250000,
+        currency: 'mxn',
+        billingInterval: BillingInterval.MONTHLY,
+        active: true,
+      },
+    });
+    const otherSub = await prisma.subscription.create({
+      data: {
+        studioId: f.studio.id,
+        userId: f.memberA.id,
+        membershipPlanId: other.id,
+        status: SubscriptionStatus.ACTIVE,
+        source: SubscriptionSource.CASH,
+        priceCents: 250000,
+        currentPeriodStart: new Date(Date.now() - 86_400_000),
+        currentPeriodEnd: new Date(Date.now() + 30 * 86_400_000),
+      },
+    });
+
+    const result = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.ALL_EXISTING,
+        newPriceCents: 125000,
+        idempotencyKey: 'pro-all-existing',
+        confirm: true,
+      })
+      .expect(200);
+    expect(result.body.status).toBe('COMPLETED');
+    const after = await prices(f.plan.id);
+    expect(after.catalog).toBe(125000);
+    expect(after.locks.get(f.subA.id)).toBe(125000);
+    expect(after.locks.get(f.subB.id)).toBe(125000);
+    expect((await prisma.subscription.findUniqueOrThrow({ where: { id: otherSub.id } })).priceCents).toBe(250000);
+    expect((await prisma.membershipPlan.findUniqueOrThrow({ where: { id: other.id } })).priceCents).toBe(250000);
+    expect(stripePriceUpdate).not.toHaveBeenCalled();
+  });
+  it('Stripe SELECTED uses a mocked unprorated item swap and preserves billing dates', async () => {
+    const f = await seed('Basic Access');
+    await prisma.membershipPlan.update({
+      where: { id: f.plan.id },
+      data: { stripeProductId: 'prod_mock_ares', stripePriceId: 'price_old_ares' },
+    });
+    const stripeSub = await prisma.subscription.update({
+      where: { id: f.subA.id },
+      data: { source: SubscriptionSource.STRIPE, stripeSubscriptionId: 'sub_mock_ares' },
+    });
+    const periodStartBefore = stripeSub.currentPeriodStart?.getTime();
+    const periodEndBefore = stripeSub.currentPeriodEnd?.getTime();
+
+    // Real Stripe prices carry currency and cadence; the swap is refused unless both match.
+    const monthlyMxn = { currency: 'mxn', recurring: { interval: 'month', interval_count: 1 } };
+    jest.mocked(stripe.retrieveSubscription).mockResolvedValue({
+      id: 'sub_mock_ares',
+      items: {
+        data: [{
+          id: 'si_mock_ares',
+          price: { id: 'price_old_ares', unit_amount: 100000, ...monthlyMxn },
+        }],
+      },
+    } as never);
+    jest.mocked(stripe.retrievePrice).mockResolvedValue(
+      { id: 'price_e2e_test', unit_amount: 125000, ...monthlyMxn } as never,
+    );
+
+    const result = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.SELECTED,
+        subscriptionIds: [f.subA.id],
+        newPriceCents: 125000,
+        idempotencyKey: 'stripe-selected-isolated-test',
+        confirm: true,
+      })
+      .expect(200);
+    expect(result.body.status).toBe('COMPLETED');
+    expect(stripePriceUpdate).toHaveBeenCalledTimes(1);
+    expect(stripePriceUpdate).toHaveBeenCalledWith(
+      'sub_mock_ares',
+      {
+        items: [{ id: 'si_mock_ares', price: 'price_e2e_test' }],
+        proration_behavior: 'none',
+      },
+      { idempotencyKey: expect.stringMatching(/^membership-price-change:/) },
+    );
+    const after = await prices(f.plan.id);
+    expect(after.catalog).toBe(125000);
+    expect(after.locks.get(f.subA.id)).toBe(125000);
+    expect(after.locks.get(f.subB.id)).toBe(100000);
+    const updated = await prisma.subscription.findUniqueOrThrow({ where: { id: f.subA.id } });
+    expect(updated.currentPeriodStart?.getTime()).toBe(periodStartBefore);
+    expect(updated.currentPeriodEnd?.getTime()).toBe(periodEndBefore);
+
+    const replay = await request(app.getHttpServer())
+      .post(f.url)
+      .set('Authorization', `Bearer ${f.ownerToken}`)
+      .send({
+        scope: MembershipPriceChangeScope.SELECTED,
+        subscriptionIds: [f.subA.id],
+        newPriceCents: 125000,
+        idempotencyKey: 'stripe-selected-isolated-test',
+        confirm: true,
+      })
+      .expect(200);
+    expect(replay.body.idempotentReplay).toBe(true);
+    expect(stripePriceUpdate).toHaveBeenCalledTimes(1);
+    expect(await prisma.membershipPriceChange.count()).toBe(1);
+  });
+
+  describe('concurrent administrators and stale retries', () => {
+    const submit = (url: string, token: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer()).post(url).set('Authorization', `Bearer ${token}`).send({ confirm: true, ...body });
+
+    it('a double submit of the same request records one change and applies it once', async () => {
+      const f = await seed('Basic Access');
+      const body = { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 120000, idempotencyKey: 'double-submit-same-key' };
+      const [a, b] = await Promise.all([submit(f.url, f.ownerToken, body), submit(f.url, f.ownerToken, body)]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+      expect(a.body.id).toBe(b.body.id);
+      expect(await prisma.membershipPriceChange.count()).toBe(1);
+      expect(await prisma.membershipPriceChangeItem.count()).toBe(2);
+      const after = await prices(f.plan.id);
+      expect(after.catalog).toBe(120000);
+      expect(after.locks.get(f.subA.id)).toBe(120000);
+      expect(after.locks.get(f.subB.id)).toBe(120000);
+    });
+
+    it('two different decisions never leave a change with a stale old price', async () => {
+      const f = await seed('Pro');
+      const [a, b] = await Promise.all([
+        submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 120000, idempotencyKey: 'admin-one-decision' }),
+        submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 130000, idempotencyKey: 'admin-two-decision' }),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      const changes = await prisma.membershipPriceChange.findMany({ orderBy: { createdAt: 'asc' } });
+      const after = await prices(f.plan.id);
+      if (statuses[1] === 409) {
+        // They overlapped: exactly one decision is recorded and applied.
+        expect(statuses).toEqual([200, 409]);
+        expect(changes).toHaveLength(1);
+        expect(changes[0]!.oldPriceCents).toBe(100000);
+      } else {
+        // They ran one after the other: the second saw the first's price as the old price.
+        expect(statuses).toEqual([200, 200]);
+        expect(changes).toHaveLength(2);
+        expect(changes[0]!.oldPriceCents).toBe(100000);
+        expect(changes[1]!.oldPriceCents).toBe(changes[0]!.newPriceCents);
+      }
+      const last = changes[changes.length - 1]!;
+      expect(after.catalog).toBe(last.newPriceCents);
+      expect(after.locks.get(f.subA.id)).toBe(last.newPriceCents);
+      expect(after.locks.get(f.subB.id)).toBe(last.newPriceCents);
+    });
+
+    it('refuses to retry an older partial change once a newer change exists', async () => {
+      const f = await seed('Full Access');
+      // A Stripe-sourced member with no Stripe subscription id fails, so the change ends PARTIAL.
+      await prisma.subscription.update({ where: { id: f.subA.id }, data: { source: SubscriptionSource.STRIPE, stripeSubscriptionId: null } });
+      const first = await submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.ALL_EXISTING, newPriceCents: 120000, idempotencyKey: 'older-partial-change' }).expect(200);
+      expect(first.body.status).toBe('PARTIAL');
+      await submit(f.url, f.ownerToken, { scope: MembershipPriceChangeScope.FUTURE_ONLY, newPriceCents: 140000, idempotencyKey: 'newer-decision' }).expect(200);
+      const before = await prices(f.plan.id);
+
+      const retry = await request(app.getHttpServer())
+        .post(`${f.url}/${first.body.id}/retry`)
+        .set('Authorization', `Bearer ${f.ownerToken}`)
+        .send({ confirm: true })
+        .expect(409);
+      expect(retry.body.message).toContain('reemplazado');
+      const after = await prices(f.plan.id);
+      expect(after.catalog).toBe(140000);
+      expect([...after.locks]).toEqual([...before.locks]);
+      const failed = await prisma.membershipPriceChangeItem.findFirstOrThrow({ where: { priceChangeId: first.body.id, subscriptionId: f.subA.id } });
+      expect(failed.status).toBe('FAILED');
+    });
+  });
+});

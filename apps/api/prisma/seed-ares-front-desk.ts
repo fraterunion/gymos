@@ -21,7 +21,7 @@ const DRY_RUN = process.env.DRY_RUN === 'true';
 
 const ARES_SLUG = 'ares-fitness';
 const FRONT_DESK_EMAIL = 'recepcion@arestrainingclub.com';
-const FRONT_DESK_PASSWORD = 'AresFrontDesk2026!';
+const FRONT_DESK_PASSWORD = process.env['ARES_FRONT_DESK_PASSWORD'] ?? '';
 
 function log(op: string, entity: string, detail: string): void {
   const prefix = DRY_RUN ? '[DRY_RUN]' : '[WRITE  ]';
@@ -33,6 +33,7 @@ function hashPassword(plain: string): string {
 }
 
 async function main(): Promise<void> {
+  if (!DRY_RUN && FRONT_DESK_PASSWORD.length < 16) throw new Error('Set ARES_FRONT_DESK_PASSWORD securely (16+ characters); no default is allowed.');
   const studio = await prisma.studio.findUniqueOrThrow({
     where: { slug: ARES_SLUG },
     select: { id: true, name: true, slug: true },
@@ -104,7 +105,7 @@ async function main(): Promise<void> {
 
   console.log('\nFront desk account ready.');
   console.log(`  Email:    ${FRONT_DESK_EMAIL}`);
-  console.log(`  Password: ${FRONT_DESK_PASSWORD}`);
+  console.log('  Password: configured privately via ARES_FRONT_DESK_PASSWORD');
   console.log(`  Role:     FRONT_DESK`);
   console.log(`  Studio:   ${studio.name}`);
 }

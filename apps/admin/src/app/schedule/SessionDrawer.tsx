@@ -18,6 +18,7 @@ import {
   formatRosterStatus,
   occupancyToneClass,
 } from "@/lib/scheduleOccupancy";
+import { canOfferClassCancel } from "@/lib/classCancellation";
 import { formatSeriesDayLabel } from "@/lib/scheduleConflictCopy";
 import {
   canAddMemberToSession,
@@ -485,7 +486,7 @@ export function SessionDrawer({
                 Duplicar
               </button>
             ) : null}
-            {canCancelSessionFromDrawer(role) && session.class.status === "SCHEDULED" ? (
+            {canCancelSessionFromDrawer(role) && session.class.status === "SCHEDULED" && canOfferClassCancel({ startsAt: session.class.startsAt, attendedCount: session.occupancy.attended }) ? (
               <button
                 type="button"
                 className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50"

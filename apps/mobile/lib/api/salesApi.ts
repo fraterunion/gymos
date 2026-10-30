@@ -56,6 +56,7 @@ export type OfflineSubscriptionResult = {
     amountCents: number;
     status: string;
     paymentMethod: string;
+    paidAt?: string | null;
   };
 };
 
@@ -101,6 +102,7 @@ export async function createOfflineSubscription(
     amountCents: number;
     periodStart?: string;
     periodEnd?: string;
+    paidOn?: string;
     paymentMethod: 'CASH';
     notes?: string;
     priceOverrideNote?: string;
@@ -124,6 +126,7 @@ export type StaffPurchaseOptionDto = {
   relatedPlanName: string | null;
   effectiveDate: string | null;
   reasonCode: string | null;
+  effectivePriceCents?: number;
 };
 
 export async function fetchMemberPurchaseOptions(

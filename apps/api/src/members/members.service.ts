@@ -1280,6 +1280,7 @@ export class MembersService {
           source: stripeSubscriptionId ? SubscriptionSource.STRIPE : SubscriptionSource.MANUAL,
           stripeSubscriptionId: stripeSubscriptionId ?? null,
           exclusiveGroupKey: plan.exclusiveGroup,
+          priceCents: plan.priceCents,
           currentPeriodStart: now,
           currentPeriodEnd: periodEnd,
           ...(entitlementEndsAt !== undefined ? { entitlementEndsAt } : {}),

@@ -55,7 +55,7 @@ const CLEANUP = process.argv.includes('--cleanup');
 const ARES_SLUG = 'ares-fitness';
 
 const QA_EMAIL = 'mm.qa@fraterunion.com';
-const QA_PASSWORD = 'MmQa2026!';
+const QA_PASSWORD = process.env['ARES_MM_QA_PASSWORD'] ?? '';
 const QA_FIRST_NAME = 'MM QA';
 const QA_LAST_NAME = 'Dual Membership';
 const QA_NOTES = 'MM-5 QA account — synthetic, no revenue, no Stripe';
@@ -538,7 +538,7 @@ async function provision(): Promise<void> {
         dry_run: DRY_RUN,
         account: {
           email: QA_EMAIL,
-          password: QA_PASSWORD,
+          passwordProvidedBy: 'ARES_MM_QA_PASSWORD',
           role: Role.MEMBER,
           excludeFromAnalytics: true,
         },
@@ -760,6 +760,7 @@ async function cleanup(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (!CLEANUP && QA_PASSWORD.length < 16) throw new Error('Set ARES_MM_QA_PASSWORD securely (16+ characters) for QA provisioning.');
   if (DRY_RUN) {
     console.log('════════════════════════════════════════════════');
     console.log('  DRY RUN — zero writes will occur');

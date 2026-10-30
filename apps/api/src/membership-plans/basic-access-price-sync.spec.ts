@@ -43,6 +43,9 @@ describe('Basic Access MXN 1,300 price contract', () => {
   it('Staff sales renders and submits the API plan price', () => {
     const source = repoFile('apps/mobile/app/(app)/staff-sales/index.tsx');
     expect(source).toContain('formatMoneyFromCents(plan.priceCents, plan.currency)');
-    expect(source).toContain('amountCents: selectedPlan.priceCents');
+    expect(source).toContain('option?.effectivePriceCents ?? selectedPlan.priceCents');
+    expect(source).toContain('amountCents: chargeCents');
+    expect(source).not.toContain('amountCents: 100000');
+    expect(source).not.toContain('amountCents: 130000');
   });
 });

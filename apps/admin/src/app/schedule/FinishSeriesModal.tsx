@@ -10,6 +10,7 @@ import {
   type FinishSeriesPreview,
   type SeriesDetail,
 } from "@/lib/api/scheduleSeries";
+import { protectedClassesNote } from "@/lib/classCancellation";
 import { formatLocalDateShort } from "@/lib/scheduleSeriesPresentation";
 
 type FinishMode = "AFTER_LAST_SCHEDULED" | "ON_DATE";
@@ -121,6 +122,9 @@ export function FinishSeriesModal({
           <p className="mt-1">{preview?.bookedOccurrencesAffected ?? 0} tienen reservaciones</p>
           {preview && preview.skippedDetachedCount > 0 ? (
             <p className="mt-1">{preview.skippedDetachedCount} clases modificadas individualmente incluidas</p>
+          ) : null}
+          {preview?.skippedProtectedCount ? (
+            <p className="mt-1">{protectedClassesNote(preview.skippedProtectedCount).trim()}</p>
           ) : null}
         </div>
 

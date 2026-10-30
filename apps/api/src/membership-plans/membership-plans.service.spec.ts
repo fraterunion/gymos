@@ -2,6 +2,138 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BillingInterval } from '@prisma/client';
 import { MembershipPlansService } from './membership-plans.service';
 
+describe('MembershipPlansService.updatePlanFromAdmin (public price safety)', () => {
+  const prisma = {
+    membershipPlan: { findFirst: jest.fn() },
+  };
+  const service = new MembershipPlansService(
+    prisma as never,
+    { log: jest.fn() } as never,
+    {} as never,
+  );
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('rejects changes to the billing interval, currency or fixed-duration entitlement outside a controlled migration', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      priceCents: 130000,
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      entitlementDays: null,
+    });
+    const update = jest.spyOn(service, 'updatePlan');
+    try {
+      for (const modification of [
+        { currency: 'usd' },
+        { billingInterval: BillingInterval.YEARLY },
+        { entitlementDays: 45 },
+      ]) {
+        await expect(service.updatePlanFromAdmin(
+          'studio-a', 'basic', modification, 'owner',
+        )).rejects.toThrow('migración financiera separada');
+      }
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      update.mockRestore();
+    }
+  });
+
+  it('rejects arbitrary Stripe Price or Product relinking through the ordinary admin PATCH', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      priceCents: 130000,
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      entitlementDays: null,
+      stripeProductId: 'prod_existing',
+      stripePriceId: 'price_existing',
+    });
+    const update = jest.spyOn(service, 'updatePlan');
+    try {
+      for (const modification of [
+        { stripePriceId: 'price_different' },
+        { stripeProductId: 'prod_different' },
+      ]) {
+        await expect(service.updatePlanFromAdmin(
+          'studio-a', 'basic', modification, 'owner',
+        )).rejects.toThrow('identificadores de cobro');
+      }
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      update.mockRestore();
+    }
+  });
+
+  it('allows no-op billing terms in a benefits form without forwarding any financial field', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      priceCents: 130000,
+      currency: 'mxn',
+      billingInterval: BillingInterval.MONTHLY,
+      entitlementDays: null,
+    });
+    const update = jest.spyOn(service, 'updatePlan').mockResolvedValueOnce({ id: 'basic' } as never);
+    try {
+      await service.updatePlanFromAdmin('studio-a', 'basic', {
+        priceCents: 130000,
+        currency: 'mxn',
+        billingInterval: BillingInterval.MONTHLY,
+        entitlementDays: null,
+        description: 'New benefits',
+      }, 'owner');
+      expect(update).toHaveBeenCalledWith(
+        'studio-a', 'basic', { description: 'New benefits' }, 'owner',
+      );
+    } finally {
+      update.mockRestore();
+    }
+  });
+
+  it('rejects an unscoped catalog price edit before any Stripe or membership mutation', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({ priceCents: 130000 });
+    const actualUpdate = jest.spyOn(service, 'updatePlan').mockImplementationOnce(async () => {
+      throw new Error('should not call updatePlan');
+    });
+    try {
+      await expect(service.updatePlanFromAdmin(
+        'studio-a', 'basic', { priceCents: 140000, description: 'Benefits' }, 'owner',
+      )).rejects.toThrow('grandfathering');
+      expect(actualUpdate).not.toHaveBeenCalled();
+    } finally {
+      actualUpdate.mockRestore();
+    }
+  });
+
+  it('accepts unchanged price on a metadata edit and strips price before applying it', async () => {
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      priceCents: 130000, currency: 'mxn', billingInterval: BillingInterval.MONTHLY, entitlementDays: null,
+    });
+    const actualUpdate = jest.spyOn(service, 'updatePlan').mockResolvedValueOnce({ id: 'basic' } as never);
+    try {
+      await service.updatePlanFromAdmin(
+        'studio-a', 'basic', { priceCents: 130000, description: 'Updated bullets' }, 'owner',
+      );
+      expect(actualUpdate).toHaveBeenCalledWith(
+        'studio-a', 'basic', { description: 'Updated bullets' }, 'owner',
+      );
+    } finally {
+      actualUpdate.mockRestore();
+    }
+  });
+
+  it('allows description-only edits without reading or overwriting the catalog price', async () => {
+    const actualUpdate = jest.spyOn(service, 'updatePlan').mockResolvedValueOnce({ id: 'basic' } as never);
+    try {
+      await service.updatePlanFromAdmin('studio-a', 'basic', { description: 'New copy' }, 'owner');
+      expect(prisma.membershipPlan.findFirst).not.toHaveBeenCalled();
+      expect(actualUpdate).toHaveBeenCalledWith(
+        'studio-a', 'basic', { description: 'New copy' }, 'owner',
+      );
+    } finally {
+      actualUpdate.mockRestore();
+    }
+  });
+});
+
+
 describe('MembershipPlansService class access', () => {
   const prisma = {
     studio: { findFirst: jest.fn() },

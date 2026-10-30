@@ -58,7 +58,24 @@ export type OfflineSubscriptionResult = {
     amountCents: number;
     status: string;
     paymentMethod: string;
+    /** When the cash was received (reporting date; see `paidOn`). */
+    paidAt: string | null;
+    /** When this payment row was actually inserted — never backdated. */
+    createdAt: string;
   };
+};
+
+export type CreateOfflineSubscriptionInput = {
+  planId: string;
+  amountCents: number;
+  /** Membership period (vigencia). Omitted → the API starts it at the moment of the sale. */
+  periodStart?: string;
+  periodEnd?: string;
+  /** Studio-local YYYY-MM-DD the cash was received. Reporting only; never moves the period. */
+  paidOn?: string;
+  paymentMethod: "CASH";
+  notes?: string;
+  priceOverrideNote?: string;
 };
 
 export async function fetchSalesSettings(studioId: string): Promise<SalesSettings> {
@@ -98,15 +115,7 @@ export async function createStaffCheckoutSession(
 export async function createOfflineSubscription(
   studioId: string,
   userId: string,
-  input: {
-    planId: string;
-    amountCents: number;
-    periodStart?: string;
-    periodEnd?: string;
-    paymentMethod: "CASH";
-    notes?: string;
-    priceOverrideNote?: string;
-  },
+  input: CreateOfflineSubscriptionInput,
 ): Promise<OfflineSubscriptionResult> {
   return apiRequest<OfflineSubscriptionResult>(
     `/studios/${studioId}/members/${userId}/offline-subscriptions`,

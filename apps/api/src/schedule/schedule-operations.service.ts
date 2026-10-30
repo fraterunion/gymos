@@ -33,6 +33,11 @@ import {
   ScheduleConflictsService,
 } from './schedule-conflicts.service';
 import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
+import {
+  ATTENDED_CLASS_CANCEL_MESSAGE,
+  protectedClassReason,
+  STARTED_CLASS_CANCEL_MESSAGE,
+} from './class-cancellation-guard';
 import { assertStartsBeforeEnds } from './occurrence-interval';
 import { acquireOperationAdvisoryLock, acquireWeekReconciliationLocks } from './schedule-occurrence-concurrency';
 import { insertScheduledOccurrenceOrSkip } from './schedule-occurrence-insert';
@@ -1079,6 +1084,22 @@ export class ScheduleOperationsService {
           capacity: row.capacity,
           excludeScheduledClassId: row.id,
         });
+      } else if (dto.operation === BulkScheduleOperation.CANCEL) {
+        // A selected class that started, ended or has early check-ins blocks the whole bulk
+        // cancel with the reason, so the administrator deselects it explicitly.
+        const reason = protectedClassReason({
+          startsAt: row.startsAt,
+          status: ClassStatus.SCHEDULED, // loadBulkTargets only returns SCHEDULED classes
+          attendanceCount: row._count.attendances,
+        });
+        if (reason) {
+          conflicts.push({
+            kind: 'PROTECTED_CLASS',
+            severity: 'BLOCKING',
+            message: reason === 'STARTED' ? STARTED_CLASS_CANCEL_MESSAGE : ATTENDED_CLASS_CANCEL_MESSAGE,
+            scheduledClassId: row.id,
+          });
+        }
       } else if (
         dto.operation === BulkScheduleOperation.CHANGE_CAPACITY &&
         dto.capacity! < row._count.bookings
@@ -1143,6 +1164,7 @@ export class ScheduleOperationsService {
         _count: {
           select: {
             bookings: { where: { status: BookingStatus.CONFIRMED } },
+            attendances: true,
           },
         },
       },

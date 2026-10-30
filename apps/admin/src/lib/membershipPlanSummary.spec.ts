@@ -292,8 +292,11 @@ test("stripe technical ids are behind progressive disclosure", () => {
   const source = readFileSync(new URL("../app/memberships/page.tsx", import.meta.url), "utf8");
   assert.match(source, /Detalles técnicos de Stripe/);
   assert.match(source, /showStripeTechnical/);
-  assert.match(source, /sincroniza\s+automáticamente el precio de venta actual con Stripe/);
-  assert.match(source, /conservan su precio histórico/);
+  // Price changes are an explicit owner choice of scope (grandfathering), never an automatic re-sync.
+  assert.match(source, /eliges si aplica a todos, solo a futuros, o a miembros\s+concretos/);
+  assert.match(source, /Stripe no prorratea ni adelanta el cobro/);
+  assert.match(source, /permanecen protegidos en planes existentes/);
+  assert.doesNotMatch(source, /sincroniza\s+automáticamente el precio de venta actual con Stripe/);
 });
 
 test("subscription destructive actions require confirmation", () => {

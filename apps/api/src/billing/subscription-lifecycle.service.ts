@@ -193,7 +193,7 @@ export class SubscriptionLifecycleService {
     const [plans, rows] = await Promise.all([
       this.prisma.membershipPlan.findMany({
         where: { studioId, active: true, deletedAt: null },
-        select: { id: true, name: true, exclusiveGroup: true },
+        select: { id: true, name: true, exclusiveGroup: true, priceCents: true },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.subscription.findMany({
@@ -224,10 +224,20 @@ export class SubscriptionLifecycleService {
     const scheduledRows = rows.filter((s) => s.status === SubscriptionStatus.SCHEDULED).map(toOptionRow);
     const currentRows = rows.filter((s) => s.status !== SubscriptionStatus.SCHEDULED).map(toOptionRow);
 
+    const priceBySubscription = new Map(rows.map((row) => [row.id, row.priceCents]));
     return {
-      options: plans.map((plan) =>
-        resolvePurchaseAction(plan, currentRows, scheduledRows, undefined, context),
-      ),
+      options: plans.map((plan) => {
+        const option = resolvePurchaseAction(plan, currentRows, scheduledRows, undefined, context);
+        const related = option.relatedSubscriptionId
+          ? rows.find((row) => row.id === option.relatedSubscriptionId)
+          : undefined;
+        const samePlan = related?.membershipPlanId === plan.id;
+        const locked = samePlan ? priceBySubscription.get(related.id) : null;
+        return {
+          ...option,
+          effectivePriceCents: locked ?? plan.priceCents,
+        };
+      }),
     };
   }
 
@@ -473,6 +483,7 @@ export class SubscriptionLifecycleService {
           membershipPlanId: upgradeApplied
             ? targetPlan.id
             : localSubscription.membershipPlanId,
+          ...(upgradeApplied ? { priceCents: targetPlan.priceCents } : {}),
           pendingMembershipPlanId:
             effective === 'next_period' ? targetPlan.id : null,
           cancelAtPeriodEnd: upgradeApplied ? false : updatedStripeSub.cancel_at_period_end,

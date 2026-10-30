@@ -29,6 +29,7 @@ import {
   buildGymosStripeToCashImmediateIdempotencyKey,
   buildGymosStripeToCashPeriodEndIdempotencyKey,
 } from './stripe-renewal-audit.utils';
+import { getStudioLocalDateKey } from '../common/date/studio-local-date';
 import { findConflictingMemberships } from '../memberships/membership-compatibility';
 import { acquireSubscriptionWriteAdvisoryLock } from './subscription-write-advisory-lock';
 
@@ -57,6 +58,7 @@ export type ScheduledCashResult = {
     amountCents: number;
     status: PaymentStatus;
     paymentMethod: PaymentMethod;
+    paidAt?: Date | null;
   };
   stripe: {
     localSubscriptionId: string;
@@ -292,6 +294,7 @@ export class StripeToCashTransitionService {
     targetUserId: string;
     plan: MembershipPlan;
     amountCents: number;
+    paidAt?: Date;
     notes: string | null;
     defaultPeriodEnd: (start: Date, interval: MembershipPlan['billingInterval']) => Date;
   }): Promise<ScheduledCashResult> {
@@ -326,6 +329,7 @@ export class StripeToCashTransitionService {
         stripeSub,
         planId: params.plan.id,
         amountCents: params.amountCents,
+        requestedPaidAt: params.paidAt,
       });
     }
 
@@ -370,6 +374,7 @@ export class StripeToCashTransitionService {
             cancelAtPeriodEnd: true,
             createdByUserId: params.actorUserId,
             notes: params.notes,
+            priceCents: params.amountCents,
             ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
           },
           include: planInclude,
@@ -410,7 +415,7 @@ export class StripeToCashTransitionService {
             paymentMethod: PaymentMethod.CASH,
             recordedByUserId: params.actorUserId,
             notes: params.notes,
-            paidAt: new Date(),
+            paidAt: params.paidAt ?? new Date(),
           },
         });
 
@@ -456,6 +461,7 @@ export class StripeToCashTransitionService {
             stripeSub,
             planId: params.plan.id,
             amountCents: params.amountCents,
+            requestedPaidAt: params.paidAt,
           });
         }
         throw new ConflictException(
@@ -471,6 +477,7 @@ export class StripeToCashTransitionService {
     stripeSub: StripeSubWithPlan;
     planId: string;
     amountCents: number;
+    requestedPaidAt?: Date;
   }): Promise<ScheduledCashResult> {
     if (params.existingScheduled.membershipPlanId !== params.planId) {
       throw new ConflictException(
@@ -489,6 +496,20 @@ export class StripeToCashTransitionService {
       throw new ConflictException(
         'Hay una transición a efectivo programada sin pago asociado. Requiere revisión manual.',
       );
+    }
+    if (params.requestedPaidAt && payment.paidAt) {
+      const studio = await this.prisma.studio.findFirst({
+        where: { id: params.existingScheduled.studioId, deletedAt: null },
+        select: { timezone: true },
+      });
+      const timezone = studio?.timezone ?? 'UTC';
+      const requestedKey = getStudioLocalDateKey(params.requestedPaidAt, timezone);
+      const storedKey = getStudioLocalDateKey(payment.paidAt, timezone);
+      if (requestedKey !== storedKey) {
+        throw new ConflictException(
+          `Ya hay un pago en efectivo programado con fecha ${storedKey}. No se cambió la fecha registrada.`,
+        );
+      }
     }
     if (!params.stripeSub.cancelAtPeriodEnd) {
       await this.ensureStripeCancelAtPeriodEnd(params.stripeSub);
@@ -517,6 +538,7 @@ export class StripeToCashTransitionService {
         amountCents: payment.amountCents,
         status: payment.status,
         paymentMethod: payment.paymentMethod,
+        paidAt: payment.paidAt,
       },
       stripe: {
         localSubscriptionId: params.stripeSub.id,

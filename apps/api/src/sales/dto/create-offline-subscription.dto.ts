@@ -1,4 +1,4 @@
-import { IsDateString, IsIn, IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsString, Min, MinLength, Matches } from 'class-validator';
 
 export class CreateOfflineSubscriptionDto {
   @IsString()
@@ -15,6 +15,11 @@ export class CreateOfflineSubscriptionDto {
   @IsOptional()
   @IsDateString()
   periodEnd?: string;
+
+  /** Studio-local YYYY-MM-DD of the actual cash receipt. Not membership start. */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  paidOn?: string;
 
   @IsIn(['CASH'])
   paymentMethod!: 'CASH';

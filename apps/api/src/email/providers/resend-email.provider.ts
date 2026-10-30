@@ -38,6 +38,7 @@ export class ResendEmailProvider implements EmailProvider {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
+          ...(message.idempotencyKey ? { 'Idempotency-Key': message.idempotencyKey } : {}),
         },
         body: JSON.stringify({
           from: message.from.name
@@ -48,6 +49,7 @@ export class ResendEmailProvider implements EmailProvider {
           html: message.html,
           text: message.text,
           ...(message.replyTo ? { reply_to: message.replyTo } : {}),
+          ...(message.headers ? { headers: message.headers } : {}),
           ...(message.tags
             ? { tags: Object.entries(message.tags).map(([name, value]) => ({ name, value })) }
             : {}),

@@ -36,8 +36,27 @@ import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
-/** Documented in docs/DEMO_ENVIRONMENT.md — local / private demo only. */
-const DEMO_PASSWORD = 'DemoGymOS2026!';
+/** Never ship a built-in password or run the destructive seed on a remote DB. */
+const DEMO_PASSWORD = process.env['GYMOS_DEMO_PASSWORD'] ?? '';
+
+function assertDisposableLocalDemoTarget(): void {
+  const raw = process.env['DATABASE_URL'] ?? '';
+  let parsed: URL;
+  try { parsed = new URL(raw); } catch { throw new Error('Seed blocked: DATABASE_URL is invalid.'); }
+  const host = parsed.hostname.toLowerCase();
+  const dbName = decodeURIComponent(parsed.pathname.slice(1));
+  if (
+    process.env['NODE_ENV'] === 'production' ||
+    !['localhost', '127.0.0.1', '[::1]'].includes(host) ||
+    !['gymos_test', 'gymos_dev', 'gymos_demo'].includes(dbName)
+  ) {
+    throw new Error('Seed blocked: destructive demo seed requires local disposable GymOS DB.');
+  }
+  if (DEMO_PASSWORD.length < 16) {
+    throw new Error('Set GYMOS_DEMO_PASSWORD securely (16+ characters); no default password.');
+  }
+}
+
 
 const DEMO_SLUGS = ['ares-fitness', 'pilates-toluca', 'gymos-dev'] as const;
 
@@ -127,6 +146,8 @@ async function clearDemoData(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // This seed deletes existing studio/member data; fail closed before any write.
+  assertDisposableLocalDemoTarget();
   await clearDemoData();
   const passwordHash = hashDemoPassword();
   const now = new Date();

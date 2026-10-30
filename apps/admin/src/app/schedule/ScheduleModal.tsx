@@ -25,6 +25,7 @@ import {
   type SeriesPreviewResult,
 } from "@/lib/api/scheduleSeries";
 import type { ClassTemplateDto } from "@/lib/api/classTemplates";
+import { canOfferClassCancel, protectedClassesNote } from "@/lib/classCancellation";
 import type { StaffInstructorDto } from "@/lib/api/staff";
 
 const WEEKDAY_LABELS = [
@@ -341,12 +342,16 @@ export function ScheduleModal({
     try {
       if (isRecurringEdit) {
         const impact = await previewCancelOccurrence(studioId, modal.cls.id, scope);
-        if (impact.totalReservations > 0) {
-          const ok = window.confirm(
-            `${impact.affectedClassCount} clases serán canceladas · ${impact.totalReservations} reservaciones afectadas. ¿Continuar?`,
-          );
-          if (!ok) return;
-        }
+        const generationNote =
+          scope === "SERIES"
+            ? " No se generarán clases nuevas de esta serie. El historial se conserva."
+            : scope === "FOLLOWING"
+              ? " No se generarán clases después de esta fecha."
+              : "";
+        const ok = window.confirm(
+          `${impact.affectedClassCount} clases serán canceladas · ${impact.totalReservations} reservaciones afectadas.${protectedClassesNote(impact.protectedClassCount)}${generationNote} ¿Continuar?`,
+        );
+        if (!ok) return;
         await cancelSeriesOccurrence(studioId, modal.cls.id, {
           scope,
           cancelReason: cancelReason.trim() || undefined,
@@ -684,7 +689,7 @@ export function ScheduleModal({
 
             <div className="flex items-center justify-between gap-3 pt-1">
               <div>
-                {modal.type === "edit" && !isCancelled ? (
+                {modal.type === "edit" && !isCancelled && canOfferClassCancel({ startsAt: modal.cls.startsAt, attendedCount: modal.cls.checkedInCount }) ? (
                   <button
                     type="button"
                     onClick={() => {

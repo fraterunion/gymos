@@ -77,6 +77,8 @@ export type MutationImpact = {
   affectedClassCount: number;
   classesWithReservations: number;
   totalReservations: number;
+  /** Series cancellations: future classes kept because they already have attendance. */
+  protectedClassCount?: number;
 };
 
 export type SeriesRecurrenceImpact = {
@@ -100,6 +102,8 @@ export type FinishSeriesPreview = {
   cancelledCount: number;
   bookedOccurrencesAffected: number;
   skippedDetachedCount: number;
+  /** Future classes kept because they already have attendance. */
+  skippedProtectedCount?: number;
 };
 
 export type RecurringSeriesContext = {
@@ -249,9 +253,30 @@ export async function cancelSeriesOccurrence(
     cancelReason?: string;
     confirmReservations?: boolean;
   },
-): Promise<{ cancelledCount: number }> {
+): Promise<{ cancelledCount: number; skippedProtectedCount?: number }> {
   return apiRequest(`/studios/${studioId}/schedule-series/occurrences/${scheduledClassId}`, {
     method: "DELETE",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function previewCancelSeriesPermanently(
+  studioId: string,
+  seriesId: string,
+): Promise<MutationImpact> {
+  return apiRequest<MutationImpact>(
+    `/studios/${studioId}/schedule-series/${seriesId}/cancel-preview`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export async function cancelSeriesPermanently(
+  studioId: string,
+  seriesId: string,
+  input: { cancelReason?: string; confirmReservations?: boolean },
+): Promise<{ cancelledCount: number; alreadyEnded?: boolean; skippedProtectedCount?: number }> {
+  return apiRequest(`/studios/${studioId}/schedule-series/${seriesId}/cancel`, {
+    method: "POST",
     body: JSON.stringify(input),
   });
 }

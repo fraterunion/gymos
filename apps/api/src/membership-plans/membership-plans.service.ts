@@ -126,6 +126,7 @@ export class MembershipPlansService {
       ...(includeInactive ? {} : { active: true }),
     };
 
+    const entitledWhere = currentlyEntitledSubscriptionWhere(new Date());
     const plans = await this.prisma.membershipPlan.findMany({
       where,
       orderBy: [{ active: 'desc' }, { createdAt: 'asc' }],
@@ -133,22 +134,44 @@ export class MembershipPlansService {
         ...classAccessInclude,
         _count: {
           select: {
-            subscriptions: {
-              where: currentlyEntitledSubscriptionWhere(new Date()),
-            },
+            subscriptions: { where: entitledWhere },
           },
         },
       },
     });
 
+    if (plans.length === 0) return [];
+
+    // A future-only price increase must NEVER make grandfathered members look
+    // more expensive in admin revenue projections. Aggregate the actual
+    // subscription locks, not the plan's new-customer catalog price.
+    // Legacy null locks fall back to the catalog until backfilled.
+    const priceGroups = await this.prisma.subscription.groupBy({
+      by: ['membershipPlanId', 'priceCents'],
+      where: {
+        studioId,
+        membershipPlanId: { in: plans.map((plan) => plan.id) },
+        ...entitledWhere,
+      },
+      _count: { _all: true },
+    });
+    const planById = new Map(plans.map((plan) => [plan.id, plan]));
+    const mrrByPlan = new Map<string, number>();
+    for (const group of priceGroups) {
+      const plan = planById.get(group.membershipPlanId);
+      if (!plan) continue;
+      const lockedPrice = group.priceCents ?? plan.priceCents;
+      const contribution = computeMrr(lockedPrice, plan.billingInterval, group._count._all);
+      mrrByPlan.set(plan.id, (mrrByPlan.get(plan.id) ?? 0) + contribution);
+    }
+
     return plans.map((p) => {
       const { _count, ...plan } = p;
       const mapped = mapPlanWithClassAccess(plan);
-      const count = _count.subscriptions;
       return {
         ...mapped,
-        activeSubscriberCount: count,
-        mrrCents: computeMrr(mapped.priceCents, mapped.billingInterval, count),
+        activeSubscriberCount: _count.subscriptions,
+        mrrCents: mrrByPlan.get(plan.id) ?? 0,
       };
     });
   }
@@ -219,6 +242,73 @@ export class MembershipPlansService {
       });
     }
     return mapped;
+  }
+
+  /**
+   * Public administrative plan update. Never let an ordinary PATCH silently
+   * change the catalog price without a confirmed ALL/FUTURE/SELECTED policy.
+   * The stripped price prevents a concurrent catalog change being overwritten
+   * by an otherwise harmless metadata edit.
+   *
+   * The dedicated price-change service owns catalog mutations and the ledger.
+   */
+  async updatePlanFromAdmin(
+    studioId: string,
+    planId: string,
+    dto: UpdateMembershipPlanDto,
+    actorUserId?: string,
+  ): Promise<MembershipPlan & { classAccess: PlanClassAccessDto }> {
+    // Currency, interval and fixed-duration windows are also financial terms:
+    // altering them under the regular metadata editor could silently change
+    // what the same nominal amount buys or when a Stripe renewal occurs.
+    // Only exact no-op values may be sent by a form that includes these fields.
+    const financialFieldProvided =
+      dto.priceCents !== undefined ||
+      dto.currency !== undefined ||
+      dto.billingInterval !== undefined ||
+      dto.entitlementDays !== undefined ||
+      dto.stripePriceId !== undefined ||
+      dto.stripeProductId !== undefined;
+    if (financialFieldProvided) {
+      const existing = await this.prisma.membershipPlan.findFirst({
+        where: { id: planId, studioId, deletedAt: null },
+        select: {
+          priceCents: true, currency: true, billingInterval: true, entitlementDays: true,
+          stripePriceId: true, stripeProductId: true,
+        },
+      });
+      if (!existing) throw new NotFoundException('Membership plan not found');
+      if (dto.priceCents !== undefined && dto.priceCents !== existing.priceCents) {
+        throw new BadRequestException(
+          'Para cambiar el precio, utiliza el flujo de grandfathering con selección explícita de miembros.',
+        );
+      }
+      if (
+        (dto.stripePriceId !== undefined && dto.stripePriceId !== existing.stripePriceId) ||
+        (dto.stripeProductId !== undefined && dto.stripeProductId !== existing.stripeProductId)
+      ) {
+        throw new BadRequestException(
+          'No puedes modificar directamente los identificadores de cobro de Stripe desde el editor del plan.',
+        );
+      }
+      if (
+        (dto.currency !== undefined && dto.currency !== existing.currency) ||
+        (dto.billingInterval !== undefined && dto.billingInterval !== existing.billingInterval) ||
+        (dto.entitlementDays !== undefined && dto.entitlementDays !== existing.entitlementDays)
+      ) {
+        throw new BadRequestException(
+          'La moneda, periodicidad y duración afectan la facturación. Requieren una migración financiera separada; no se modificaron las membresías.',
+        );
+      }
+    }
+    const safeDto = { ...dto };
+    delete safeDto.priceCents;
+    delete safeDto.currency;
+    delete safeDto.billingInterval;
+    delete safeDto.entitlementDays;
+    delete safeDto.stripePriceId;
+    delete safeDto.stripeProductId;
+    return this.updatePlan(studioId, planId, safeDto, actorUserId);
   }
 
   async updatePlan(
@@ -535,10 +625,10 @@ export class MembershipPlansService {
    * Must succeed before any GymOS stripePriceId write. Idempotent via Stripe Idempotency-Key.
    * Authoritative rotation primitive shared by financial edit and catalog reconciliation.
    */
-  private async rotateStripeSalePrice(params: {
+  async rotateStripeSalePrice(params: {
     plan: MembershipPlan;
     next: PlanFinancialIdentity;
-    source: 'membership_plan_edit' | 'catalog_reconciliation';
+    source: 'membership_plan_edit' | 'catalog_reconciliation' | 'membership_price_change';
   }): Promise<{
     previousStripePriceId: string | null;
     newStripePriceId: string;

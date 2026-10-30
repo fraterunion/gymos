@@ -53,8 +53,20 @@ jobs:
       - name: Prisma migrate deploy
         run: pnpm --filter api exec prisma migrate deploy
 
-      - name: Lint, typecheck, test, e2e, build
-        run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api
+      # Build may regenerate Prisma Client; concurrent Jest/typecheck can import
+      # its temporarily missing #main-entry-point. Serialize these tasks to
+      # eliminate this nondeterministic CI-only race without touching runtime.
+      - name: Lint, typecheck, test, e2e, build (serialized Prisma client)
+        run: pnpm exec turbo run lint typecheck test test:e2e build --filter=api --concurrency=1
+
+      # Read-only external smoke against the *isolated* release-rehearsal API.
+      # This job cannot create accounts, change prices or send messages.
+      - name: ARES PR5 rehearsal public HTTP and auth boundary smoke
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/ares-ops-payments-and-memberships-20261028'
+        run: node apps/api/scripts/smoke-ares-rehearsal-public.mjs
+
+      - name: ARES rehearsal fixture safety guards (pure Node, no DB writes)
+        run: node --test apps/api/scripts/provision-pr5-qa.test.mjs
 
       # Pure Node env-precedence + release-contract unit tests (no Expo CLI).
       - name: Mobile env precedence tests
@@ -64,3 +76,15 @@ jobs:
       # otherwise the checked-in env/.env.ares.example production contract (CI).
       - name: Mobile ARES config verify
         run: pnpm --filter mobile config:verify:ares
+
+      # Admin web: pure-Node unit tests, typecheck and production build (no API or DB).
+      # Last, on its own Node: the admin unit tests run TypeScript through
+      # `node --experimental-strip-types`, which needs Node >= 22.6 (the job uses 20).
+      # Lint is not gated yet: existing react-hooks compiler-rule errors predate this step.
+      - name: Setup Node.js 22 for admin checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Admin typecheck, unit tests, build
+        run: pnpm exec turbo run typecheck test build --filter=admin --concurrency=1

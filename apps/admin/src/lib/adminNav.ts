@@ -56,6 +56,7 @@ export function getAdminNavStructure(ctx: AdminNavContext): AdminNavStructure {
     { href: "/schedule", label: "Calendario" },
     { href: "/members", label: "Miembros" },
     ...(canManage ? [{ href: "/memberships", label: "Membresías" }] : []),
+    ...(canManage ? [{ href: "/communications", label: "Comunicaciones" }] : []),
     ...(canManage ? [{ href: "/staff", label: "Equipo" }] : []),
     ...(canExecutive ? [{ href: "/analytics", label: "Analytics" }] : []),
   ];
