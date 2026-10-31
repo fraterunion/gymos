@@ -207,6 +207,64 @@ export async function previewRangeCancel(studioId: string, body: RangeCancelFilt
   });
 }
 
+export type MatchingDatesClass = {
+  id: string;
+  localDate: string;
+  localTime: string;
+  className: string;
+  instructorName: string | null;
+  bookings: number;
+  waitlist: number;
+};
+
+export type MatchingDatesPreview = {
+  timezone: string;
+  className: string;
+  localTime: string;
+  instructorName: string | null;
+  includeOtherInstructors: boolean;
+  classes: MatchingDatesClass[];
+  protectedClasses: Array<MatchingDatesClass & { reason: "STARTED" | "ATTENDED"; attendances: number }>;
+  excludedClasses: Array<MatchingDatesClass & { reason: "OTHER_INSTRUCTOR" | "SERIES" }>;
+  alreadyCancelledCount: number;
+  totals: { classes: number; bookings: number; waitlist: number; protected: number; excluded: number };
+  previewFingerprint: string;
+};
+
+export type MatchingDatesResult = {
+  cancelledCount: number;
+  cancelledBookingCount: number;
+  expiredWaitlistCount: number;
+  idempotentReplay?: boolean;
+};
+
+export function previewMatchingDatesCancel(
+  studioId: string,
+  scheduledClassId: string,
+  includeOtherInstructors: boolean,
+): Promise<MatchingDatesPreview> {
+  return apiRequest(`/studios/${studioId}/schedule-operations/matching-dates-cancel/preview`, {
+    method: "POST",
+    body: JSON.stringify({ scheduledClassId, includeOtherInstructors }),
+  });
+}
+
+export function executeMatchingDatesCancel(
+  studioId: string,
+  body: {
+    scheduledClassId: string;
+    includeOtherInstructors: boolean;
+    previewFingerprint: string;
+    cancelReason?: string;
+    idempotencyKey: string;
+  },
+): Promise<MatchingDatesResult> {
+  return apiRequest(`/studios/${studioId}/schedule-operations/matching-dates-cancel`, {
+    method: "POST",
+    body: JSON.stringify({ ...body, confirm: true }),
+  });
+}
+
 export async function executeRangeCancel(
   studioId: string,
   body: RangeCancelFilters & { previewFingerprint: string; cancelReason?: string; idempotencyKey: string },
