@@ -712,6 +712,7 @@ export class ScheduleOperationsService {
         status: true,
         scheduleTemplateId: true,
         exceptionKind: true,
+        cancelReason: true,
         classTemplate: { select: { name: true } },
         instructor: { select: { firstName: true, lastName: true } },
         _count: {
@@ -756,6 +757,7 @@ export class ScheduleOperationsService {
       status: row.status,
       scheduleTemplateId: row.scheduleTemplateId,
       exceptionKind: row.exceptionKind,
+      cancelReason: row.cancelReason,
       bookingCount: row._count.bookings,
       attendanceCount: row._count.attendances,
       waitlistCount: row._count.waitlist,

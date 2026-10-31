@@ -18,6 +18,7 @@ import {
   formatRosterStatus,
   occupancyToneClass,
 } from "@/lib/scheduleOccupancy";
+import { MatchingDatesCancelDialog } from "@/app/schedule/MatchingDatesCancelDialog";
 import { canOfferClassCancel } from "@/lib/classCancellation";
 import { formatSeriesDayLabel } from "@/lib/scheduleConflictCopy";
 import {
@@ -247,6 +248,7 @@ export function SessionDrawer({
   const [error, setError] = useState<string | null>(null);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [walkInOpen, setWalkInOpen] = useState(false);
+  const [matchingDatesOpen, setMatchingDatesOpen] = useState(false);
   const [busyBookingId, setBusyBookingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -495,9 +497,31 @@ export function SessionDrawer({
                 Cancelar clase
               </button>
             ) : null}
+            {canCancelSessionFromDrawer(role) && !session.seriesContext.isRecurring ? (
+              <button
+                type="button"
+                className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                onClick={() => setMatchingDatesOpen(true)}
+              >
+                Cancelar todas las fechas
+              </button>
+            ) : null}
           </div>
         ) : null}
       </aside>
+
+      {matchingDatesOpen && session ? (
+        <MatchingDatesCancelDialog
+          studioId={studioId}
+          scheduledClassId={classId}
+          onClose={() => setMatchingDatesOpen(false)}
+          onDone={() => {
+            setMatchingDatesOpen(false);
+            onCalendarRefresh();
+            onClose();
+          }}
+        />
+      ) : null}
 
       {walkInOpen && session ? (
         <RegisterAttendanceModal

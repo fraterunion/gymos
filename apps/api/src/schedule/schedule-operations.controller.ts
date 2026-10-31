@@ -17,9 +17,12 @@ import {
   BulkScheduleOperationDto,
   DuplicateClassDto,
   DuplicateWeekDto,
+  MatchingDatesCancelExecuteDto,
+  MatchingDatesCancelPreviewDto,
   RangeCancelExecuteDto,
   RangeCancelPreviewDto,
 } from './dto/schedule-operations.dto';
+import { ScheduleMatchingDatesCancellationService } from './schedule-matching-dates-cancellation.service';
 import { ScheduleOperationsService } from './schedule-operations.service';
 import { ScheduleRangeCancellationService } from './schedule-range-cancellation.service';
 
@@ -30,6 +33,7 @@ export class ScheduleOperationsController {
   constructor(
     private readonly operations: ScheduleOperationsService,
     private readonly rangeCancellation: ScheduleRangeCancellationService,
+    private readonly matchingDatesCancellation: ScheduleMatchingDatesCancellationService,
   ) {}
 
   @Post('duplicate-week/preview')
@@ -110,5 +114,24 @@ export class ScheduleOperationsController {
     @CurrentUser('sub') actorUserId: string,
   ) {
     return this.rangeCancellation.execute(studioId, dto, actorUserId);
+  }
+
+  @Post('matching-dates-cancel/preview')
+  @HttpCode(HttpStatus.OK)
+  previewMatchingDatesCancel(
+    @Param('studioId') studioId: string,
+    @Body() dto: MatchingDatesCancelPreviewDto,
+  ) {
+    return this.matchingDatesCancellation.preview(studioId, dto);
+  }
+
+  @Post('matching-dates-cancel')
+  @HttpCode(HttpStatus.OK)
+  executeMatchingDatesCancel(
+    @Param('studioId') studioId: string,
+    @Body() dto: MatchingDatesCancelExecuteDto,
+    @CurrentUser('sub') actorUserId: string,
+  ) {
+    return this.matchingDatesCancellation.execute(studioId, dto, actorUserId);
   }
 }
