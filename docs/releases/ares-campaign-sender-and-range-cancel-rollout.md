@@ -47,6 +47,33 @@ by itself.
 - **Soft cancel only.** Classes are never deleted. Cancelled rows keep their unique slot, so the
   daily generator cannot recreate them (proved in e2e). Series stay active for other dates.
 
+## Acceptance evidence
+
+- **Local:** the full app with real Postgres. API unit tests 1,716/1,716 and e2e 662/662, including the
+  new `schedule-range-cancel` and `communications-campaign-sender` suites. Admin specs pass.
+- **GitHub CI on `4a4571e`:** push and pull_request runs green.
+- **Rehearsal:** deployment `b79e8265` at `4a4571e`, with synthetic data in `ares-pr5-isolated-acceptance` only.
+  Evidence: `docs/releases/evidence/ares-pr8-rehearsal-acceptance-20261030.json`.
+  Harness: `docs/releases/tools/ares-pr8-rehearsal-acceptance.remote.js`.
+  - **Range cancel:**
+    - 4 calendar weeks; 9 classes, 2 bookings and 1 waitlist entry; 1 protected early check-in kept.
+    - Local-midnight boundaries handled correctly; filters exact; a member gets 403.
+    - Two concurrent executes → one result and one replay. A stale fingerprint → 409.
+    - Running the generator again → all 6 recurring occurrences stay `CANCELLED`, with future dates
+      unaffected.
+    - Bookings `CANCELLED/STUDIO`, waitlist `EXPIRED`, protected attendance and booking intact.
+    - 0 rows deleted; 1 audit row.
+  - **Campaigns:**
+    - Status shows paused, and the old QA `SENDING` campaign (started 21 h ago) shows `PAUSED`.
+      With delivery enabled it would be `STALE`.
+    - Confirming a new draft → 409 and it stays `DRAFT`. 0 emails sent.
+- **Provider:** the production Resend key is send-only. One validation send went to Resend's test
+  sink `delivered@resend.dev` with From `ARES Training Club <fernando@arestrainingclub.com>`: HTTP 200,
+  id `01a18eb3-5fa2-7bf0-b47d-0e9d72ced3b1`.
+  - DNS: Resend DKIM (`resend._domainkey`) and the `send.` bounce domain are present; DMARC
+    `p=quarantine`.
+  - The real-inbox header check is deferred to activation step 4, by owner decision.
+
 ## Production activation checklist
 
 Each step is separately approved.
