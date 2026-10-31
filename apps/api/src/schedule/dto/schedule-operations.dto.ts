@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -152,4 +153,44 @@ export class BulkScheduleOperationDto {
   @IsString()
   @MaxLength(64)
   idempotencyKey?: string;
+}
+
+/** "Cancelar clases por rango de fechas": studio-local dates, inclusive on both ends. */
+export class RangeCancelPreviewDto {
+  @Matches(DATE_KEY)
+  fromDate!: string;
+
+  @Matches(DATE_KEY)
+  toDate!: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  instructorIds?: string[];
+
+  /** Class types (ClassTemplate ids). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  classTemplateIds?: string[];
+}
+
+export class RangeCancelExecuteDto extends RangeCancelPreviewDto {
+  @Matches(/^[a-f0-9]{64}$/)
+  previewFingerprint!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  cancelReason?: string;
+
+  @IsBoolean()
+  confirm!: boolean;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  idempotencyKey!: string;
 }

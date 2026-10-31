@@ -1,0 +1,116 @@
+{
+  "_about": "PR #8 rehearsal acceptance, release-rehearsal deployment b79e8265 @ 4a4571e, 2026-10-30. Synthetic data in studio ares-pr5-isolated-acceptance only; real HTTP API of the rehearsal container; counts/states only. Worker paused (EMAIL_CAMPAIGN_WORKER=0); 0 emails sent.",
+  "run": "1",
+  "steps": {
+    "createSeries": 201,
+    "generator1": {
+      "http": 201,
+      "created": 4
+    },
+    "preview": {
+      "http": 200,
+      "weekCount": 4,
+      "totals": {
+        "classes": 9,
+        "bookings": 2,
+        "waitlist": 1,
+        "protected": 1
+      },
+      "protected": [
+        "ATTENDED"
+      ],
+      "boundaryIncluded": true,
+      "boundaryExcluded": true,
+      "recurringAllIncluded": true
+    },
+    "filters": {
+      "hiitOnly": 3,
+      "instructorOnly": 6
+    },
+    "crossStudio": "no other owner",
+    "memberForbidden": 403,
+    "execute": {
+      "http": [
+        200,
+        200
+      ],
+      "replayFlags": [
+        true,
+        false
+      ],
+      "cancelledCount": 9,
+      "cancelledBookingCount": 2,
+      "expiredWaitlistCount": 1,
+      "protectedKept": 1,
+      "sameResult": true
+    },
+    "staleFingerprintNewKey": 409,
+    "regeneration": {
+      "generatorHttp": 201,
+      "inRangeBefore": 6,
+      "inRangeAfter": 6,
+      "allCancelled": true,
+      "futureOutsideRangeScheduled": 2
+    },
+    "db": {
+      "rowsBefore": 24,
+      "rowsAfter": 24,
+      "protectedStillScheduled": "SCHEDULED",
+      "protectedAttendance": 1,
+      "protectedBookingConfirmed": 1,
+      "bookedClassBookings": [
+        "CANCELLED/STUDIO",
+        "CANCELLED/STUDIO"
+      ],
+      "bookedClassWaitlist": [
+        "EXPIRED"
+      ],
+      "outsideRange": [
+        "SCHEDULED",
+        "SCHEDULED"
+      ],
+      "auditRows": 1
+    },
+    "commsStatus": {
+      "http": 200,
+      "delivery": {
+        "active": false,
+        "message": "Los envíos de campañas están pausados en este servidor. La campaña queda en borrador y no se enviará hasta que se activen los envíos."
+      },
+      "senderSource": "PLATFORM_DEFAULT",
+      "unsubscribeConfigured": true,
+      "staleAfterMinutes": 360
+    },
+    "commsCampaigns": [
+      {
+        "status": "SENDING",
+        "deliveryState": "PAUSED",
+        "pendingCount": 2,
+        "startedHoursAgo": 21
+      }
+    ],
+    "confirmWhilePaused": {
+      "createHttp": 201,
+      "confirmHttp": 409,
+      "message": "Los envíos de campañas están pausados en este servidor. La campaña queda en borrador y no se enviará hasta que se activen los envíos.",
+      "statusAfter": "DRAFT"
+    },
+    "recipientsSent": 0
+  },
+  "guards": {
+    "env": "release-rehearsal",
+    "db": "postgres-rehearsal.railway.internal",
+    "worker": "0",
+    "commit": "4a4571e"
+  },
+  "seed": {
+    "timezone": "America/Mexico_City",
+    "fromDate": "2026-11-20",
+    "toDate": "2026-12-10",
+    "recurringInRange": 6,
+    "oneOffs": 6,
+    "bookings": 3,
+    "waitlist": 1,
+    "earlyCheckIn": 1
+  }
+}

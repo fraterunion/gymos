@@ -22,12 +22,20 @@ import { resolveEmailBranding, type PlatformEmailDefaults } from '../email/email
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
 import { normalizeCampaignContent, renderCampaignEmail } from './campaign-email.template';
+import { resolveCampaignSender, type CampaignSender } from './campaign-sender';
 import { campaignAudienceSignature, recipientSnapshotFingerprint, resolveCampaignRecipients, type CampaignFilters, type RecipientCandidate } from './campaign-recipients';
 import type { ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto/campaign.dto';
 import { readUnsubscribeToken, signUnsubscribeToken } from './unsubscribe-token';
 
 const STALE_CLAIM_MS = 10 * 60_000;
 const DEFAULT_BATCH = 5;
+const DEFAULT_STALE_AFTER_MINUTES = 360;
+
+export const CAMPAIGN_DELIVERY_PAUSED_MESSAGE =
+  'Los envíos de campañas están pausados en este servidor. La campaña queda en borrador y no se enviará hasta que se activen los envíos.';
+
+/** ACTIVE: being delivered. PAUSED: delivery is off on this server. STALE: queued too long ago — never auto-sent, needs an explicit "Reanudar". */
+export type CampaignDeliveryState = 'ACTIVE' | 'PAUSED' | 'STALE';
 
 @Injectable()
 export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
@@ -53,6 +61,70 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  /** EMAIL_CAMPAIGN_WORKER=0 pauses campaign delivery: nothing is sent and nothing new can be queued. */
+  deliveryPaused(): boolean {
+    return process.env['EMAIL_CAMPAIGN_WORKER'] === '0';
+  }
+
+  private staleAfterMs(): number {
+    const minutes = Number(this.config.get<string>('EMAIL_CAMPAIGN_STALE_AFTER_MINUTES', '') || DEFAULT_STALE_AFTER_MINUTES);
+    return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_STALE_AFTER_MINUTES) * 60_000;
+  }
+
+  /**
+   * A SENDING campaign is only delivered automatically while its last explicit start (confirm,
+   * retry or resume) is recent. A campaign left queued — e.g. delivery was paused mid-send — is
+   * never resumed on its own when delivery is enabled again.
+   */
+  private isStale(campaign: Pick<EmailCampaign, 'startedAt'>, now = Date.now()): boolean {
+    return !campaign.startedAt || campaign.startedAt.getTime() < now - this.staleAfterMs();
+  }
+
+  private campaignSender(studioSlug: string): CampaignSender {
+    return resolveCampaignSender(
+      studioSlug,
+      this.config.get<string>('EMAIL_CAMPAIGN_SENDERS', ''),
+      this.platformDefaults().fromEmail,
+    );
+  }
+
+  /** Delivery state and the exact sender identity shown to the administrator before sending. */
+  async status(studioId: string) {
+    const studio = await this.loadStudio(studioId);
+    const sender = this.campaignSender(studio.slug);
+    const branding = resolveEmailBranding(studio, this.platformDefaults());
+    let unsubscribeConfigured = true;
+    try {
+      this.unsubscribeBase();
+    } catch {
+      unsubscribeConfigured = false;
+    }
+    return {
+      delivery: {
+        active: !this.deliveryPaused(),
+        message: this.deliveryPaused() ? CAMPAIGN_DELIVERY_PAUSED_MESSAGE : null,
+      },
+      sender:
+        sender.kind === 'CONFIGURED'
+          ? { source: 'CAMPAIGN_SENDER' as const, fromName: sender.from.name, fromAddress: sender.from.email, replyTo: sender.replyTo, error: null }
+          : sender.kind === 'PLATFORM_DEFAULT'
+            ? { source: 'PLATFORM_DEFAULT' as const, fromName: branding.from.name, fromAddress: branding.from.email, replyTo: branding.supportEmail, error: null }
+            : { source: 'INVALID' as const, fromName: null, fromAddress: null, replyTo: null, error: sender.error },
+      unsubscribeConfigured,
+      staleAfterMinutes: Math.round(this.staleAfterMs() / 60_000),
+    };
+  }
+
+  /** Refuses to queue anything that could not be sent right now with the expected identity. */
+  private async assertCanQueue(studioId: string) {
+    if (this.deliveryPaused()) throw new ConflictException(CAMPAIGN_DELIVERY_PAUSED_MESSAGE);
+    const studio = await this.loadStudio(studioId);
+    const sender = this.campaignSender(studio.slug);
+    if (sender.kind === 'INVALID') throw new BadRequestException(sender.error);
+    // Every marketing email MUST contain a working public unsubscribe URL; never ship localhost links.
+    this.unsubscribeBase();
   }
 
   async preview(studioId: string, dto: PreviewCampaignDto) {
@@ -162,9 +234,9 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
     if (campaign.status !== EmailCampaignStatus.DRAFT) {
       return this.campaignView(campaign.id);
     }
-    // Fail closed before enabling delivery. Every marketing email MUST contain
-    // a working public unsubscribe URL; never ship localhost links.
-    this.unsubscribeBase();
+    // Fail closed before enabling delivery: paused delivery, an invalid campaign sender or a
+    // missing unsubscribe URL leave the campaign as a DRAFT.
+    await this.assertCanQueue(studioId);
     const now = new Date();
     await this.prisma.emailCampaign.update({
       where: { id: campaign.id },
@@ -187,13 +259,15 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
     if (campaign.status === EmailCampaignStatus.DRAFT) {
       throw new BadRequestException('La campaña todavía no fue confirmada.');
     }
+    await this.assertCanQueue(studioId);
+    const wasStale = campaign.status === EmailCampaignStatus.SENDING && this.isStale(campaign);
     await this.prisma.emailCampaignRecipient.updateMany({
       where: { campaignId, status: { in: [EmailRecipientStatus.FAILED, EmailRecipientStatus.SKIPPED] } },
       data: { status: EmailRecipientStatus.PENDING, error: null, claimedAt: null },
     });
     await this.prisma.emailCampaign.update({
       where: { id: campaignId },
-      data: { status: EmailCampaignStatus.SENDING, completedAt: null },
+      data: { status: EmailCampaignStatus.SENDING, completedAt: null, startedAt: new Date() },
     });
     await this.audit.log({
       studioId,
@@ -201,7 +275,7 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
       action: 'EMAIL_CAMPAIGN_RETRIED',
       entityType: 'email_campaign',
       entityId: campaignId,
-      metadata: {},
+      metadata: { resumedStaleCampaign: wasStale },
     });
     return this.campaignView(campaignId);
   }
@@ -244,6 +318,11 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
 
   /** Sends pending recipients. Tests call this directly; production uses the interval. */
   async deliver(campaignId: string, opts?: { maxSends?: number }) {
+    const campaign = await this.prisma.emailCampaign.findUnique({
+      where: { id: campaignId },
+      select: { status: true, startedAt: true },
+    });
+    if (!campaign || campaign.status !== EmailCampaignStatus.SENDING || this.isStale(campaign)) return;
     await this.reclaimStaleClaims(campaignId);
     let sentThisCall = 0;
     const max = opts?.maxSends ?? Number.POSITIVE_INFINITY;
@@ -267,8 +346,12 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick() {
+    if (this.deliveryPaused()) return;
     const campaign = await this.prisma.emailCampaign.findFirst({
-      where: { status: EmailCampaignStatus.SENDING },
+      where: {
+        status: EmailCampaignStatus.SENDING,
+        startedAt: { gte: new Date(Date.now() - this.staleAfterMs()) },
+      },
       orderBy: { confirmedAt: 'asc' },
       select: { id: true },
     });
@@ -302,6 +385,14 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
         },
       });
       const branding = resolveEmailBranding(studio, this.platformDefaults());
+      const sender = this.campaignSender(studio?.slug ?? '');
+      if (sender.kind === 'INVALID') {
+        await this.prisma.emailCampaignRecipient.update({
+          where: { id: recipient.id },
+          data: { status: EmailRecipientStatus.FAILED, error: `campaign_sender_invalid: ${sender.error}`.slice(0, 500), claimedAt: null },
+        });
+        return;
+      }
       const token = signUnsubscribeToken(
         { studioId: recipient.studioId, email: recipient.email },
         this.config.getOrThrow<string>('JWT_SECRET'),
@@ -315,8 +406,8 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
       });
       const result = await this.email.send({
         to: recipient.email,
-        from: branding.from,
-        replyTo: branding.supportEmail ?? undefined,
+        from: sender.kind === 'CONFIGURED' ? sender.from : branding.from,
+        replyTo: sender.kind === 'CONFIGURED' ? sender.replyTo : (branding.supportEmail ?? undefined),
         subject: rendered.subject,
         html: rendered.html,
         text: rendered.text,
@@ -510,7 +601,19 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private summary(campaign: EmailCampaign) {
+    const pendingCount = Math.max(0, campaign.recipientCount - campaign.sentCount - campaign.failedCount - campaign.skippedCount);
+    const deliveryState: CampaignDeliveryState | null =
+      campaign.status !== EmailCampaignStatus.SENDING
+        ? null
+        : this.deliveryPaused()
+          ? 'PAUSED'
+          : this.isStale(campaign)
+            ? 'STALE'
+            : 'ACTIVE';
     return {
+      deliveryState,
+      pendingCount,
+      startedAt: campaign.startedAt,
       id: campaign.id,
       subject: campaign.subject,
       status: campaign.status,
@@ -523,6 +626,19 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
       completedAt: campaign.completedAt,
       createdAt: campaign.createdAt,
     };
+  }
+
+  private async loadStudio(studioId: string) {
+    const studio = await this.prisma.studio.findFirst({
+      where: { id: studioId, deletedAt: null },
+      select: {
+        id: true, slug: true, name: true, appName: true, appDisplayName: true,
+        brandPrimaryColor: true, primaryColor: true, brandLogoUrl: true, logoUrl: true,
+        supportEmail: true, supportPhone: true,
+      },
+    });
+    if (!studio) throw new NotFoundException('Studio not found');
+    return studio;
   }
 
   private platformDefaults(): PlatformEmailDefaults {

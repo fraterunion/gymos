@@ -11,17 +11,28 @@ import {
   createCampaign,
   fetchCampaign,
   fetchCampaigns,
+  fetchCommunicationsStatus,
   previewCampaign,
+  retryCampaign,
   type CampaignDetail,
   type CampaignRecipient,
   type CampaignSummary,
+  type CommunicationsStatus,
 } from "@/lib/api/communications";
+import { CAMPAIGN_ACTION_LABEL, campaignAction, campaignStateLabel, formatSender, type CampaignTone } from "@/lib/campaignDelivery";
 import { ApiError } from "@/lib/api/errors";
 import { fetchMembers, type MemberListItem } from "@/lib/api/members";
 import { fetchMembershipPlans, type MembershipPlanDto } from "@/lib/api/memberships";
 
 const STATUSES = ["ACTIVE", "TRIALING", "ENDING", "PAST_DUE", "PAUSED", "CANCELED", "REPLACED", "SCHEDULED", "EXPIRED", "NONE"] as const;
 const SOURCES = ["STRIPE", "CASH", "MANUAL", "NONE"] as const;
+const TONE_CLASS: Record<CampaignTone, string> = {
+  neutral: "text-zinc-500",
+  progress: "text-sky-700",
+  warning: "text-amber-700",
+  success: "text-emerald-700",
+  danger: "text-red-700",
+};
 
 export default function CommunicationsPage() {
   const { selectedStudioId } = useDeskStudio();
@@ -45,10 +56,16 @@ export default function CommunicationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [status, setStatus] = useState<CommunicationsStatus | null>(null);
 
   const loadHistory = useCallback(async () => {
     if (!selectedStudioId) return;
-    setHistory(await fetchCampaigns(selectedStudioId));
+    const [rows, nextStatus] = await Promise.all([
+      fetchCampaigns(selectedStudioId),
+      fetchCommunicationsStatus(selectedStudioId).catch(() => null),
+    ]);
+    setHistory(rows);
+    setStatus(nextStatus);
   }, [selectedStudioId]);
 
   useEffect(() => {
@@ -60,6 +77,9 @@ export default function CommunicationsPage() {
     void fetchCampaigns(selectedStudioId)
       .then((rows) => { if (!cancelled) setHistory(rows); })
       .catch(() => { if (!cancelled) setHistory([]); });
+    void fetchCommunicationsStatus(selectedStudioId)
+      .then((next) => { if (!cancelled) setStatus(next); })
+      .catch(() => { if (!cancelled) setStatus(null); });
     return () => { cancelled = true; };
   }, [selectedStudioId]);
 
@@ -136,6 +156,35 @@ export default function CommunicationsPage() {
     }
   }
 
+  const deliveryActive = status?.delivery.active === true;
+  const canSend = deliveryActive && status?.sender.source !== "INVALID" && status?.unsubscribeConfigured === true;
+
+  async function onCampaignAction(campaign: CampaignSummary) {
+    if (!selectedStudioId) return;
+    const action = campaignAction(campaign, deliveryActive);
+    if (!action) return;
+    const pending = campaign.pendingCount ?? 0;
+    const prompt = action === "CONFIRM"
+      ? `¿Enviar "${campaign.subject}" a ${campaign.recipientCount} personas?`
+      : action === "RESUME"
+        ? `¿Reanudar el envío de "${campaign.subject}"? Se enviará a ${pending} personas pendientes.`
+        : `¿Reintentar los ${campaign.failedCount} envíos fallidos de "${campaign.subject}"?`;
+    if (!window.confirm(prompt)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = action === "CONFIRM"
+        ? await confirmCampaign(selectedStudioId, campaign.id)
+        : await retryCampaign(selectedStudioId, campaign.id);
+      setOpen(updated);
+      await loadHistory();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No se pudo actualizar la campaña.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function searchMembers() {
     if (!selectedStudioId || search.trim().length < 2) return;
     const res = await fetchMembers(selectedStudioId, { search: search.trim(), role: "MEMBER", limit: 20 });
@@ -149,6 +198,24 @@ export default function CommunicationsPage() {
   return (
     <AdminPageShell>
       <PageHeader title="Comunicaciones" subtitle="Correo a miembros del estudio. El envío queda en historial y no sale hasta que lo confirmas." />
+      {status ? (
+        <div className={`mt-6 rounded-2xl border p-4 text-sm ${canSend ? "border-emerald-200 bg-emerald-50" : "border-amber-300 bg-amber-50"}`}>
+          <p className="font-medium text-zinc-900">
+            {deliveryActive ? "Envíos activos" : "Envíos pausados"}
+          </p>
+          {status.delivery.message ? <p className="mt-1 text-amber-800">{status.delivery.message}</p> : null}
+          {status.sender.source === "INVALID" ? (
+            <p className="mt-1 text-red-700">Remitente de campañas inválido: {status.sender.error}</p>
+          ) : (
+            <p className="mt-1 text-zinc-700">
+              De: {formatSender(status.sender.fromName, status.sender.fromAddress)} · Responder a: {status.sender.replyTo ?? "—"}
+            </p>
+          )}
+          {!status.unsubscribeConfigured ? (
+            <p className="mt-1 text-red-700">Falta configurar el enlace público para cancelar correos; no se pueden enviar campañas.</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <section className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5">
           <label className="block text-sm">
@@ -215,10 +282,13 @@ export default function CommunicationsPage() {
           {error ? <p className="text-sm text-red-700">{error}</p> : null}
           <div className="flex gap-2">
             <button type="button" className={adminSecondaryBtn} disabled={busy} onClick={() => void onPreview()}>Vista previa</button>
-            <button type="button" className={adminPrimaryBtn} disabled={busy || !previewIsCurrent || !subject.trim() || !bodyText.trim()} onClick={() => void onSend()}>
+            <button type="button" className={adminPrimaryBtn} disabled={busy || !canSend || !previewIsCurrent || !subject.trim() || !bodyText.trim()} onClick={() => void onSend()}>
               Confirmar envío
             </button>
           </div>
+          {status && !canSend ? (
+            <p className="text-sm text-amber-700">El envío está deshabilitado mientras los envíos estén pausados o el remitente no esté configurado.</p>
+          ) : null}
           {preview && !previewIsCurrent ? (
             <p className="text-sm text-amber-700">Los filtros o miembros seleccionados cambiaron. Vuelve a generar la vista previa antes de enviar.</p>
           ) : null}
@@ -243,7 +313,7 @@ export default function CommunicationsPage() {
               <li key={campaign.id}>
                 <button type="button" className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-left text-sm" onClick={() => selectedStudioId && void fetchCampaign(selectedStudioId, campaign.id).then(setOpen)}>
                   <span className="block font-medium">{campaign.subject}</span>
-                  <span className="text-xs text-zinc-500">{campaign.status} · {campaign.sentCount}/{campaign.recipientCount} enviados · {campaign.failedCount} fallos</span>
+                  <span className={`text-xs ${TONE_CLASS[campaignStateLabel(campaign).tone]}`}>{campaignStateLabel(campaign).label}</span>
                 </button>
               </li>
             ))}
@@ -251,6 +321,14 @@ export default function CommunicationsPage() {
           {open ? (
             <div className="rounded-xl border border-zinc-200 bg-white p-3 text-sm">
               <p className="font-medium">{open.subject}</p>
+              <p className={`mt-1 text-xs ${TONE_CLASS[campaignStateLabel(open).tone]}`}>
+                {campaignStateLabel(open).label} · {open.sentCount} enviados · {open.failedCount} fallos · {open.skippedCount} omitidos
+              </p>
+              {campaignAction(open, deliveryActive) ? (
+                <button type="button" className={`${adminSecondaryBtn} mt-2`} disabled={busy} onClick={() => void onCampaignAction(open)}>
+                  {CAMPAIGN_ACTION_LABEL[campaignAction(open, deliveryActive)!]}
+                </button>
+              ) : null}
               <p className="mt-2 whitespace-pre-wrap text-zinc-700">{open.bodyText}</p>
               <ul className="mt-3 max-h-48 overflow-y-auto text-xs text-zinc-600">
                 {open.recipients.map((recipient) => (
