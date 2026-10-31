@@ -14,7 +14,12 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
 import { cascadeClassCancellationInTx } from './cascade-class-cancellation';
-import { cancellableClassWhere, protectedClassReason, type ProtectedReason } from './class-cancellation-guard';
+import {
+  assertNotProtected,
+  cancellableClassWhere,
+  protectedClassReason,
+  type ProtectedReason,
+} from './class-cancellation-guard';
 import type { MatchingDatesCancelExecuteDto, MatchingDatesCancelPreviewDto } from './dto/schedule-operations.dto';
 import { acquireOperationAdvisoryLock } from './schedule-occurrence-concurrency';
 import { matchingDatesCancelReason } from './schedule-matching-dates-tombstone';
@@ -36,6 +41,10 @@ export const MATCHING_DATES_CANCEL_AUDIT_ACTION = 'SCHEDULE_MATCHING_DATES_CANCE
 export const MATCHING_DATES_CANCEL_MAX_CLASSES = 2000;
 export const MATCHING_DATES_STALE_PREVIEW_MESSAGE =
   'Las fechas cambiaron desde la vista previa (nuevas reservas, check-ins o cambios de horario). Genera una nueva vista previa antes de cancelar.';
+export const MATCHING_DATES_SOURCE_SERIES_MESSAGE =
+  'Esta clase pertenece a una serie recurrente. Cancélala desde la serie.';
+export const MATCHING_DATES_SOURCE_INELIGIBLE_MESSAGE =
+  'Solo una clase futura programada puede originar esta cancelación.';
 
 export type MatchingDatesExcludedReason = 'OTHER_INSTRUCTOR' | 'SERIES';
 
@@ -112,6 +121,9 @@ type SourceClass = {
   classTemplateId: string;
   instructorId: string | null;
   startsAt: Date;
+  status: ClassStatus;
+  scheduleTemplateId: string | null;
+  attendanceCount: number;
   classTemplate: { name: string };
   instructor: { firstName: string; lastName: string } | null;
 };
@@ -129,7 +141,8 @@ export class ScheduleMatchingDatesCancellationService {
     now: Date = new Date(),
   ): Promise<MatchingDatesPreview> {
     const studio = await this.requireStudio(studioId);
-    const source = await this.requireSource(studioId, dto.scheduledClassId);
+    const source = await this.requireSource(this.prisma, studioId, dto.scheduledClassId);
+    this.assertEligibleSource(source, now);
     return this.buildPreview(this.prisma, studioId, studio.timezone, source, dto.includeOtherInstructors === true, now);
   }
 
@@ -142,7 +155,7 @@ export class ScheduleMatchingDatesCancellationService {
       throw new BadRequestException('Confirma explícitamente la cancelación antes de continuar.');
     }
     const studio = await this.requireStudio(studioId);
-    const source = await this.requireSource(studioId, dto.scheduledClassId);
+    await this.requireSource(this.prisma, studioId, dto.scheduledClassId);
     const includeOtherInstructors = dto.includeOtherInstructors === true;
     const staffReason = dto.cancelReason?.trim() || null;
 
@@ -153,6 +166,8 @@ export class ScheduleMatchingDatesCancellationService {
         if (replay) return replay;
 
         const now = new Date();
+        const source = await this.requireSource(tx, studioId, dto.scheduledClassId);
+        this.assertEligibleSource(source, now);
         const preview = await this.buildPreview(tx, studioId, studio.timezone, source, includeOtherInstructors, now);
         if (preview.previewFingerprint !== dto.previewFingerprint) {
           throw new ConflictException(MATCHING_DATES_STALE_PREVIEW_MESSAGE);
@@ -364,20 +379,53 @@ export class ScheduleMatchingDatesCancellationService {
     return studio;
   }
 
-  private async requireSource(studioId: string, scheduledClassId: string): Promise<SourceClass> {
-    const source = await this.prisma.scheduledClass.findFirst({
+  /** The opened class must itself be a future unlinked SCHEDULED session. Replay is decided before this. */
+  private assertEligibleSource(source: SourceClass, now: Date): void {
+    if (source.scheduleTemplateId != null) {
+      throw new BadRequestException(MATCHING_DATES_SOURCE_SERIES_MESSAGE);
+    }
+    if (source.status !== ClassStatus.SCHEDULED) {
+      throw new BadRequestException(MATCHING_DATES_SOURCE_INELIGIBLE_MESSAGE);
+    }
+    assertNotProtected(
+      protectedClassReason(
+        { startsAt: source.startsAt, status: source.status, attendanceCount: source.attendanceCount },
+        now,
+      ),
+    );
+  }
+
+  private async requireSource(
+    db: Prisma.TransactionClient | PrismaService,
+    studioId: string,
+    scheduledClassId: string,
+  ): Promise<SourceClass> {
+    const source = await db.scheduledClass.findFirst({
       where: { id: scheduledClassId, studioId },
       select: {
         id: true,
         classTemplateId: true,
         instructorId: true,
         startsAt: true,
+        status: true,
+        scheduleTemplateId: true,
         classTemplate: { select: { name: true } },
         instructor: { select: { firstName: true, lastName: true } },
+        _count: { select: { attendances: true } },
       },
     });
     if (!source) throw new NotFoundException('Class not found');
-    return source;
+    return {
+      id: source.id,
+      classTemplateId: source.classTemplateId,
+      instructorId: source.instructorId,
+      startsAt: source.startsAt,
+      status: source.status,
+      scheduleTemplateId: source.scheduleTemplateId,
+      attendanceCount: source._count.attendances,
+      classTemplate: source.classTemplate,
+      instructor: source.instructor,
+    };
   }
 }
 

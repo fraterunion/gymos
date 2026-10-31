@@ -4,7 +4,12 @@ import request from 'supertest';
 import { addDaysToDateKey, getDayOfWeekFromDateKey, getStudioLocalDateKey, studioLocalTimeToUtc } from '../src/common/date/studio-local-date';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { ScheduleGeneratorService } from '../src/schedule-generator/schedule-generator.service';
-import { MATCHING_DATES_CANCEL_AUDIT_ACTION } from '../src/schedule/schedule-matching-dates-cancellation.service';
+import {
+  MATCHING_DATES_CANCEL_AUDIT_ACTION,
+  MATCHING_DATES_SOURCE_INELIGIBLE_MESSAGE,
+  MATCHING_DATES_SOURCE_SERIES_MESSAGE,
+} from '../src/schedule/schedule-matching-dates-cancellation.service';
+import { ATTENDED_CLASS_CANCEL_MESSAGE, STARTED_CLASS_CANCEL_MESSAGE } from '../src/schedule/class-cancellation-guard';
 import { MATCHING_DATES_TOMBSTONE_PREFIX } from '../src/schedule/schedule-matching-dates-tombstone';
 import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
@@ -177,6 +182,7 @@ describe('Matching future dates cancellation (e2e)', () => {
       expiredWaitlistCount: 1,
     });
 
+    expect((await prisma.scheduledClass.findUniqueOrThrow({ where: { id: seeded.week1.id } })).status).toBe(ClassStatus.CANCELLED);
     const again = await execute(seeded, {
       previewFingerprint: seen.body.previewFingerprint,
       idempotencyKey: 'matching-dates-1',
@@ -245,6 +251,55 @@ describe('Matching future dates cancellation (e2e)', () => {
     });
     expect((await prisma.scheduledClass.findUniqueOrThrow({ where: { id: seeded.otherCoach.id } })).status).toBe(ClassStatus.CANCELLED);
     expect((await prisma.scheduledClass.findUniqueOrThrow({ where: { id: seeded.evening.id } })).status).toBe(ClassStatus.SCHEDULED);
+  });
+
+  it('rejects a series-linked, started, attended, completed or already cancelled source', async () => {
+    const seeded = await seed();
+    const fingerprint = 'ab'.repeat(32);
+
+    const seriesPreview = await preview(seeded, { scheduledClassId: seeded.linked.id }, 400);
+    expect(seriesPreview.body.message).toBe(MATCHING_DATES_SOURCE_SERIES_MESSAGE);
+    const seriesExecute = await execute(seeded, {
+      scheduledClassId: seeded.linked.id,
+      previewFingerprint: fingerprint,
+      idempotencyKey: 'matching-dates-series-source',
+    }, 400);
+    expect(seriesExecute.body.message).toBe(MATCHING_DATES_SOURCE_SERIES_MESSAGE);
+    expect((await prisma.scheduledClass.findUniqueOrThrow({ where: { id: seeded.linked.id } })).status).toBe(ClassStatus.SCHEDULED);
+
+    const attended = await preview(seeded, { scheduledClassId: seeded.attended.id }, 400);
+    expect(attended.body.message).toBe(ATTENDED_CLASS_CANCEL_MESSAGE);
+    expect((await execute(seeded, {
+      scheduledClassId: seeded.attended.id,
+      previewFingerprint: fingerprint,
+      idempotencyKey: 'matching-dates-attended-source',
+    }, 400)).body.message).toBe(ATTENDED_CLASS_CANCEL_MESSAGE);
+
+    const startedAt = new Date(Date.now() - 60_000);
+    const started = await prisma.scheduledClass.create({
+      data: {
+        studioId: seeded.studio.id,
+        classTemplateId: seeded.booty.id,
+        instructorId: seeded.etzia.id,
+        capacity: 12,
+        status: ClassStatus.SCHEDULED,
+        startsAt: startedAt,
+        endsAt: new Date(startedAt.getTime() + 60 * MIN),
+      },
+    });
+    expect((await preview(seeded, { scheduledClassId: started.id }, 400)).body.message).toBe(STARTED_CLASS_CANCEL_MESSAGE);
+
+    await prisma.scheduledClass.update({ where: { id: seeded.evening.id }, data: { status: ClassStatus.COMPLETED } });
+    expect((await preview(seeded, { scheduledClassId: seeded.evening.id }, 400)).body.message).toBe(MATCHING_DATES_SOURCE_INELIGIBLE_MESSAGE);
+
+    await prisma.scheduledClass.update({ where: { id: seeded.week0.id }, data: { status: ClassStatus.CANCELLED } });
+    expect((await preview(seeded, { scheduledClassId: seeded.week0.id }, 400)).body.message).toBe(MATCHING_DATES_SOURCE_INELIGIBLE_MESSAGE);
+    expect((await execute(seeded, {
+      scheduledClassId: seeded.week0.id,
+      previewFingerprint: fingerprint,
+      idempotencyKey: 'matching-dates-cancelled-source',
+    }, 400)).body.message).toBe(MATCHING_DATES_SOURCE_INELIGIBLE_MESSAGE);
+    expect((await prisma.scheduledClass.findUniqueOrThrow({ where: { id: seeded.week1.id } })).status).toBe(ClassStatus.SCHEDULED);
   });
 
   it('refuses a stale preview and does not cancel', async () => {

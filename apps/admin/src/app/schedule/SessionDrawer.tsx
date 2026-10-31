@@ -19,7 +19,7 @@ import {
   occupancyToneClass,
 } from "@/lib/scheduleOccupancy";
 import { MatchingDatesCancelDialog } from "@/app/schedule/MatchingDatesCancelDialog";
-import { canOfferClassCancel } from "@/lib/classCancellation";
+import { canOfferClassCancel, canOfferMatchingDatesCancel } from "@/lib/classCancellation";
 import { formatSeriesDayLabel } from "@/lib/scheduleConflictCopy";
 import {
   canAddMemberToSession,
@@ -497,7 +497,12 @@ export function SessionDrawer({
                 Cancelar clase
               </button>
             ) : null}
-            {canCancelSessionFromDrawer(role) && !session.seriesContext.isRecurring ? (
+            {canCancelSessionFromDrawer(role) && canOfferMatchingDatesCancel({
+              startsAt: session.class.startsAt,
+              status: session.class.status,
+              attendedCount: session.occupancy.attended,
+              isRecurring: session.seriesContext.isRecurring,
+            }) ? (
               <button
                 type="button"
                 className="w-full rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50"
