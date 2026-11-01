@@ -194,3 +194,33 @@ export class RangeCancelExecuteDto extends RangeCancelPreviewDto {
   @MaxLength(64)
   idempotencyKey!: string;
 }
+
+/** Future unlinked occurrences that share the source class type, local weekday and local start time. */
+export class MatchingDatesCancelPreviewDto {
+  @IsString()
+  @MinLength(1)
+  scheduledClassId!: string;
+
+  /** Default false: only the source instructor (including “no instructor”). */
+  @IsOptional()
+  @IsBoolean()
+  includeOtherInstructors?: boolean;
+}
+
+export class MatchingDatesCancelExecuteDto extends MatchingDatesCancelPreviewDto {
+  @Matches(/^[a-f0-9]{64}$/)
+  previewFingerprint!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  cancelReason?: string;
+
+  @IsBoolean()
+  confirm!: boolean;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  idempotencyKey!: string;
+}

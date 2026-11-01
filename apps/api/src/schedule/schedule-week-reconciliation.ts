@@ -1,6 +1,7 @@
 import { ClassStatus, ScheduleOccurrenceExceptionKind } from '@prisma/client';
 import { hasOperationalHistory } from './schedule-occurrence-history';
 import { occurrenceDedupKey } from './schedule-occurrence-key';
+import { isMatchingDatesTombstone } from './schedule-matching-dates-tombstone';
 
 export { hasOperationalHistory } from './schedule-occurrence-history';
 
@@ -29,6 +30,8 @@ export type ExistingWeekRow = {
   status: ClassStatus;
   scheduleTemplateId: string | null;
   exceptionKind: ScheduleOccurrenceExceptionKind | null;
+  /** Set when a matching-dates cancellation must not be revived by week copy. */
+  cancelReason?: string | null;
   /** CONFIRMED bookings only (operational history). */
   bookingCount: number;
   /** Any Attendance row (operational history). */
@@ -220,6 +223,20 @@ export function buildWeekReconciliationPlan(
 
     if (existing && existing.status === ClassStatus.CANCELLED) {
       matchedIds.add(existing.id);
+      if (isMatchingDatesTombstone(existing.cancelReason)) {
+        blockedCount++;
+        actions.push({
+          kind: 'BLOCK',
+          existingId: existing.id,
+          slot,
+          bookingCount: existing.bookingCount,
+          attendanceCount: existing.attendanceCount,
+          waitlistCount: existing.waitlistCount,
+          message:
+            'Esta fecha se canceló en grupo y no se reactiva al copiar la semana. Para programarla de nuevo, créala manualmente.',
+        });
+        continue;
+      }
       if (hasOperationalHistory(existing)) {
         blockedCount++;
         actions.push({

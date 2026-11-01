@@ -1,4 +1,5 @@
 import { ClassStatus, ScheduleOccurrenceExceptionKind } from '@prisma/client';
+import { MATCHING_DATES_TOMBSTONE_PREFIX } from './schedule-matching-dates-tombstone';
 import {
   buildWeekReconciliationPlan,
   type DesiredWeekSlot,
@@ -178,6 +179,18 @@ describe('buildWeekReconciliationPlan', () => {
     expect(plan.createdCount).toBe(0);
     expect(plan.actions[0]?.kind).toBe('UPDATE');
     expect(plan.actions[0]?.patch?.status).toBe(ClassStatus.SCHEDULED);
+  });
+
+  it('does not reactivate a matching-dates tombstone, even when it has no reservations', () => {
+    const plan = buildWeekReconciliationPlan(
+      [desired()],
+      [existing({ status: ClassStatus.CANCELLED, cancelReason: MATCHING_DATES_TOMBSTONE_PREFIX })],
+      NOW,
+    );
+    expect(plan.blockedCount).toBe(1);
+    expect(plan.updatedCount).toBe(0);
+    expect(plan.createdCount).toBe(0);
+    expect(plan.actions[0]?.kind).toBe('BLOCK');
   });
 
   it('blocks reactivation when cancelled slot has operational history', () => {

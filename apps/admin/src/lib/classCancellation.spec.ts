@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { canOfferClassCancel, classHasStarted, protectedClassesNote } from "./classCancellation.ts";
+import { canOfferClassCancel, canOfferMatchingDatesCancel, classHasStarted, protectedClassesNote } from "./classCancellation.ts";
 
 const NOW = Date.parse("2026-10-30T15:00:00.000Z");
 const FUTURE = "2026-10-30T16:00:00.000Z";
@@ -22,6 +22,16 @@ test("cancel is offered only for future classes without attendance", () => {
   assert.equal(canOfferClassCancel({ startsAt: FUTURE, status: "CANCELLED" }, NOW), false);
 });
 
+test("matching-dates cancel is offered only for a future unlinked scheduled session", () => {
+  const eligible = { startsAt: FUTURE, status: "SCHEDULED", attendedCount: 0, isRecurring: false };
+  assert.equal(canOfferMatchingDatesCancel(eligible, NOW), true);
+  assert.equal(canOfferMatchingDatesCancel({ ...eligible, isRecurring: true }, NOW), false);
+  assert.equal(canOfferMatchingDatesCancel({ ...eligible, status: "CANCELLED" }, NOW), false);
+  assert.equal(canOfferMatchingDatesCancel({ ...eligible, status: "COMPLETED" }, NOW), false);
+  assert.equal(canOfferMatchingDatesCancel({ ...eligible, attendedCount: 1 }, NOW), false);
+  assert.equal(canOfferMatchingDatesCancel({ ...eligible, startsAt: "2026-10-30T14:30:00.000Z" }, NOW), false);
+});
+
 test("series confirmations mention classes kept because of attendance", () => {
   assert.equal(protectedClassesNote(0), "");
   assert.equal(protectedClassesNote(undefined), "");
@@ -32,6 +42,8 @@ test("series confirmations mention classes kept because of attendance", () => {
 test("schedule UI wiring follows the cancellation policy", () => {
   const drawer = readFileSync(new URL("../app/schedule/SessionDrawer.tsx", import.meta.url), "utf8");
   assert.match(drawer, /canOfferClassCancel\(\{ startsAt: session\.class\.startsAt, attendedCount: session\.occupancy\.attended \}\)/);
+  assert.match(drawer, /canOfferMatchingDatesCancel\(\{/);
+  assert.match(drawer, /isRecurring: session\.seriesContext\.isRecurring/);
   const modal = readFileSync(new URL("../app/schedule/ScheduleModal.tsx", import.meta.url), "utf8");
   assert.match(modal, /canOfferClassCancel\(\{ startsAt: modal\.cls\.startsAt, attendedCount: modal\.cls\.checkedInCount \}\)/);
   assert.match(modal, /protectedClassesNote\(impact\.protectedClassCount\)/);

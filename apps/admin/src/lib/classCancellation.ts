@@ -18,6 +18,16 @@ export function canOfferClassCancel(
   return !(cls.attendedCount && cls.attendedCount > 0);
 }
 
+/** Bulk “cancel every matching date” is offered only from a future unlinked SCHEDULED session. */
+export function canOfferMatchingDatesCancel(
+  cls: { startsAt: string; status?: string; attendedCount?: number | null; isRecurring: boolean },
+  now: number = Date.now(),
+): boolean {
+  if (cls.isRecurring) return false;
+  if (cls.status !== "SCHEDULED") return false;
+  return canOfferClassCancel(cls, now);
+}
+
 /** Sentence appended to a series-cancellation confirmation or result; empty when nothing is kept. */
 export function protectedClassesNote(count: number | null | undefined): string {
   if (!count) return "";
