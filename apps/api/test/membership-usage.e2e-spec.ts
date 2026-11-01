@@ -36,6 +36,64 @@ function periodBounds(now = new Date()) {
   return { start, end };
 }
 
+/** Timer APIs Prisma and Nest keep using while `Date` is frozen. */
+const REAL_ASYNC_APIS = [
+  'setTimeout',
+  'clearTimeout',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+  'nextTick',
+  'queueMicrotask',
+  'hrtime',
+  'performance',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+] as const;
+
+/**
+ * Eight class starts before `clock`, plus one booking start after `clock`, all inside the
+ * UTC month that contains `clock`. A flat `clock + 3h` is not used when that instant is
+ * already the next month: on 31 Oct 22:00Z that offset is 1 Nov, which correctly has a
+ * fresh credit period.
+ */
+function samePeriodCreditInstants(clock: Date): { walkIns: Date[]; bookingStart: Date } {
+  const { start, end } = periodBounds(clock);
+  const span = clock.getTime() - start.getTime();
+  if (span <= 8 * 60_000) {
+    throw new Error(`clock ${clock.toISOString()} leaves no room for eight past classes in its billing period`);
+  }
+  const step = Math.floor(span / 9);
+  const walkIns = Array.from({ length: 8 }, (_, index) => new Date(start.getTime() + (index + 1) * step));
+  const plusThreeHours = clock.getTime() + 3 * 60 * 60 * 1000;
+  const bookingMs = plusThreeHours < end.getTime() ? plusThreeHours : end.getTime() - 60_000;
+  const bookingStart = new Date(bookingMs);
+  if (!(bookingStart.getTime() > clock.getTime() && bookingStart < end)) {
+    throw new Error(
+      `booking ${bookingStart.toISOString()} is not a future class inside the period ending ${end.toISOString()}`,
+    );
+  }
+  for (const startsAt of walkIns) {
+    if (!(startsAt >= start && startsAt < clock)) {
+      throw new Error(`walk-in ${startsAt.toISOString()} is not inside the period and before ${clock.toISOString()}`);
+    }
+  }
+  return { walkIns, bookingStart };
+}
+
+async function withFrozenClock<T>(iso: string, run: (clock: Date) => Promise<T>): Promise<T> {
+  jest.useFakeTimers({ doNotFake: [...REAL_ASYNC_APIS] });
+  jest.setSystemTime(new Date(iso));
+  try {
+    return await run(new Date(iso));
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 describe('Membership usage (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -53,7 +111,7 @@ describe('Membership usage (e2e)', () => {
     await app.close();
   });
 
-  async function seedFlex8Member(studioId: string) {
+  async function seedFlex8Member(studioId: string, now = new Date()) {
     const plan = await prisma.membershipPlan.create({
       data: {
         studioId,
@@ -67,7 +125,7 @@ describe('Membership usage (e2e)', () => {
     });
     const member = await createUserWithPassword(prisma, { email: `flex-${Date.now()}@e2e.local` });
     await createMembership(prisma, member.id, studioId, Role.MEMBER);
-    const { start, end } = periodBounds();
+    const { start, end } = periodBounds(now);
     await createActiveSubscription(prisma, studioId, member.id, plan.id, {
       currentPeriodStart: start,
       currentPeriodEnd: end,
@@ -173,47 +231,68 @@ describe('Membership usage (e2e)', () => {
     expect(String((res.body as { message: unknown }).message)).toContain('créditos');
   });
 
-  it('rejects booking after walk-ins exhaust credits', async () => {
-    const studio = await createStudio(prisma);
-    const tpl = await createClassTemplate(prisma, studio.id);
-    const { member } = await seedFlex8Member(studio.id);
-    const owner = await createUserWithPassword(prisma, { email: 'book-block-owner@e2e.local' });
-    await createMembership(prisma, owner.id, studio.id, Role.OWNER);
-    const ownerToken = await loginAccessToken(app, owner.email, owner.password);
-    const memberToken = await loginAccessToken(app, member.email, member.password);
+  it.each(['2026-10-31T22:00:00.000Z', '2026-11-01T02:00:00.000Z'])(
+    'rejects booking after walk-ins exhaust credits at %s',
+    async (clockIso) => {
+      await withFrozenClock(clockIso, async (clock) => {
+        const period = periodBounds(clock);
+        const naiveThreeHours = new Date(clock.getTime() + 3 * 60 * 60 * 1000);
+        const { walkIns, bookingStart } = samePeriodCreditInstants(clock);
+        if (clockIso.startsWith('2026-10-31')) {
+          expect(naiveThreeHours.getTime()).toBeGreaterThanOrEqual(period.end.getTime());
+        } else {
+          expect(naiveThreeHours.getTime()).toBeLessThan(period.end.getTime());
+          expect(bookingStart.getTime()).toBe(naiveThreeHours.getTime());
+        }
+        expect(bookingStart.getTime()).toBeGreaterThan(clock.getTime());
+        expect(bookingStart.getTime()).toBeLessThan(period.end.getTime());
+        expect(new Date().toISOString()).toBe(clockIso);
 
-    for (let day = 1; day <= 8; day++) {
-      const startsAt = new Date();
-      startsAt.setUTCDate(day);
-      startsAt.setUTCHours(11, 0, 0, 0);
-      const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
-      const cls = await createScheduledClass(prisma, studio.id, tpl.id, { startsAt, endsAt });
-      await request(app.getHttpServer())
-        .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/manual-attendance`)
-        .set('Authorization', `Bearer ${ownerToken}`)
-        .send({ memberId: member.id })
-        .expect(201);
-    }
+        const studio = await createStudio(prisma);
+        const tpl = await createClassTemplate(prisma, studio.id);
+        const { member } = await seedFlex8Member(studio.id, clock);
+        const owner = await createUserWithPassword(prisma, {
+          email: `book-block-owner-${clock.getTime()}@e2e.local`,
+        });
+        await createMembership(prisma, owner.id, studio.id, Role.OWNER);
+        const ownerToken = await loginAccessToken(app, owner.email, owner.password);
+        const memberToken = await loginAccessToken(app, member.email, member.password);
 
-    // Must stay strictly after Date.now(): bookings.service checks classAlreadyStarted
-    // (409) before credit exhaustion (403). Fixed UTC day-of-month + 14:00 fails once
-    // that wall-clock time has passed on the 25th (CI flake on release day).
-    const futureStart = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    futureStart.setUTCSeconds(0, 0);
-    const futureEnd = new Date(futureStart.getTime() + 60 * 60 * 1000);
-    const futureClass = await createScheduledClass(prisma, studio.id, tpl.id, {
-      startsAt: futureStart,
-      endsAt: futureEnd,
-    });
+        for (const startsAt of walkIns) {
+          const cls = await createScheduledClass(prisma, studio.id, tpl.id, {
+            startsAt,
+            endsAt: new Date(startsAt.getTime() + 60 * 60 * 1000),
+          });
+          await request(app.getHttpServer())
+            .post(`/api/v1/studios/${studio.id}/classes/${cls.id}/manual-attendance`)
+            .set('Authorization', `Bearer ${ownerToken}`)
+            .send({ memberId: member.id })
+            .expect(201);
+        }
 
-    const bookingRes = await request(app.getHttpServer())
-      .post(`/api/v1/studios/${studio.id}/classes/${futureClass.id}/bookings`)
-      .set('Authorization', `Bearer ${memberToken}`);
-    expect(bookingRes.status).toBe(403);
-    expect(String((bookingRes.body as { message?: unknown }).message ?? '')).toMatch(
-      /cr[eé]dito/i,
-    );
-  });
+        const profile = await request(app.getHttpServer())
+          .get(`/api/v1/studios/${studio.id}/members/${member.id}`)
+          .set('Authorization', `Bearer ${ownerToken}`)
+          .expect(200);
+        expect(
+          (profile.body as { activeSubscription: { creditsUsed: number; creditsRemaining: number } })
+            .activeSubscription,
+        ).toMatchObject({ creditsUsed: 8, creditsRemaining: 0 });
+
+        const futureClass = await createScheduledClass(prisma, studio.id, tpl.id, {
+          startsAt: bookingStart,
+          endsAt: new Date(bookingStart.getTime() + 60 * 60 * 1000),
+        });
+        const bookingRes = await request(app.getHttpServer())
+          .post(`/api/v1/studios/${studio.id}/classes/${futureClass.id}/bookings`)
+          .set('Authorization', `Bearer ${memberToken}`);
+        expect(bookingRes.status).toBe(403);
+        expect(String((bookingRes.body as { message?: unknown }).message ?? '')).toMatch(
+          /cr[eé]dito/i,
+        );
+      });
+    },
+  );
 
   it('cancelled booking does not consume credit', async () => {
     const studio = await createStudio(prisma);
