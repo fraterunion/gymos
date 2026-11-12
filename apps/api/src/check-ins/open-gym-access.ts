@@ -4,10 +4,16 @@ import { getStudioLocalHHmm } from '../common/date/studio-local-date';
  * Open Gym door policy, expressed as pure functions over already-loaded data so the decision
  * is unit-testable without a database and identical wherever it is asked.
  *
- * Entitlement is read exclusively from structured MembershipPlan fields. Plan `description`
- * copy is never parsed, and ClassTemplate.isOpenGymSlot is deliberately not consulted: a class
- * template is one shared object and cannot express per-plan hours (at ARES, Basic and Full
- * Access allow 11:00-22:00 while the Open Gym plan allows 11:00-17:00).
+ * Entitlement is read exclusively from structured MembershipPlan fields (openGymAccess and its
+ * optional window) — the Open Gym toggle in Admin. Plan `description` copy is never parsed.
+ *
+ * This is the ONE Open Gym policy. It governs every way Open Gym can be reached:
+ *   - door access with no reservation (CheckInType.OPEN_GYM), evaluated at the scan instant;
+ *   - scheduled Open Gym slots (ClassTemplate.isOpenGymSlot): booking, waitlist, walk-in
+ *     attendance and booking check-in, evaluated at the slot's start;
+ *   - what the member app shows (GET /me/open-gym).
+ * A template flag only says "this class IS Open Gym"; whether a plan INCLUDES Open Gym is a
+ * per-plan decision, because door hours differ per plan.
  */
 
 export type OpenGymPlanPolicy = {
@@ -69,6 +75,24 @@ export function isWithinOpenGymWindow(
     return localHHmm >= windowStart && localHHmm < windowEnd;
   }
   return localHHmm >= windowStart || localHHmm < windowEnd;
+}
+
+/**
+ * Whether a single plan grants Open Gym at an instant: openGymAccess AND the instant falls in
+ * the plan's studio-local window (no window = no hour restriction). Used to decide Open Gym
+ * slot bookings at the slot's start time with the same rule the door applies at scan time.
+ */
+export function planGrantsOpenGymAt(
+  plan: Pick<OpenGymPlanPolicy, 'openGymAccess' | 'openGymWindowStart' | 'openGymWindowEnd'>,
+  at: Date,
+  timezone: string,
+): boolean {
+  if (!plan.openGymAccess) return false;
+  return isWithinOpenGymWindow(
+    getStudioLocalHHmm(at, timezone),
+    plan.openGymWindowStart,
+    plan.openGymWindowEnd,
+  );
 }
 
 /**
@@ -136,5 +160,36 @@ export function evaluateOpenGymEligibility(
     windowStart: named.openGymWindowStart!,
     windowEnd: named.openGymWindowEnd!,
     localTime: localHHmm,
+  };
+}
+
+/** What the member app may show about Open Gym. Time-independent: "is it in my plan?". */
+export type OpenGymEntitlementSummary = {
+  /** True only when a currently-entitled plan has openGymAccess saved as enabled. */
+  included: boolean;
+  /** The most permissive entitling plan; null when not included. */
+  membershipPlanName: string | null;
+  /** Studio-local 'HH:mm'; both null when not included OR included without hour limits. */
+  windowStart: string | null;
+  windowEnd: string | null;
+};
+
+/**
+ * Collapses the member's currently-entitled plans into the single answer the app needs to
+ * decide whether ANY Open Gym UI is shown. Same inputs and same plan ordering as the door,
+ * so the app can never advertise Open Gym to someone the door would refuse as not_included.
+ */
+export function summarizeOpenGymEntitlement(
+  entitledPlans: OpenGymPlanPolicy[],
+): OpenGymEntitlementSummary {
+  const best = entitledPlans.filter((p) => p.openGymAccess).sort(byMostPermissive)[0];
+  if (!best) {
+    return { included: false, membershipPlanName: null, windowStart: null, windowEnd: null };
+  }
+  return {
+    included: true,
+    membershipPlanName: best.membershipPlanName,
+    windowStart: best.openGymWindowStart,
+    windowEnd: best.openGymWindowEnd,
   };
 }

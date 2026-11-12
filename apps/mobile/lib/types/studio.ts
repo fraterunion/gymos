@@ -27,6 +27,8 @@ export type ClassTemplateSummary = {
   caloriesEstimateMax: number | null;
   cancellationWindowHours: number | null;
   waitlistCapacity: number | null;
+  /** True for scheduled Open Gym slots. Optional: absent on APIs older than the entitlement fix. */
+  isOpenGymSlot?: boolean;
 };
 
 export type InstructorStaffProfile = {

@@ -186,7 +186,11 @@ test("paid Booty bridge is operationally active while genuine unpaid trial remai
 test("allowed classes use canonical mappings and include Open Gym hours", () => {
   assert.deepEqual(allowedClassPresentation({ isEntitled: false, plan: { allClassesAccess: false, allowedTemplates: [] } } as never), ["Sin acceso vigente"]);
   assert.deepEqual(allowedClassPresentation({ isEntitled: true, plan: { allClassesAccess: true, allowedTemplates: [] } } as never), ["Todas las clases"]);
-  assert.deepEqual(allowedClassPresentation({ isEntitled: true, plan: { allClassesAccess: false, allowedTemplates: [{ name: "Open Gym", isOpenGymSlot: true, accessWindowStart: "06:00", accessWindowEnd: "12:00" }] } } as never), ["Open Gym · 06:00–12:00"]);
+  // Open Gym comes from the plan toggle (openGymAccess), never from a template in the class list.
+  assert.deepEqual(allowedClassPresentation({ isEntitled: true, plan: { allClassesAccess: false, openGymAccess: true, openGymWindowStart: "06:00", openGymWindowEnd: "12:00", allowedTemplates: [{ name: "Open Gym", isOpenGymSlot: true, accessWindowStart: "10:00", accessWindowEnd: "17:00" }] } } as never), ["Open Gym · 06:00–12:00"]);
+  assert.deepEqual(allowedClassPresentation({ isEntitled: true, plan: { allClassesAccess: false, openGymAccess: false, allowedTemplates: [{ name: "Strength", isOpenGymSlot: false }, { name: "Open Gym", isOpenGymSlot: true }] } } as never), ["Strength"]);
+  assert.deepEqual(allowedClassPresentation({ isEntitled: true, plan: { allClassesAccess: true, openGymAccess: false, allowedTemplates: [] } } as never), ["Todas las clases"]);
+  assert.deepEqual(allowedClassPresentation({ isEntitled: true, plan: { allClassesAccess: true, openGymAccess: true, openGymWindowStart: null, openGymWindowEnd: null, allowedTemplates: [] } } as never), ["Todas las clases", "Open Gym"]);
 });
 
 test("cycle ledger links only real successful invoice-backed payments", () => {

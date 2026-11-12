@@ -47,6 +47,12 @@ export type MembershipPlanDto = {
   activeSubscriberCount: number;
   mrrCents: number;
   classAccess: PlanClassAccessDto;
+  /** Open Gym toggle — the ONLY authority for Open Gym (door + Open Gym slots). Never implied
+   *  by classAccess.allClasses or by an Open Gym template in classAccess.templates. */
+  openGymAccess: boolean;
+  /** Studio-local 'HH:mm'; both null = Open Gym without hour restriction. */
+  openGymWindowStart: string | null;
+  openGymWindowEnd: string | null;
 };
 
 export type MembershipPlanInput = {
@@ -61,6 +67,9 @@ export type MembershipPlanInput = {
   stripePriceId?: string | null;
   allClassesAccess?: boolean;
   classTemplateIds?: string[];
+  openGymAccess?: boolean;
+  openGymWindowStart?: string | null;
+  openGymWindowEnd?: string | null;
 };
 
 export type MembershipPlanUpdateInput = Partial<MembershipPlanInput> & {

@@ -1,3 +1,4 @@
+import type { OpenGymEntitlementDto } from '@/lib/openGymEntitlement';
 import { apiRequest } from '@/lib/api/client';
 
 export type BillingInterval = 'MONTHLY' | 'YEARLY' | 'WEEKLY';
@@ -67,6 +68,11 @@ export type MyMemberProfileDto = {
   /** MM-5: every current membership — the singular activeSubscription stays the primary. */
   memberships: MembershipSummaryDto[];
   attendances: { totalInStudio: number };
+  /**
+   * Server-decided Open Gym entitlement (the plan's saved Open Gym toggle on a currently valid
+   * membership). Optional only for APIs older than the entitlement fix — absent means hidden.
+   */
+  openGym?: OpenGymEntitlementDto;
   activeSubscription: {
     id: string;
     status: string;

@@ -1,5 +1,5 @@
 import { SubscriptionStatus } from '@prisma/client';
-import { isClassIncludedInPlan } from '../membership-plans/membership-plan-class-access.utils';
+import { isClassInPlanClassList } from '../membership-plans/membership-plan-class-access.utils';
 import { orderEntitlementCandidates } from '../memberships/membership-compatibility';
 
 /**
@@ -136,8 +136,11 @@ export function resolveLegacyEventOwner(
 ): string | null {
   const covering = candidates.filter((c) => candidateWindowCovers(c, event.startsAt));
   if (covering.length === 0) return null;
+  // Historical ledger attribution, not an authorization decision: deliberately the plan's
+  // class LIST (isClassInPlanClassList), so past events keep the owner they always had and
+  // the Open Gym entitlement fix can never shift historical credit counts.
   const qualifying = covering.filter((c) =>
-    isClassIncludedInPlan({
+    isClassInPlanClassList({
       allClassesAccess: c.membershipPlan.allClassesAccess,
       allowedTemplateIds: c.membershipPlan.allowedTemplateIds,
       // Category values are persisted enum strings; the access check compares them

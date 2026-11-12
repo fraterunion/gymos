@@ -25,8 +25,11 @@ describe('BookingAccessService', () => {
       classCredits: number | null;
       allowedTemplateIds: string[];
       entitlementEndsAt?: Date | null;
+      openGymAccess?: boolean;
+      openGymWindow?: { start: string; end: string } | null;
     } | null;
     templateCategory?: ClassCategory | null;
+    templateIsOpenGymSlot?: boolean;
     templateTimeWindow?: { start: string; end: string } | null;
     /** Whether the class template is in the DayPassClassAccess allowlist. Defaults to !!dayPass. */
     dayPassClassEligible?: boolean;
@@ -54,6 +57,9 @@ describe('BookingAccessService', () => {
                     allClassesAccess: overrides.sub.allClassesAccess,
                     allowedCategories: overrides.sub.allowedCategories,
                     classCredits: overrides.sub.classCredits,
+                    openGymAccess: overrides.sub.openGymAccess ?? false,
+                    openGymWindowStart: overrides.sub.openGymWindow?.start ?? null,
+                    openGymWindowEnd: overrides.sub.openGymWindow?.end ?? null,
                     classTemplateAccess: overrides.sub.allowedTemplateIds.map((id) => ({
                       classTemplateId: id,
                     })),
@@ -71,7 +77,7 @@ describe('BookingAccessService', () => {
             overrides.templateCategory !== undefined
               ? overrides.templateCategory
               : ClassCategory.STRENGTH,
-          isOpenGymSlot: false,
+          isOpenGymSlot: overrides.templateIsOpenGymSlot ?? false,
           accessWindowStart: overrides.templateTimeWindow?.start ?? null,
           accessWindowEnd: overrides.templateTimeWindow?.end ?? null,
         }),
@@ -544,6 +550,85 @@ describe('BookingAccessService', () => {
         expect.objectContaining({ currentPeriodEnd }),
         { errorType: 'forbidden' },
       );
+    });
+  });
+  describe('Open Gym slots (isOpenGymSlot) — plan openGymAccess is the only authority', () => {
+    const tz = 'America/Mexico_City';
+    const noonLocal = new Date('2026-08-10T18:00:00.000Z'); // 12:00 CST
+    const tenLocal = new Date('2026-08-10T16:00:00.000Z'); // 10:00 CST
+
+    function call(tx: ReturnType<typeof makeTx>, role: Role = Role.MEMBER, at = noonLocal) {
+      return service.assertAccess(tx as never, studioId, userId, role, at, tz, 'tpl-og', scheduledClassId);
+    }
+
+    it('denies an all-classes plan without openGymAccess (Basic/Pro leak)', async () => {
+      const tx = makeTx({
+        sub: { allClassesAccess: true, allowedCategories: [], classCredits: null, allowedTemplateIds: [], openGymAccess: false },
+        templateIsOpenGymSlot: true,
+      });
+      await expect(call(tx)).rejects.toThrow(new ForbiddenException(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE));
+    });
+
+    it('denies a plan that lists the Open Gym template but has openGymAccess disabled', async () => {
+      const tx = makeTx({
+        sub: { allClassesAccess: false, allowedCategories: [], classCredits: null, allowedTemplateIds: ['tpl-og'], openGymAccess: false },
+        templateIsOpenGymSlot: true,
+      });
+      await expect(call(tx)).rejects.toThrow(new ForbiddenException(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE));
+    });
+
+    it('allows a plan with openGymAccess enabled and no window (Full Access)', async () => {
+      const tx = makeTx({
+        sub: { allClassesAccess: false, allowedCategories: [], classCredits: null, allowedTemplateIds: ['tpl-strength'], openGymAccess: true },
+        templateIsOpenGymSlot: true,
+      });
+      await expect(call(tx)).resolves.toMatchObject({ subscriptionId: 'sub-1' });
+    });
+
+    it('applies the plan Open Gym window at the slot start', async () => {
+      const sub = {
+        allClassesAccess: false,
+        allowedCategories: [] as ClassCategory[],
+        classCredits: null,
+        allowedTemplateIds: [] as string[],
+        openGymAccess: true,
+        openGymWindow: { start: '11:00', end: '17:00' },
+      };
+      await expect(call(makeTx({ sub, templateIsOpenGymSlot: true }), Role.MEMBER, tenLocal)).rejects.toThrow(
+        new ForbiddenException(MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE),
+      );
+      await expect(call(makeTx({ sub, templateIsOpenGymSlot: true }), Role.MEMBER, noonLocal)).resolves.toMatchObject({
+        subscriptionId: 'sub-1',
+      });
+    });
+
+    it('a configurable plan (any name) gains Open Gym purely from the saved toggle', async () => {
+      const tx = makeTx({
+        sub: { allClassesAccess: false, allowedCategories: [], classCredits: 12, allowedTemplateIds: ['tpl-strength'], openGymAccess: true },
+        templateIsOpenGymSlot: true,
+      });
+      (membershipUsage.assertCreditAvailableForClass as jest.Mock).mockResolvedValue(undefined);
+      await expect(call(tx)).resolves.toMatchObject({ subscriptionId: 'sub-1' });
+    });
+
+    it('ordinary classes are unaffected by openGymAccess=false', async () => {
+      const tx = makeTx({
+        sub: { allClassesAccess: true, allowedCategories: [], classCredits: null, allowedTemplateIds: [], openGymAccess: false },
+        templateIsOpenGymSlot: false,
+      });
+      await expect(
+        service.assertAccess(tx as never, studioId, userId, Role.MEMBER, noonLocal, tz, classTemplateId, scheduledClassId),
+      ).resolves.toMatchObject({ subscriptionId: 'sub-1' });
+    });
+
+    it('staff role bypass is unchanged', async () => {
+      const tx = makeTx({ sub: null, templateIsOpenGymSlot: true });
+      await expect(call(tx, Role.STAFF)).resolves.toMatchObject({ subscriptionId: null });
+    });
+
+    it('no membership and no Day Pass is denied', async () => {
+      const tx = makeTx({ sub: null, templateIsOpenGymSlot: true });
+      await expect(call(tx)).rejects.toThrow(ForbiddenException);
     });
   });
 });

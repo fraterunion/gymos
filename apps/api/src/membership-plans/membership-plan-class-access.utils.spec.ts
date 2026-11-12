@@ -4,14 +4,83 @@ import {
   dedupeTemplateIds,
   formatPlanAccessSummary,
   isClassIncludedInPlan,
+  isClassInPlanClassList,
+  normalizeOpenGymPlanConfig,
   validateRestrictedPlanAccess,
 } from './membership-plan-class-access.utils';
 
 describe('membership-plan-class-access.utils', () => {
-  describe('isClassIncludedInPlan', () => {
-    it('allows any class when allClassesAccess is true', () => {
+  describe('isClassIncludedInPlan — Open Gym gate', () => {
+    const base = {
+      allowedTemplateIds: [] as string[],
+      allowedCategories: [] as ClassCategory[],
+      classTemplateId: 'tpl-open-gym',
+      templateCategory: null,
+    };
+
+    it('denies an Open Gym slot to an all-classes plan without openGymAccess (the leak)', () => {
       expect(
         isClassIncludedInPlan({
+          ...base,
+          allClassesAccess: true,
+          openGymAccess: false,
+          templateIsOpenGymSlot: true,
+        }),
+      ).toBe(false);
+    });
+
+    it('denies an Open Gym slot that is explicitly listed when openGymAccess is false', () => {
+      expect(
+        isClassIncludedInPlan({
+          ...base,
+          allClassesAccess: false,
+          allowedTemplateIds: ['tpl-open-gym'],
+          openGymAccess: false,
+          templateIsOpenGymSlot: true,
+        }),
+      ).toBe(false);
+    });
+
+    it('allows an Open Gym slot whenever the plan has openGymAccess, regardless of class list', () => {
+      expect(
+        isClassIncludedInPlan({
+          ...base,
+          allClassesAccess: false,
+          allowedTemplateIds: ['tpl-strength'],
+          openGymAccess: true,
+          templateIsOpenGymSlot: true,
+        }),
+      ).toBe(true);
+    });
+
+    it('leaves ordinary classes on the class-list rule, unaffected by openGymAccess', () => {
+      const regular = { ...base, classTemplateId: 'tpl-strength', templateIsOpenGymSlot: false };
+      expect(
+        isClassIncludedInPlan({ ...regular, allClassesAccess: true, openGymAccess: false }),
+      ).toBe(true);
+      expect(
+        isClassIncludedInPlan({
+          ...regular,
+          allClassesAccess: false,
+          allowedTemplateIds: ['tpl-strength'],
+          openGymAccess: false,
+        }),
+      ).toBe(true);
+      expect(
+        isClassIncludedInPlan({
+          ...regular,
+          allClassesAccess: false,
+          allowedTemplateIds: ['tpl-other'],
+          openGymAccess: true,
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe('isClassInPlanClassList', () => {
+    it('allows any class when allClassesAccess is true', () => {
+      expect(
+        isClassInPlanClassList({
           allClassesAccess: true,
           allowedTemplateIds: [],
           allowedCategories: [],
@@ -23,7 +92,7 @@ describe('membership-plan-class-access.utils', () => {
 
     it('allows listed template when restricted by template IDs', () => {
       expect(
-        isClassIncludedInPlan({
+        isClassInPlanClassList({
           allClassesAccess: false,
           allowedTemplateIds: ['tpl-1', 'tpl-2', 'tpl-3'],
           allowedCategories: [],
@@ -35,7 +104,7 @@ describe('membership-plan-class-access.utils', () => {
 
     it('denies unlisted template when restricted by template IDs', () => {
       expect(
-        isClassIncludedInPlan({
+        isClassInPlanClassList({
           allClassesAccess: false,
           allowedTemplateIds: ['tpl-1', 'tpl-2'],
           allowedCategories: [],
@@ -47,7 +116,7 @@ describe('membership-plan-class-access.utils', () => {
 
     it('falls back to legacy allowedCategories when no template IDs', () => {
       expect(
-        isClassIncludedInPlan({
+        isClassInPlanClassList({
           allClassesAccess: false,
           allowedTemplateIds: [],
           allowedCategories: [ClassCategory.HYROX],
@@ -57,7 +126,7 @@ describe('membership-plan-class-access.utils', () => {
       ).toBe(true);
 
       expect(
-        isClassIncludedInPlan({
+        isClassInPlanClassList({
           allClassesAccess: false,
           allowedTemplateIds: [],
           allowedCategories: [ClassCategory.HYROX],
@@ -69,7 +138,7 @@ describe('membership-plan-class-access.utils', () => {
 
     it('denies when restricted with no templates and no categories', () => {
       expect(
-        isClassIncludedInPlan({
+        isClassInPlanClassList({
           allClassesAccess: false,
           allowedTemplateIds: [],
           allowedCategories: [],
@@ -99,6 +168,16 @@ describe('membership-plan-class-access.utils', () => {
       ).not.toThrow();
     });
 
+    it('allows an Open-Gym-only restricted plan with no listed classes', () => {
+      expect(() =>
+        validateRestrictedPlanAccess({
+          allClassesAccess: false,
+          classTemplateIds: [],
+          openGymAccess: true,
+        }),
+      ).not.toThrow();
+    });
+
     it('allows restricted legacy category-only plans', () => {
       expect(() =>
         validateRestrictedPlanAccess({
@@ -116,7 +195,7 @@ describe('membership-plan-class-access.utils', () => {
           classTemplateIds: [],
           allowedCategories: [],
         }),
-      ).toThrow(/at least one class template or allowed category/i);
+      ).toThrow(/at least one class template, allowed category, or Open Gym/i);
     });
   });
 
@@ -181,5 +260,37 @@ describe('membership-plan-class-access.utils', () => {
         }),
       ).toBe('4 clases incluidas');
     });
+  });
+});
+
+describe('normalizeOpenGymPlanConfig', () => {
+  it('clears any window when the toggle is off', () => {
+    expect(
+      normalizeOpenGymPlanConfig({ openGymAccess: false, openGymWindowStart: '11:00', openGymWindowEnd: '22:00' }),
+    ).toEqual({ openGymAccess: false, openGymWindowStart: null, openGymWindowEnd: null });
+  });
+
+  it('keeps an unrestricted grant as null bounds', () => {
+    expect(
+      normalizeOpenGymPlanConfig({ openGymAccess: true, openGymWindowStart: null, openGymWindowEnd: null }),
+    ).toEqual({ openGymAccess: true, openGymWindowStart: null, openGymWindowEnd: null });
+  });
+
+  it('accepts a valid window', () => {
+    expect(
+      normalizeOpenGymPlanConfig({ openGymAccess: true, openGymWindowStart: '11:00', openGymWindowEnd: '17:00' }),
+    ).toEqual({ openGymAccess: true, openGymWindowStart: '11:00', openGymWindowEnd: '17:00' });
+  });
+
+  it('rejects half windows, malformed times and empty windows', () => {
+    expect(() =>
+      normalizeOpenGymPlanConfig({ openGymAccess: true, openGymWindowStart: '11:00', openGymWindowEnd: null }),
+    ).toThrow(/inicio y hora de fin/);
+    expect(() =>
+      normalizeOpenGymPlanConfig({ openGymAccess: true, openGymWindowStart: '9:00', openGymWindowEnd: '17:00' }),
+    ).toThrow(/HH:mm/);
+    expect(() =>
+      normalizeOpenGymPlanConfig({ openGymAccess: true, openGymWindowStart: '11:00', openGymWindowEnd: '11:00' }),
+    ).toThrow(/misma hora/);
   });
 });

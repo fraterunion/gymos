@@ -23,6 +23,7 @@ import {
   canReconcileStripeCatalog,
   operationalOverview,
   planCardLines,
+  planOpenGymLabel,
   planCycleLabel,
   planHealth,
   formatHistoryEntry,
@@ -545,11 +546,14 @@ export function ClassAccessMatrix({
           </thead>
           <tbody className="divide-y divide-zinc-100">
             {templates.map((template) => {
-              const entitled = activePlans.filter(
-                (plan) =>
-                  plan.classAccess.allClasses ||
-                  plan.classAccess.templates.some((allowed) => allowed.id === template.id),
-              );
+              // Same rule as the server: an Open Gym slot is included ONLY by the plan's Open Gym
+              // toggle — never by "Todas las clases" or by the slot appearing in the class list.
+              const planIncludes = (plan: MembershipPlanDto) =>
+                template.isOpenGymSlot
+                  ? plan.openGymAccess
+                  : plan.classAccess.allClasses ||
+                    plan.classAccess.templates.some((allowed) => allowed.id === template.id);
+              const entitled = activePlans.filter(planIncludes);
               const orphan = entitled.length === 0 && !dayPassById.get(template.id);
               const isSpecial = template.isOpenGymSlot || template.name.toLowerCase().includes("booty");
               return (
@@ -571,9 +575,7 @@ export function ClassAccessMatrix({
                     ) : null}
                   </td>
                   {activePlans.map((plan) => {
-                    const allowed =
-                      plan.classAccess.allClasses ||
-                      plan.classAccess.templates.some((entry) => entry.id === template.id);
+                    const allowed = planIncludes(plan);
                     return (
                       <td key={plan.id} className="px-3 py-3 text-center">
                         <span className={allowed ? "font-medium text-emerald-600" : "text-zinc-300"}>
@@ -624,15 +626,17 @@ export function OpenGymPanel({
     setEnd(template?.accessWindowEnd ?? "");
   }, [template]);
 
-  if (!template) return null;
+  // Door access and Open Gym slots both follow each plan's own Open Gym toggle.
+  const allowedPlans = plans.filter((plan) => plan.active && !plan.deletedAt && plan.openGymAccess);
 
-  const allowedPlans = plans.filter(
-    (plan) =>
-      plan.active &&
-      !plan.deletedAt &&
-      (plan.classAccess.allClasses ||
-        plan.classAccess.templates.some((entry) => entry.id === template.id)),
-  );
+  if (!template) {
+    return (
+      <div className="mt-6 rounded-xl border border-sky-100 bg-sky-50/40 p-5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-sky-700">Open Gym</p>
+        <OpenGymPlanList plans={allowedPlans} />
+      </div>
+    );
+  }
 
   async function saveWindow() {
     if (!template || !start || !end || start >= end) return;
@@ -658,10 +662,11 @@ export function OpenGymPanel({
           ? `${template.accessWindowStart}–${template.accessWindowEnd}`
           : "sin configurar"}
       </p>
-      <p className="mt-1 text-sm text-zinc-600">
-        Acceso: {allowedPlans.map((plan) => plan.name).join(", ") || "ningún plan"}
+      <p className="mt-1 text-xs text-zinc-500">
+        Horario de reserva de slots Open Gym, en zona local del estudio. El acceso por plan se
+        controla con «Incluye Open Gym» en el editor de cada membresía.
       </p>
-      <p className="mt-1 text-xs text-zinc-500">Horario en zona local del estudio</p>
+      <OpenGymPlanList plans={allowedPlans} />
       <button
         type="button"
         onClick={() => setEditing((value) => !value)}
@@ -698,6 +703,24 @@ export function OpenGymPanel({
             {saving ? "Guardando…" : "Guardar horario"}
           </button>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+function OpenGymPlanList({ plans }: { plans: MembershipPlanDto[] }) {
+  return (
+    <div className="mt-2 text-sm text-zinc-600">
+      <p>Planes con Open Gym: {plans.length === 0 ? "ningún plan" : null}</p>
+      {plans.length > 0 ? (
+        <ul className="mt-1 space-y-0.5">
+          {plans.map((plan) => (
+            <li key={plan.id}>
+              <span className="font-medium text-zinc-800">{plan.name}</span>
+              <span className="text-zinc-500"> · {planOpenGymLabel(plan)}</span>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

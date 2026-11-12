@@ -15,7 +15,26 @@ export type PlanForSummary = {
   allowedCategories: string[];
   activeSubscriberCount: number;
   classAccess: { allClasses: boolean; templates: PlanSummaryTemplate[] };
+  /** The plan's Open Gym toggle — the only source of truth for Open Gym access. */
+  openGymAccess: boolean;
+  openGymWindowStart: string | null;
+  openGymWindowEnd: string | null;
 };
+
+type OpenGymFields = Pick<PlanForSummary, "openGymAccess" | "openGymWindowStart" | "openGymWindowEnd">;
+
+/** "11:00–17:00", or null when Open Gym is off or has no hour restriction. */
+export function planOpenGymWindowLabel(plan: OpenGymFields): string | null {
+  if (!plan.openGymAccess || !plan.openGymWindowStart || !plan.openGymWindowEnd) return null;
+  return `${plan.openGymWindowStart}–${plan.openGymWindowEnd}`;
+}
+
+/** Staff copy for the Open Gym toggle state, used in the editor, matrix and Open Gym panel. */
+export function planOpenGymLabel(plan: OpenGymFields): string {
+  if (!plan.openGymAccess) return "Sin Open Gym";
+  const window = planOpenGymWindowLabel(plan);
+  return window ? `Open Gym ${window}` : "Open Gym sin restricción de horario";
+}
 
 /** "Cada 45 días" for fixed-duration plans, or null when the plan follows the normal
  *  recurring billingInterval (the price line should append the interval instead). */
@@ -37,22 +56,24 @@ export type PlanAccessSummary = {
 };
 
 /** Derives the human access summary from the same canonical fields the booking engine
- *  reads (classAccess.allClasses / template list with isOpenGymSlot) — never re-derives
- *  Open Gym membership from a template name. */
-export function planAccessSummary(plan: Pick<PlanForSummary, "classAccess">): PlanAccessSummary {
+ *  reads: the class list (classAccess) for classes, and the plan's Open Gym toggle
+ *  (openGymAccess) for Open Gym. An Open Gym template in the class list, or "Todas las
+ *  clases", never implies Open Gym — the server ignores both for Open Gym slots. */
+export function planAccessSummary(
+  plan: Pick<PlanForSummary, "classAccess"> & OpenGymFields,
+): PlanAccessSummary {
+  const hasOpenGym = plan.openGymAccess;
+  const openGymWindow = planOpenGymWindowLabel(plan);
   if (plan.classAccess.allClasses) {
-    return { label: "Todas las clases", regularCount: 0, hasOpenGym: false, openGymWindow: null };
+    return {
+      label: hasOpenGym ? "Todas las clases + Open Gym" : "Todas las clases",
+      regularCount: 0,
+      hasOpenGym,
+      openGymWindow,
+    };
   }
-  const activeTemplates = plan.classAccess.templates.filter((t) => t.active);
-  const openGymTemplates = activeTemplates.filter((t) => t.isOpenGymSlot);
-  const regularTemplates = activeTemplates.filter((t) => !t.isOpenGymSlot);
-  const hasOpenGym = openGymTemplates.length > 0;
+  const regularTemplates = plan.classAccess.templates.filter((t) => t.active && !t.isOpenGymSlot);
   const regularCount = regularTemplates.length;
-  const og = openGymTemplates[0];
-  const openGymWindow =
-    og?.accessWindowStart && og.accessWindowEnd
-      ? `${og.accessWindowStart}–${og.accessWindowEnd}`
-      : null;
 
   if (regularCount === 0 && !hasOpenGym) {
     return { label: "Sin clases permitidas", regularCount, hasOpenGym, openGymWindow };
@@ -80,7 +101,9 @@ export function planAccessSummary(plan: Pick<PlanForSummary, "classAccess">): Pl
 }
 
 /** Compact card copy: usage line + access line (+ optional schedule for Open Gym-only). */
-export function planCardLines(plan: Pick<PlanForSummary, "classCredits" | "classAccess">): {
+export function planCardLines(
+  plan: Pick<PlanForSummary, "classCredits" | "classAccess"> & OpenGymFields,
+): {
   usageLine: string;
   accessLine: string;
   scheduleLine: string | null;
@@ -149,7 +172,9 @@ export function planWarnings(plan: PlanForSummary): string[] {
 
   if (plan.classAccess.allClasses) {
     warnings.push(
-      "Acceso a todas las clases activas — incluye Booty Lab y Open Gym.",
+      plan.openGymAccess
+        ? "Acceso a todas las clases activas (incluye Booty Lab) + Open Gym."
+        : "Acceso a todas las clases activas (incluye Booty Lab). Open Gym no incluido.",
     );
   }
 
@@ -164,7 +189,8 @@ export function planWarnings(plan: PlanForSummary): string[] {
   if (
     !plan.classAccess.allClasses &&
     plan.classAccess.templates.filter((t) => t.active).length === 0 &&
-    plan.allowedCategories.length === 0
+    plan.allowedCategories.length === 0 &&
+    !plan.openGymAccess
   ) {
     warnings.push("Plan restringido sin ninguna clase permitida — nadie puede reservar.");
   }

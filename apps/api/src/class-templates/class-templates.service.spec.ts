@@ -201,7 +201,7 @@ describe('ClassTemplatesService.listAccessSummary', () => {
       { id: 'og', name: 'Open Gym', category: null, isOpenGymSlot: true, accessWindowStart: '10:00', accessWindowEnd: '17:00' },
     ]);
     prisma.membershipPlan.findMany.mockResolvedValue([
-      { id: 'og-plan', name: 'Open Gym', allClassesAccess: false, allowedCategories: [], classTemplateAccess: [{ classTemplateId: 'og' }] },
+      { id: 'og-plan', name: 'Open Gym', allClassesAccess: false, allowedCategories: [], openGymAccess: true, classTemplateAccess: [{ classTemplateId: 'og' }] },
     ]);
     prisma.dayPassClassAccess.findMany.mockResolvedValue([]);
 
@@ -211,5 +211,25 @@ describe('ClassTemplatesService.listAccessSummary', () => {
     expect(result.accessWindowStart).toBe('10:00');
     expect(result.accessWindowEnd).toBe('17:00');
     expect(result.orphan).toBe(false);
+  });
+
+  it('Open Gym slot access is reported from openGymAccess only — never from allClassesAccess or the template list', async () => {
+    prisma.classTemplate.findMany.mockResolvedValue([
+      { id: 'og', name: 'Open Gym', category: null, isOpenGymSlot: true, accessWindowStart: null, accessWindowEnd: null },
+      { id: 'strength', name: 'Strength', category: null, isOpenGymSlot: false, accessWindowStart: null, accessWindowEnd: null },
+    ]);
+    prisma.membershipPlan.findMany.mockResolvedValue([
+      { id: 'full', name: 'Full Access', allClassesAccess: false, allowedCategories: [], openGymAccess: true, classTemplateAccess: [{ classTemplateId: 'strength' }] },
+      { id: 'basic', name: 'Basic Access', allClassesAccess: true, allowedCategories: [], openGymAccess: false, classTemplateAccess: [] },
+      { id: 'pro', name: 'Pro', allClassesAccess: false, allowedCategories: [], openGymAccess: false, classTemplateAccess: [{ classTemplateId: 'og' }, { classTemplateId: 'strength' }] },
+    ]);
+    prisma.dayPassClassAccess.findMany.mockResolvedValue([]);
+
+    const results = await service.listAccessSummary('studio-1');
+    const og = results.find((r) => r.id === 'og')!;
+    const strength = results.find((r) => r.id === 'strength')!;
+
+    expect(og.planNames).toEqual(['Full Access']);
+    expect(strength.planNames.sort()).toEqual(['Basic Access', 'Full Access', 'Pro']);
   });
 });
