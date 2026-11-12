@@ -28,10 +28,17 @@ describe('Basic Access MXN 1,300 price contract', () => {
     expect(ui).toContain('formatCents(plan.priceCents, plan.currency)');
   });
 
-  it('Admin member profile and plan-change choices render the API plan price', () => {
+  it('Admin plan-change choices render the API plan price; owned memberships render the agreed lock', () => {
     const source = repoFile('apps/admin/src/app/members/[userId]/page.tsx');
     expect(source).toContain('fmtPlanPrice(plan.priceCents, plan.currency, plan.billingInterval)');
-    expect(source).toContain('currentSubscription.membershipPlan.priceCents');
+    expect(source).toContain('fmtPlanPrice(membershipAgreedPriceCents(currentSubscription), currentSubscription.membershipPlan.currency');
+    expect(source).toContain('fmtPlanPrice(membershipAgreedPriceCents(s), s.membershipPlan.currency');
+    expect(source).toContain('fmtMoney(membershipAgreedPriceCents(s), s.membershipPlan.currency)');
+    // The lock comes from the API row first, then the API-projected plan price (itself the lock).
+    expect(source).toContain('if (s.priceCents != null) return s.priceCents;');
+    expect(source).toContain('return s.membershipPlan.priceCents;');
+    expect(source).not.toMatch(/fmt(?:PlanPrice|Money)\([^)]*catalogPriceCents/);
+    expect(source).not.toMatch(/fmt(?:PlanPrice|Money)\(\s*(?:s|currentSubscription)\.membershipPlan\.priceCents/);
   });
 
   it('Mobile catalog and purchase preview render the API plan price', () => {

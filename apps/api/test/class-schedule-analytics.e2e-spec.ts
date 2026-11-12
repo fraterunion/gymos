@@ -1,6 +1,13 @@
 import type { INestApplication } from '@nestjs/common';
 import { BookingStatus, ClassStatus, Role } from '@prisma/client';
 import request from 'supertest';
+import {
+  addDaysToDateKey,
+  getDayOfWeekFromDateKey,
+  getStudioLocalDateKey,
+  studioLocalDateKeyToUtcAnchor,
+  studioLocalTimeToUtc,
+} from '../src/common/date/studio-local-date';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createTestApp } from './helpers/create-app';
 import { truncateAll } from './helpers/db';
@@ -21,6 +28,23 @@ async function loginAccessToken(
     .send({ email, password })
     .expect(201);
   return (res.body as { accessToken: string }).accessToken;
+}
+
+const TZ = 'America/Mexico_City';
+
+/** Studio-local wall-clock instant `dayOffset` local days after `dateKey`. */
+function localAt(dateKey: string, dayOffset: number, hhmm: string): Date {
+  return studioLocalTimeToUtc(addDaysToDateKey(dateKey, dayOffset), hhmm, TZ);
+}
+
+/**
+ * The Wednesday 14–20 studio-local days before today: always inside `last_90d` and in the
+ * past, so fixtures built around it never age out of the window.
+ */
+function recentPastWednesdayKey(): string {
+  let key = addDaysToDateKey(getStudioLocalDateKey(new Date(), TZ), -14);
+  while (getDayOfWeekFromDateKey(key) !== 3) key = addDaysToDateKey(key, -1);
+  return key;
 }
 
 describe('Class Schedule Analytics 1.2 (e2e)', () => {
@@ -98,15 +122,14 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
       data: { isOpenGymSlot: true },
     });
 
-    // Wed 2026-08-12 07:00 Mexico = 13:00 UTC
-    const wed7 = new Date('2026-08-12T13:00:00.000Z');
-    const wed7end = new Date('2026-08-12T14:00:00.000Z');
-    // Wed 08:00 Mexico = 14:00 UTC
-    const wed8 = new Date('2026-08-12T14:00:00.000Z');
-    const wed8end = new Date('2026-08-12T15:00:00.000Z');
-    // Future
-    const future = new Date('2027-01-10T13:00:00.000Z');
-    const futureEnd = new Date('2027-01-10T14:00:00.000Z');
+    const wed = recentPastWednesdayKey();
+    const wed7 = localAt(wed, 0, '07:00');
+    const wed7end = localAt(wed, 0, '08:00');
+    const wed8 = localAt(wed, 0, '08:00');
+    const wed8end = localAt(wed, 0, '09:00');
+    const todayKey = getStudioLocalDateKey(new Date(), TZ);
+    const future = localAt(todayKey, 60, '07:00');
+    const futureEnd = localAt(todayKey, 60, '08:00');
 
     const scStrong = await prisma.scheduledClass.create({
       data: {
@@ -132,8 +155,8 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
       data: {
         studioId: studio.id,
         classTemplateId: push.id,
-        startsAt: new Date('2026-08-05T13:00:00.000Z'),
-        endsAt: new Date('2026-08-05T14:00:00.000Z'),
+        startsAt: localAt(wed, -7, '07:00'),
+        endsAt: localAt(wed, -7, '08:00'),
         capacity: 25,
         status: ClassStatus.CANCELLED,
       },
@@ -152,8 +175,8 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
       data: {
         studioId: studio.id,
         classTemplateId: openGym.id,
-        startsAt: new Date('2026-08-11T13:00:00.000Z'),
-        endsAt: new Date('2026-08-11T14:00:00.000Z'),
+        startsAt: localAt(wed, -1, '07:00'),
+        endsAt: localAt(wed, -1, '08:00'),
         capacity: 25,
         status: ClassStatus.SCHEDULED,
       },
@@ -163,8 +186,8 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
       data: {
         studioId: studio.id,
         classTemplateId: push.id,
-        startsAt: new Date('2026-08-13T13:00:00.000Z'),
-        endsAt: new Date('2026-08-13T14:00:00.000Z'),
+        startsAt: localAt(wed, 1, '07:00'),
+        endsAt: localAt(wed, 1, '08:00'),
         capacity: 25,
         status: ClassStatus.SCHEDULED,
       },
@@ -185,7 +208,7 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
         scheduledClassId: scStrong.id,
         userId: member.id,
         method: 'MANUAL',
-        checkedInAt: new Date('2026-08-12T13:05:00.000Z'),
+        checkedInAt: localAt(wed, 0, '07:05'),
         checkedInByUserId: ownerId,
       },
     });
@@ -201,7 +224,7 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
         scheduledClassId: scStrong.id,
         userId: walkIn.id,
         method: 'MANUAL',
-        checkedInAt: new Date('2026-08-12T13:06:00.000Z'),
+        checkedInAt: localAt(wed, 0, '07:06'),
         checkedInByUserId: ownerId,
       },
     });
@@ -213,7 +236,7 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
         scheduledClassId: scWeak.id,
         userId: member.id,
         status: BookingStatus.CANCELLED,
-        cancelledAt: new Date('2026-08-12T12:00:00.000Z'),
+        cancelledAt: localAt(wed, 0, '06:00'),
         cancelSource: 'MEMBER',
       },
     });
@@ -266,6 +289,83 @@ describe('Class Schedule Analytics 1.2 (e2e)', () => {
 
     expect(detail.body.className).toBe('Push');
     expect(detail.body.recentSessions.length).toBeGreaterThan(0);
+  });
+
+  it('buckets sessions by studio-local day and time across UTC date boundaries', async () => {
+    const studio = await createStudio(prisma, { timezone: TZ });
+    const { token, userId: ownerId } = await tokenForRole(Role.OWNER, studio.id, 'own-tz@e2e.local');
+    const member = await createUserWithPassword(prisma, { email: 'm-tz@e2e.local', password: 'password12' });
+    await createMembership(prisma, member.id, studio.id, Role.MEMBER);
+    const tpl = await createClassTemplate(prisma, studio.id, { name: 'Night Owl' });
+    const session = (startsAt: Date) =>
+      prisma.scheduledClass.create({
+        data: {
+          studioId: studio.id,
+          classTemplateId: tpl.id,
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + 60 * 60_000),
+          capacity: 20,
+          status: ClassStatus.SCHEDULED,
+        },
+      });
+
+    // Day D, ~2-3 weeks ago. `beforeMidnight` (D-1 23:50 local) and `afterMidnight` (D 00:05
+    // local) share one UTC date; the first check-in (D 00:10 local) sets the trusted floor
+    // to studio-local midnight of D, so only `afterMidnight` and `lateNight` may count.
+    const d = recentPastWednesdayKey();
+    const beforeMidnight = await session(localAt(d, -1, '23:50'));
+    const afterMidnight = await session(localAt(d, 0, '00:05'));
+    const lateNight = await session(localAt(d, 1, '23:30'));
+    expect(beforeMidnight.startsAt.toISOString().slice(0, 10)).toBe(afterMidnight.startsAt.toISOString().slice(0, 10));
+    await prisma.attendance.create({
+      data: {
+        studioId: studio.id,
+        scheduledClassId: afterMidnight.id,
+        userId: member.id,
+        method: 'MANUAL',
+        checkedInAt: localAt(d, 0, '00:10'),
+        checkedInByUserId: ownerId,
+      },
+    });
+    await prisma.attendance.create({
+      data: {
+        studioId: studio.id,
+        scheduledClassId: lateNight.id,
+        userId: member.id,
+        method: 'MANUAL',
+        checkedInAt: localAt(d, 1, '23:35'),
+        checkedInByUserId: ownerId,
+      },
+    });
+
+    const summary = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/analytics/classes/summary?period=last_90d`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(summary.body.timezone).toBe(TZ);
+    expect(summary.body.trustedFloorApplied).toBe(true);
+    expect(new Date(summary.body.effectivePeriodStart as string).toISOString()).toBe(
+      studioLocalDateKeyToUtcAnchor(d, TZ).toISOString(),
+    );
+    expect(summary.body.kpis.scheduledSessions).toBe(2);
+    expect(summary.body.kpis.activeSessions).toBe(2);
+    expect(summary.body.kpis.attendances).toBe(2);
+
+    const activity = await request(app.getHttpServer())
+      .get(`/api/v1/studios/${studio.id}/analytics/classes/activity?period=last_90d`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const slots = [
+      ...(activity.body.heatmap as Array<{ weekday: number; scheduleTime: string }>),
+      ...(activity.body.limitedHistorySlots as Array<{ weekday: number; scheduleTime: string }>),
+    ].map((s) => `${s.weekday}@${s.scheduleTime}`);
+    expect(slots).toEqual(
+      expect.arrayContaining([
+        `${getDayOfWeekFromDateKey(d)}@00:05`,
+        `${getDayOfWeekFromDateKey(addDaysToDateKey(d, 1))}@23:30`,
+      ]),
+    );
+    expect(slots).not.toContain(`${getDayOfWeekFromDateKey(addDaysToDateKey(d, -1))}@23:50`);
   });
 
   it('isolates studios', async () => {

@@ -25,7 +25,6 @@ import {
   findConflictingMemberships,
 } from '../memberships/membership-compatibility';
 import {
-  MissingSubscriptionPriceLockError,
   resolveAuthorizedSalePriceCents,
   resolveStampedSalePriceCents,
 } from '../memberships/subscription-price';
@@ -243,24 +242,19 @@ export class SalesService {
       orderBy: { createdAt: 'desc' },
       select: { id: true, priceCents: true },
     });
-    let authorizedPrice: number;
-    try {
-      authorizedPrice = resolveAuthorizedSalePriceCents({
-        heldSubscription,
-        catalogPriceCents: plan.priceCents,
-      });
-    } catch (err) {
-      if (!(err instanceof MissingSubscriptionPriceLockError)) throw err;
-      // Existing membership without a lock must not inherit catalog (e.g. 1700
-      // after a FUTURE_ONLY rise). Only an owner with an override note may set
-      // the charged amount, which then becomes the stamped lock.
-      if (actor.role !== Role.OWNER || !dto.priceOverrideNote?.trim()) {
-        throw new BadRequestException(
-          'This membership has no locked price. An owner must set amountCents with priceOverrideNote before renewing.',
-        );
-      }
-      authorizedPrice = dto.amountCents;
+    // An existing membership without a lock must never inherit the catalog price
+    // (e.g. 1700 after a FUTURE_ONLY rise): only an owner, with a written note,
+    // may state the agreed amount, which then becomes the stamped lock.
+    const priceLockMissing = heldSubscription != null && heldSubscription.priceCents == null;
+    const priceOverrideNote = dto.priceOverrideNote?.trim() || null;
+    if (priceLockMissing && (actor.role !== Role.OWNER || !priceOverrideNote)) {
+      throw new BadRequestException(
+        'Esta membresía no tiene un precio acordado registrado. Solo un owner puede cobrarla indicando el monto acordado y una nota de autorización (priceOverrideNote).',
+      );
     }
+    const authorizedPrice = priceLockMissing
+      ? dto.amountCents
+      : resolveAuthorizedSalePriceCents({ heldSubscription, catalogPriceCents: plan.priceCents });
     const ownerPriceOverride = dto.amountCents !== authorizedPrice;
     if (ownerPriceOverride) {
       if (actor.role !== Role.OWNER) {
@@ -268,7 +262,7 @@ export class SalesService {
           'Amount must match the member price unless overridden by an owner',
         );
       }
-      if (!dto.priceOverrideNote?.trim()) {
+      if (!priceOverrideNote) {
         throw new BadRequestException(
           'priceOverrideNote is required when amount differs from plan price',
         );
@@ -278,10 +272,16 @@ export class SalesService {
       heldSubscription,
       catalogPriceCents: plan.priceCents,
       chargedAmountCents: dto.amountCents,
-      ownerOverride:
-        ownerPriceOverride ||
-        (heldSubscription != null && heldSubscription.priceCents == null),
+      ownerOverride: ownerPriceOverride || priceLockMissing,
     });
+    const priceAudit = {
+      catalogPriceCents: plan.priceCents,
+      heldPriceCents: heldSubscription?.priceCents ?? null,
+      lockedPriceCents: stampedPriceCents,
+      priceOverride: ownerPriceOverride || priceLockMissing,
+      priceLockMissing,
+      priceOverrideNote,
+    };
 
     const combinedNotes =
       [dto.notes?.trim(), dto.priceOverrideNote?.trim()].filter(Boolean).join(' | ') ||
@@ -350,6 +350,7 @@ export class SalesService {
           targetUserId,
           plan,
           amountCents: dto.amountCents,
+          priceCents: stampedPriceCents,
           paidAt,
           notes: combinedNotes,
           defaultPeriodEnd: (start, interval) => this.defaultPeriodEnd(start, interval),
@@ -373,6 +374,7 @@ export class SalesService {
             stripeSubscriptionId: scheduled.stripe.stripeSubscriptionId,
             effectiveAt: scheduled.subscription.currentPeriodStart?.toISOString() ?? null,
             amountCents: dto.amountCents,
+            ...priceAudit,
             paymentPaidAt: paidAt.toISOString(),
             paymentId: scheduled.payment.id,
             origin: 'GYMOS',
@@ -671,6 +673,7 @@ export class SalesService {
       metadata: {
         planId: plan.id,
         amountCents: dto.amountCents,
+        ...priceAudit,
         paymentId: result.payment.id,
         paymentPaidAt: paidAt.toISOString(),
         ...(dto.stripeResolution === 'cancel_immediately'

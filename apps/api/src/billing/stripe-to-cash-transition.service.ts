@@ -294,6 +294,8 @@ export class StripeToCashTransitionService {
     targetUserId: string;
     plan: MembershipPlan;
     amountCents: number;
+    /** Agreed recurring lock for the successor; a one-off owner amount override must not replace it. */
+    priceCents: number;
     paidAt?: Date;
     notes: string | null;
     defaultPeriodEnd: (start: Date, interval: MembershipPlan['billingInterval']) => Date;
@@ -374,7 +376,7 @@ export class StripeToCashTransitionService {
             cancelAtPeriodEnd: true,
             createdByUserId: params.actorUserId,
             notes: params.notes,
-            priceCents: params.amountCents,
+            priceCents: params.priceCents,
             ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
           },
           include: planInclude,
