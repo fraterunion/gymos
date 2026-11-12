@@ -255,7 +255,10 @@ export type MemberPlan = {
   id: string;
   name: string;
   billingInterval: "MONTHLY" | "YEARLY" | "WEEKLY";
+  /** Agreed price for this membership when returned on a subscription (lock). */
   priceCents: number;
+  /** Mutable catalog price when the API distinguishes it from the lock. */
+  catalogPriceCents?: number;
   currency: string;
   classCredits: number | null;
   entitlementDays?: number | null;
@@ -273,6 +276,8 @@ export type MemberSubscription = {
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   source: Exclude<PaymentSource, "NONE">;
+  /** Locked recurring amount for this membership; prefer over catalog for display. */
+  priceCents?: number | null;
   membershipPlan: MemberPlan & {
     allClassesAccess: boolean;
     allowedCategories: string[];

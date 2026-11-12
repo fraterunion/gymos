@@ -30,6 +30,7 @@ import {
   findCreationConflicts,
   selectPrimaryMembership,
 } from '../memberships/membership-compatibility';
+import { effectiveSubscriptionPriceCents } from '../memberships/subscription-price';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MembershipUsageService } from '../membership-usage/membership-usage.service';
@@ -586,7 +587,11 @@ export class MembersService {
             id: latestSubscription.membershipPlan.id,
             name: latestSubscription.membershipPlan.name,
             billingInterval: latestSubscription.membershipPlan.billingInterval,
-            priceCents: latestSubscription.membershipPlan.priceCents,
+            priceCents: effectiveSubscriptionPriceCents({
+              subscriptionPriceCents: latestSubscription.priceCents,
+              catalogPriceCents: latestSubscription.membershipPlan.priceCents,
+            }),
+            catalogPriceCents: latestSubscription.membershipPlan.priceCents,
             currency: latestSubscription.membershipPlan.currency,
             classCredits: latestSubscription.membershipPlan.classCredits,
             entitlementDays: latestSubscription.membershipPlan.entitlementDays,
@@ -688,7 +693,11 @@ export class MembersService {
             id: s.membershipPlan.id,
             name: s.membershipPlan.name,
             billingInterval: s.membershipPlan.billingInterval,
-            priceCents: s.membershipPlan.priceCents,
+            priceCents: effectiveSubscriptionPriceCents({
+              subscriptionPriceCents: s.priceCents,
+              catalogPriceCents: s.membershipPlan.priceCents,
+            }),
+            catalogPriceCents: s.membershipPlan.priceCents,
             currency: s.membershipPlan.currency,
             classCredits: s.membershipPlan.classCredits,
             entitlementDays: s.membershipPlan.entitlementDays,
@@ -769,7 +778,11 @@ export class MembersService {
               id: activeSubscription.membershipPlan.id,
               name: activeSubscription.membershipPlan.name,
               billingInterval: activeSubscription.membershipPlan.billingInterval,
-              priceCents: activeSubscription.membershipPlan.priceCents,
+              priceCents: effectiveSubscriptionPriceCents({
+                subscriptionPriceCents: activeSubscription.priceCents,
+                catalogPriceCents: activeSubscription.membershipPlan.priceCents,
+              }),
+              catalogPriceCents: activeSubscription.membershipPlan.priceCents,
               currency: activeSubscription.membershipPlan.currency,
               classCredits: activeSubscription.membershipPlan.classCredits,
               allowedCategories: activeSubscription.membershipPlan.allowedCategories,
@@ -931,9 +944,21 @@ export class MembersService {
         legacyContext,
       );
       const hasCurrentPaidEntitlementCycle = subscription.entitlementCycles.some((cycle) => isCurrentImmutableCycle(cycle, now));
+      const catalogPriceCents = subscription.membershipPlan.priceCents;
+      const lockedPriceCents = effectiveSubscriptionPriceCents({
+        subscriptionPriceCents: subscription.priceCents,
+        catalogPriceCents,
+      });
       return {
         ...subscription,
         ...lifecycle,
+        // Expose the agreed lock as membershipPlan.priceCents so admin/mobile
+        // "Precio actual" / renewal copy cannot drift to a later catalog price.
+        membershipPlan: {
+          ...subscription.membershipPlan,
+          priceCents: lockedPriceCents,
+          catalogPriceCents,
+        },
         primaryStatus: toPrimaryMembershipStatus(lifecycle.lifecycleStatus, { isEntitled: lifecycle.isEntitled, hasCurrentPaidEntitlementCycle }),
         endReason: lifecycle.endReason,
         transitionDetail: lifecycle.transitionDetail,

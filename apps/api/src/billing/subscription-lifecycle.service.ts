@@ -45,6 +45,7 @@ import {
   type PlanSummary,
 } from './subscription-lifecycle.utils';
 import { buildGymosRenewalIdempotencyKey } from './stripe-renewal-audit.utils';
+import { effectiveSubscriptionPriceCents } from '../memberships/subscription-price';
 
 export type MembershipCheckoutResponse =
   | { action: 'checkout'; url: string }
@@ -275,6 +276,10 @@ export class SubscriptionLifecycleService {
     }
 
     const stripePrimary = await this.findPrimaryStripeSubscription(params.studioId, params.userId);
+    const currentLockedPriceCents = effectiveSubscriptionPriceCents({
+      subscriptionPriceCents: current.priceCents,
+      catalogPriceCents: current.membershipPlan.priceCents,
+    });
     let upgrade: boolean;
     if (
       stripePrimary &&
@@ -284,11 +289,11 @@ export class SubscriptionLifecycleService {
       upgrade = await this.resolveStripeUpgrade(
         stripePrimary.membershipPlan.stripePriceId,
         targetPlan.stripePriceId,
-        current.membershipPlan.priceCents,
+        currentLockedPriceCents,
         targetPlan.priceCents,
       );
     } else {
-      upgrade = isUpgrade(current.membershipPlan.priceCents, targetPlan.priceCents);
+      upgrade = isUpgrade(currentLockedPriceCents, targetPlan.priceCents);
     }
     const effective =
       stripePrimary && !upgrade ? ('next_period' as const) : ('immediate' as const);
@@ -296,7 +301,10 @@ export class SubscriptionLifecycleService {
     return {
       hasCurrentMembership: true,
       isPlanChange: true,
-      currentPlan: toPlanSummary(current.membershipPlan),
+      currentPlan: {
+        ...toPlanSummary(current.membershipPlan),
+        priceCents: currentLockedPriceCents,
+      },
       newPlan: toPlanSummary(targetPlan),
       effective: stripePrimary ? effective : 'checkout',
       message:

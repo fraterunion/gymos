@@ -12,6 +12,7 @@ import {
 } from './membership-transition';
 import { toPrimaryMembershipStatus } from '../members/member-operations';
 import { isCurrentImmutableCycle } from '../members/member-360.utils';
+import { effectiveSubscriptionPriceCents } from './subscription-price';
 
 export type MembershipsOverview = {
   totalActivePlans: number;
@@ -46,11 +47,16 @@ export type SubscriptionListItem = {
     id: string;
     name: string;
     billingInterval: string;
+    /** Agreed subscription lock (falls back to catalog only if lock is null). */
     priceCents: number;
+    /** Mutable catalog price for new sales. */
+    catalogPriceCents: number;
     currency: string;
     classCredits: number | null;
     entitlementDays: number | null;
   };
+  /** Locked recurring amount for this membership row. */
+  priceCents: number | null;
   endReason: string | null;
   transitionDetail: MembershipTransitionDetail | null;
 };
@@ -173,12 +179,22 @@ export class MembershipsService {
         siblings,
         legacyContext,
       );
+      const catalogPriceCents = row.membershipPlan.priceCents;
+      const lockedPriceCents = effectiveSubscriptionPriceCents({
+        subscriptionPriceCents: row.priceCents,
+        catalogPriceCents,
+      });
       return {
         row,
         lifecycle,
         item: {
           ...row,
           ...lifecycle,
+          membershipPlan: {
+            ...row.membershipPlan,
+            priceCents: lockedPriceCents,
+            catalogPriceCents,
+          },
           primaryStatus: toPrimaryMembershipStatus(lifecycle.lifecycleStatus, {
             isEntitled: lifecycle.isEntitled,
             hasCurrentPaidEntitlementCycle: row.entitlementCycles.some((cycle) =>
