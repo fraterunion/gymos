@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { CampaignEmailPreview } from "@/components/communications/CampaignEmailPreview";
 import { AdminPageShell } from "@/components/shell/AdminPageShell";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { useDeskStudio } from "@/contexts/DeskStudioContext";
@@ -226,6 +227,7 @@ export default function CommunicationsPage() {
             <span className="mb-1 block text-zinc-600">Mensaje</span>
             <textarea value={bodyText} onChange={(e) => setBodyText(e.target.value)} rows={8} className={adminInput} maxLength={10000} />
           </label>
+          <CampaignEmailPreview studioId={selectedStudioId} subject={subject} bodyText={bodyText} />
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium text-zinc-800">Plan</legend>
             <div className="flex flex-wrap gap-2">

@@ -31,7 +31,31 @@ export type StudioBrandingRow = {
   logoUrl: string | null;
   supportEmail: string | null;
   supportPhone: string | null;
+  /** Public footer details; optional so a caller that only needs the identity can select less. */
+  privacyUrl?: string | null;
+  websiteUrl?: string | null;
+  instagramHandle?: string | null;
+  address?: string | null;
 };
+
+/** Prisma `select` for every column resolveEmailBranding reads. */
+export const EMAIL_BRANDING_STUDIO_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  appName: true,
+  appDisplayName: true,
+  brandPrimaryColor: true,
+  primaryColor: true,
+  brandLogoUrl: true,
+  logoUrl: true,
+  supportEmail: true,
+  supportPhone: true,
+  privacyUrl: true,
+  websiteUrl: true,
+  instagramHandle: true,
+  address: true,
+} as const;
 
 export type PlatformEmailDefaults = {
   /** Neutral product name used when no studio context exists. */
@@ -52,6 +76,11 @@ export type ResolvedEmailBranding = {
   logoUrl: string | null;
   supportEmail: string | null;
   supportPhone: string | null;
+  privacyUrl: string | null;
+  websiteUrl: string | null;
+  /** Without the leading "@". */
+  instagramHandle: string | null;
+  address: string | null;
   from: { email: string; name: string };
 };
 
@@ -59,6 +88,8 @@ export type ResolvedEmailBranding = {
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 /** Only absolute http(s) images are embedded; anything else is dropped. */
 const HTTP_URL = /^https?:\/\/[^\s"'<>]+$/;
+const INSTAGRAM_HANDLE = /^[A-Za-z0-9._]{1,30}$/;
+const ADDRESS_MAX = 200;
 
 export function safeHexColor(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null;
@@ -70,6 +101,18 @@ export function safeHttpUrl(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return HTTP_URL.test(trimmed) ? trimmed : null;
+}
+
+function safeInstagramHandle(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const handle = value.trim().replace(/^@/, '');
+  return INSTAGRAM_HANDLE.test(handle) ? handle : null;
+}
+
+function safeAddress(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const flat = value.replace(/\s+/g, ' ').trim();
+  return flat && flat.length <= ADDRESS_MAX ? flat : null;
 }
 
 export function resolveEmailBranding(
@@ -85,6 +128,10 @@ export function resolveEmailBranding(
       logoUrl: null,
       supportEmail: defaults.supportEmail,
       supportPhone: null,
+      privacyUrl: null,
+      websiteUrl: null,
+      instagramHandle: null,
+      address: null,
       from: { email: defaults.fromEmail, name: defaults.fromName ?? defaults.platformName },
     };
   }
@@ -99,6 +146,10 @@ export function resolveEmailBranding(
     logoUrl: safeHttpUrl(studio.logoUrl ?? studio.brandLogoUrl),
     supportEmail: studio.supportEmail ?? defaults.supportEmail,
     supportPhone: studio.supportPhone,
+    privacyUrl: safeHttpUrl(studio.privacyUrl),
+    websiteUrl: safeHttpUrl(studio.websiteUrl),
+    instagramHandle: safeInstagramHandle(studio.instagramHandle),
+    address: safeAddress(studio.address),
     // The envelope sender stays on the platform's verified domain; only the display name
     // is white-labelled, so studios never need their own DNS to receive resets.
     from: { email: defaults.fromEmail, name: displayName },

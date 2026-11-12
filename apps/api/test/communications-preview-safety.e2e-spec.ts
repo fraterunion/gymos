@@ -1,6 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import request from 'supertest';
+import { EMAIL_PROVIDER, type EmailProvider } from '../src/email/email-provider';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { signUnsubscribeToken } from '../src/communications/unsubscribe-token';
 import { createTestApp } from './helpers/create-app';
@@ -170,6 +171,71 @@ describe('ARES communications preview + unsubscribe safety (e2e)', () => {
       .send(payload).expect(403);
     expect(await prisma.emailCampaign.count()).toBe(0);
     expect(await prisma.emailCampaignRecipient.count()).toBe(0);
+  });
+
+  it('email preview renders the branded email for owners only, and stores or sends nothing', async () => {
+    const f = await seed();
+    await prisma.studio.update({
+      where: { id: f.studio.id },
+      data: {
+        slug: 'ares-fitness',
+        appDisplayName: 'Ares Training Club',
+        supportEmail: 'support@arestrainingclub.com',
+        privacyUrl: 'https://www.arestrainingclub.com/privacy',
+      },
+    });
+    const sendSpy = jest.spyOn(app.get<EmailProvider>(EMAIL_PROVIDER), 'send');
+    try {
+      const rendered = await request(app.getHttpServer())
+        .post(`${f.base}/email-preview`)
+        .set('Authorization', `Bearer ${f.token}`)
+        .send({ subject: 'Horarios <diciembre>', bodyText: 'Hola equipo\n\nReserva en https://www.arestrainingclub.com/support.' })
+        .expect(200);
+      const body = rendered.body as { subject: string; html: string; text: string };
+      expect(body.subject).toBe('Horarios <diciembre>');
+      expect(body.html).toContain('src="https://www.arestrainingclub.com/ares-wordmark.png"');
+      expect(body.html).toContain('Horarios &lt;diciembre&gt;</h1>');
+      expect(body.html).toContain('href="https://www.arestrainingclub.com/support" target="_blank"');
+      expect(body.html).toContain('href="https://www.arestrainingclub.com/privacy"');
+      expect(body.text).toContain('Hola equipo');
+
+      await request(app.getHttpServer())
+        .post(`${f.base}/email-preview`)
+        .set('Authorization', `Bearer ${f.token}`)
+        .send({ subject: 'Sin cuerpo', bodyText: '' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`${f.base}/email-preview`)
+        .set('Authorization', `Bearer ${f.token}`)
+        .send({ subject: 'Aviso', bodyText: 'Hola', allMembers: true })
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`${f.base}/email-preview`)
+        .send({ subject: 'Aviso', bodyText: 'Hola' })
+        .expect(401);
+      const memberLogin = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: f.memberA.email, password: f.memberA.password })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`${f.base}/email-preview`)
+        .set('Authorization', `Bearer ${(memberLogin.body as { accessToken: string }).accessToken}`)
+        .send({ subject: 'Aviso', bodyText: 'Hola' })
+        .expect(403);
+      const otherStudio = await createStudio(prisma);
+      await request(app.getHttpServer())
+        .post(`/api/v1/studios/${otherStudio.id}/communications/email-preview`)
+        .set('Authorization', `Bearer ${f.token}`)
+        .send({ subject: 'Aviso', bodyText: 'Hola' })
+        .expect(403);
+
+      expect(sendSpy).not.toHaveBeenCalled();
+      expect(await prisma.emailCampaign.count()).toBe(0);
+      expect(await prisma.emailCampaignRecipient.count()).toBe(0);
+      expect(await prisma.auditLog.count({ where: { entityType: 'email_campaign' } })).toBe(0);
+    } finally {
+      sendSpy.mockRestore();
+    }
   });
 
   it('rejects a snapshot if new members joined after preview', async () => {

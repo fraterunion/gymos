@@ -20,7 +20,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { StudioMemberGuard } from '../auth/guards/studio-member.guard';
 import type { RequestWithUser } from '../auth/interfaces/request-with-user.interface';
 import { CommunicationsService } from './communications.service';
-import { ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto/campaign.dto';
+import { CampaignEmailPreviewDto, ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto/campaign.dto';
 
 @Controller('studios/:studioId/communications')
 @UseGuards(JwtAuthGuard, StudioMemberGuard, RolesGuard)
@@ -41,6 +41,16 @@ export class CommunicationsController {
     @Body() dto: PreviewCampaignDto,
   ) {
     return this.communications.preview(studioId, dto);
+  }
+
+  /** Renders the branded email for the composer. Read-only: nothing is stored or sent. */
+  @Post('email-preview')
+  @HttpCode(HttpStatus.OK)
+  emailPreview(
+    @Param('studioId') studioId: string,
+    @Body() dto: CampaignEmailPreviewDto,
+  ) {
+    return this.communications.emailPreview(studioId, dto);
   }
 
   @Get('campaigns')
