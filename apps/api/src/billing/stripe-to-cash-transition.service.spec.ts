@@ -223,6 +223,7 @@ describe('StripeToCashTransitionService', () => {
         billingInterval: 'MONTHLY',
       } as never,
       amountCents: 60000,
+      priceCents: 60000,
       notes: null,
       defaultPeriodEnd: (start) => new Date(start.getTime() + 30 * 86_400_000),
     });
@@ -398,6 +399,7 @@ describe('StripeToCashTransitionService', () => {
         targetUserId: 'user-1',
         plan: { id: 'plan-full', exclusiveGroup: 'CORE', entitlementDays: null, billingInterval: 'MONTHLY' } as never,
         amountCents: 150000,
+        priceCents: 150000,
         notes: null,
         defaultPeriodEnd: (start) => new Date(start.getTime() + 30 * 86_400_000),
       });

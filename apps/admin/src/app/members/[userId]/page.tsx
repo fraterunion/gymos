@@ -757,6 +757,18 @@ function fmtPlanPrice(priceCents: number, currency: string, billingInterval: str
   return `${new Intl.NumberFormat(undefined, { style: "currency", currency: currency.toUpperCase() }).format(priceCents / 100)} / ${INTERVAL_LABELS[billingInterval] ?? billingInterval}`;
 }
 
+/**
+ * Prefer the raw subscription lock, then the API-projected plan.priceCents
+ * (already the agreed lock for owned memberships). Do not use catalogPriceCents.
+ */
+function membershipAgreedPriceCents(s: {
+  priceCents?: number | null;
+  membershipPlan: { priceCents: number; catalogPriceCents?: number };
+}): number {
+  if (s.priceCents != null) return s.priceCents;
+  return s.membershipPlan.priceCents;
+}
+
 type ChangePlanModalProps = {
   open: boolean;
   onClose: () => void;
@@ -908,7 +920,7 @@ function ChangePlanModal({ open, onClose, studioId, memberId, currentSubscriptio
                       <span className={`rounded-full px-2 py-0.5 text-xs ${PRIMARY_STATUS_COLORS[currentSubscription.primaryStatus]}`}>{PRIMARY_STATUS_LABELS[currentSubscription.primaryStatus]}</span>
                     </div>
                     <p className="mt-0.5 text-xs text-zinc-500">
-                      {fmtPlanPrice(currentSubscription.membershipPlan.priceCents, currentSubscription.membershipPlan.currency, currentSubscription.membershipPlan.billingInterval)}
+                      {fmtPlanPrice(membershipAgreedPriceCents(currentSubscription), currentSubscription.membershipPlan.currency, currentSubscription.membershipPlan.billingInterval)}
                     </p>
                     {currentSubscription.source === "STRIPE" && currentSubscription.cancelAtPeriodEnd && (
                       <p className="mt-1 text-xs text-amber-600">No renovará · vence {fmtDate(currentSubscription.effectiveEnd)}</p>
@@ -1175,7 +1187,7 @@ function MembershipTab({
                 ) : null}
                 <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Precio actual</p>
                 <p className="text-sm text-zinc-500">
-                  {fmtPlanPrice(s.membershipPlan.priceCents, s.membershipPlan.currency, s.membershipPlan.billingInterval)}
+                  {fmtPlanPrice(membershipAgreedPriceCents(s), s.membershipPlan.currency, s.membershipPlan.billingInterval)}
                 </p>
                 {/* Scheduled downgrade indicator */}
                 {s.pendingMembershipPlan && (
@@ -1256,7 +1268,7 @@ function MembershipTab({
                 {s.membershipPlan.allClassesAccess ? <span className="text-sm text-zinc-700">Todas las clases</span> : s.membershipPlan.classTemplateAccess.length > 0 ? s.membershipPlan.classTemplateAccess.map((access) => <span key={access.classTemplateId} className="rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-700">{access.classTemplate.name}{access.classTemplate.isOpenGymSlot && access.classTemplate.accessWindowStart && access.classTemplate.accessWindowEnd ? ` · ${access.classTemplate.accessWindowStart}–${access.classTemplate.accessWindowEnd}` : ""}</span>) : <span className="text-sm text-rose-600">Sin clases configuradas</span>}
               </div>
             </div>
-            {s.source === "STRIPE" && s.isEntitled && !s.cancelAtPeriodEnd ? <div className="mt-4 rounded-lg bg-zinc-50 px-3 py-2"><p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Próxima renovación programada</p><p className="mt-1 text-sm font-medium text-zinc-900">{studioDate(s.currentPeriodEnd ?? s.effectiveEnd)} · {fmtMoney(s.membershipPlan.priceCents, s.membershipPlan.currency)}</p><p className="text-xs text-zinc-500">{s.membershipPlan.entitlementDays ? `Cada ${s.membershipPlan.entitlementDays} días` : "Renovación automática"} · el siguiente derecho se crea solo tras pago exitoso.</p></div> : null}
+            {s.source === "STRIPE" && s.isEntitled && !s.cancelAtPeriodEnd ? <div className="mt-4 rounded-lg bg-zinc-50 px-3 py-2"><p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Próxima renovación programada</p><p className="mt-1 text-sm font-medium text-zinc-900">{studioDate(s.currentPeriodEnd ?? s.effectiveEnd)} · {fmtMoney(membershipAgreedPriceCents(s), s.membershipPlan.currency)}</p><p className="text-xs text-zinc-500">{s.membershipPlan.entitlementDays ? `Cada ${s.membershipPlan.entitlementDays} días` : "Renovación automática"} · el siguiente derecho se crea solo tras pago exitoso.</p></div> : null}
             {s.entitlementCycles.length > 0 ? (
               <div className="mt-4 border-t border-zinc-100 pt-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Historial de ciclos pagados</p>

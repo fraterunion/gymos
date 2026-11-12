@@ -643,6 +643,73 @@ describe('SalesService', () => {
     );
   });
 
+  it('keeps the legacy 1500 lock on a period-end Stripe→Cash successor when an owner overrides one payment', async () => {
+    mockActor(Role.OWNER);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'stripe-local', priceCents: 150000 });
+    stripeToCash.findConflictingStripeSubscription.mockResolvedValue({
+      id: 'stripe-local',
+      stripeSubscriptionId: 'sub_legacy',
+      membershipPlanId: 'plan-fa',
+      membershipPlan: { name: 'Full Access' },
+      status: SubscriptionStatus.ACTIVE,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: new Date('2026-12-01T06:00:00.000Z'),
+    });
+    stripeToCash.scheduleCashAtStripePeriodEnd.mockResolvedValue({
+      subscription: {
+        id: 'cash-sched',
+        status: SubscriptionStatus.SCHEDULED,
+        source: SubscriptionSource.CASH,
+        currentPeriodStart: new Date('2026-12-01T06:00:00.000Z'),
+        currentPeriodEnd: new Date('2027-01-01T06:00:00.000Z'),
+        membershipPlan: { id: 'plan-fa', name: 'Full Access', billingInterval: 'MONTHLY', priceCents: 170000, currency: 'mxn' },
+      },
+      payment: { id: 'pay-sched', amountCents: 140000, status: PaymentStatus.SUCCEEDED, paymentMethod: PaymentMethod.CASH },
+      stripe: {
+        localSubscriptionId: 'stripe-local',
+        stripeSubscriptionId: 'sub_legacy',
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: new Date('2026-12-01T06:00:00.000Z'),
+      },
+    });
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-fa',
+      amountCents: 140000,
+      paymentMethod: 'CASH',
+      stripeResolution: 'cancel_at_period_end',
+      priceOverrideNote: 'Descuento único autorizado',
+    });
+
+    expect(stripeToCash.scheduleCashAtStripePeriodEnd).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 140000, priceCents: 150000 }),
+    );
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'STRIPE_TO_CASH_PERIOD_END_SCHEDULED',
+        metadata: expect.objectContaining({
+          amountCents: 140000,
+          catalogPriceCents: 170000,
+          heldPriceCents: 150000,
+          lockedPriceCents: 150000,
+          priceOverride: true,
+          priceLockMissing: false,
+          priceOverrideNote: 'Descuento único autorizado',
+        }),
+      }),
+    );
+  });
+
   it('forbids FRONT_DESK from Stripe resolution mutations', async () => {
     mockActor(Role.FRONT_DESK);
     salesSettingsService.getSettings.mockResolvedValue({
@@ -849,6 +916,7 @@ describe('SalesService', () => {
       const currentEnd = new Date(Date.now() + 10 * 86_400_000);
       prisma.subscription.findFirst.mockResolvedValue({
         id: 'sub-current-booty',
+        priceCents: 80000,
         currentPeriodStart: periodStart,
         currentPeriodEnd: currentEnd,
         entitlementEndsAt: currentEnd,
@@ -893,7 +961,7 @@ describe('SalesService', () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-1',
       studioId: 'studio-1',
-      priceCents: 195000,
+      priceCents: 170000,
       currency: 'mxn',
       billingInterval: 'MONTHLY',
       name: 'Full',
@@ -907,14 +975,14 @@ describe('SalesService', () => {
       status: SubscriptionStatus.ACTIVE,
       source: SubscriptionSource.CASH,
       currentPeriodEnd: new Date('2026-12-01'),
-      membershipPlan: { id: 'plan-1', name: 'Full', billingInterval: 'MONTHLY', priceCents: 195000, currency: 'mxn' },
+      membershipPlan: { id: 'plan-1', name: 'Full', billingInterval: 'MONTHLY', priceCents: 170000, currency: 'mxn' },
     });
     prisma.payment.create.mockResolvedValue({ id: 'pay-locked' });
 
     await expect(
       service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
         planId: 'plan-1',
-        amountCents: 195000,
+        amountCents: 170000,
         paymentMethod: 'CASH',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -928,6 +996,235 @@ describe('SalesService', () => {
       expect.objectContaining({
         data: expect.objectContaining({ priceCents: 150000 }),
       }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 150000 }),
+      }),
+    );
+  });
+
+  it('new Full Access cash sale with no held subscription charges and stamps catalog 1700', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue(null);
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-new-fa',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodEnd: new Date('2026-12-01'),
+      membershipPlan: {
+        id: 'plan-fa',
+        name: 'Full Access',
+        billingInterval: 'MONTHLY',
+        priceCents: 170000,
+        currency: 'mxn',
+      },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-new-fa' });
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-fa',
+      amountCents: 170000,
+      paymentMethod: 'CASH',
+    });
+
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priceCents: 170000 }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 170000 }),
+      }),
+    );
+  });
+
+  it('blocks cash renewal when the held Full Access row has a missing price lock', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub-nolock', priceCents: null });
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-fa',
+        amountCents: 170000,
+        paymentMethod: 'CASH',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.subscription.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner repair a missing lock by charging with priceOverrideNote without stamping catalog', async () => {
+    mockActor(Role.OWNER);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub-nolock', priceCents: null });
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-repaired',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodEnd: new Date('2026-12-01'),
+      membershipPlan: {
+        id: 'plan-fa',
+        name: 'Full Access',
+        billingInterval: 'MONTHLY',
+        priceCents: 170000,
+        currency: 'mxn',
+      },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-repaired' });
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-fa',
+      amountCents: 150000,
+      paymentMethod: 'CASH',
+      priceOverrideNote: 'Restore grandfathered 1500 lock after null priceCents',
+    });
+
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priceCents: 150000 }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 150000 }),
+      }),
+    );
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CASH_SUBSCRIPTION_CREATED',
+        metadata: expect.objectContaining({
+          amountCents: 150000,
+          catalogPriceCents: 170000,
+          heldPriceCents: null,
+          lockedPriceCents: 150000,
+          priceOverride: true,
+          priceLockMissing: true,
+          priceOverrideNote: 'Restore grandfathered 1500 lock after null priceCents',
+        }),
+      }),
+    );
+  });
+
+  it('refuses an owner renewal of a missing price lock without a written override note', async () => {
+    mockActor(Role.OWNER);
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub-nolock', priceCents: null });
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-fa',
+        amountCents: 170000,
+        paymentMethod: 'CASH',
+        priceOverrideNote: '   ',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.subscription.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it('renews a negotiated 1400 lock at 1400 and keeps it under a 1700 catalog', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub-negotiated', priceCents: 140000 });
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-negotiated-2',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodEnd: new Date('2026-12-01'),
+      membershipPlan: { id: 'plan-fa', name: 'Full Access', billingInterval: 'MONTHLY', priceCents: 170000, currency: 'mxn' },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-negotiated' });
+
+    for (const amountCents of [150000, 170000]) {
+      await expect(
+        service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+          planId: 'plan-fa',
+          amountCents,
+          paymentMethod: 'CASH',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-fa',
+      amountCents: 140000,
+      paymentMethod: 'CASH',
+    });
+    expect(prisma.subscription.create).toHaveBeenCalledTimes(1);
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ priceCents: 140000 }) }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ amountCents: 140000 }) }),
     );
   });
 });

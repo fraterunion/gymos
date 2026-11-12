@@ -24,6 +24,10 @@ import {
   allowNewMembershipStacks,
   findConflictingMemberships,
 } from '../memberships/membership-compatibility';
+import {
+  resolveAuthorizedSalePriceCents,
+  resolveStampedSalePriceCents,
+} from '../memberships/subscription-price';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { AuditService } from './audit.service';
@@ -238,19 +242,46 @@ export class SalesService {
       orderBy: { createdAt: 'desc' },
       select: { id: true, priceCents: true },
     });
-    const authorizedPrice = heldSubscription?.priceCents ?? plan.priceCents;
-    if (dto.amountCents !== authorizedPrice) {
+    // An existing membership without a lock must never inherit the catalog price
+    // (e.g. 1700 after a FUTURE_ONLY rise): only an owner, with a written note,
+    // may state the agreed amount, which then becomes the stamped lock.
+    const priceLockMissing = heldSubscription != null && heldSubscription.priceCents == null;
+    const priceOverrideNote = dto.priceOverrideNote?.trim() || null;
+    if (priceLockMissing && (actor.role !== Role.OWNER || !priceOverrideNote)) {
+      throw new BadRequestException(
+        'Esta membresía no tiene un precio acordado registrado. Solo un owner puede cobrarla indicando el monto acordado y una nota de autorización (priceOverrideNote).',
+      );
+    }
+    const authorizedPrice = priceLockMissing
+      ? dto.amountCents
+      : resolveAuthorizedSalePriceCents({ heldSubscription, catalogPriceCents: plan.priceCents });
+    const ownerPriceOverride = dto.amountCents !== authorizedPrice;
+    if (ownerPriceOverride) {
       if (actor.role !== Role.OWNER) {
         throw new BadRequestException(
           'Amount must match the member price unless overridden by an owner',
         );
       }
-      if (!dto.priceOverrideNote?.trim()) {
+      if (!priceOverrideNote) {
         throw new BadRequestException(
           'priceOverrideNote is required when amount differs from plan price',
         );
       }
     }
+    const stampedPriceCents = resolveStampedSalePriceCents({
+      heldSubscription,
+      catalogPriceCents: plan.priceCents,
+      chargedAmountCents: dto.amountCents,
+      ownerOverride: ownerPriceOverride || priceLockMissing,
+    });
+    const priceAudit = {
+      catalogPriceCents: plan.priceCents,
+      heldPriceCents: heldSubscription?.priceCents ?? null,
+      lockedPriceCents: stampedPriceCents,
+      priceOverride: ownerPriceOverride || priceLockMissing,
+      priceLockMissing,
+      priceOverrideNote,
+    };
 
     const combinedNotes =
       [dto.notes?.trim(), dto.priceOverrideNote?.trim()].filter(Boolean).join(' | ') ||
@@ -319,6 +350,7 @@ export class SalesService {
           targetUserId,
           plan,
           amountCents: dto.amountCents,
+          priceCents: stampedPriceCents,
           paidAt,
           notes: combinedNotes,
           defaultPeriodEnd: (start, interval) => this.defaultPeriodEnd(start, interval),
@@ -342,6 +374,7 @@ export class SalesService {
             stripeSubscriptionId: scheduled.stripe.stripeSubscriptionId,
             effectiveAt: scheduled.subscription.currentPeriodStart?.toISOString() ?? null,
             amountCents: dto.amountCents,
+            ...priceAudit,
             paymentPaidAt: paidAt.toISOString(),
             paymentId: scheduled.payment.id,
             origin: 'GYMOS',
@@ -470,6 +503,11 @@ export class SalesService {
                   : renewableCashSubscription.currentPeriodStart,
               currentPeriodEnd: entitlementEndsAt!,
               entitlementEndsAt: entitlementEndsAt!,
+              // In-place fixed-duration renew: keep an existing lock; only stamp when
+              // the held row was missing one and an owner override authorized the amount.
+              ...(heldSubscription?.priceCents == null
+                ? { priceCents: stampedPriceCents }
+                : {}),
             },
             include: planInclude,
           });
@@ -538,7 +576,7 @@ export class SalesService {
               cancelAtPeriodEnd: true,
               createdByUserId: actorUserId,
               notes: combinedNotes,
-              priceCents: heldSubscription?.priceCents ?? plan.priceCents,
+              priceCents: stampedPriceCents,
               ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
             },
             include: planInclude,
@@ -635,6 +673,7 @@ export class SalesService {
       metadata: {
         planId: plan.id,
         amountCents: dto.amountCents,
+        ...priceAudit,
         paymentId: result.payment.id,
         paymentPaidAt: paidAt.toISOString(),
         ...(dto.stripeResolution === 'cancel_immediately'

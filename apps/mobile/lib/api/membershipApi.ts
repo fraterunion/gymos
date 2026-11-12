@@ -37,7 +37,9 @@ export type MembershipSummaryDto = {
     id: string;
     name: string;
     billingInterval: BillingInterval;
+    /** Agreed lock for this membership (API overlays catalog). */
     priceCents: number;
+    catalogPriceCents?: number;
     currency: string;
     classCredits: number | null;
     entitlementDays: number | null;
@@ -81,7 +83,9 @@ export type MyMemberProfileDto = {
       id: string;
       name: string;
       billingInterval: BillingInterval;
+      /** Agreed lock for this membership (API overlays catalog). */
       priceCents: number;
+      catalogPriceCents?: number;
       currency: string;
       classCredits: number | null;
       allowedCategories: string[];

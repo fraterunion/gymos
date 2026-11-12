@@ -47,6 +47,7 @@ import { appleFixture, DYNAMIC_PASS_TYPE } from './helpers/wallet-dynamic-env';
  * explicit clock. Nothing here contacts Apple or Stripe.
  */
 const TZ = 'America/Mexico_City';
+const PLAN_PRICE_CENTS = 120_000;
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 const PASSKIT = '/api/v1/wallet/passkit/v1';
@@ -137,7 +138,7 @@ maybeDescribe('Smart Wallet 2.0 Stage 3 — automatic refresh engine (e2e)', () 
       data: {
         studioId,
         name: data.name ?? 'Full Access',
-        priceCents: 120000,
+        priceCents: PLAN_PRICE_CENTS,
         currency: 'mxn',
         billingInterval: 'MONTHLY',
         active: true,
@@ -161,6 +162,8 @@ maybeDescribe('Smart Wallet 2.0 Stage 3 — automatic refresh engine (e2e)', () 
         currentPeriodEnd: end,
         cancelAtPeriodEnd: true,
         exclusiveGroupKey: group,
+        // Every real sale stamps the agreed price; the desk refuses to renew a membership without one.
+        priceCents: PLAN_PRICE_CENTS,
       },
     });
   }
@@ -279,7 +282,7 @@ maybeDescribe('Smart Wallet 2.0 Stage 3 — automatic refresh engine (e2e)', () 
       await request(app.getHttpServer())
         .post(`/api/v1/studios/${m.studioId}/members/${m.member.id}/offline-subscriptions`)
         .set('Authorization', `Bearer ${await login(owner.email, owner.password)}`)
-        .send({ planId: planRow.id, amountCents: 120000, paymentMethod: 'CASH' })
+        .send({ planId: planRow.id, amountCents: PLAN_PRICE_CENTS, paymentMethod: 'CASH' })
         .expect(201);
 
       const first = await detectAndProcess();
@@ -393,7 +396,7 @@ maybeDescribe('Smart Wallet 2.0 Stage 3 — automatic refresh engine (e2e)', () 
       await request(app.getHttpServer())
         .post(`/api/v1/studios/${m.studioId}/members/${m.member.id}/offline-subscriptions`)
         .set('Authorization', `Bearer ${await login(owner.email, owner.password)}`)
-        .send({ planId: full.id, amountCents: 120000, paymentMethod: 'CASH' })
+        .send({ planId: full.id, amountCents: PLAN_PRICE_CENTS, paymentMethod: 'CASH' })
         .expect(201);
 
       await detectAndProcess();
@@ -727,7 +730,7 @@ maybeDescribe('Smart Wallet 2.0 Stage 3 — automatic refresh engine (e2e)', () 
       await request(app.getHttpServer())
         .post(`/api/v1/studios/${m.studioId}/members/${m.member.id}/offline-subscriptions`)
         .set('Authorization', `Bearer ${await login(owner.email, owner.password)}`)
-        .send({ planId: planRow.id, amountCents: 120000, paymentMethod: 'CASH' })
+        .send({ planId: planRow.id, amountCents: PLAN_PRICE_CENTS, paymentMethod: 'CASH' })
         .expect(201);
       expect(await prisma.payment.count()).toBeGreaterThan(0);
 
