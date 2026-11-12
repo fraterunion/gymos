@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
@@ -60,7 +62,10 @@ test('class detail: Open Gym slot included only with entitlement; ordinary class
 });
 
 test('no screen renders the Open Gym card without an entitlement, and guests never see it', () => {
-  const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  // Resolve a plain filesystem path: the mobile tsconfig's global `URL` is the DOM / React Native
+  // type, which Node's readFileSync overloads do not accept.
+  const specDir = dirname(fileURLToPath(import.meta.url));
+  const read = (p: string) => readFileSync(join(specDir, p), 'utf8');
   const card = read('../components/OpenGymBenefitCard.tsx');
   assert.match(card, /if \(!entitlement\.included\) return null;/);
   for (const screen of ['../app/(app)/(tabs)/index.tsx', '../app/(app)/(tabs)/schedule.tsx']) {
