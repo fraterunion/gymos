@@ -56,6 +56,7 @@ describe('CommunicationsService delivery', () => {
   let campaignCreate: jest.Mock;
   let storedRecipients: jest.Mock;
   let campaignFindFirst: jest.Mock;
+  let studioFindFirst: jest.Mock;
 
   beforeEach(async () => {
     recipients = [
@@ -67,6 +68,11 @@ describe('CommunicationsService delivery', () => {
     campaignFindFirst = jest.fn().mockResolvedValue({ ...campaign, status: EmailCampaignStatus.DRAFT });
     storedRecipients = jest.fn().mockResolvedValue([{ userId: 'user-1', email: 'ada@ares.test' }]);
     send = jest.fn().mockResolvedValue({ providerMessageId: 'msg-1', delivered: true });
+    studioFindFirst = jest.fn().mockResolvedValue({
+      id: 'studio-1', slug: 'ares', name: 'ARES', appName: 'ARES', appDisplayName: 'ARES',
+      brandPrimaryColor: null, primaryColor: null, brandLogoUrl: null, logoUrl: null,
+      supportEmail: 'desk@ares.test', supportPhone: null,
+    });
     configGet = jest.fn((key: string, fallback?: string) =>
       key === 'EMAIL_UNSUBSCRIBE_URL_BASE' ? 'https://api.ares.example.test' : fallback ?? '',
     );
@@ -119,13 +125,7 @@ describe('CommunicationsService delivery', () => {
           where.studioId_email.email === 'gone@ares.test' ? { reason: 'UNSUBSCRIBE' } : null,
         ),
       },
-      studio: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 'studio-1', slug: 'ares', name: 'ARES', appName: 'ARES', appDisplayName: 'ARES',
-          brandPrimaryColor: null, primaryColor: null, brandLogoUrl: null, logoUrl: null,
-          supportEmail: 'desk@ares.test', supportPhone: null,
-        }),
-      },
+      studio: { findFirst: studioFindFirst },
     };
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -290,6 +290,71 @@ describe('CommunicationsService delivery', () => {
     expect(message.replyTo).toBe('fernando@arestrainingclub.com');
     expect(message.headers['List-Unsubscribe']).toMatch(/^<https:\/\/api\.ares\.example\.test\/api\/v1\/email\/unsubscribe\?token=/);
     expect(message.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+  });
+
+  const ARES_STUDIO = {
+    id: 'studio-1', slug: 'ares-fitness', name: 'Ares Training Club', appName: 'Ares Training Club',
+    appDisplayName: 'Ares Training Club', brandPrimaryColor: '#0f172a', primaryColor: null, brandLogoUrl: null,
+    logoUrl: 'https://www.arestrainingclub.com/ares-wordmark.png', supportEmail: 'support@arestrainingclub.com',
+    supportPhone: '+52 55 0000 0000', privacyUrl: 'https://www.arestrainingclub.com/privacy',
+    websiteUrl: null, instagramHandle: null, address: null,
+  };
+
+  it('delivers the branded ARES layout without changing anything else about the message', async () => {
+    studioFindFirst.mockResolvedValue(ARES_STUDIO);
+    withConfig({
+      EMAIL_CAMPAIGN_SENDERS: JSON.stringify({ 'ares-fitness': JSON.parse(ARES_SENDERS).ares }),
+      EMAIL_FROM_ADDRESS: 'no-reply@arestrainingclub.com',
+    });
+    await service.deliver('camp-1', { maxSends: 5 });
+    expect(send).toHaveBeenCalledTimes(1);
+    const message = send.mock.calls[0][0];
+    const unsubscribeUrl = /^<(.+)>$/.exec(message.headers['List-Unsubscribe'])![1]!;
+    expect(message).toEqual({
+      to: 'ada@ares.test',
+      from: { email: 'fernando@arestrainingclub.com', name: 'ARES Training Club' },
+      replyTo: 'fernando@arestrainingclub.com',
+      subject: 'Aviso',
+      html: expect.any(String),
+      text: expect.any(String),
+      idempotencyKey: 'campaign-recipient:rec-pending',
+      headers: {
+        'List-Unsubscribe': `<${unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+      tags: { type: 'campaign', campaign: 'camp-1' },
+    });
+    expect(unsubscribeUrl).toMatch(/^https:\/\/api\.ares\.example\.test\/api\/v1\/email\/unsubscribe\?token=/);
+    expect(message.html).toContain(`href="${unsubscribeUrl}"`);
+    expect(message.text).toContain(`Cancelar suscripción: ${unsubscribeUrl}`);
+    expect(message.html).toContain('src="https://www.arestrainingclub.com/ares-wordmark.png"');
+    // The footer signs with the same name the From header shows.
+    expect(message.html).toContain('>ARES Training Club</p>');
+    expect(message.html).toContain('Hola &lt;script&gt;');
+    expect(message.html).not.toContain('<script>');
+    expect(message.text.startsWith('Hola <script>')).toBe(true);
+  });
+
+  it('renders the email preview with the studio branding without storing or sending anything', async () => {
+    studioFindFirst.mockResolvedValue(ARES_STUDIO);
+    withConfig({
+      EMAIL_CAMPAIGN_SENDERS: JSON.stringify({ 'ares-fitness': JSON.parse(ARES_SENDERS).ares }),
+      EMAIL_FROM_ADDRESS: 'no-reply@arestrainingclub.com',
+    });
+    const preview = await service.emailPreview('studio-1', {
+      subject: '  Horarios\r\nnuevos ',
+      bodyText: 'Hola <b>equipo</b>\n\nhttps://www.arestrainingclub.com/support',
+    });
+    expect(preview.subject).toBe('Horarios nuevos');
+    expect(preview.html).toContain('src="https://www.arestrainingclub.com/ares-wordmark.png"');
+    expect(preview.html).toContain('>ARES Training Club</p>');
+    expect(preview.html).toContain('Hola &lt;b&gt;equipo&lt;/b&gt;');
+    expect(preview.html).toContain('href="https://www.arestrainingclub.com/support"');
+    expect(preview.html).not.toContain('token=');
+    expect(send).not.toHaveBeenCalled();
+    expect(campaignCreate).not.toHaveBeenCalled();
+    expect(campaignUpdate).not.toHaveBeenCalled();
+    await expect(service.emailPreview('studio-1', { subject: ' ', bodyText: 'Hola' })).rejects.toThrow('asunto');
   });
 
   it('keeps the previous platform sender and studio support Reply-To for studios without a campaign sender', async () => {

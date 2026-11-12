@@ -83,12 +83,36 @@ describe('white-label email branding', () => {
     expect(safeHttpUrl('data:image/png;base64,AAA')).toBeNull();
   });
 
+  it('resolves public footer details only when they are safe to print', () => {
+    const b = resolveEmailBranding(
+      studio({
+        privacyUrl: 'https://tiny.test/privacidad',
+        websiteUrl: 'javascript:alert(1)',
+        instagramHandle: '@tiny.gym',
+        address: '  Calle 1\n\tCentro  ',
+      }),
+      DEFAULTS,
+    );
+    expect(b.privacyUrl).toBe('https://tiny.test/privacidad');
+    expect(b.websiteUrl).toBeNull();
+    expect(b.instagramHandle).toBe('tiny.gym');
+    expect(b.address).toBe('Calle 1 Centro');
+    const hostile = resolveEmailBranding(studio({ instagramHandle: 'x"><script>', address: 'a'.repeat(201) }), DEFAULTS);
+    expect(hostile.instagramHandle).toBeNull();
+    expect(hostile.address).toBeNull();
+    // Callers that select only the identity columns still resolve.
+    const minimal = resolveEmailBranding(studio(), DEFAULTS);
+    expect([minimal.privacyUrl, minimal.websiteUrl, minimal.instagramHandle, minimal.address]).toEqual([null, null, null, null]);
+    expect(resolveEmailBranding(null, DEFAULTS).privacyUrl).toBeNull();
+  });
+
   it('contains no hardcoded studio identity anywhere in the shared modules', () => {
     // Guards the platform boundary: the shared service must never mention one customer.
     const sources = [
       readFileSync(`${__dirname}/email-branding.ts`, 'utf8'),
       readFileSync(`${__dirname}/transactional-email.service.ts`, 'utf8'),
       readFileSync(`${__dirname}/templates/password-reset.template.ts`, 'utf8'),
+      readFileSync(`${__dirname}/templates/branded-email-layout.ts`, 'utf8'),
     ].join('\n');
     expect(sources).not.toMatch(/ares/i);
     expect(sources).not.toMatch(/arestrainingclub/i);

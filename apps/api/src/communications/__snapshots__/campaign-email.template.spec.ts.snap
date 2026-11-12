@@ -1,0 +1,85 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`campaign email renders the ARES campaign byte-for-byte as reviewed 1`] = `
+"<!doctype html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="x-apple-disable-message-reformatting" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
+<title>Nuevos horarios de diciembre</title>
+<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+<!--[if mso]><style>table,td,h1,p,a,span{font-family:'Segoe UI',Arial,sans-serif !important}</style><![endif]-->
+<style>
+body{margin:0 !important;padding:0 !important;width:100% !important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}
+table,td{mso-table-lspace:0pt;mso-table-rspace:0pt}
+img{-ms-interpolation-mode:bicubic}
+@media only screen and (max-width:620px){
+.em-page{padding:0 !important}
+.em-card{border-radius:0 !important}
+.em-header{border-radius:0 !important;padding:36px 24px 34px !important}
+.em-body{padding:36px 24px 32px !important}
+.em-footer{border-radius:0 !important;padding:28px 24px 32px !important}
+.em-headline{font-size:26px !important;line-height:32px !important}
+.em-cta{width:100% !important}
+.em-cta a{display:block !important}
+}
+</style>
+<style>
+:root{color-scheme:light;supported-color-schemes:light}
+a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !important;font-size:inherit !important;font-family:inherit !important;font-weight:inherit !important;line-height:inherit !important}
+</style>
+</head>
+<body style="margin:0;padding:0;background:#F0F0F0">
+<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all">Hola equipo: Ajustamos los horarios. Reserva en https://reservas.studio.test/clases.&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F0F0F0" style="background:#F0F0F0">
+<tr>
+<td align="center" class="em-page" style="padding:40px 12px 48px">
+<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" class="em-card" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background:#FFFFFF;border-radius:16px;overflow:hidden">
+<tr>
+<td class="em-header" align="center" bgcolor="#0A0A0A" style="background:#0A0A0A;border-bottom:1px solid #1A1A1A;border-radius:16px 16px 0 0;padding:44px 40px 40px">
+<img src="https://www.arestrainingclub.com/ares-wordmark.png" width="208" height="52" alt="Ares Training Club" style="display:block;margin:0 auto;width:208px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:20px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#FFFFFF" />
+</td>
+</tr>
+<tr>
+<td class="em-body" style="padding:48px 48px 44px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif">
+<h1 class="em-headline" style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:30px;line-height:36px;font-weight:800;letter-spacing:-0.6px;color:#0A0A0A">Nuevos horarios de diciembre</h1>
+<table role="presentation" class="em-rule" width="48" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 26px"><tr><td height="2" style="height:2px;line-height:2px;font-size:0;background:#0A0A0A">&nbsp;</td></tr></table>
+<p style="margin:0 0 18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:26px;color:#3A3A3A">Hola equipo:</p>
+<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:26px;color:#3A3A3A">Ajustamos los horarios.<br />Reserva en <a href="https://reservas.studio.test/clases" target="_blank" style="color:#0A0A0A;font-weight:600;text-decoration:underline;word-break:break-word;overflow-wrap:anywhere">https://reservas.studio.test/clases</a>.</p>
+
+</td>
+</tr>
+<tr>
+<td class="em-footer" align="center" bgcolor="#F7F7F7" style="background:#F7F7F7;border-top:1px solid #E8E8E8;border-radius:0 0 16px 16px;padding:32px 48px 36px">
+<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:11px;line-height:16px;font-weight:700;letter-spacing:2.4px;text-transform:uppercase;color:#0A0A0A">ARES Training Club</p>
+<p style="margin:12px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:13px;line-height:20px;color:#6B6B6B"><a href="mailto:support@arestrainingclub.com" target="_blank" style="color:#6B6B6B;text-decoration:underline">support@arestrainingclub.com</a><span style="color:#B4B4B4"> &middot; </span><a href="https://www.arestrainingclub.com/privacy" target="_blank" style="color:#6B6B6B;text-decoration:underline">Aviso de privacidad</a></p>
+<p style="margin:20px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:18px;color:#6B6B6B">Recibes este mensaje porque tienes una membresía en Ares Training Club.<br /><a href="https://api.platform.test/api/v1/email/unsubscribe?token=signed.token" target="_blank" style="color:#3A3A3A;text-decoration:underline">Cancelar suscripción</a></p>
+</td>
+</tr>
+</table>
+<!--[if mso]></td></tr></table><![endif]-->
+</td>
+</tr>
+</table>
+</body>
+</html>"
+`;
+
+exports[`campaign email renders the ARES campaign byte-for-byte as reviewed 2`] = `
+"Hola equipo:
+
+Ajustamos los horarios.
+Reserva en https://reservas.studio.test/clases.
+
+—
+ARES Training Club
+support@arestrainingclub.com
+Aviso de privacidad: https://www.arestrainingclub.com/privacy
+
+Recibes este mensaje porque tienes una membresía en Ares Training Club.
+Cancelar suscripción: https://api.platform.test/api/v1/email/unsubscribe?token=signed.token"
+`;

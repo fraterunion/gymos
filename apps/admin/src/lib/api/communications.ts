@@ -79,6 +79,16 @@ export function previewCampaign(studioId: string, input: {
   });
 }
 
+export type CampaignEmailPreview = { subject: string; html: string; text: string };
+
+/** The branded email exactly as the API sends it. Read-only: nothing is stored or sent. */
+export function fetchCampaignEmailPreview(studioId: string, input: { subject: string; bodyText: string }) {
+  return apiRequest<CampaignEmailPreview>(`/studios/${studioId}/communications/email-preview`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function createCampaign(studioId: string, input: {
   subject: string;
   bodyText: string;

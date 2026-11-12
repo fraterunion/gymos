@@ -18,18 +18,26 @@ import {
   type EmailCampaign,
 } from '@prisma/client';
 import { EMAIL_PROVIDER, type EmailProvider } from '../email/email-provider';
-import { resolveEmailBranding, type PlatformEmailDefaults } from '../email/email-branding';
+import {
+  EMAIL_BRANDING_STUDIO_SELECT,
+  resolveEmailBranding,
+  type PlatformEmailDefaults,
+  type ResolvedEmailBranding,
+} from '../email/email-branding';
+import { studioEmailLogo } from '../email/studio-email-logos';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../sales/audit.service';
 import { normalizeCampaignContent, renderCampaignEmail } from './campaign-email.template';
 import { resolveCampaignSender, type CampaignSender } from './campaign-sender';
 import { campaignAudienceSignature, recipientSnapshotFingerprint, resolveCampaignRecipients, type CampaignFilters, type RecipientCandidate } from './campaign-recipients';
-import type { ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto/campaign.dto';
+import type { CampaignEmailPreviewDto, ConfirmCampaignDto, CreateCampaignDto, PreviewCampaignDto } from './dto/campaign.dto';
 import { readUnsubscribeToken, signUnsubscribeToken } from './unsubscribe-token';
 
 const STALE_CLAIM_MS = 10 * 60_000;
 const DEFAULT_BATCH = 5;
 const DEFAULT_STALE_AFTER_MINUTES = 360;
+/** Unsubscribe links are signed per recipient at send time; a preview has none to show. */
+const PREVIEW_UNSUBSCRIBE_URL = '#';
 
 export const CAMPAIGN_DELIVERY_PAUSED_MESSAGE =
   'Los envíos de campañas están pausados en este servidor. La campaña queda en borrador y no se enviará hasta que se activen los envíos.';
@@ -138,6 +146,30 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
       recipients: resolved.recipients,
       suppressed: resolved.suppressed,
     };
+  }
+
+  /** The branded email exactly as recipients get it, for the composer. Stores and sends nothing. */
+  async emailPreview(studioId: string, dto: CampaignEmailPreviewDto) {
+    const content = this.parseContent(dto.subject, dto.bodyText);
+    const studio = await this.loadStudio(studioId);
+    const branding = resolveEmailBranding(studio, this.platformDefaults());
+    return this.renderCampaign(branding, this.campaignSender(studio.slug), content, PREVIEW_UNSUBSCRIBE_URL);
+  }
+
+  private renderCampaign(
+    branding: ResolvedEmailBranding,
+    sender: CampaignSender,
+    content: { subject: string; bodyText: string },
+    unsubscribeUrl: string,
+  ) {
+    return renderCampaignEmail({
+      branding,
+      senderName: sender.kind === 'CONFIGURED' ? sender.from.name : branding.from.name,
+      logo: studioEmailLogo(branding.studioSlug),
+      subject: content.subject,
+      bodyText: content.bodyText,
+      unsubscribeUrl,
+    });
   }
 
   async create(studioId: string, actorUserId: string, dto: CreateCampaignDto) {
@@ -378,11 +410,7 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
     try {
       const studio = await this.prisma.studio.findFirst({
         where: { id: recipient.studioId, deletedAt: null },
-        select: {
-          id: true, slug: true, name: true, appName: true, appDisplayName: true,
-          brandPrimaryColor: true, primaryColor: true, brandLogoUrl: true, logoUrl: true,
-          supportEmail: true, supportPhone: true,
-        },
+        select: EMAIL_BRANDING_STUDIO_SELECT,
       });
       const branding = resolveEmailBranding(studio, this.platformDefaults());
       const sender = this.campaignSender(studio?.slug ?? '');
@@ -398,12 +426,7 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
         this.config.getOrThrow<string>('JWT_SECRET'),
       );
       const unsubscribeUrl = `${this.unsubscribeBase()}/api/v1/email/unsubscribe?token=${encodeURIComponent(token)}`;
-      const rendered = renderCampaignEmail({
-        studioName: branding.displayName,
-        subject: recipient.campaign.subject,
-        bodyText: recipient.campaign.bodyText,
-        unsubscribeUrl,
-      });
+      const rendered = this.renderCampaign(branding, sender, recipient.campaign, unsubscribeUrl);
       const result = await this.email.send({
         to: recipient.email,
         from: sender.kind === 'CONFIGURED' ? sender.from : branding.from,
@@ -631,11 +654,7 @@ export class CommunicationsService implements OnModuleInit, OnModuleDestroy {
   private async loadStudio(studioId: string) {
     const studio = await this.prisma.studio.findFirst({
       where: { id: studioId, deletedAt: null },
-      select: {
-        id: true, slug: true, name: true, appName: true, appDisplayName: true,
-        brandPrimaryColor: true, primaryColor: true, brandLogoUrl: true, logoUrl: true,
-        supportEmail: true, supportPhone: true,
-      },
+      select: EMAIL_BRANDING_STUDIO_SELECT,
     });
     if (!studio) throw new NotFoundException('Studio not found');
     return studio;

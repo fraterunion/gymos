@@ -94,6 +94,18 @@ export class CreateCampaignDto extends PreviewCampaignDto {
   idempotencyKey!: string;
 }
 
+export class CampaignEmailPreviewDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  subject!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(10_000)
+  bodyText!: string;
+}
+
 export class ConfirmCampaignDto {
   @IsBoolean()
   @Equals(true)

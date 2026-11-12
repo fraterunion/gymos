@@ -1,9 +1,17 @@
-import { escapeHtml } from '../email/templates/password-reset.template';
+import type { ResolvedEmailBranding } from '../email/email-branding';
+import {
+  emailPreheader,
+  plainTextToEmailHtml,
+  renderBrandedEmailLayout,
+  type EmailImage,
+  type EmailLink,
+} from '../email/templates/branded-email-layout';
 
 export type RenderedCampaignEmail = { subject: string; html: string; text: string };
 
 const SUBJECT_MAX = 200;
 const BODY_MAX = 10_000;
+const EMAIL = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/;
 
 export function normalizeCampaignContent(subject: string, bodyText: string): { subject: string; bodyText: string } {
   const cleanSubject = subject.replace(/[\r\n]+/g, ' ').trim();
@@ -17,27 +25,69 @@ export function normalizeCampaignContent(subject: string, bodyText: string): { s
   return { subject: cleanSubject, bodyText: cleanBody };
 }
 
-/** Plain text from the admin becomes escaped HTML. No raw markup is trusted. */
+function websiteLabel(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Plain text from the admin becomes escaped HTML inside the studio's branded layout. No raw
+ * markup is trusted. The subject doubles as the headline.
+ */
 export function renderCampaignEmail(input: {
-  studioName: string;
+  branding: ResolvedEmailBranding;
+  /** Display name of the From header; the footer signs with the same name. */
+  senderName: string;
+  /** A logo verified for the dark header (see studio-email-logos.ts), or null for a name lockup. */
+  logo: EmailImage | null;
   subject: string;
   bodyText: string;
   unsubscribeUrl: string;
 }): RenderedCampaignEmail {
-  const paragraphs = input.bodyText
-    .split(/\n{2,}/)
-    .map((block) => escapeHtml(block).replace(/\n/g, '<br>'));
-  const htmlBody = paragraphs
-    .map((block) => `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#18181b;">${block}</p>`)
-    .join('');
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f4f5;padding:24px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-<table role="presentation" width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;padding:28px;">
-<tr><td style="font-family:Georgia,serif;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;color:#71717a;">${escapeHtml(input.studioName)}</td></tr>
-<tr><td style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding-top:16px;">${htmlBody}
-<p style="margin:24px 0 0;font-size:12px;line-height:1.5;color:#71717a;">Recibes este mensaje porque tienes una membresía en ${escapeHtml(input.studioName)}.
-<a href="${escapeHtml(input.unsubscribeUrl)}" style="color:#71717a;">Cancelar suscripción</a></p>
-</td></tr></table></td></tr></table></body></html>`;
-  const text = `${input.bodyText}\n\n—\nRecibes este mensaje porque tienes una membresía en ${input.studioName}.\nCancelar suscripción: ${input.unsubscribeUrl}`;
+  const { branding } = input;
+  const supportEmail = branding.supportEmail && EMAIL.test(branding.supportEmail) ? branding.supportEmail : null;
+  const instagram = branding.instagramHandle;
+  const contact: EmailLink[] = [
+    ...(supportEmail ? [{ label: supportEmail, url: `mailto:${supportEmail}` }] : []),
+    ...(branding.websiteUrl ? [{ label: websiteLabel(branding.websiteUrl), url: branding.websiteUrl }] : []),
+    ...(instagram ? [{ label: `@${instagram}`, url: `https://www.instagram.com/${instagram}/` }] : []),
+    ...(branding.privacyUrl ? [{ label: 'Aviso de privacidad', url: branding.privacyUrl }] : []),
+  ];
+  const notice = `Recibes este mensaje porque tienes una membresía en ${branding.displayName}.`;
+
+  const html = renderBrandedEmailLayout({
+    locale: 'es',
+    title: input.subject,
+    preheader: emailPreheader(input.bodyText),
+    brand: { name: branding.displayName, logo: input.logo, accentColor: branding.primaryColor },
+    headline: input.subject,
+    bodyHtml: plainTextToEmailHtml(input.bodyText),
+    footer: {
+      senderName: input.senderName,
+      links: contact,
+      address: branding.address,
+      notice,
+      unsubscribe: { label: 'Cancelar suscripción', url: input.unsubscribeUrl },
+    },
+  });
+
+  const text = [
+    input.bodyText,
+    '',
+    '—',
+    input.senderName,
+    ...(supportEmail ? [supportEmail] : []),
+    ...(branding.websiteUrl ? [branding.websiteUrl] : []),
+    ...(instagram ? [`Instagram: @${instagram}`] : []),
+    ...(branding.privacyUrl ? [`Aviso de privacidad: ${branding.privacyUrl}`] : []),
+    ...(branding.address ? [branding.address] : []),
+    '',
+    notice,
+    `Cancelar suscripción: ${input.unsubscribeUrl}`,
+  ].join('\n');
+
   return { subject: input.subject, html, text };
 }
