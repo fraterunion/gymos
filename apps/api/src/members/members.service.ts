@@ -26,6 +26,8 @@ import { acquireSubscriptionWriteAdvisoryLock } from '../billing/subscription-wr
 import { acquireBookingClassAdvisoryLock } from '../booking-class-advisory-lock';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { OPEN_GYM_LABEL } from '../check-ins/open-gym.constants';
+import { planGrantsOpenGymAt, summarizeOpenGymEntitlement } from '../check-ins/open-gym-access';
+import { loadOpenGymPlanPolicies } from '../check-ins/open-gym-entitlement';
 import {
   findCreationConflicts,
   selectPrimaryMembership,
@@ -429,6 +431,8 @@ export class MembersService {
               allowedCategories: true,
               allClassesAccess: true,
               openGymAccess: true,
+              openGymWindowStart: true,
+              openGymWindowEnd: true,
               exclusiveGroup: true,
               classTemplateAccess: {
                 select: {
@@ -597,6 +601,9 @@ export class MembersService {
             entitlementDays: latestSubscription.membershipPlan.entitlementDays,
             allowedCategories: latestSubscription.membershipPlan.allowedCategories,
             allClassesAccess: latestSubscription.membershipPlan.allClassesAccess,
+            openGymAccess: latestSubscription.membershipPlan.openGymAccess,
+            openGymWindowStart: latestSubscription.membershipPlan.openGymWindowStart,
+            openGymWindowEnd: latestSubscription.membershipPlan.openGymWindowEnd,
             allowedTemplateIds: latestSubscription.membershipPlan.classTemplateAccess.map((row) => row.classTemplateId),
             allowedTemplates: latestSubscription.membershipPlan.classTemplateAccess.map((row) => ({
               id: row.classTemplateId,
@@ -763,6 +770,11 @@ export class MembersService {
           classStartsAt: booking.scheduledClass.startsAt,
         })),
       },
+      // Server-decided Open Gym entitlement for the member app. The app shows Open Gym UI only
+      // when this is true and never re-derives it from plan names, descriptions or class lists.
+      openGym: summarizeOpenGymEntitlement(
+        await loadOpenGymPlanPolicies(this.prisma, studioId, userId, profileNow),
+      ),
       activeSubscription: activeSubscription
         ? {
             id: activeSubscription.id,
@@ -989,7 +1001,14 @@ export class MembersService {
             where: { id: scheduledClassId, studioId },
             include: {
               classTemplate: {
-                select: { id: true, name: true, category: true, accessWindowStart: true, accessWindowEnd: true },
+                select: {
+                  id: true,
+                  name: true,
+                  category: true,
+                  isOpenGymSlot: true,
+                  accessWindowStart: true,
+                  accessWindowEnd: true,
+                },
               },
             },
           }),
@@ -1025,15 +1044,18 @@ export class MembersService {
           }
         }
 
-        // Entitlement check: verify the member's active subscription covers this class.
-        // If it does not, an explicit override (ADMIN/OWNER only + mandatory reason) is required.
+        // Entitlement check: verify one of the member's currently entitled subscriptions covers
+        // this class. If none does, an explicit override (ADMIN/OWNER only + mandatory reason)
+        // is required. Every entitled membership is considered (not one arbitrary row), so a
+        // multi-membership member is judged by the membership that actually includes the class.
         const now = new Date();
-        const memberSub = await tx.subscription.findFirst({
+        const entitledSubs = await tx.subscription.findMany({
           where: {
             studioId,
             userId: targetUserId,
             ...currentlyEntitledSubscriptionWhere(now),
           },
+          orderBy: { createdAt: 'asc' },
           select: {
             membershipPlan: {
               select: {
@@ -1041,11 +1063,31 @@ export class MembersService {
                 name: true,
                 allClassesAccess: true,
                 allowedCategories: true,
+                openGymAccess: true,
+                openGymWindowStart: true,
+                openGymWindowEnd: true,
                 classTemplateAccess: { select: { classTemplateId: true } },
               },
             },
           },
         });
+        const isOpenGymSlot = scheduledClass.classTemplate.isOpenGymSlot;
+        const coveringSub = entitledSubs.find(
+          (sub) =>
+            isClassIncludedInPlan({
+              allClassesAccess: sub.membershipPlan.allClassesAccess,
+              allowedTemplateIds: sub.membershipPlan.classTemplateAccess.map((a) => a.classTemplateId),
+              allowedCategories: sub.membershipPlan.allowedCategories,
+              openGymAccess: sub.membershipPlan.openGymAccess,
+              classTemplateId: scheduledClass.classTemplateId,
+              templateCategory: scheduledClass.classTemplate.category,
+              templateIsOpenGymSlot: isOpenGymSlot,
+            }) &&
+            (!isOpenGymSlot ||
+              (studio !== null &&
+                planGrantsOpenGymAt(sub.membershipPlan, scheduledClass.startsAt, studio.timezone))),
+        );
+        const memberSub = coveringSub ?? entitledSubs[0] ?? null;
 
         if (!memberSub && !overrideEntitlement) {
           throw new ForbiddenException(MEMBERSHIP_EXPIRED_MESSAGE);
@@ -1080,17 +1122,8 @@ export class MembersService {
         }
 
         if (memberSub) {
-          const { allClassesAccess, allowedCategories, classTemplateAccess, id: planId, name: planName } =
-            memberSub.membershipPlan;
-          const allowedTemplateIds = classTemplateAccess.map((a) => a.classTemplateId);
-
-          const hasAccess = isClassIncludedInPlan({
-            allClassesAccess,
-            allowedTemplateIds,
-            allowedCategories,
-            classTemplateId: scheduledClass.classTemplateId,
-            templateCategory: scheduledClass.classTemplate.category,
-          });
+          const { id: planId, name: planName } = memberSub.membershipPlan;
+          const hasAccess = coveringSub !== undefined;
 
           if (!hasAccess) {
             if (!overrideEntitlement) {

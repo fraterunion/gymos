@@ -39,6 +39,7 @@ import { resolveCoachDisplayName } from '@/lib/coachDisplay';
 import { lowSpotsLabel } from '@/lib/spotsRemaining';
 import { getColors, Space } from '@/constants/Theme';
 import type { ScheduledClassDto } from '@/lib/types/studio';
+import { isOpenGymSlotIncluded, resolveOpenGymEntitlement } from '@/lib/openGymEntitlement';
 
 const PLAN_RESTRICTED_MESSAGE = 'Esta clase no está incluida en tu membresía.';
 
@@ -385,15 +386,20 @@ export default function ClassDetailScreen() {
   const activeSubscription = memberProfile?.activeSubscription ?? null;
   const classTemplateId = cls.classTemplate.id;
   const classCategory = cls.classTemplate.category;
+  // Display hint only — the API decides. Open Gym slots follow the server-decided Open Gym
+  // entitlement (plan toggle), never the class list, mirroring the booking engine.
+  const isOpenGymSlot = cls.classTemplate.isOpenGymSlot === true;
   const isPlanRestricted =
     !isGuest &&
     activeSubscription !== null &&
     !hasMatchingDayPass &&
-    !isClassIncludedInMemberPlan(
-      activeSubscription.plan,
-      classTemplateId,
-      classCategory,
-    );
+    (isOpenGymSlot
+      ? !isOpenGymSlotIncluded(cls.classTemplate, resolveOpenGymEntitlement(memberProfile))
+      : !isClassIncludedInMemberPlan(
+          activeSubscription.plan,
+          classTemplateId,
+          classCategory,
+        ));
 
   // CTA logic
   let primaryCTA: { label: string; onPress: () => void; disabled?: boolean; muted?: boolean } | null = null;

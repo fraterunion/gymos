@@ -8,12 +8,14 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { OPEN_GYM_HHMM_PATTERN } from '../membership-plan-class-access.utils';
 
 
 export class CreateMembershipPlanDto {
@@ -86,4 +88,25 @@ export class CreateMembershipPlanDto {
   @ArrayUnique()
   @IsString({ each: true })
   classTemplateIds?: string[];
+
+  /**
+   * Open Gym entitlement — the Admin toggle. The ONLY authority for Open Gym door access and
+   * for scheduled Open Gym slots; never inferred from allClassesAccess or class templates.
+   */
+  @IsOptional()
+  @IsBoolean()
+  openGymAccess?: boolean;
+
+  /** Studio-local 'HH:mm'. Set together with openGymWindowEnd, or both null = no hour limit. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @Matches(OPEN_GYM_HHMM_PATTERN, { message: 'openGymWindowStart must be HH:mm (24h)' })
+  openGymWindowStart?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @Matches(OPEN_GYM_HHMM_PATTERN, { message: 'openGymWindowEnd must be HH:mm (24h)' })
+  openGymWindowEnd?: string | null;
 }

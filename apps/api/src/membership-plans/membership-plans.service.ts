@@ -15,6 +15,8 @@ import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-en
 import {
   buildPlanClassAccessDto,
   dedupeTemplateIds,
+  normalizeOpenGymPlanConfig,
+  type OpenGymPlanConfig,
   type PlanClassAccessDto,
   validateRestrictedPlanAccess,
 } from './membership-plan-class-access.utils';
@@ -186,7 +188,18 @@ export class MembershipPlansService {
     const allClassesAccess = dto.allClassesAccess ?? true;
     const classTemplateIds = dedupeTemplateIds(dto.classTemplateIds);
     this.assertNoDuplicateTemplateIds(dto.classTemplateIds, classTemplateIds);
-    this.assertRestrictedAccess(allClassesAccess, classTemplateIds, dto.allowedCategories ?? []);
+    // Deny-by-default: a new plan includes Open Gym only when the Admin toggle says so.
+    const openGym = this.normalizeOpenGym({
+      openGymAccess: dto.openGymAccess ?? false,
+      openGymWindowStart: dto.openGymWindowStart ?? null,
+      openGymWindowEnd: dto.openGymWindowEnd ?? null,
+    });
+    this.assertRestrictedAccess(
+      allClassesAccess,
+      classTemplateIds,
+      dto.allowedCategories ?? [],
+      openGym.openGymAccess,
+    );
     await this.validateClassTemplateIds(studioId, classTemplateIds);
 
     const plan = await this.prisma.$transaction(async (tx) => {
@@ -204,6 +217,7 @@ export class MembershipPlansService {
           stripePriceId: dto.stripePriceId ?? null,
           allowedCategories: dto.allowedCategories ?? [],
           allClassesAccess,
+          ...openGym,
           active: true,
         },
       });
@@ -238,6 +252,9 @@ export class MembershipPlansService {
           classCredits: mapped.classCredits,
           entitlementDays: mapped.entitlementDays,
           allClassesAccess: mapped.allClassesAccess,
+          openGymAccess: mapped.openGymAccess,
+          openGymWindowStart: mapped.openGymWindowStart,
+          openGymWindowEnd: mapped.openGymWindowEnd,
         },
       });
     }
@@ -338,8 +355,31 @@ export class MembershipPlansService {
     const nextAllowedCategories =
       dto.allowedCategories !== undefined ? dto.allowedCategories : plan.allowedCategories;
 
-    if (dto.allClassesAccess !== undefined || classTemplateIdsProvided) {
-      this.assertRestrictedAccess(nextAllClassesAccess, classTemplateIds, nextAllowedCategories);
+    const openGymProvided =
+      dto.openGymAccess !== undefined ||
+      dto.openGymWindowStart !== undefined ||
+      dto.openGymWindowEnd !== undefined;
+    const nextOpenGym: OpenGymPlanConfig = openGymProvided
+      ? this.normalizeOpenGym({
+          openGymAccess: dto.openGymAccess ?? plan.openGymAccess,
+          openGymWindowStart:
+            dto.openGymWindowStart !== undefined ? dto.openGymWindowStart : plan.openGymWindowStart,
+          openGymWindowEnd:
+            dto.openGymWindowEnd !== undefined ? dto.openGymWindowEnd : plan.openGymWindowEnd,
+        })
+      : {
+          openGymAccess: plan.openGymAccess,
+          openGymWindowStart: plan.openGymWindowStart,
+          openGymWindowEnd: plan.openGymWindowEnd,
+        };
+
+    if (dto.allClassesAccess !== undefined || classTemplateIdsProvided || openGymProvided) {
+      this.assertRestrictedAccess(
+        nextAllClassesAccess,
+        classTemplateIds,
+        nextAllowedCategories,
+        nextOpenGym.openGymAccess,
+      );
       await this.validateClassTemplateIds(studioId, classTemplateIds);
     }
 
@@ -383,6 +423,8 @@ export class MembershipPlansService {
       ...(dto.active !== undefined ? { active: dto.active } : {}),
       ...(dto.allowedCategories !== undefined ? { allowedCategories: dto.allowedCategories } : {}),
       ...(dto.allClassesAccess !== undefined ? { allClassesAccess: dto.allClassesAccess } : {}),
+      // Written as one unit so the DB pairing CHECK always sees a consistent window.
+      ...(openGymProvided ? nextOpenGym : {}),
     };
 
     if (rotated) {
@@ -855,19 +897,40 @@ export class MembershipPlansService {
     if (dto.entitlementDays !== undefined) track('entitlementDays', before.entitlementDays, after.entitlementDays);
     if (dto.active !== undefined) track('active', before.active, after.active);
     if (dto.allClassesAccess !== undefined) track('allClassesAccess', before.allClassesAccess, after.allClassesAccess);
+    if (
+      dto.openGymAccess !== undefined ||
+      dto.openGymWindowStart !== undefined ||
+      dto.openGymWindowEnd !== undefined
+    ) {
+      track('openGymAccess', before.openGymAccess, after.openGymAccess);
+      track('openGymWindowStart', before.openGymWindowStart, after.openGymWindowStart);
+      track('openGymWindowEnd', before.openGymWindowEnd, after.openGymWindowEnd);
+    }
     return changes;
+  }
+
+  private normalizeOpenGym(input: OpenGymPlanConfig): OpenGymPlanConfig {
+    try {
+      return normalizeOpenGymPlanConfig(input);
+    } catch (e) {
+      throw new BadRequestException(
+        e instanceof Error ? e.message : 'Configuración de Open Gym inválida.',
+      );
+    }
   }
 
   private assertRestrictedAccess(
     allClassesAccess: boolean,
     classTemplateIds: string[],
     allowedCategories: MembershipPlan['allowedCategories'],
+    openGymAccess: boolean,
   ): void {
     try {
       validateRestrictedPlanAccess({
         allClassesAccess,
         classTemplateIds,
         allowedCategories,
+        openGymAccess,
       });
     } catch (e) {
       throw new BadRequestException(

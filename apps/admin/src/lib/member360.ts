@@ -105,14 +105,20 @@ export function usagePresentation(profile: Pick<MemberProfile, "currentMembershi
 
 export function allowedClassPresentation(membership: NonNullable<MemberProfile["currentMembership"]>): string[] {
   if (!membership.isEntitled) return ["Sin acceso vigente"];
-  if (membership.plan.allClassesAccess) return ["Todas las clases"];
-  if (membership.plan.allowedTemplates.length === 0) return ["Sin clases configuradas"];
-  return membership.plan.allowedTemplates.map((template) => {
-    const hours = template.isOpenGymSlot && template.accessWindowStart && template.accessWindowEnd
-      ? ` · ${template.accessWindowStart}–${template.accessWindowEnd}`
-      : "";
-    return `${template.name}${hours}`;
-  });
+  const plan = membership.plan;
+  // Open Gym follows the plan's toggle only; an Open Gym template in the class list or
+  // "Todas las clases" never grants it (same rule the API enforces).
+  const openGym = plan.openGymAccess
+    ? [
+        plan.openGymWindowStart && plan.openGymWindowEnd
+          ? `Open Gym · ${plan.openGymWindowStart}–${plan.openGymWindowEnd}`
+          : "Open Gym",
+      ]
+    : [];
+  if (plan.allClassesAccess) return ["Todas las clases", ...openGym];
+  const classes = plan.allowedTemplates.filter((template) => !template.isOpenGymSlot).map((template) => template.name);
+  if (classes.length === 0 && openGym.length === 0) return ["Sin clases configuradas"];
+  return [...classes, ...openGym];
 }
 
 export function cyclePayment(subscription: { payments: Array<{ stripeInvoiceId: string | null; status: string; amountCents: number; currency: string; paymentMethod: string }> }, stripeInvoiceId: string | null) {

@@ -19,6 +19,7 @@ import {
   MEMBERSHIP_CLASS_ACCESS_DENIED_MESSAGE,
 } from '../membership-plans/membership-plan-class-access.utils';
 import { currentlyEntitledSubscriptionWhere } from '../memberships/membership-entitlement';
+import { planGrantsOpenGymAt } from '../check-ins/open-gym-access';
 import { orderEntitlementCandidates } from '../memberships/membership-compatibility';
 import { MEMBER_ERRORS } from '../member-facing/member-errors';
 
@@ -46,7 +47,10 @@ export type BookingAccessResult = {
  * WaitlistService (waitlist join + promotion). Single canonical path enforcing:
  *   1. Role bypass (STAFF/INSTRUCTOR/ADMIN/OWNER)
  *   2. Time-window enforcement for restricted templates (e.g., Open Gym 10:00–17:00)
- *   3. Subscription class-template access (deny-by-default; allClassesAccess=false)
+ *   3. Subscription class-template access (deny-by-default; allClassesAccess=false).
+ *      Open Gym slots (isOpenGymSlot) qualify ONLY under plans whose saved openGymAccess is on
+ *      and whose Open Gym hours cover the slot start — never via allClassesAccess or the
+ *      template list. This is the Admin Open Gym toggle, enforced server-side.
  *   4. Credit limits (classCredits; uses entitlementEndsAt for fixed-duration plans)
  *   5. Day Pass fallback (explicit allowlist; Booty Lab is NOT in it)
  *
@@ -118,6 +122,9 @@ export class BookingAccessService {
             allowedCategories: true,
             classCredits: true,
             entitlementDays: true,
+            openGymAccess: true,
+            openGymWindowStart: true,
+            openGymWindowEnd: true,
             classTemplateAccess: {
               select: { classTemplateId: true },
             },
@@ -131,14 +138,21 @@ export class BookingAccessService {
 
     if (entitledSubs.length > 0) {
       // Candidates: only memberships whose plan actually includes this class.
-      const qualifying = entitledSubs.filter((sub) =>
-        isClassIncludedInPlan({
-          allClassesAccess: sub.membershipPlan.allClassesAccess,
-          allowedTemplateIds: sub.membershipPlan.classTemplateAccess.map((row) => row.classTemplateId),
-          allowedCategories: sub.membershipPlan.allowedCategories,
-          classTemplateId,
-          templateCategory: template?.category ?? null,
-        }),
+      const isOpenGymSlot = template?.isOpenGymSlot === true;
+      const qualifying = entitledSubs.filter(
+        (sub) =>
+          isClassIncludedInPlan({
+            allClassesAccess: sub.membershipPlan.allClassesAccess,
+            allowedTemplateIds: sub.membershipPlan.classTemplateAccess.map((row) => row.classTemplateId),
+            allowedCategories: sub.membershipPlan.allowedCategories,
+            openGymAccess: sub.membershipPlan.openGymAccess,
+            classTemplateId,
+            templateCategory: template?.category ?? null,
+            templateIsOpenGymSlot: isOpenGymSlot,
+          }) &&
+          // Open Gym hours are per plan; evaluate them at the slot's start, exactly as the
+          // door evaluates them at the scan instant.
+          (!isOpenGymSlot || planGrantsOpenGymAt(sub.membershipPlan, classStartsAt, studioTimezone)),
       );
 
       if (qualifying.length === 0) {

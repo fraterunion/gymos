@@ -50,7 +50,12 @@ import {
   WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
   WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
 } from './open-gym.constants';
-import { evaluateOpenGymEligibility, type OpenGymPlanPolicy } from './open-gym-access';
+import {
+  evaluateOpenGymEligibility,
+  planGrantsOpenGymAt,
+  type OpenGymEligibility,
+} from './open-gym-access';
+import { evaluateOpenGymSlotAccess, loadOpenGymPlanPolicies } from './open-gym-entitlement';
 
 const ENTITLEMENT_OVERRIDE_ROLES: ReadonlySet<Role> = new Set([Role.ADMIN, Role.OWNER]);
 
@@ -520,7 +525,7 @@ export class CheckInsService {
       throw new NotFoundException('Studio not found');
     }
 
-    const entitledPlans = await this.resolveOpenGymPlanPolicies(studioId, userId, now);
+    const entitledPlans = await loadOpenGymPlanPolicies(this.prisma, studioId, userId, now);
     const eligibility = evaluateOpenGymEligibility(entitledPlans, now, studio.timezone);
 
     if (eligibility.outcome !== 'allowed') {
@@ -528,35 +533,7 @@ export class CheckInsService {
       // enter for Open Gym may still legitimately be added to a class in progress, and that
       // path (POST /classes/:id/manual-attendance) remains the only authority on whether the
       // walk-in itself is permitted.
-      const walkInCandidates = await this.resolveWalkInCandidates(studioId, userId, now);
-      const base = { statusCode: 409, memberId: userId, memberName, walkInCandidates };
-
-      if (eligibility.outcome === 'not_entitled') {
-        this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_MEMBERSHIP_NOT_ENTITLED_CODE);
-        throw new ConflictException({
-          ...base,
-          code: WALLET_MEMBERSHIP_NOT_ENTITLED_CODE,
-          message: WALLET_MEMBERSHIP_NOT_ENTITLED_CODE,
-        });
-      }
-      if (eligibility.outcome === 'not_included') {
-        this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_OPEN_GYM_NOT_INCLUDED_CODE);
-        throw new ConflictException({
-          ...base,
-          code: WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
-          message: WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
-        });
-      }
-      this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE);
-      throw new ConflictException({
-        ...base,
-        code: WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
-        message: WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
-        membershipPlanName: eligibility.membershipPlanName,
-        windowStart: eligibility.windowStart,
-        windowEnd: eligibility.windowEnd,
-        localTime: eligibility.localTime,
-      });
+      return this.throwOpenGymDenial(studioId, userId, memberName, now, eligibility, walletCredentialId);
     }
 
     const { attendance, deduplicated } = await this.prisma.$transaction(async (tx) => {
@@ -644,39 +621,49 @@ export class CheckInsService {
   }
 
   /**
-   * Open Gym door policy for every subscription the member is currently entitled under, using
-   * the same `currentlyEntitledSubscriptionWhere` predicate as booking access — so "expired",
-   * "paused" and "cancelled but still inside a paid entitlement window" mean exactly what they
-   * already mean everywhere else in the system. An empty result is read downstream as "no valid
-   * membership", never as "no Open Gym".
+   * The single Open Gym refusal, shared by the door (no reservation) and by check-in of a
+   * reservation on a scheduled Open Gym slot. One response shape for both, so Front Desk shows
+   * the same reason ("no incluye Open Gym", "fuera de horario", "membresía no vigente") however
+   * the member reached the door — and already-installed staff builds parse it unchanged.
+   * `message` stays the raw code string, matching every other wallet outcome.
    */
-  private async resolveOpenGymPlanPolicies(
+  private async throwOpenGymDenial(
     studioId: string,
     userId: string,
+    memberName: string,
     now: Date,
-  ): Promise<OpenGymPlanPolicy[]> {
-    const subscriptions = await this.prisma.subscription.findMany({
-      where: { studioId, userId, ...currentlyEntitledSubscriptionWhere(now) },
-      select: {
-        membershipPlan: {
-          select: {
-            id: true,
-            name: true,
-            openGymAccess: true,
-            openGymWindowStart: true,
-            openGymWindowEnd: true,
-          },
-        },
-      },
-    });
+    eligibility: Exclude<OpenGymEligibility, { outcome: 'allowed' }>,
+    walletCredentialId: string | null,
+  ): Promise<never> {
+    const walkInCandidates = await this.resolveWalkInCandidates(studioId, userId, now);
+    const base = { statusCode: 409, memberId: userId, memberName, walkInCandidates };
 
-    return subscriptions.map((s) => ({
-      membershipPlanId: s.membershipPlan.id,
-      membershipPlanName: s.membershipPlan.name,
-      openGymAccess: s.membershipPlan.openGymAccess,
-      openGymWindowStart: s.membershipPlan.openGymWindowStart,
-      openGymWindowEnd: s.membershipPlan.openGymWindowEnd,
-    }));
+    if (eligibility.outcome === 'not_entitled') {
+      this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_MEMBERSHIP_NOT_ENTITLED_CODE);
+      throw new ConflictException({
+        ...base,
+        code: WALLET_MEMBERSHIP_NOT_ENTITLED_CODE,
+        message: WALLET_MEMBERSHIP_NOT_ENTITLED_CODE,
+      });
+    }
+    if (eligibility.outcome === 'not_included') {
+      this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_OPEN_GYM_NOT_INCLUDED_CODE);
+      throw new ConflictException({
+        ...base,
+        code: WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
+        message: WALLET_OPEN_GYM_NOT_INCLUDED_CODE,
+      });
+    }
+    this.logWalletCheckInDenied(studioId, walletCredentialId, WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE);
+    throw new ConflictException({
+      ...base,
+      code: WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
+      message: WALLET_OPEN_GYM_OUTSIDE_HOURS_CODE,
+      membershipPlanName: eligibility.membershipPlanName,
+      windowStart: eligibility.windowStart,
+      windowEnd: eligibility.windowEnd,
+      localTime: eligibility.localTime,
+    });
   }
 
   private logWalletCheckInDenied(studioId: string, walletCredentialId: string | null, reason: string): void {
@@ -822,7 +809,7 @@ export class CheckInsService {
   ): Promise<WalletWalkInCandidate[]> {
     const studio = await this.prisma.studio.findFirst({
       where: { id: studioId, deletedAt: null },
-      select: { checkInWindowMinutes: true },
+      select: { checkInWindowMinutes: true, timezone: true },
     });
     if (!studio) {
       throw new NotFoundException('Studio not found');
@@ -840,12 +827,23 @@ export class CheckInsService {
         // would reject it anyway, so filtering here just avoids offering a doomed action.
         attendances: { none: { userId } },
       },
-      include: { classTemplate: { select: { name: true } } },
+      include: { classTemplate: { select: { name: true, isOpenGymSlot: true } } },
       orderBy: { startsAt: 'asc' },
     });
 
+    // An Open Gym slot is offered only to a member whose plan grants Open Gym at that slot —
+    // registerManualClassAttendance would refuse anyone else, so offering it is a doomed action.
+    const plans = classes.some((c) => c.classTemplate.isOpenGymSlot)
+      ? await loadOpenGymPlanPolicies(this.prisma, studioId, userId, now)
+      : [];
+
     return classes
       .filter((c) => isWithinCheckInWindow(c.startsAt, now, studio.checkInWindowMinutes))
+      .filter(
+        (c) =>
+          !c.classTemplate.isOpenGymSlot ||
+          plans.some((plan) => planGrantsOpenGymAt(plan, c.startsAt, studio.timezone)),
+      )
       .map((c) => ({
         scheduledClassId: c.id,
         className: c.classTemplate.name,
@@ -924,7 +922,7 @@ export class CheckInsService {
         await acquireMembershipUsageAdvisoryLock(tx, studioId, memberId);
 
         const now = new Date();
-        const [membership, scheduledClass, entitledSubscriptions] = await Promise.all([
+        const [membership, scheduledClass, entitledSubscriptions, studio] = await Promise.all([
           tx.studioMembership.findFirst({
             where: {
               studioId,
@@ -938,7 +936,9 @@ export class CheckInsService {
           }),
           tx.scheduledClass.findFirst({
             where: { id: scheduledClassId, studioId },
-            include: { classTemplate: { select: { id: true, name: true, category: true } } },
+            include: {
+              classTemplate: { select: { id: true, name: true, category: true, isOpenGymSlot: true } },
+            },
           }),
           // MM-2: ALL currently entitled memberships — resolution below picks the one
           // whose entitlement this walk-in attendance actually consumes.
@@ -963,15 +963,25 @@ export class CheckInsService {
                   entitlementDays: true,
                   allClassesAccess: true,
                   allowedCategories: true,
+                  openGymAccess: true,
+                  openGymWindowStart: true,
+                  openGymWindowEnd: true,
                   classTemplateAccess: { select: { classTemplateId: true } },
                 },
               },
             },
           }),
+          tx.studio.findFirst({
+            where: { id: studioId, deletedAt: null },
+            select: { timezone: true },
+          }),
         ]);
 
         if (!scheduledClass) {
           throw new NotFoundException('Class not found');
+        }
+        if (!studio) {
+          throw new NotFoundException('Studio not found');
         }
         this.logger.log(
           JSON.stringify({
@@ -1021,15 +1031,23 @@ export class CheckInsService {
         // Staff cannot silently book an incompatible plan member into a restricted class.
         // MM-2: candidates are the memberships whose plan includes this class, resolved by
         // the canonical precedence (unlimited first, then soonest-ending credits).
+        // Open Gym slots qualify only under plans whose saved Open Gym entitlement covers the
+        // slot start (same rule as booking and the door) — never via allClassesAccess.
+        const isOpenGymSlot = scheduledClass.classTemplate.isOpenGymSlot;
         const qualifying = orderEntitlementCandidates(
-          entitledSubscriptions.filter((sub) =>
-            isClassIncludedInPlan({
-              allClassesAccess: sub.membershipPlan.allClassesAccess,
-              allowedTemplateIds: sub.membershipPlan.classTemplateAccess.map((a) => a.classTemplateId),
-              allowedCategories: sub.membershipPlan.allowedCategories,
-              classTemplateId: scheduledClass.classTemplate.id,
-              templateCategory: scheduledClass.classTemplate.category,
-            }),
+          entitledSubscriptions.filter(
+            (sub) =>
+              isClassIncludedInPlan({
+                allClassesAccess: sub.membershipPlan.allClassesAccess,
+                allowedTemplateIds: sub.membershipPlan.classTemplateAccess.map((a) => a.classTemplateId),
+                allowedCategories: sub.membershipPlan.allowedCategories,
+                openGymAccess: sub.membershipPlan.openGymAccess,
+                classTemplateId: scheduledClass.classTemplate.id,
+                templateCategory: scheduledClass.classTemplate.category,
+                templateIsOpenGymSlot: isOpenGymSlot,
+              }) &&
+              (!isOpenGymSlot ||
+                planGrantsOpenGymAt(sub.membershipPlan, scheduledClass.startsAt, studio.timezone)),
           ),
         );
         // Override path metadata + credit anchor when nothing qualifies: the deterministic
@@ -1203,14 +1221,30 @@ export class CheckInsService {
     return membership;
   }
 
+  /**
+   * Shared gate for every path that turns a reservation into an attendance (booking QR,
+   * manual check-in, wallet credential with a booking).
+   *
+   * Ordinary classes keep their existing contract: entitlement is decided at booking time and
+   * not re-checked once CONFIRMED. Scheduled Open Gym slots are the exception: the reservation
+   * is a claim on the plan's Open Gym entitlement, which Admin can switch off and which ends
+   * with the membership, so it is re-evaluated here against the current saved plan state. A
+   * reservation that no longer qualifies is left untouched — it simply stops admitting.
+   */
   private async assertBookingAndClassEligibleForCheckIn(
-    booking: { status: BookingStatus; studioId: string; scheduledClassId: string },
-    scheduledClass: { id: string; status: ClassStatus; startsAt: Date; studioId: string },
+    booking: { status: BookingStatus; studioId: string; scheduledClassId: string; userId: string },
+    scheduledClass: {
+      id: string;
+      status: ClassStatus;
+      startsAt: Date;
+      studioId: string;
+      classTemplateId: string;
+    },
     now: Date,
   ): Promise<void> {
     const studio = await this.prisma.studio.findFirst({
       where: { id: booking.studioId, deletedAt: null },
-      select: { checkInWindowMinutes: true },
+      select: { checkInWindowMinutes: true, timezone: true },
     });
     if (!studio) {
       throw new NotFoundException('Studio not found');
@@ -1221,6 +1255,41 @@ export class CheckInsService {
       now,
       studio.checkInWindowMinutes,
     );
+
+    const template = await this.prisma.classTemplate.findUnique({
+      where: { id: scheduledClass.classTemplateId },
+      select: { isOpenGymSlot: true },
+    });
+    if (!template?.isOpenGymSlot) {
+      return;
+    }
+
+    const access = await evaluateOpenGymSlotAccess(this.prisma, {
+      studioId: booking.studioId,
+      userId: booking.userId,
+      classTemplateId: scheduledClass.classTemplateId,
+      slotStartsAt: scheduledClass.startsAt,
+      timezone: studio.timezone,
+      now,
+    });
+    if (access.outcome === 'allowed') {
+      return;
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: booking.userId },
+      select: { firstName: true, lastName: true },
+    });
+    const memberName = user ? `${user.firstName} ${user.lastName}`.trim() : 'Miembro';
+    this.logger.log(
+      JSON.stringify({
+        event: 'checkin.open_gym_slot.denied',
+        studioId: booking.studioId,
+        scheduledClassId: scheduledClass.id,
+        reason: access.outcome,
+      }),
+    );
+    await this.throwOpenGymDenial(booking.studioId, booking.userId, memberName, now, access, null);
   }
 
   /**

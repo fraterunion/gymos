@@ -10,6 +10,12 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { OpenGymBenefitCard } from '@/components/OpenGymBenefitCard';
+import {
+  filterOpenGymSlots,
+  NO_OPEN_GYM,
+  resolveOpenGymEntitlement,
+  type OpenGymEntitlementDto,
+} from '@/lib/openGymEntitlement';
 import { BrandButton } from '@/components/BrandButton';
 import { ClassCard } from '@/components/ClassCard';
 import { FeaturedClassTile } from '@/components/FeaturedClassTile';
@@ -557,7 +563,6 @@ function GuestLanding({
 
         {/* Category strip */}
         <CategoryStrip />
-        <OpenGymBenefitCard compact delay={120} />
 
         {/* Value proposition + CTAs */}
         <Animated.View entering={FadeInDown.delay(80).duration(460)} style={{ marginBottom: Space.sectionGap }}>
@@ -686,14 +691,18 @@ export default function HomeScreen() {
 
   /** null = unknown; false = no active subscription; true = subscribed */
   const [hasActiveSubscription, setHasActiveSubscription] = useState<boolean | null>(null);
+  /** Server-decided Open Gym entitlement; fail-closed (hidden) until the profile confirms it. */
+  const [openGym, setOpenGym] = useState<OpenGymEntitlementDto>(NO_OPEN_GYM);
 
   const loadMembershipStatus = useCallback(async () => {
     if (!studioId) return;
     try {
       const profile = await fetchMyMemberProfile(studioId);
       setHasActiveSubscription(profile.activeSubscription !== null);
+      setOpenGym(resolveOpenGymEntitlement(profile));
     } catch {
-      // Keep home usable if membership status cannot be loaded
+      // Keep home usable if membership status cannot be loaded. Open Gym stays hidden.
+      setOpenGym(NO_OPEN_GYM);
     }
   }, [studioId]);
 
@@ -739,10 +748,14 @@ export default function HomeScreen() {
     };
   }, [nextBooking, classes]);
 
+  // Browsing lists never offer an Open Gym slot to a member without Open Gym. The member's
+  // own bookings are still resolved against the full list so nothing they hold disappears.
+  const browsableClasses = useMemo(() => filterOpenGymSlots(classes, openGym), [classes, openGym]);
+
   // Upcoming classes today
   const todaysUpcoming = useMemo(() => {
     const now = Date.now();
-    return classes
+    return browsableClasses
       .filter(
         (c) =>
           c.status === 'SCHEDULED' &&
@@ -750,7 +763,7 @@ export default function HomeScreen() {
           calendarDayKeyInZone(c.startsAt, timeZone) === todayKey,
       )
       .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-  }, [classes, timeZone, todayKey]);
+  }, [browsableClasses, timeZone, todayKey]);
 
   const waitlistPreview = useMemo(
     () =>
@@ -767,7 +780,7 @@ export default function HomeScreen() {
         studioName={matched?.studio.name ?? publicStudio?.name ?? ''}
         timeZone={timeZone}
         primaryColor={primaryColor}
-        classes={publicClasses}
+        classes={filterOpenGymSlots(publicClasses, NO_OPEN_GYM)}
       />
     );
   }
@@ -830,7 +843,7 @@ export default function HomeScreen() {
 
         {/* ── Category strip — official ARES Method themes ── */}
         <CategoryStrip />
-        <OpenGymBenefitCard compact delay={100} />
+        <OpenGymBenefitCard entitlement={openGym} compact delay={100} />
 
         {error ? (
           <View style={{ marginBottom: 16 }}>
@@ -922,7 +935,7 @@ export default function HomeScreen() {
             ) : null}
 
             {/* ── Coach spotlight ── */}
-            <CoachSpotlight classes={classes} />
+            <CoachSpotlight classes={browsableClasses} />
 
             {/* ── Waitlist ── */}
             {waitlistPreview.length > 0 ? (

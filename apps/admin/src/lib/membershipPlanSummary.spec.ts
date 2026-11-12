@@ -17,6 +17,8 @@ import {
   planHealth,
   planUsageLabel,
   planWarnings,
+  planOpenGymLabel,
+  planOpenGymWindowLabel,
   operationalOverview,
   subscriptionActionLabel,
   subscriptionActions,
@@ -44,6 +46,9 @@ const basePlan = (overrides: Partial<PlanForSummary> = {}): PlanForSummary => ({
   allowedCategories: [],
   activeSubscriberCount: 0,
   classAccess: { allClasses: false, templates: [] },
+  openGymAccess: false,
+  openGymWindowStart: null,
+  openGymWindowEnd: null,
   ...overrides,
 });
 
@@ -69,6 +74,7 @@ test("Pro usage label = 5 créditos", () => {
 
 test("Full Access card lines: unlimited + classes + Open Gym", () => {
   const plan = basePlan({
+    openGymAccess: true,
     classAccess: {
       allClasses: false,
       templates: [
@@ -86,6 +92,9 @@ test("Full Access card lines: unlimited + classes + Open Gym", () => {
 
 test("Open Gym-only card uses schedule line without redundant access prefix", () => {
   const plan = basePlan({
+    openGymAccess: true,
+    openGymWindowStart: "10:00",
+    openGymWindowEnd: "17:00",
     classAccess: {
       allClasses: false,
       templates: [template({ name: "Open Gym", isOpenGymSlot: true, accessWindowStart: "10:00", accessWindowEnd: "17:00" })],
@@ -94,6 +103,56 @@ test("Open Gym-only card uses schedule line without redundant access prefix", ()
   const lines = planCardLines(plan);
   assert.equal(lines.accessLine, "Solo Open Gym");
   assert.equal(lines.scheduleLine, "Horario 10:00–17:00");
+});
+
+test("Open Gym template ticked in the class list does NOT mean Open Gym when the toggle is off", () => {
+  const plan = basePlan({
+    openGymAccess: false,
+    classAccess: {
+      allClasses: false,
+      templates: [
+        template({ name: "Calirox" }),
+        template({ name: "Hyrox" }),
+        template({ name: "Open Gym", isOpenGymSlot: true }),
+      ],
+    },
+  });
+  assert.deepEqual(planAccessSummary(plan), {
+    label: "2 clases permitidas",
+    regularCount: 2,
+    hasOpenGym: false,
+    openGymWindow: null,
+  });
+});
+
+test("Todas las clases does not imply Open Gym; the toggle does", () => {
+  assert.equal(
+    planAccessSummary(basePlan({ classAccess: { allClasses: true, templates: [] } })).label,
+    "Todas las clases",
+  );
+  assert.equal(
+    planAccessSummary(basePlan({ openGymAccess: true, classAccess: { allClasses: true, templates: [] } })).label,
+    "Todas las clases + Open Gym",
+  );
+});
+
+test("Open Gym label reflects the saved toggle and hours", () => {
+  assert.equal(planOpenGymLabel(basePlan()), "Sin Open Gym");
+  assert.equal(planOpenGymLabel(basePlan({ openGymAccess: true })), "Open Gym sin restricción de horario");
+  assert.equal(
+    planOpenGymLabel(basePlan({ openGymAccess: true, openGymWindowStart: "11:00", openGymWindowEnd: "17:00" })),
+    "Open Gym 11:00–17:00",
+  );
+  // A stale window never shows for a disabled plan.
+  assert.equal(
+    planOpenGymWindowLabel(basePlan({ openGymAccess: false, openGymWindowStart: "11:00", openGymWindowEnd: "22:00" })),
+    null,
+  );
+});
+
+test("Open-Gym-only plan with no classes is not flagged as unbookable", () => {
+  const warnings = planWarnings(basePlan({ openGymAccess: true }));
+  assert.ok(!warnings.some((w) => /sin ninguna clase permitida/.test(w)));
 });
 
 test("Booty Lab summary: single restricted class, no Open Gym", () => {

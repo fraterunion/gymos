@@ -353,6 +353,10 @@ export type MemberProfile = {
     plan: MemberPlan & {
       allowedCategories: string[];
       allClassesAccess: boolean;
+      /** Open Gym toggle of the plan — the only Open Gym authority (optional for older APIs). */
+      openGymAccess?: boolean;
+      openGymWindowStart?: string | null;
+      openGymWindowEnd?: string | null;
       allowedTemplateIds: string[];
       allowedTemplates: Array<{ id: string; name: string; isOpenGymSlot: boolean; accessWindowStart: string | null; accessWindowEnd: string | null }>;
     };

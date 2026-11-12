@@ -55,6 +55,9 @@ function scheduleInclude(studioId: string) {
         caloriesEstimateMax: true,
         cancellationWindowHours: true,
         waitlistCapacity: true,
+        // Lets the member app hide Open Gym slots from members whose plan does not include
+        // Open Gym. Display only — booking and check-in enforce the entitlement server-side.
+        isOpenGymSlot: true,
       },
     },
     instructor: {

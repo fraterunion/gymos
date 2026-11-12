@@ -76,6 +76,12 @@ type PlanFormState = {
   active: boolean;
   allClassesAccess: boolean;
   selectedTemplateIds: string[];
+  /** Open Gym toggle — persisted as MembershipPlan.openGymAccess, the only Open Gym authority. */
+  openGymAccess: boolean;
+  /** When false, Open Gym (if enabled) has no hour restriction. */
+  openGymRestrictHours: boolean;
+  openGymWindowStart: string;
+  openGymWindowEnd: string;
 };
 
 const emptyForm = (): PlanFormState => ({
@@ -93,6 +99,11 @@ const emptyForm = (): PlanFormState => ({
   active: true,
   allClassesAccess: false,
   selectedTemplateIds: [],
+  // Deny by default, matching the API: a new plan never includes Open Gym unless toggled on.
+  openGymAccess: false,
+  openGymRestrictHours: false,
+  openGymWindowStart: "",
+  openGymWindowEnd: "",
 });
 
 function planToForm(p: MembershipPlanDto): PlanFormState {
@@ -111,6 +122,10 @@ function planToForm(p: MembershipPlanDto): PlanFormState {
     active: p.active,
     allClassesAccess: p.classAccess.allClasses,
     selectedTemplateIds: p.classAccess.templates.map((t) => t.id),
+    openGymAccess: p.openGymAccess,
+    openGymRestrictHours: p.openGymAccess && p.openGymWindowStart !== null && p.openGymWindowEnd !== null,
+    openGymWindowStart: p.openGymWindowStart ?? "",
+    openGymWindowEnd: p.openGymWindowEnd ?? "",
   };
 }
 
@@ -272,7 +287,7 @@ function PlanModal({
         const confirmed = window.confirm(
           `«${editing!.name}» currently restricts access to ${editing!.classAccess.templates.length} class(es). ` +
             "Switching to «Todas las clases» will immediately grant this plan access to every active class in the studio, " +
-            "including classes it was deliberately excluded from (e.g. Booty Lab, Open Gym). Continue?",
+            "including classes it was deliberately excluded from (e.g. Booty Lab). Open Gym is NOT affected — it has its own toggle. Continue?",
         );
         if (!confirmed) return;
       }
@@ -302,10 +317,21 @@ function PlanModal({
       setError("Ingresa un precio válido.");
       return;
     }
-    if (!form.allClassesAccess && form.selectedTemplateIds.length === 0) {
-      setError("Selecciona al menos una clase o activa «Todas las clases».");
+    if (!form.allClassesAccess && form.selectedTemplateIds.length === 0 && !form.openGymAccess) {
+      setError("Selecciona al menos una clase, activa «Todas las clases» o incluye Open Gym.");
       return;
     }
+    if (form.openGymAccess && form.openGymRestrictHours) {
+      if (!form.openGymWindowStart || !form.openGymWindowEnd) {
+        setError("Indica la hora de inicio y fin de Open Gym, o quita la restricción de horario.");
+        return;
+      }
+      if (form.openGymWindowStart === form.openGymWindowEnd) {
+        setError("El horario de Open Gym no puede iniciar y terminar a la misma hora.");
+        return;
+      }
+    }
+    const restrictOpenGymHours = form.openGymAccess && form.openGymRestrictHours;
     if (form.fixedDuration) {
       const days = parseInt(form.entitlementDays, 10);
       if (isNaN(days) || days < 1) {
@@ -327,6 +353,9 @@ function PlanModal({
         : null,
       allClassesAccess: form.allClassesAccess,
       classTemplateIds: form.allClassesAccess ? [] : form.selectedTemplateIds,
+      openGymAccess: form.openGymAccess,
+      openGymWindowStart: restrictOpenGymHours ? form.openGymWindowStart : null,
+      openGymWindowEnd: restrictOpenGymHours ? form.openGymWindowEnd : null,
     };
 
     // When financial identity changes, let the API rotate Stripe Prices.
@@ -589,8 +618,8 @@ function PlanModal({
             {form.allClassesAccess ? (
               <p className="text-xs text-amber-700">
                 ⚠ Esta membresía incluye acceso a <strong>todas</strong> las clases activas del
-                estudio, incluyendo clases restringidas como Booty Lab u Open Gym. Úsalo solo para
-                planes de acceso total.
+                estudio, incluyendo clases restringidas como Booty Lab. Open Gym <strong>no</strong>{" "}
+                se incluye por esta opción: se controla abajo, en «Open Gym».
               </p>
             ) : null}
 
@@ -604,7 +633,7 @@ function PlanModal({
                 </p>
               ) : (
                 <div className="max-h-48 overflow-y-auto pr-1">
-                  {templates.map((template) => (
+                  {templates.filter((template) => !template.isOpenGymSlot).map((template) => (
                     <ClassAccessTemplateRow
                       key={template.id}
                       name={template.name}
@@ -625,7 +654,7 @@ function PlanModal({
                   {inactiveSavedTemplates.length > 0 ? (
                     <div className="mt-2 border-t border-zinc-200 pt-2">
                       <p className="mb-1 text-xs text-zinc-400">Inactivas</p>
-                      {inactiveSavedTemplates.map((template) => (
+                      {inactiveSavedTemplates.filter((template) => !template.isOpenGymSlot).map((template) => (
                         <ClassAccessTemplateRow
                           key={template.id}
                           name={template.name}
@@ -648,6 +677,63 @@ function PlanModal({
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="rounded-lg border border-sky-100 bg-sky-50/40 p-3 space-y-3">
+            <p className="text-xs font-semibold text-sky-700 uppercase tracking-wide">Open Gym</p>
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={form.openGymAccess}
+                onChange={(e) => set("openGymAccess", e.target.checked)}
+                className="rounded"
+                data-testid="plan-open-gym-toggle"
+              />
+              Incluye Open Gym
+            </label>
+            <p className="text-[11px] text-zinc-500">
+              Controla el acceso a Open Gym en recepción (Mi Pase / QR), las reservas de horarios
+              Open Gym y lo que el miembro ve en la app. Se aplica de inmediato a todos los
+              miembros con esta membresía. «Todas las clases» no incluye Open Gym.
+            </p>
+            {form.openGymAccess ? (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={form.openGymRestrictHours}
+                    onChange={(e) => set("openGymRestrictHours", e.target.checked)}
+                    className="rounded"
+                  />
+                  Restringir horario
+                </label>
+                {form.openGymRestrictHours ? (
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="text-xs text-zinc-600">
+                      Inicio
+                      <input
+                        type="time"
+                        value={form.openGymWindowStart}
+                        onChange={(e) => set("openGymWindowStart", e.target.value)}
+                        className="mt-1 block rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-xs text-zinc-600">
+                      Fin
+                      <input
+                        type="time"
+                        value={form.openGymWindowEnd}
+                        onChange={(e) => set("openGymWindowEnd", e.target.value)}
+                        className="mt-1 block rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <p className="w-full text-[11px] text-zinc-500">Hora local del estudio.</p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-zinc-500">Sin restricción de horario.</p>
+                )}
+              </div>
+            ) : null}
           </div>
 
           <SectionHeader>Stripe / Billing</SectionHeader>

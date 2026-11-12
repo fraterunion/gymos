@@ -1,5 +1,11 @@
 import { getStudioLocalHHmm, studioLocalTimeToUtc } from '../common/date/studio-local-date';
-import { evaluateOpenGymEligibility, isWithinOpenGymWindow, type OpenGymPlanPolicy } from './open-gym-access';
+import {
+  evaluateOpenGymEligibility,
+  isWithinOpenGymWindow,
+  planGrantsOpenGymAt,
+  summarizeOpenGymEntitlement,
+  type OpenGymPlanPolicy,
+} from './open-gym-access';
 
 /**
  * ARES plan configuration, mirroring the structured data the Open Gym migration writes.
@@ -311,5 +317,70 @@ describe('evaluateOpenGymEligibility — multiple entitled subscriptions', () =>
       windowStart: null,
       windowEnd: null,
     });
+  });
+});
+
+describe('planGrantsOpenGymAt', () => {
+  const tz = 'America/Mexico_City';
+  const at = (iso: string) => new Date(iso);
+
+  it('is false whenever openGymAccess is off, whatever the window', () => {
+    expect(
+      planGrantsOpenGymAt({ openGymAccess: false, openGymWindowStart: null, openGymWindowEnd: null }, at('2026-08-10T18:00:00Z'), tz),
+    ).toBe(false);
+  });
+
+  it('is true at any hour for an unrestricted plan', () => {
+    const plan = { openGymAccess: true, openGymWindowStart: null, openGymWindowEnd: null };
+    expect(planGrantsOpenGymAt(plan, at('2026-08-10T08:30:00Z'), tz)).toBe(true); // 02:30 local
+    expect(planGrantsOpenGymAt(plan, at('2026-08-11T04:30:00Z'), tz)).toBe(true); // 22:30 local
+  });
+
+  it('respects the studio-local [start, end) window', () => {
+    const plan = { openGymAccess: true, openGymWindowStart: '11:00', openGymWindowEnd: '17:00' };
+    expect(planGrantsOpenGymAt(plan, at('2026-08-10T16:59:00Z'), tz)).toBe(false); // 10:59
+    expect(planGrantsOpenGymAt(plan, at('2026-08-10T17:00:00Z'), tz)).toBe(true); // 11:00
+    expect(planGrantsOpenGymAt(plan, at('2026-08-10T23:00:00Z'), tz)).toBe(false); // 17:00
+  });
+});
+
+describe('summarizeOpenGymEntitlement', () => {
+  const policy = (name: string, access: boolean, start: string | null = null, end: string | null = null) => ({
+    membershipPlanId: name.toLowerCase(),
+    membershipPlanName: name,
+    openGymAccess: access,
+    openGymWindowStart: start,
+    openGymWindowEnd: end,
+  });
+
+  it('is not included without entitled plans', () => {
+    expect(summarizeOpenGymEntitlement([])).toEqual({
+      included: false,
+      membershipPlanName: null,
+      windowStart: null,
+      windowEnd: null,
+    });
+  });
+
+  it('is not included when no entitled plan enables Open Gym (Basic / Pro)', () => {
+    expect(summarizeOpenGymEntitlement([policy('Basic Access', false), policy('Pro', false)]).included).toBe(false);
+  });
+
+  it('is included for Full Access, unrestricted', () => {
+    expect(summarizeOpenGymEntitlement([policy('Full Access', true)])).toEqual({
+      included: true,
+      membershipPlanName: 'Full Access',
+      windowStart: null,
+      windowEnd: null,
+    });
+  });
+
+  it('picks the most permissive entitling plan among several memberships', () => {
+    const summary = summarizeOpenGymEntitlement([
+      policy('Booty Lab', false),
+      policy('Open Gym', true, '11:00', '17:00'),
+      policy('Full Access', true),
+    ]);
+    expect(summary).toMatchObject({ included: true, membershipPlanName: 'Full Access', windowStart: null });
   });
 });

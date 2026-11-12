@@ -179,6 +179,7 @@ export class ClassTemplatesService {
           name: true,
           allClassesAccess: true,
           allowedCategories: true,
+          openGymAccess: true,
           classTemplateAccess: { select: { classTemplateId: true } },
         },
       }),
@@ -196,8 +197,10 @@ export class ClassTemplatesService {
           allClassesAccess: plan.allClassesAccess,
           allowedTemplateIds: plan.classTemplateAccess.map((row) => row.classTemplateId),
           allowedCategories: plan.allowedCategories,
+          openGymAccess: plan.openGymAccess,
           classTemplateId: template.id,
           templateCategory: template.category,
+          templateIsOpenGymSlot: template.isOpenGymSlot,
         }),
       );
       const dayPassAllowed = dayPassAllowedIds.has(template.id);

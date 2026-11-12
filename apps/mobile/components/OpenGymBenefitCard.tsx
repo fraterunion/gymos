@@ -3,15 +3,24 @@ import { Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { OPEN_GYM_HOURS_LABEL } from '@/lib/aresMembershipPlans';
+import { openGymCardTitle, type OpenGymEntitlementDto } from '@/lib/openGymEntitlement';
 import { getColors, Radius, Space } from '@/constants/Theme';
 
 type Props = {
+  /** Server-decided entitlement (GET /members/me → openGym). The card renders only when included. */
+  entitlement: OpenGymEntitlementDto;
   compact?: boolean;
   delay?: number;
 };
 
-export function OpenGymBenefitCard({ compact = false, delay = 0 }: Props) {
+/**
+ * Open Gym benefit for members whose plan includes it. Renders NOTHING otherwise — a member
+ * without Open Gym (e.g. Basic, Pro) must not be told they have it. Visibility only: the API
+ * enforces access at the door and at booking regardless of what the app shows.
+ */
+export function OpenGymBenefitCard({ entitlement, compact = false, delay = 0 }: Props) {
   const C = getColors();
+  if (!entitlement.included) return null;
 
   return (
     <Animated.View entering={FadeInDown.delay(delay).duration(420)} style={{ marginBottom: compact ? 20 : Space.cardGap }}>
@@ -64,10 +73,10 @@ export function OpenGymBenefitCard({ compact = false, delay = 0 }: Props) {
               marginBottom: 6,
             }}
           >
-            {OPEN_GYM_HOURS_LABEL}
+            {openGymCardTitle(entitlement, OPEN_GYM_HOURS_LABEL)}
           </Text>
           <Text style={{ fontSize: 13, color: C.textSub, lineHeight: 19 }}>
-            Acceso al gimnasio sin reserva. No es una clase reservable.
+            Incluido en tu membresía. Acceso al gimnasio sin reserva.
           </Text>
         </View>
       </View>

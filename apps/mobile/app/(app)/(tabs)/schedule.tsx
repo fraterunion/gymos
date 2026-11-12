@@ -11,6 +11,8 @@ import { MemberDaySelector } from '@/components/member/MemberDaySelector';
 import { MemberScheduleEmptyState } from '@/components/member/MemberScheduleEmptyState';
 import { MemberWeekNavigator } from '@/components/member/MemberWeekNavigator';
 import { OpenGymBenefitCard } from '@/components/OpenGymBenefitCard';
+import { filterOpenGymSlots } from '@/lib/openGymEntitlement';
+import { useOpenGymEntitlement } from '@/lib/useOpenGymEntitlement';
 import { ScheduleFilterBar } from '@/components/ScheduleFilterBar';
 import {
   ARES_CLASS_FILTER_ALL,
@@ -73,7 +75,13 @@ export default function ScheduleScreen() {
   const router = useRouter();
   const C = getColors();
   const { timezone, loading: studioLoading } = usePublicStudio();
-  const { classes, loading: scheduleLoading, error, refresh } = usePublicSchedule();
+  const { classes: scheduleClasses, loading: scheduleLoading, error, refresh } = usePublicSchedule();
+  // Open Gym slots only appear for members whose plan includes Open Gym; every other class stays.
+  const openGym = useOpenGymEntitlement();
+  const classes = useMemo(
+    () => filterOpenGymSlots(scheduleClasses, openGym),
+    [scheduleClasses, openGym],
+  );
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [classFilterId, setClassFilterId] = useState(ARES_CLASS_FILTER_ALL);
@@ -326,8 +334,8 @@ export default function ScheduleScreen() {
             </View>
           ) : null}
 
-          {/* 4. Open Gym benefit */}
-          <OpenGymBenefitCard compact delay={0} />
+          {/* 4. Open Gym benefit — only for members whose plan includes it */}
+          <OpenGymBenefitCard entitlement={openGym} compact delay={0} />
 
           {/* 5. Class filters */}
           <ScheduleFilterBar selectedId={classFilterId} onSelect={handleSelectFilter} />
