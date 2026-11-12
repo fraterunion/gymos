@@ -757,12 +757,16 @@ function fmtPlanPrice(priceCents: number, currency: string, billingInterval: str
   return `${new Intl.NumberFormat(undefined, { style: "currency", currency: currency.toUpperCase() }).format(priceCents / 100)} / ${INTERVAL_LABELS[billingInterval] ?? billingInterval}`;
 }
 
-/** Prefer the membership lock; never fall forward to a later catalog increase. */
+/**
+ * Prefer the raw subscription lock, then the API-projected plan.priceCents
+ * (already the agreed lock for owned memberships). Do not use catalogPriceCents.
+ */
 function membershipAgreedPriceCents(s: {
   priceCents?: number | null;
-  membershipPlan: { priceCents: number };
+  membershipPlan: { priceCents: number; catalogPriceCents?: number };
 }): number {
-  return s.priceCents ?? s.membershipPlan.priceCents;
+  if (s.priceCents != null) return s.priceCents;
+  return s.membershipPlan.priceCents;
 }
 
 type ChangePlanModalProps = {

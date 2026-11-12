@@ -24,6 +24,11 @@ import {
   allowNewMembershipStacks,
   findConflictingMemberships,
 } from '../memberships/membership-compatibility';
+import {
+  MissingSubscriptionPriceLockError,
+  resolveAuthorizedSalePriceCents,
+  resolveStampedSalePriceCents,
+} from '../memberships/subscription-price';
 import { PrismaService } from '../prisma/prisma.service';
 import { WaiverService } from '../waiver/waiver.service';
 import { AuditService } from './audit.service';
@@ -238,8 +243,26 @@ export class SalesService {
       orderBy: { createdAt: 'desc' },
       select: { id: true, priceCents: true },
     });
-    const authorizedPrice = heldSubscription?.priceCents ?? plan.priceCents;
-    if (dto.amountCents !== authorizedPrice) {
+    let authorizedPrice: number;
+    try {
+      authorizedPrice = resolveAuthorizedSalePriceCents({
+        heldSubscription,
+        catalogPriceCents: plan.priceCents,
+      });
+    } catch (err) {
+      if (!(err instanceof MissingSubscriptionPriceLockError)) throw err;
+      // Existing membership without a lock must not inherit catalog (e.g. 1700
+      // after a FUTURE_ONLY rise). Only an owner with an override note may set
+      // the charged amount, which then becomes the stamped lock.
+      if (actor.role !== Role.OWNER || !dto.priceOverrideNote?.trim()) {
+        throw new BadRequestException(
+          'This membership has no locked price. An owner must set amountCents with priceOverrideNote before renewing.',
+        );
+      }
+      authorizedPrice = dto.amountCents;
+    }
+    const ownerPriceOverride = dto.amountCents !== authorizedPrice;
+    if (ownerPriceOverride) {
       if (actor.role !== Role.OWNER) {
         throw new BadRequestException(
           'Amount must match the member price unless overridden by an owner',
@@ -251,6 +274,14 @@ export class SalesService {
         );
       }
     }
+    const stampedPriceCents = resolveStampedSalePriceCents({
+      heldSubscription,
+      catalogPriceCents: plan.priceCents,
+      chargedAmountCents: dto.amountCents,
+      ownerOverride:
+        ownerPriceOverride ||
+        (heldSubscription != null && heldSubscription.priceCents == null),
+    });
 
     const combinedNotes =
       [dto.notes?.trim(), dto.priceOverrideNote?.trim()].filter(Boolean).join(' | ') ||
@@ -470,6 +501,11 @@ export class SalesService {
                   : renewableCashSubscription.currentPeriodStart,
               currentPeriodEnd: entitlementEndsAt!,
               entitlementEndsAt: entitlementEndsAt!,
+              // In-place fixed-duration renew: keep an existing lock; only stamp when
+              // the held row was missing one and an owner override authorized the amount.
+              ...(heldSubscription?.priceCents == null
+                ? { priceCents: stampedPriceCents }
+                : {}),
             },
             include: planInclude,
           });
@@ -538,7 +574,7 @@ export class SalesService {
               cancelAtPeriodEnd: true,
               createdByUserId: actorUserId,
               notes: combinedNotes,
-              priceCents: heldSubscription?.priceCents ?? plan.priceCents,
+              priceCents: stampedPriceCents,
               ...(entitlementEndsAt !== null ? { entitlementEndsAt } : {}),
             },
             include: planInclude,

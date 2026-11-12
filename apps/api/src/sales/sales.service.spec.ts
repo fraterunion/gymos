@@ -849,6 +849,7 @@ describe('SalesService', () => {
       const currentEnd = new Date(Date.now() + 10 * 86_400_000);
       prisma.subscription.findFirst.mockResolvedValue({
         id: 'sub-current-booty',
+        priceCents: 80000,
         currentPeriodStart: periodStart,
         currentPeriodEnd: currentEnd,
         entitlementEndsAt: currentEnd,
@@ -893,7 +894,7 @@ describe('SalesService', () => {
     prisma.membershipPlan.findFirst.mockResolvedValue({
       id: 'plan-1',
       studioId: 'studio-1',
-      priceCents: 195000,
+      priceCents: 170000,
       currency: 'mxn',
       billingInterval: 'MONTHLY',
       name: 'Full',
@@ -907,14 +908,14 @@ describe('SalesService', () => {
       status: SubscriptionStatus.ACTIVE,
       source: SubscriptionSource.CASH,
       currentPeriodEnd: new Date('2026-12-01'),
-      membershipPlan: { id: 'plan-1', name: 'Full', billingInterval: 'MONTHLY', priceCents: 195000, currency: 'mxn' },
+      membershipPlan: { id: 'plan-1', name: 'Full', billingInterval: 'MONTHLY', priceCents: 170000, currency: 'mxn' },
     });
     prisma.payment.create.mockResolvedValue({ id: 'pay-locked' });
 
     await expect(
       service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
         planId: 'plan-1',
-        amountCents: 195000,
+        amountCents: 170000,
         paymentMethod: 'CASH',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -927,6 +928,144 @@ describe('SalesService', () => {
     expect(prisma.subscription.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ priceCents: 150000 }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 150000 }),
+      }),
+    );
+  });
+
+  it('new Full Access cash sale with no held subscription charges and stamps catalog 1700', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue(null);
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-new-fa',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodEnd: new Date('2026-12-01'),
+      membershipPlan: {
+        id: 'plan-fa',
+        name: 'Full Access',
+        billingInterval: 'MONTHLY',
+        priceCents: 170000,
+        currency: 'mxn',
+      },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-new-fa' });
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-fa',
+      amountCents: 170000,
+      paymentMethod: 'CASH',
+    });
+
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priceCents: 170000 }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 170000 }),
+      }),
+    );
+  });
+
+  it('blocks cash renewal when the held Full Access row has a missing price lock', async () => {
+    mockActor(Role.FRONT_DESK);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub-nolock', priceCents: null });
+
+    await expect(
+      service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+        planId: 'plan-fa',
+        amountCents: 170000,
+        paymentMethod: 'CASH',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.subscription.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner repair a missing lock by charging with priceOverrideNote without stamping catalog', async () => {
+    mockActor(Role.OWNER);
+    salesSettingsService.getSettings.mockResolvedValue({
+      ...defaultSettings,
+      frontDeskCanRecordCash: true,
+    });
+    prisma.membershipPlan.findFirst.mockResolvedValue({
+      id: 'plan-fa',
+      studioId: 'studio-1',
+      priceCents: 170000,
+      currency: 'mxn',
+      billingInterval: 'MONTHLY',
+      name: 'Full Access',
+      entitlementDays: null,
+      exclusiveGroup: 'CORE',
+    });
+    prisma.subscription.findFirst.mockResolvedValue({ id: 'sub-nolock', priceCents: null });
+    prisma.subscription.findMany.mockResolvedValue([]);
+    prisma.subscription.create.mockResolvedValue({
+      id: 'sub-repaired',
+      status: SubscriptionStatus.ACTIVE,
+      source: SubscriptionSource.CASH,
+      currentPeriodEnd: new Date('2026-12-01'),
+      membershipPlan: {
+        id: 'plan-fa',
+        name: 'Full Access',
+        billingInterval: 'MONTHLY',
+        priceCents: 170000,
+        currency: 'mxn',
+      },
+    });
+    prisma.payment.create.mockResolvedValue({ id: 'pay-repaired' });
+
+    await service.createOfflineSubscription('studio-1', 'actor', 'member-1', {
+      planId: 'plan-fa',
+      amountCents: 150000,
+      paymentMethod: 'CASH',
+      priceOverrideNote: 'Restore grandfathered 1500 lock after null priceCents',
+    });
+
+    expect(prisma.subscription.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priceCents: 150000 }),
+      }),
+    );
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 150000 }),
       }),
     );
   });

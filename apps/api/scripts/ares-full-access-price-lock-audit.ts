@@ -3,11 +3,13 @@
  * rose from MXN 1,500 → MXN 1,700 (FUTURE_ONLY, 2026-11-11).
  *
  * Usage (production vars via Railway, no writes):
- *   railway run --service api npx ts-node -r tsconfig-paths/register \
- *     scripts/ares-full-access-price-lock-audit.ts
+ *   railway run --service api npx tsx scripts/ares-full-access-price-lock-audit.ts
  *
  * Optional APPLY is intentionally unsupported: subscription locks are already
  * correct in production. This script never mutates DB or Stripe.
+ *
+ * Output is aggregate-only (counts + subscriptionIds). It never prints emails,
+ * names, phones, or userIds — safe for shared CI / application log capture.
  */
 import { PrismaClient } from '@prisma/client';
 
@@ -23,7 +25,6 @@ type Finding = {
   code: string;
   detail: string;
   subscriptionId?: string;
-  email?: string;
 };
 
 async function main() {
@@ -33,6 +34,7 @@ async function main() {
   try {
     const plan = await prisma.membershipPlan.findFirst({
       where: { id: FULL_ACCESS_PLAN_ID, studioId: STUDIO_ID },
+      select: { id: true, priceCents: true },
     });
     if (!plan) {
       throw new Error(`Full Access plan not found: ${FULL_ACCESS_PLAN_ID}`);
@@ -61,7 +63,7 @@ async function main() {
         scope: 'FUTURE_ONLY',
       },
       orderBy: { createdAt: 'desc' },
-      include: { items: true },
+      include: { items: { select: { applyNewPrice: true, status: true } } },
     });
 
     if (!change) {
@@ -86,7 +88,13 @@ async function main() {
         membershipPlanId: FULL_ACCESS_PLAN_ID,
         status: { in: ['ACTIVE', 'TRIALING', 'PAST_DUE', 'SCHEDULED'] },
       },
-      include: { user: { select: { email: true, firstName: true, lastName: true } } },
+      select: {
+        id: true,
+        source: true,
+        status: true,
+        priceCents: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -94,14 +102,22 @@ async function main() {
     const afterCutoff = active.filter((s) => s.createdAt >= new Date(CUTOFF_ISO));
 
     let wrongLock = 0;
+    let missingLock = 0;
     for (const s of shouldStay1500) {
-      if (s.priceCents !== EXPECTED_LEGACY_CENTS) {
+      if (s.priceCents == null) {
+        missingLock += 1;
+        findings.push({
+          severity: 'danger',
+          code: 'LOCK_MISSING',
+          subscriptionId: s.id,
+          detail: 'Pre-cutoff Full Access row has null priceCents — renewals must not inherit catalog',
+        });
+      } else if (s.priceCents !== EXPECTED_LEGACY_CENTS) {
         wrongLock += 1;
         findings.push({
           severity: 'danger',
           code: 'LOCK_NOT_1500',
           subscriptionId: s.id,
-          email: s.user.email,
           detail: `Expected lock ${EXPECTED_LEGACY_CENTS}, found ${s.priceCents}`,
         });
       }
@@ -113,11 +129,20 @@ async function main() {
           severity: 'review',
           code: 'POST_CUTOFF_NOT_1700',
           subscriptionId: s.id,
-          email: s.user.email,
           detail: `Post-cutoff lock is ${s.priceCents}, expected catalog ${EXPECTED_CATALOG_CENTS}`,
         });
       }
     }
+
+    const lockDist = await prisma.subscription.groupBy({
+      by: ['priceCents', 'status', 'source'],
+      where: {
+        studioId: STUDIO_ID,
+        membershipPlanId: FULL_ACCESS_PLAN_ID,
+        status: { in: ['ACTIVE', 'TRIALING', 'PAST_DUE', 'SCHEDULED'] },
+      },
+      _count: { _all: true },
+    });
 
     const paymentsAt1700 = await prisma.payment.count({
       where: {
@@ -128,37 +153,31 @@ async function main() {
       },
     });
 
-    findings.push({
-      severity: paymentsAt1700 === 0 ? 'ok' : 'review',
-      code: 'PAYMENTS_AT_1700',
-      detail: `Succeeded Full Access payments at MXN 1700: ${paymentsAt1700}`,
-    });
-
     const report = {
       generatedAt: new Date().toISOString(),
       mode: 'DRY_RUN_READ_ONLY',
       mutations: 'NONE',
+      pii: 'REDACTED',
       cutoff: CUTOFF_ISO,
       catalogPriceCents: plan.priceCents,
       activeCount: active.length,
       legacyShouldStay1500: shouldStay1500.length,
       wrongLegacyLocks: wrongLock,
+      missingLegacyLocks: missingLock,
       postCutoffCount: afterCutoff.length,
-      secureMemberIds: shouldStay1500.map((s) => ({
-        subscriptionId: s.id,
-        userId: s.userId,
-        email: s.user.email,
-        source: s.source,
-        status: s.status,
-        priceCents: s.priceCents,
-        createdAt: s.createdAt.toISOString(),
+      lockDistribution: lockDist.map((row) => ({
+        priceCents: row.priceCents,
+        status: row.status,
+        source: row.source,
+        count: row._count._all,
       })),
       findings,
-      repairNeededForLocks: wrongLock > 0,
+      repairNeededForLocks: wrongLock > 0 || missingLock > 0,
+      paymentsAt1700,
       note:
-        wrongLock === 0
+        wrongLock === 0 && missingLock === 0
           ? 'Subscription locks are correct. Incident is display/API projection of catalog price onto existing members — fixed in application code, not via DB rewrite.'
-          : 'Some locks diverge from 1500 — do NOT blanket UPDATE; craft per-row repair with human approval.',
+          : 'Some locks diverge from 1500 or are missing — do NOT blanket UPDATE; craft per-row repair with human approval.',
     };
 
     console.log(JSON.stringify(report, null, 2));
@@ -168,6 +187,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(err instanceof Error ? err.message : 'audit failed');
   process.exit(1);
 });
