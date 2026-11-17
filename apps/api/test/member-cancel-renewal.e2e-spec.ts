@@ -391,4 +391,66 @@ describe('Member cancel renewal (e2e)', () => {
     expect(row.status).toBe(SubscriptionStatus.ACTIVE);
     expect(row.membershipPlanId).toBe(after.full.id);
   });
+
+  it('cancels when the open-invoice lookup is unavailable and says the balance was not verified', async () => {
+    const world = await buildWorld(prisma);
+    arm();
+    stripe['listOpenInvoicesForSubscription'].mockRejectedValue(new Error('invoice timeout'));
+    const token = await tokenFor(world);
+
+    const seen = await preview(token, world.studio.id, world.sub.id).expect(200);
+    expect(seen.body.eligible).toBe(true);
+    expect(seen.body.invoicesUnverified).toBe(true);
+    expect(seen.body.openInvoices).toBeNull();
+    expect(seen.body.currentPeriodEnd).toBe(OCT_14.toISOString());
+
+    const res = await cancel(token, world.studio.id, world.sub.id).expect(200);
+    expect(res.body.verifiedAgainstStripe).toBe(true);
+    expect(res.body.invoicesUnverified).toBe(true);
+    expect(res.body.openInvoices).toBeNull();
+    expect(stripe['updateSubscription']).toHaveBeenCalledWith(
+      world.stripeSubscriptionId,
+      { cancel_at_period_end: true },
+      expect.any(Object),
+    );
+  });
+
+  it('replaces a stale local cancellation with the live Stripe period and still allows stopping renewal', async () => {
+    const world = await buildWorld(prisma);
+    await prisma.subscription.update({
+      where: { id: world.sub.id },
+      data: { cancelAtPeriodEnd: true, currentPeriodEnd: new Date('2026-01-01T00:00:00.000Z') },
+    });
+    arm({ cancelAtPeriodEnd: false });
+    const token = await tokenFor(world);
+
+    const seen = await preview(token, world.studio.id, world.sub.id).expect(200);
+    expect(seen.body).toMatchObject({
+      eligible: true,
+      alreadyScheduled: false,
+      verifiedAgainstStripe: true,
+      cancelAtPeriodEnd: false,
+      staleLocalCancel: true,
+      currentPeriodEnd: OCT_14.toISOString(),
+    });
+    expect(seen.body.explanation).toMatch(/renovación sigue activa/);
+    const cleared = await prisma.subscription.findUniqueOrThrow({ where: { id: world.sub.id } });
+    expect(cleared.cancelAtPeriodEnd).toBe(false);
+    expect(cleared.currentPeriodEnd?.toISOString()).toBe(OCT_14.toISOString());
+    expect(cleared.status).toBe(SubscriptionStatus.ACTIVE);
+    expect(stripe['updateSubscription']).not.toHaveBeenCalled();
+
+    const res = await cancel(token, world.studio.id, world.sub.id).expect(200);
+    expect(res.body).toMatchObject({
+      outcome: 'scheduled',
+      verifiedAgainstStripe: true,
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: OCT_14.toISOString(),
+    });
+    const saved = await prisma.subscription.findUniqueOrThrow({ where: { id: world.sub.id } });
+    expect(saved.cancelAtPeriodEnd).toBe(true);
+    expect(saved.currentPeriodEnd?.toISOString()).toBe(OCT_14.toISOString());
+    expect(saved.priceCents).toBe(cleared.priceCents);
+    expect(saved.membershipPlanId).toBe(world.full.id);
+  });
 });

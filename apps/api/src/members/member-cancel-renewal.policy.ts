@@ -98,3 +98,9 @@ export const CANCEL_UNVERIFIED_MESSAGE =
 
 export const CANCEL_LOCAL_PERSIST_MESSAGE =
   'Stripe ya detuvo la renovación, pero no pudimos guardarlo en tu cuenta. Desliza para actualizar. No se borró ninguna factura.';
+
+export const INVOICES_UNVERIFIED_MESSAGE =
+  'No pudimos verificar las facturas abiertas. Si existe alguna, puede seguir siendo cobrable. No se modificó ninguna factura.';
+
+export const STALE_LOCAL_CANCEL_MESSAGE =
+  'La app tenía una cancelación registrada, pero Stripe indica que la renovación sigue activa. No se detuvo ningún cobro futuro con ese dato local.';

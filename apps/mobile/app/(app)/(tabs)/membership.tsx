@@ -55,6 +55,7 @@ import {
   cancelRenewalConfirmationCopy,
   cancelRenewalSucceeded,
   changeConfirmationCopy,
+  membershipScreenShows,
   isPurchaseActionDisabled,
   membershipScreenMode,
   purchaseCtaLabel,
@@ -1358,6 +1359,7 @@ export default function MembershipScreen() {
     try {
       const preview = await fetchCancelRenewalPreview(studioId, target.subscriptionId);
       setCancelPreview(preview);
+      if (preview.staleLocalCancel) await load('refresh');
     } catch (e) {
       setCancelError(
         userFacingApiMessage(e, 'No pudimos consultar el estado en Stripe. No se programó la cancelación.'),
@@ -1545,12 +1547,13 @@ export default function MembershipScreen() {
   // Arriving from a class ("buy a pass for this day"): open the picker pre-selected once.
   useEffect(() => {
     const wanted = routeParams.dayPassDate;
-    if (!wanted || isGuest || !studioId || loading) return;
+    const holdsMembership = !isGuest && (profile?.memberships.length ?? 0) > 0;
+    if (!wanted || isGuest || holdsMembership || !studioId || loading) return;
     if (!dayPassCatalog?.active || dayPassCatalogError) return; // wait for / respect the catalog gate
     if (consumedDayPassParam.current === wanted) return;
     consumedDayPassParam.current = wanted;
     void openDayPassPicker(wanted);
-  }, [routeParams.dayPassDate, isGuest, studioId, loading, dayPassCatalog, dayPassCatalogError]);
+  }, [routeParams.dayPassDate, isGuest, studioId, loading, dayPassCatalog, dayPassCatalogError, profile?.memberships.length]);
 
   const refresh = isGuest ? () => loadGuest('refresh') : () => { void load('refresh'); void refreshStudioActivity(); };
 
@@ -1570,6 +1573,7 @@ export default function MembershipScreen() {
     isGuest,
     currentMembershipCount: profile?.memberships.length ?? 0,
   });
+  const screenSections = membershipScreenShows(screenMode);
   const cancelBlocked =
     cancelTarget && !cancelPreview?.eligible
       ? cancelPreview?.explanation ??
@@ -1580,9 +1584,12 @@ export default function MembershipScreen() {
     ? cancelRenewalConfirmationCopy({
         planName: cancelTarget.plan.name,
         localStatus: cancelTarget.status,
-        invoices: cancelPreview?.openInvoices ?? null,
+        invoices: cancelPreview ? cancelPreview.openInvoices : null,
         blockedExplanation: cancelBlocked,
         alreadyScheduled: cancelPreview?.alreadyScheduled === true,
+        stripePeriodEnd: cancelPreview?.currentPeriodEnd ?? null,
+        timeZone,
+        staleLocalCancel: cancelPreview?.staleLocalCancel === true,
       })
     : null;
   const cancelConfirmDisabled =
@@ -1703,7 +1710,7 @@ export default function MembershipScreen() {
         ) : null}
 
         {/* ── Available plans — sales mode only. Members manage what they already hold. ── */}
-        {screenMode === 'sales' && plans.length > 0 ? (
+        {screenSections.catalog && plans.length > 0 ? (
           <View style={{ marginTop: Space.sectionGap }}>
             <SectionLabel>Planes disponibles</SectionLabel>
 
@@ -1784,21 +1791,20 @@ export default function MembershipScreen() {
               </View>
             );})}
           </View>
-        ) : screenMode === 'sales' && loading ? (
+        ) : screenSections.catalog && loading ? (
           <View style={{ gap: 10, marginTop: Space.sectionGap }}>
             <Skeleton height={200} radius={20} />
             <Skeleton height={200} radius={20} />
           </View>
-        ) : screenMode === 'sales' ? (
+        ) : screenSections.catalog ? (
           <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 22, marginTop: Space.sectionGap }}>
             Aún no hay planes publicados. Vuelve más tarde o contacta al estudio.
           </Text>
         ) : null}
 
-        {/* Day pass sales stay on the sales screen. Owned passes still list for a member who has them. */}
-        {(screenMode === 'sales' || (!isGuest && (dayPasses.length > 0 || dayPassHistory !== null))) ? (
+        {screenSections.dayPassPurchase ? (
         <View style={{ marginTop: Space.sectionGap }}>
-          {screenMode === 'sales' ? (
+          {screenSections.dayPassPurchase ? (
           <>
           <SectionLabel>Pase diario</SectionLabel>
 
@@ -1983,7 +1989,7 @@ export default function MembershipScreen() {
           ) : null}
 
           {/* Mis pases diarios — today first, then upcoming; history on demand */}
-          {!isGuest && (() => {
+          {screenSections.dayPassHistory && !isGuest && (() => {
             const grouped = groupMyDayPasses(dayPasses, dayPassTodayKey, timeZone);
             const current = [...grouped.today, ...grouped.upcoming];
             // Older API builds return every pass in the main list; their past rows are history.
@@ -2052,7 +2058,7 @@ export default function MembershipScreen() {
         ) : null}
       </ScrollView>
 
-      {dayPassSheet && dayPassWindow && dayPassCatalog?.active ? (
+      {screenSections.dayPassPurchase && dayPassSheet && dayPassWindow && dayPassCatalog?.active ? (
         <DayPassDateSheet
           visible
           window={dayPassWindow}

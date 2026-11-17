@@ -55,6 +55,8 @@ import { MemberBillingStatusService, type MemberBillingContext } from './member-
 import {
   CANCEL_LOCAL_PERSIST_MESSAGE,
   CANCEL_UNVERIFIED_MESSAGE,
+  INVOICES_UNVERIFIED_MESSAGE,
+  STALE_LOCAL_CANCEL_MESSAGE,
   decidePeriodEndCancel,
   localStatusBlocksPeriodEndCancel,
   readStripeCancelSnapshot,
@@ -1478,8 +1480,12 @@ export class MembersService {
         verifiedAgainstStripe: false,
         liveStatus: null as string | null,
         localStatus: sub.status,
+        localCancelAtPeriodEnd: sub.cancelAtPeriodEnd,
         cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        staleLocalCancel: false,
+        currentPeriodEnd: null as string | null,
         explanation: blocked,
+        invoicesUnverified: false,
         openInvoices: null as OpenInvoiceView[] | null,
       };
     }
@@ -1489,22 +1495,33 @@ export class MembersService {
     this.assertStripeCustomerLink(live, customerId);
     const decision = decidePeriodEndCancel(live);
     const openInvoices = await this.listSubscriptionOpenInvoices(sub.stripeSubscriptionId);
-    const invoicesUnknown = openInvoices === null;
-    const eligible =
-      decision.kind === 'already_scheduled' || (decision.kind === 'schedule' && !invoicesUnknown);
+    const staleLocalCancel = sub.cancelAtPeriodEnd && !live.cancelAtPeriodEnd && decision.kind === 'schedule';
+    if (staleLocalCancel) {
+      await this.clearStaleLocalCancel({
+        studioId,
+        userId,
+        subscriptionId,
+        currentPeriodEnd: live.currentPeriodEnd,
+      });
+    }
+    const eligible = decision.kind === 'already_scheduled' || decision.kind === 'schedule';
     return {
       eligible,
       alreadyScheduled: decision.kind === 'already_scheduled',
       verifiedAgainstStripe: true,
       liveStatus: live.status,
       localStatus: sub.status,
+      localCancelAtPeriodEnd: sub.cancelAtPeriodEnd,
       cancelAtPeriodEnd: live.cancelAtPeriodEnd,
+      staleLocalCancel,
+      currentPeriodEnd: live.currentPeriodEnd?.toISOString() ?? null,
       explanation:
         decision.kind === 'unsupported'
           ? decision.message
-          : decision.kind === 'schedule' && invoicesUnknown
-            ? 'No pudimos consultar las facturas abiertas de esta suscripción. No se programó la cancelación.'
+          : staleLocalCancel
+            ? STALE_LOCAL_CANCEL_MESSAGE
             : null,
+      invoicesUnverified: openInvoices === null,
       openInvoices,
     };
   }
@@ -1533,9 +1550,15 @@ export class MembersService {
     }
 
     const openInvoices = await this.listSubscriptionOpenInvoices(stripeSubscriptionId);
-    if (decision.kind === 'schedule' && openInvoices === null) {
-      throw new BadRequestException(
-        'No pudimos consultar las facturas abiertas de esta suscripción. No se programó la cancelación.',
+    if (openInvoices === null) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'member_cancel_renewal_invoices_unverified',
+          studioId,
+          userId,
+          subscriptionId,
+          message: INVOICES_UNVERIFIED_MESSAGE,
+        }),
       );
     }
 
@@ -1634,10 +1657,11 @@ export class MembersService {
       verifiedAgainstStripe: true as const,
       subscriptionId,
       cancelAtPeriodEnd: true as const,
-      currentPeriodEnd: persisted.currentPeriodEnd,
+      currentPeriodEnd: persisted.currentPeriodEnd?.toISOString() ?? verified.currentPeriodEnd?.toISOString() ?? null,
       status: persisted.status,
       liveStatus: verified.status,
-      openInvoices: openInvoices ?? [],
+      invoicesUnverified: openInvoices === null,
+      openInvoices,
     };
   }
 
@@ -1773,6 +1797,12 @@ export class MembersService {
         },
         data: { cancelAtPeriodEnd: true },
       });
+      if (input.currentPeriodEnd) {
+        await tx.subscription.updateMany({
+          where: { id: input.subscriptionId, studioId: input.studioId, userId: input.userId },
+          data: { currentPeriodEnd: input.currentPeriodEnd },
+        });
+      }
       const row = await tx.subscription.findFirst({
         where: { id: input.subscriptionId, studioId: input.studioId, userId: input.userId },
         select: { cancelAtPeriodEnd: true, currentPeriodEnd: true, status: true },
@@ -1793,6 +1823,42 @@ export class MembersService {
         status: row.status,
       };
     });
+  }
+
+  /**
+   * Local flag says renewal is off, but live Stripe will still renew. Align the row
+   * to Stripe without a Stripe write and without an audit that would claim the member
+   * reactivated billing.
+   */
+  private async clearStaleLocalCancel(input: {
+    studioId: string;
+    userId: string;
+    subscriptionId: string;
+    currentPeriodEnd: Date | null;
+  }): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await acquireSubscriptionWriteAdvisoryLock(tx, input.studioId, input.userId);
+      await tx.subscription.updateMany({
+        where: {
+          id: input.subscriptionId,
+          studioId: input.studioId,
+          userId: input.userId,
+          cancelAtPeriodEnd: true,
+        },
+        data: {
+          cancelAtPeriodEnd: false,
+          ...(input.currentPeriodEnd ? { currentPeriodEnd: input.currentPeriodEnd } : {}),
+        },
+      });
+    });
+    this.logger.warn(
+      JSON.stringify({
+        event: 'member_cancel_local_flag_stale',
+        studioId: input.studioId,
+        userId: input.userId,
+        subscriptionId: input.subscriptionId,
+      }),
+    );
   }
 
   /**

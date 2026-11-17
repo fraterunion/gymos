@@ -208,7 +208,12 @@ export type CancelRenewalPreview = {
   liveStatus: string | null;
   localStatus: string;
   cancelAtPeriodEnd: boolean;
+  localCancelAtPeriodEnd?: boolean;
+  staleLocalCancel?: boolean;
+  /** Stripe-verified period end. Null when Stripe was not read. */
+  currentPeriodEnd: string | null;
   explanation: string | null;
+  invoicesUnverified?: boolean;
   /** null when Stripe's invoice list could not be read. */
   openInvoices: OpenInvoiceDto[] | null;
 };
@@ -221,7 +226,8 @@ export type CancelRenewalResult = {
   currentPeriodEnd: string | null;
   status: string;
   liveStatus: string;
-  openInvoices: OpenInvoiceDto[];
+  invoicesUnverified?: boolean;
+  openInvoices: OpenInvoiceDto[] | null;
 };
 
 export async function fetchCancelRenewalPreview(

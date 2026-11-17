@@ -67,6 +67,7 @@ describe('MembersService.memberCancelRenewalAtPeriodEnd', () => {
       cancelAtPeriodEnd: true,
       status: row?.status ?? SubscriptionStatus.ACTIVE,
     };
+    let storedPeriodEnd = row?.currentPeriodEnd ?? periodEnd;
     const findFirst = jest.fn().mockImplementation(async () => {
       const calls = findFirst.mock.calls.length;
       if (calls === 1) return row;
@@ -74,14 +75,17 @@ describe('MembersService.memberCancelRenewalAtPeriodEnd', () => {
         ? {
             id: 'sub_local',
             cancelAtPeriodEnd: persisted.cancelAtPeriodEnd,
-            currentPeriodEnd: periodEnd,
+            currentPeriodEnd: storedPeriodEnd,
             status: persisted.status,
           }
         : null;
     });
     const subscription = {
       findFirst,
-      updateMany: jest.fn().mockResolvedValue({ count: opts.updateCount ?? 1 }),
+      updateMany: jest.fn().mockImplementation(async (args: { data?: { currentPeriodEnd?: Date } }) => {
+        if (args.data?.currentPeriodEnd) storedPeriodEnd = args.data.currentPeriodEnd;
+        return { count: opts.updateCount ?? 1 };
+      }),
     };
     const studioMembership = { findFirst: jest.fn().mockResolvedValue({ role: 'MEMBER' }) };
     const auditLog = {
@@ -275,14 +279,66 @@ describe('MembersService.memberCancelRenewalAtPeriodEnd', () => {
     expect(updateSubscription).toHaveBeenCalledWith('sub_stripe', { cancel_at_period_end: true }, expect.any(Object));
   });
 
-  it('refuses to schedule when open invoices cannot be read', async () => {
+  it('still schedules when open invoices cannot be read, and says they were not verified', async () => {
     const { service, updateSubscription } = makeService({
       listOpenInvoices: jest.fn().mockRejectedValue(new Error('invoice timeout')),
     });
-    await expect(service.memberCancelRenewalAtPeriodEnd('studio_1', 'member_1', 'sub_local')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    const result = await service.memberCancelRenewalAtPeriodEnd('studio_1', 'member_1', 'sub_local');
+    expect(updateSubscription).toHaveBeenCalledWith('sub_stripe', { cancel_at_period_end: true }, expect.any(Object));
+    expect(result.verifiedAgainstStripe).toBe(true);
+    expect(result.invoicesUnverified).toBe(true);
+    expect(result.openInvoices).toBeNull();
+  });
+
+  it('returns the Stripe period end and clears a stale local cancellation without calling it success', async () => {
+    const stripeEnd = new Date('2026-12-14T06:00:00.000Z');
+    const { service, updateSubscription, logGymos, prisma } = makeService({
+      row: { ...stripeSub, cancelAtPeriodEnd: true },
+      retrieveSubscription: jest.fn().mockResolvedValue(
+        live({ cancel_at_period_end: false, items: { data: [{ current_period_end: Math.floor(stripeEnd.getTime() / 1000) }] } }),
+      ),
+    });
+
+    const preview = await service.memberCancelRenewalPreview('studio_1', 'member_1', 'sub_local');
+
+    expect(preview).toMatchObject({
+      eligible: true,
+      alreadyScheduled: false,
+      verifiedAgainstStripe: true,
+      cancelAtPeriodEnd: false,
+      staleLocalCancel: true,
+      currentPeriodEnd: stripeEnd.toISOString(),
+    });
+    expect(preview.explanation).toMatch(/Stripe indica que la renovación sigue activa/);
     expect(updateSubscription).not.toHaveBeenCalled();
+    expect(logGymos).not.toHaveBeenCalled();
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+      where: { id: 'sub_local', studioId: 'studio_1', userId: 'member_1', cancelAtPeriodEnd: true },
+      data: { cancelAtPeriodEnd: false, currentPeriodEnd: stripeEnd },
+    });
+  });
+
+  it('stores the Stripe period end when the cancellation is verified', async () => {
+    const stripeEnd = new Date('2026-12-14T06:00:00.000Z');
+    let applied = false;
+    const { service, prisma } = makeService({
+      updateSubscription: jest.fn().mockImplementation(async () => {
+        applied = true;
+        return live({ cancel_at_period_end: true });
+      }),
+      retrieveSubscription: jest.fn().mockImplementation(async () =>
+        live({
+          cancel_at_period_end: applied,
+          items: { data: [{ current_period_end: Math.floor(stripeEnd.getTime() / 1000) }] },
+        }),
+      ),
+    });
+    const result = await service.memberCancelRenewalAtPeriodEnd('studio_1', 'member_1', 'sub_local');
+    expect(result.currentPeriodEnd).toBe(stripeEnd.toISOString());
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+      where: { id: 'sub_local', studioId: 'studio_1', userId: 'member_1' },
+      data: { currentPeriodEnd: stripeEnd },
+    });
   });
 
   it('explains a Stripe status that cannot be scheduled and does not write', async () => {

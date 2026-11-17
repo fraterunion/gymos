@@ -5,8 +5,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import type { MembershipSummaryDto } from '@/lib/api/membershipApi';
 import {
   attachScheduledSuccessors,
-  canCancelStripeRenewal,
   cancelRenewalSupport,
+  stripeRenewalAction,
   membershipCreditsDisplay,
   membershipPriceLine,
   membershipStatusDisplay,
@@ -260,11 +260,15 @@ export function MembershipCard({
 
           {successor ? <ScheduledSuccessorRow successor={successor} timeZone={timeZone} /> : null}
 
-          {canCancelStripeRenewal(membership) && onCancelRenewal ? (
+          {stripeRenewalAction(membership) && onCancelRenewal ? (
             <View style={{ marginTop: 22 }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Cancelar renovación automática"
+                accessibilityLabel={
+                  stripeRenewalAction(membership) === 'verify'
+                    ? 'Verificar renovación'
+                    : 'Cancelar renovación automática'
+                }
                 onPress={() => onCancelRenewal(membership.subscriptionId)}
                 disabled={cancelBusy}
                 style={{
@@ -286,11 +290,15 @@ export function MembershipCard({
                     letterSpacing: -0.2,
                   }}
                 >
-                  {cancelBusy ? 'Cancelando…' : 'Cancelar renovación automática'}
+                  {cancelBusy
+                    ? 'Cancelando…'
+                    : stripeRenewalAction(membership) === 'verify'
+                      ? 'Verificar renovación'
+                      : 'Cancelar renovación automática'}
                 </Text>
               </Pressable>
               <Text style={{ fontSize: 13, color: C.textMute, lineHeight: 19, marginTop: 10 }}>
-                {cancelRenewalSupport(membership.status)}
+                {cancelRenewalSupport(membership.status, stripeRenewalAction(membership) ?? 'cancel')}
               </Text>
             </View>
           ) : null}

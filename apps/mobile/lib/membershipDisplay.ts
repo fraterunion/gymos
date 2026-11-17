@@ -308,20 +308,48 @@ export function membershipScreenMode(input: {
   return 'sales';
 }
 
+/** What the membership tab is allowed to render. Management mode is header, Mi Pase and cards only. */
+export function membershipScreenShows(mode: MembershipScreenMode): {
+  catalog: boolean;
+  dayPassPurchase: boolean;
+  dayPassHistory: boolean;
+  membershipManagement: boolean;
+} {
+  if (mode === 'manage') {
+    return { catalog: false, dayPassPurchase: false, dayPassHistory: false, membershipManagement: true };
+  }
+  return { catalog: true, dayPassPurchase: true, dayPassHistory: true, membershipManagement: false };
+}
+
 /**
  * Self-service "stop renewing" for a Stripe subscription that is still set to
  * renew. PAST_DUE is included so a failed renewal does not trap the member.
  * Cash, manual, paused, scheduled and already-ending rows are not offered this.
  * The server still re-checks the live Stripe status before anything is scheduled.
  */
+export type StripeRenewalAction = 'cancel' | 'verify';
+
+export function stripeRenewalAction(
+  membership: Pick<MembershipSummaryLike, 'source' | 'status' | 'cancelAtPeriodEnd'>,
+): StripeRenewalAction | null {
+  if (membership.source !== 'STRIPE') return null;
+  if (membership.status !== 'ACTIVE' && membership.status !== 'TRIALING' && membership.status !== 'PAST_DUE') {
+    return null;
+  }
+  return membership.cancelAtPeriodEnd ? 'verify' : 'cancel';
+}
+
 export function canCancelStripeRenewal(
   membership: Pick<MembershipSummaryLike, 'source' | 'status' | 'cancelAtPeriodEnd'>,
 ): boolean {
-  return (
-    membership.source === 'STRIPE' &&
-    (membership.status === 'ACTIVE' || membership.status === 'TRIALING' || membership.status === 'PAST_DUE') &&
-    !membership.cancelAtPeriodEnd
-  );
+  return stripeRenewalAction(membership) === 'cancel';
+}
+
+/** Local flag is not proof that Stripe stopped billing. The member can re-check the live state. */
+export function canVerifyStripeRenewal(
+  membership: Pick<MembershipSummaryLike, 'source' | 'status' | 'cancelAtPeriodEnd'>,
+): boolean {
+  return stripeRenewalAction(membership) === 'verify';
 }
 
 export function stripeRenewalCancelTargets<
@@ -330,11 +358,35 @@ export function stripeRenewalCancelTargets<
   return rows.filter(canCancelStripeRenewal).map((row) => row.subscriptionId);
 }
 
-export function cancelRenewalSupport(status: string): string {
+export function cancelRenewalSupport(status: string, action: StripeRenewalAction = 'cancel'): string {
+  if (action === 'verify') {
+    return 'Esto no confirma que Stripe haya detenido el cobro. Verifica el estado real y, si sigue renovando, podrás detenerlo.';
+  }
   if (status === 'PAST_DUE') {
     return 'Detiene renovaciones futuras. No borra facturas ya emitidas ni restaura el acceso.';
   }
   return 'Detiene renovaciones futuras. La membresía sigue hasta el fin del periodo pagado. Las facturas ya emitidas siguen siendo cobrables.';
+}
+
+export function formatStudioDate(iso: string | null | undefined, timeZone?: string): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'long', year: 'numeric' };
+  if (timeZone) options.timeZone = timeZone;
+  try {
+    return new Intl.DateTimeFormat('es-MX', options).format(date);
+  } catch {
+    return new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+  }
+}
+
+/** The sheet date is the Stripe-verified period, never a different local period. */
+export function cancellationSheetDate(input: {
+  stripePeriodEnd: string | null | undefined;
+  timeZone?: string;
+}): string | null {
+  return formatStudioDate(input.stripePeriodEnd, input.timeZone);
 }
 
 export type OpenInvoiceCopy = {
@@ -343,12 +395,10 @@ export type OpenInvoiceCopy = {
   currency: string;
 };
 
-function appendInvoicePoint(points: string[], invoices: readonly OpenInvoiceCopy[] | null, alreadyScheduled: boolean): void {
+function appendInvoicePoint(points: string[], invoices: readonly OpenInvoiceCopy[] | null): void {
   if (invoices === null) {
     points.push(
-      alreadyScheduled
-        ? 'No pudimos consultar las facturas abiertas. Si existe alguna, sigue siendo cobrable.'
-        : 'No pudimos consultar las facturas abiertas. No confirmes hasta ver el saldo.',
+      'No pudimos verificar las facturas abiertas. Si existe alguna, puede seguir siendo cobrable. No se modificó ninguna factura.',
     );
     return;
   }
@@ -381,6 +431,10 @@ export function cancelRenewalConfirmationCopy(input: {
   /** Set when this membership cannot be scheduled. The copy must not claim a cancellation. */
   blockedExplanation?: string | null;
   alreadyScheduled?: boolean;
+  /** Stripe-verified period end. A local period must not be substituted. */
+  stripePeriodEnd?: string | null;
+  timeZone?: string;
+  staleLocalCancel?: boolean;
 }): {
   title: string;
   points: readonly string[];
@@ -402,15 +456,34 @@ export function cancelRenewalConfirmationCopy(input: {
       dismissLabel: 'Cerrar',
     };
   }
+  const when = cancellationSheetDate({ stripePeriodEnd: input.stripePeriodEnd, timeZone: input.timeZone });
+  const pastDue = input.localStatus === 'PAST_DUE';
+  if (input.staleLocalCancel) {
+    const points = [
+      'La app tenía una cancelación registrada, pero Stripe indica que la renovación sigue activa.',
+      'Ese dato local no detuvo el cobro futuro.',
+      when
+        ? `Si confirmas, las renovaciones futuras se detienen al terminar el periodo del ${when}.`
+        : 'Si confirmas, se detienen las renovaciones futuras. Stripe no devolvió la fecha de término.',
+    ];
+    if (pastDue) points.push('Esto no restaura el acceso ni da por pagado el saldo. Tampoco extiende el acceso hasta esa fecha.');
+    appendInvoicePoint(points, input.invoices);
+    return {
+      title: 'Stripe todavía va a renovar',
+      points,
+      confirmLabel: 'Detener renovación futura',
+      dismissLabel: 'Cerrar',
+    };
+  }
   if (input.alreadyScheduled) {
     const points = [
-      `Stripe ya detuvo las renovaciones futuras de ${input.planName}.`,
+      when
+        ? `Stripe confirma que no habrá otra renovación automática después del ${when}.`
+        : `Stripe confirma que las renovaciones futuras de ${input.planName} ya están detenidas.`,
       'Las facturas ya emitidas pueden seguir siendo cobrables. No se borran ni se condonan.',
     ];
-    if (input.localStatus === 'PAST_DUE') {
-      points.push('No restaura el acceso ni da por pagado el saldo pendiente.');
-    }
-    appendInvoicePoint(points, input.invoices, true);
+    if (pastDue) points.push('No restaura el acceso ni da por pagado el saldo pendiente. Esa fecha no extiende el acceso.');
+    appendInvoicePoint(points, input.invoices);
     return {
       title: 'La renovación ya está cancelada',
       points,
@@ -422,12 +495,18 @@ export function cancelRenewalConfirmationCopy(input: {
     `Se detienen las renovaciones automáticas futuras de ${input.planName}.`,
     'Las facturas ya emitidas pueden seguir siendo cobrables. Esta acción no las borra, condona ni reembolsa.',
   ];
-  if (input.localStatus === 'PAST_DUE') {
-    points.push('No restaura el acceso ni da por pagado el saldo pendiente.');
+  if (pastDue) {
+    points.push(
+      when
+        ? `La fecha del ${when} no significa que el acceso pagado continúe ni que el saldo quede cubierto.`
+        : 'No restaura el acceso ni da por pagado el saldo pendiente.',
+    );
+  } else if (when) {
+    points.push(`La cancelación queda para el ${when}, al terminar el periodo que Stripe tiene registrado.`);
   } else {
     points.push('El acceso del periodo ya pagado continúa hasta su fecha de término.');
   }
-  appendInvoicePoint(points, input.invoices, false);
+  appendInvoicePoint(points, input.invoices);
   return {
     title: 'Cancelar renovación automática',
     points,

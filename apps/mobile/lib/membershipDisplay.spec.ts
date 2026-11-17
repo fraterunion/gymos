@@ -10,8 +10,12 @@ import {
   changeConfirmationCopy,
   isPurchaseActionDisabled,
   canCancelStripeRenewal,
+  canVerifyStripeRenewal,
+  cancellationSheetDate,
   cancelRenewalConfirmationCopy,
   cancelRenewalSucceeded,
+  cancelRenewalSupport,
+  membershipScreenShows,
   stripeRenewalCancelTargets,
   membershipCreditsDisplay,
   membershipPriceLine,
@@ -247,6 +251,23 @@ test('cancel renewal is offered per Stripe row, including PAST_DUE, and never fo
     row({ subscriptionId: 'ending', source: 'STRIPE', status: 'ACTIVE', cancelAtPeriodEnd: true }),
   ]);
   assert.deepEqual(targets, ['stripe-active', 'stripe-due']);
+  assert.equal(canVerifyStripeRenewal(row({ source: 'STRIPE', status: 'ACTIVE', cancelAtPeriodEnd: true })), true);
+  assert.equal(canVerifyStripeRenewal(row({ source: 'STRIPE', status: 'PAST_DUE', isEntitled: false, cancelAtPeriodEnd: true })), true);
+  assert.equal(canVerifyStripeRenewal(row({ source: 'CASH', status: 'ACTIVE', cancelAtPeriodEnd: true })), false);
+  assert.match(cancelRenewalSupport('ACTIVE', 'verify'), /no confirma que Stripe/);
+});
+
+test('a current member sees management only; guests and non-members keep the catalog and day pass', () => {
+  const manage = membershipScreenShows('manage');
+  assert.equal(manage.catalog, false);
+  assert.equal(manage.dayPassPurchase, false);
+  assert.equal(manage.dayPassHistory, false);
+  assert.equal(manage.membershipManagement, true);
+  const sales = membershipScreenShows('sales');
+  assert.equal(sales.catalog, true);
+  assert.equal(sales.dayPassPurchase, true);
+  assert.equal(sales.dayPassHistory, true);
+  assert.equal(sales.membershipManagement, false);
 });
 
 test('PAST_DUE that will not renew keeps the balance visible and does not say access was restored', () => {
@@ -284,7 +305,52 @@ test('cancel confirmation separates future renewals from known open invoices', (
     localStatus: 'ACTIVE',
     invoices: null,
   });
-  assert.match(unknown.points.join(' '), /No confirmes hasta ver el saldo/);
+  assert.match(unknown.points.join(' '), /No pudimos verificar las facturas abiertas/);
+  assert.match(unknown.points.join(' '), /puede seguir siendo cobrable/);
+  assert.equal(unknown.confirmLabel, 'Confirmar cancelación');
+
+  const dated = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'ACTIVE',
+    invoices: [],
+    stripePeriodEnd: '2026-12-14T06:00:00.000Z',
+    timeZone: 'America/Mexico_City',
+  });
+  assert.match(dated.points.join(' '), /14 de diciembre de 2026/);
+  const pastDueDated = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'PAST_DUE',
+    invoices: [],
+    stripePeriodEnd: '2026-12-14T06:00:00.000Z',
+    timeZone: 'America/Mexico_City',
+  });
+  assert.match(pastDueDated.points.join(' '), /no significa que el acceso pagado continúe/);
+  assert.doesNotMatch(pastDueDated.points.join(' '), /acceso pagado continúa hasta/);
+
+  const stale = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'ACTIVE',
+    invoices: null,
+    stripePeriodEnd: '2026-12-14T06:00:00.000Z',
+    timeZone: 'America/Mexico_City',
+    staleLocalCancel: true,
+  });
+  assert.equal(stale.title, 'Stripe todavía va a renovar');
+  assert.match(stale.points.join(' '), /no detuvo el cobro futuro/);
+  assert.match(stale.points.join(' '), /14 de diciembre de 2026/);
+  assert.equal(
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' }),
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' }),
+  );
+  assert.match(
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' }) ?? '',
+    /diciembre de 2026/,
+  );
+  assert.equal(cancellationSheetDate({ stripePeriodEnd: '2026-01-01T06:00:00.000Z', timeZone: 'America/Mexico_City' })?.includes('enero'), true);
+  assert.equal(
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' })?.includes('enero'),
+    false,
+  );
 
   const blocked = cancelRenewalConfirmationCopy({
     planName: 'Full Access',
