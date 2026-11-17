@@ -31,6 +31,8 @@ import {
 } from '@/lib/api/publicDiscoveryApi';
 import { userFacingApiMessage } from '@/lib/userFacingApiMessage';
 import {
+  cancelMembershipRenewal,
+  fetchCancelRenewalPreview,
   createBillingPortalSession,
   createMembershipCheckoutSession,
   type MembershipPurchaseResponse,
@@ -40,7 +42,9 @@ import {
   fetchPurchaseOptions,
   type BillingInterval,
   type CheckoutPreviewDto,
+  type CancelRenewalPreview,
   type MembershipPlanDto,
+  type MembershipSummaryDto,
   type MyMemberProfileDto,
   type PurchaseOptionDto,
 } from '@/lib/api/membershipApi';
@@ -48,8 +52,12 @@ import { MembershipList } from '@/components/membership/MembershipCards';
 import {
   addConfirmationCopy,
   blockedReasonCopy,
+  cancelRenewalConfirmationCopy,
+  cancelRenewalSucceeded,
   changeConfirmationCopy,
+  membershipScreenShows,
   isPurchaseActionDisabled,
+  membershipScreenMode,
   purchaseCtaLabel,
   type PurchaseActionLike,
 } from '@/lib/membershipDisplay';
@@ -89,7 +97,6 @@ import {
 import { formatMoneyFromCents } from '@/lib/formatMoney';
 import { resolveAresPlanBenefits, resolveAresPricePerClassLabel } from '@/lib/aresMembershipPlans';
 import { FitnessImages } from '@/lib/imagery';
-import { statusConfig } from '@/lib/membershipStatus';
 import { getStudioSlug } from '@/lib/env';
 import { TAB_BAR_CLEARANCE } from '@/components/FloatingTabBar';
 import { getColors, Space, type ThemeColors } from '@/constants/Theme';
@@ -180,228 +187,6 @@ function creditsLabel(credits: number | null): string | null {
   return `${credits} visitas al mes`;
 }
 
-function membershipCreditDisplay(
-  classCredits: number | null,
-  creditsUsed: number | null,
-  creditsRemaining: number | null,
-): { primary: string; secondary?: string } {
-  if (classCredits === null) {
-    return { primary: 'Clases ilimitadas' };
-  }
-  if (typeof creditsUsed === 'number' && typeof creditsRemaining === 'number') {
-    return {
-      primary: `${creditsUsed} / ${classCredits} clases usadas`,
-      secondary: `${creditsRemaining} restantes en este periodo`,
-    };
-  }
-  return { primary: `${classCredits} clases por periodo` };
-}
-
-// ---------------------------------------------------------------------------
-// Active membership — physical luxury card
-// ---------------------------------------------------------------------------
-
-function MembershipCard({
-  planName,
-  status,
-  cancelAtPeriodEnd,
-  renewsAt,
-  currentPeriodEnd,
-  classCredits,
-  creditsUsed,
-  creditsRemaining,
-  primaryColor,
-  onManage,
-  portalBusy,
-}: {
-  planName: string;
-  status: string;
-  cancelAtPeriodEnd: boolean;
-  renewsAt: string;
-  currentPeriodEnd: string | null;
-  classCredits: number | null;
-  creditsUsed: number | null;
-  creditsRemaining: number | null;
-  primaryColor: string;
-  onManage: () => void;
-  portalBusy: boolean;
-}) {
-  const C = getColors();
-  const cfg = statusConfig(status, cancelAtPeriodEnd, currentPeriodEnd);
-  const accentBarColor = (status === 'ACTIVE' || status === 'TRIALING') ? primaryColor : C.surface3;
-  const creditDisplay = membershipCreditDisplay(classCredits, creditsUsed, creditsRemaining);
-
-  const showCreditProgress =
-    classCredits !== null &&
-    typeof creditsUsed === 'number' &&
-    classCredits > 0;
-  const creditProgress = showCreditProgress
-    ? Math.min(creditsUsed! / classCredits!, 1)
-    : 0;
-
-  return (
-    <Animated.View entering={FadeInDown.duration(450)}>
-      <View
-        style={{
-          ...premiumCardStyle(C),
-          overflow: 'hidden',
-          marginBottom: 8,
-        }}
-      >
-        <View style={{ height: 3, backgroundColor: accentBarColor }} />
-
-        <View style={{ padding: 28 }}>
-          {/* Status pill */}
-          <View
-            style={{
-              alignSelf: 'flex-start',
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: cfg.bg,
-              borderRadius: 100,
-              paddingVertical: 5,
-              paddingHorizontal: 10,
-              marginBottom: 24,
-            }}
-          >
-            <View
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: cfg.dotColor,
-                marginRight: 6,
-              }}
-            />
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: '700',
-                letterSpacing: 0.6,
-                textTransform: 'uppercase',
-                color: cfg.textColor,
-              }}
-            >
-              {cfg.label}
-            </Text>
-          </View>
-
-          {/* Plan name — the hero */}
-          <Text
-            style={{
-              fontSize: 34,
-              fontWeight: '800',
-              letterSpacing: -1.0,
-              color: C.text,
-              lineHeight: 38,
-              marginBottom: 12,
-            }}
-          >
-            {planName}
-          </Text>
-
-          {/* Renewal info */}
-          <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 20 }}>
-            {renewsAt}
-          </Text>
-
-          <View
-            style={{
-              marginTop: 18,
-              paddingVertical: 14,
-              paddingHorizontal: 16,
-              backgroundColor: 'rgba(255,255,255,0.04)',
-              borderRadius: 14,
-              borderWidth: 1,
-              borderColor: C.separator,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: '700',
-                letterSpacing: 0.8,
-                textTransform: 'uppercase',
-                color: C.textMute,
-                marginBottom: 8,
-              }}
-            >
-              Créditos de clases
-            </Text>
-            <Text
-              style={{
-                fontSize: 15,
-                fontWeight: '600',
-                color: C.text,
-                letterSpacing: -0.2,
-              }}
-            >
-              {creditDisplay.primary}
-            </Text>
-            {creditDisplay.secondary ? (
-              <Text
-                style={{
-                  fontSize: 13,
-                  color: C.textSub,
-                  marginTop: 4,
-                  letterSpacing: -0.05,
-                }}
-              >
-                {creditDisplay.secondary}
-              </Text>
-            ) : null}
-            {showCreditProgress ? (
-              <View
-                style={{
-                  marginTop: 12,
-                  height: 4,
-                  borderRadius: 2,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  overflow: 'hidden',
-                }}
-              >
-                <View
-                  style={{
-                    height: '100%',
-                    width: `${creditProgress * 100}%`,
-                    backgroundColor: primaryColor,
-                    borderRadius: 2,
-                  }}
-                />
-              </View>
-            ) : null}
-          </View>
-
-          {/* Divider */}
-          <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 24 }} />
-
-          {/* Manage billing */}
-          <Pressable
-            accessibilityRole="button"
-            onPress={onManage}
-            disabled={portalBusy}
-            hitSlop={8}
-          >
-            <Text
-              style={{
-                fontSize: 15,
-                fontWeight: '600',
-                color: portalBusy ? C.textMute : C.text,
-                letterSpacing: -0.2,
-              }}
-            >
-              {portalBusy ? 'Abriendo…' : 'Gestionar membresía →'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-    </Animated.View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Plan card — cinematic hero with per-plan theme
-// ---------------------------------------------------------------------------
 
 const PLAN_HERO_HEIGHT = 188;
 
@@ -1289,6 +1074,7 @@ export default function MembershipScreen() {
   const { studio: publicStudio, timezone: publicTimezone } = usePublicStudio();
   const { refresh: refreshStudioActivity } = useStudioActivity();
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const insets = useSafeAreaInsets();
 
   const studioId = matched?.studio.id;
   const timeZone = isGuest ? publicTimezone : (matched?.studio.timezone ?? 'UTC');
@@ -1333,6 +1119,12 @@ export default function MembershipScreen() {
   const [checkoutPlanId, setCheckoutPlanId] = useState<string | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<MembershipSummaryDto | null>(null);
+  const [cancelPreview, setCancelPreview] = useState<CancelRenewalPreview | null>(null);
+  const [cancelPreviewLoading, setCancelPreviewLoading] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const cancelInFlight = useRef(false);
   const [dayPassBusy, setDayPassBusy] = useState(false);
   const [dayPassError, setDayPassError] = useState<string | null>(null);
   const [dayPassLoadError, setDayPassLoadError] = useState<string | null>(null);
@@ -1440,27 +1232,34 @@ export default function MembershipScreen() {
       void loadDayPassCatalog();
 
       try {
-        const [p, prof, opts] = await Promise.all([
-          fetchMembershipPlans(studioId),
-          fetchMyMemberProfile(studioId),
-          // CTA semantics are server-decided; a transient failure falls back to
-          // conservative labels rather than blocking the screen.
-          fetchPurchaseOptions(studioId).catch(() => [] as PurchaseOptionDto[]),
-        ]);
-        setPlans(p);
+        const prof = await fetchMyMemberProfile(studioId);
         setProfile(prof);
-        setPurchaseOptions(opts);
+        // Current members never see the sales catalog. Don't block their screen on it.
+        if (prof.memberships.length > 0) {
+          setPlans([]);
+          setPurchaseOptions([]);
+          setCheckoutPreview(null);
+        } else {
+          const [p, opts] = await Promise.all([
+            fetchMembershipPlans(studioId),
+            // CTA semantics are server-decided; a transient failure falls back to
+            // conservative labels rather than blocking the screen.
+            fetchPurchaseOptions(studioId).catch(() => [] as PurchaseOptionDto[]),
+          ]);
+          setPlans(p);
+          setPurchaseOptions(opts);
 
-        // Fetch enrollment preview for the first available plan (fee info is studio-wide)
-        if (p.length > 0 && !prof.activeSubscription) {
-          try {
-            const preview = await fetchCheckoutPreview(studioId, p[0]!.id);
-            setCheckoutPreview(preview);
-          } catch {
+          // Fetch enrollment preview for the first available plan (fee info is studio-wide)
+          if (p.length > 0 && !prof.activeSubscription) {
+            try {
+              const preview = await fetchCheckoutPreview(studioId, p[0]!.id);
+              setCheckoutPreview(preview);
+            } catch {
+              setCheckoutPreview(null);
+            }
+          } else {
             setCheckoutPreview(null);
           }
-        } else {
-          setCheckoutPreview(null);
         }
       } catch (e) {
         setError(userFacingApiMessage(e, 'No se pudo cargar la información de membresía. Desliza para actualizar.'));
@@ -1548,6 +1347,48 @@ export default function MembershipScreen() {
       setError(userFacingApiMessage(e, 'No se pudo iniciar el pago. Inténtalo de nuevo.'));
     } finally {
       setConfirmingCheckout(false);
+    }
+  }
+
+  async function beginCancelRenewal(target: MembershipSummaryDto) {
+    if (!studioId || cancelInFlight.current) return;
+    setCancelTarget(target);
+    setCancelPreview(null);
+    setCancelError(null);
+    setCancelPreviewLoading(true);
+    try {
+      const preview = await fetchCancelRenewalPreview(studioId, target.subscriptionId);
+      setCancelPreview(preview);
+      if (preview.staleLocalCancel) await load('refresh');
+    } catch (e) {
+      setCancelError(
+        userFacingApiMessage(e, 'No pudimos consultar el estado en Stripe. No se programó la cancelación.'),
+      );
+    } finally {
+      setCancelPreviewLoading(false);
+    }
+  }
+
+  async function confirmCancelRenewal() {
+    if (!studioId || !cancelTarget || cancelInFlight.current) return;
+    if (!cancelPreview?.verifiedAgainstStripe || !cancelPreview.eligible) return;
+    cancelInFlight.current = true;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      const result = await cancelMembershipRenewal(studioId, cancelTarget.subscriptionId);
+      if (!cancelRenewalSucceeded(result)) {
+        setCancelError('No pudimos verificar la cancelación con Stripe. No se mostrará como confirmada.');
+        return;
+      }
+      setCancelTarget(null);
+      setCancelPreview(null);
+      await load('refresh');
+    } catch (e) {
+      setCancelError(userFacingApiMessage(e, 'No se pudo cancelar la renovación. Inténtalo de nuevo.'));
+    } finally {
+      cancelInFlight.current = false;
+      setCancelBusy(false);
     }
   }
 
@@ -1706,12 +1547,13 @@ export default function MembershipScreen() {
   // Arriving from a class ("buy a pass for this day"): open the picker pre-selected once.
   useEffect(() => {
     const wanted = routeParams.dayPassDate;
-    if (!wanted || isGuest || !studioId || loading) return;
+    const holdsMembership = !isGuest && (profile?.memberships.length ?? 0) > 0;
+    if (!wanted || isGuest || holdsMembership || !studioId || loading) return;
     if (!dayPassCatalog?.active || dayPassCatalogError) return; // wait for / respect the catalog gate
     if (consumedDayPassParam.current === wanted) return;
     consumedDayPassParam.current = wanted;
     void openDayPassPicker(wanted);
-  }, [routeParams.dayPassDate, isGuest, studioId, loading, dayPassCatalog, dayPassCatalogError]);
+  }, [routeParams.dayPassDate, isGuest, studioId, loading, dayPassCatalog, dayPassCatalogError, profile?.memberships.length]);
 
   const refresh = isGuest ? () => loadGuest('refresh') : () => { void load('refresh'); void refreshStudioActivity(); };
 
@@ -1727,6 +1569,31 @@ export default function MembershipScreen() {
   if (loading && !plans.length && (isGuest || !profile)) return <ScreenLoader />;
 
   const sub = profile?.activeSubscription;
+  const screenMode = membershipScreenMode({
+    isGuest,
+    currentMembershipCount: profile?.memberships.length ?? 0,
+  });
+  const screenSections = membershipScreenShows(screenMode);
+  const cancelBlocked =
+    cancelTarget && !cancelPreview?.eligible
+      ? cancelPreview?.explanation ??
+        cancelError ??
+        'No pudimos verificar esta membresía con Stripe. No se programó la cancelación.'
+      : null;
+  const cancelCopy = cancelTarget
+    ? cancelRenewalConfirmationCopy({
+        planName: cancelTarget.plan.name,
+        localStatus: cancelTarget.status,
+        invoices: cancelPreview ? cancelPreview.openInvoices : null,
+        blockedExplanation: cancelBlocked,
+        alreadyScheduled: cancelPreview?.alreadyScheduled === true,
+        stripePeriodEnd: cancelPreview?.currentPeriodEnd ?? null,
+        timeZone,
+        staleLocalCancel: cancelPreview?.staleLocalCancel === true,
+      })
+    : null;
+  const cancelConfirmDisabled =
+    cancelBusy || cancelPreviewLoading || !cancelPreview?.verifiedAgainstStripe || !cancelPreview.eligible;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['bottom', 'left', 'right']}>
@@ -1820,6 +1687,12 @@ export default function MembershipScreen() {
               timeZone={timeZone}
               onManage={() => void openPortal()}
               portalBusy={portalBusy}
+              onCancelRenewal={(subscriptionId) => {
+                const target = profile!.memberships.find((m) => m.subscriptionId === subscriptionId) ?? null;
+                if (!target) return;
+                void beginCancelRenewal(target);
+              }}
+              cancelBusySubscriptionId={cancelBusy ? cancelTarget?.subscriptionId ?? null : null}
             />
           </View>
         ) : (
@@ -1836,8 +1709,8 @@ export default function MembershipScreen() {
           </Text>
         ) : null}
 
-        {/* ── Available plans ── */}
-        {plans.length > 0 ? (
+        {/* ── Available plans — sales mode only. Members manage what they already hold. ── */}
+        {screenSections.catalog && plans.length > 0 ? (
           <View style={{ marginTop: Space.sectionGap }}>
             <SectionLabel>Planes disponibles</SectionLabel>
 
@@ -1918,19 +1791,21 @@ export default function MembershipScreen() {
               </View>
             );})}
           </View>
-        ) : loading ? (
+        ) : screenSections.catalog && loading ? (
           <View style={{ gap: 10, marginTop: Space.sectionGap }}>
             <Skeleton height={200} radius={20} />
             <Skeleton height={200} radius={20} />
           </View>
-        ) : (
+        ) : screenSections.catalog ? (
           <Text style={{ fontSize: 14, color: C.textMute, lineHeight: 22, marginTop: Space.sectionGap }}>
             Aún no hay planes publicados. Vuelve más tarde o contacta al estudio.
           </Text>
-        )}
+        ) : null}
 
-        {/* ── Day Pass ── */}
+        {screenSections.dayPassPurchase ? (
         <View style={{ marginTop: Space.sectionGap }}>
+          {screenSections.dayPassPurchase ? (
+          <>
           <SectionLabel>Pase diario</SectionLabel>
 
           <Animated.View entering={FadeInDown.duration(420)}>
@@ -2110,9 +1985,11 @@ export default function MembershipScreen() {
               {dayPassLoadError}
             </Text>
           ) : null}
+          </>
+          ) : null}
 
           {/* Mis pases diarios — today first, then upcoming; history on demand */}
-          {!isGuest && (() => {
+          {screenSections.dayPassHistory && !isGuest && (() => {
             const grouped = groupMyDayPasses(dayPasses, dayPassTodayKey, timeZone);
             const current = [...grouped.today, ...grouped.upcoming];
             // Older API builds return every pass in the main list; their past rows are history.
@@ -2178,9 +2055,10 @@ export default function MembershipScreen() {
             );
           })()}
         </View>
+        ) : null}
       </ScrollView>
 
-      {dayPassSheet && dayPassWindow && dayPassCatalog?.active ? (
+      {screenSections.dayPassPurchase && dayPassSheet && dayPassWindow && dayPassCatalog?.active ? (
         <DayPassDateSheet
           visible
           window={dayPassWindow}
@@ -2232,6 +2110,77 @@ export default function MembershipScreen() {
           onConfirm={() => void confirmCheckout()}
           onCancel={() => { if (!confirmingCheckout) setBreakdownPlan(null); }}
         />
+      ) : null}
+
+      {cancelCopy ? (
+        <Modal
+          visible
+          transparent
+          animationType="slide"
+          onRequestClose={() => { if (!cancelBusy) setCancelTarget(null); }}
+          statusBarTranslucent
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cerrar confirmación"
+            onPress={() => { if (!cancelBusy) setCancelTarget(null); }}
+            style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.72)' }}
+          >
+            <Pressable
+              onPress={() => {}}
+              style={{
+                backgroundColor: '#141416',
+                borderTopLeftRadius: 28,
+                borderTopRightRadius: 28,
+                borderWidth: 1,
+                borderColor: C.separator,
+                paddingHorizontal: 24,
+                paddingTop: 28,
+                paddingBottom: 24 + insets.bottom,
+              }}
+            >
+              <Text style={{ fontSize: 24, fontWeight: '800', letterSpacing: -0.7, color: C.text, marginBottom: 14 }}>
+                {cancelCopy.title}
+              </Text>
+              <View style={{ gap: 10 }}>
+                {cancelCopy.points.map((point) => (
+                  <Text key={point} style={{ fontSize: 15, color: C.textSub, lineHeight: 22 }}>
+                    {point}
+                  </Text>
+                ))}
+              </View>
+              {cancelPreviewLoading ? (
+                <Text style={{ fontSize: 13, color: C.textMute, lineHeight: 19, marginTop: 14 }}>
+                  Consultando Stripe y facturas abiertas…
+                </Text>
+              ) : null}
+              {cancelError ? (
+                <Text style={{ fontSize: 13, color: C.negative, lineHeight: 19, marginTop: 14 }}>{cancelError}</Text>
+              ) : null}
+              <View style={{ marginTop: 22, gap: 12 }}>
+                <BrandButton
+                  label={cancelBusy ? 'Cancelando…' : cancelPreviewLoading ? 'Consultando…' : cancelCopy.confirmLabel}
+                  variant="white"
+                  accentColor={primaryColor}
+                  onPress={() => void confirmCancelRenewal()}
+                  disabled={cancelConfirmDisabled}
+                  loading={cancelBusy || cancelPreviewLoading}
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => { if (!cancelBusy) setCancelTarget(null); }}
+                  disabled={cancelBusy}
+                  hitSlop={8}
+                  style={{ alignItems: 'center', paddingVertical: 6 }}
+                >
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: cancelBusy ? C.textMute : C.textSub }}>
+                    {cancelCopy.dismissLabel}
+                  </Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
       ) : null}
 
       <AuthRequiredModal

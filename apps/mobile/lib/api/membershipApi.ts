@@ -195,6 +195,62 @@ export async function fetchPurchaseOptions(studioId: string): Promise<PurchaseOp
   return res.options;
 }
 
+export type OpenInvoiceDto = {
+  id: string;
+  amountDueCents: number;
+  currency: string;
+};
+
+export type CancelRenewalPreview = {
+  eligible: boolean;
+  alreadyScheduled: boolean;
+  verifiedAgainstStripe: boolean;
+  liveStatus: string | null;
+  localStatus: string;
+  cancelAtPeriodEnd: boolean;
+  localCancelAtPeriodEnd?: boolean;
+  staleLocalCancel?: boolean;
+  /** Stripe-verified period end. Null when Stripe was not read. */
+  currentPeriodEnd: string | null;
+  explanation: string | null;
+  invoicesUnverified?: boolean;
+  /** null when Stripe's invoice list could not be read. */
+  openInvoices: OpenInvoiceDto[] | null;
+};
+
+export type CancelRenewalResult = {
+  outcome: 'scheduled' | 'already_scheduled';
+  verifiedAgainstStripe: boolean;
+  subscriptionId: string;
+  cancelAtPeriodEnd: boolean;
+  currentPeriodEnd: string | null;
+  status: string;
+  liveStatus: string;
+  invoicesUnverified?: boolean;
+  openInvoices: OpenInvoiceDto[] | null;
+};
+
+export async function fetchCancelRenewalPreview(
+  studioId: string,
+  subscriptionId: string,
+): Promise<CancelRenewalPreview> {
+  return apiRequest<CancelRenewalPreview>(
+    `/studios/${studioId}/members/me/subscriptions/${subscriptionId}/cancel-renewal-preview`,
+    { method: 'GET' },
+  );
+}
+
+/** Stops future Stripe renewals for the signed-in member. Does not void invoices. */
+export async function cancelMembershipRenewal(
+  studioId: string,
+  subscriptionId: string,
+): Promise<CancelRenewalResult> {
+  return apiRequest<CancelRenewalResult>(
+    `/studios/${studioId}/members/me/subscriptions/${subscriptionId}/cancel-renewal`,
+    { method: 'POST', body: '{}' },
+  );
+}
+
 export async function createBillingPortalSession(studioId: string): Promise<{ url: string }> {
   return apiRequest<{ url: string }>(`/studios/${studioId}/billing-portal`, {
     method: 'POST',

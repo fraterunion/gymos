@@ -405,6 +405,17 @@ export class StripeService {
     return page.data;
   }
 
+  /**
+   * READ-ONLY open invoices for one subscription. Does not void, forgive, or retry them.
+   */
+  async listOpenInvoicesForSubscription(subscriptionId: string, limit = 10): Promise<Stripe.Invoice[]> {
+    const page = await this.getClient().invoices.list(
+      { subscription: subscriptionId, status: 'open', limit },
+      { timeout: 4_000, maxNetworkRetries: 1 },
+    );
+    return page.data;
+  }
+
   async listRefundsSince(createdGteUnix: number, limit = 100): Promise<{ data: Stripe.Refund[]; hasMore: boolean }> {
     const page = await this.getClient().refunds.list({ created: { gte: createdGteUnix }, limit });
     return { data: page.data, hasMore: page.has_more };

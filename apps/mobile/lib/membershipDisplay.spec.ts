@@ -9,8 +9,17 @@ import {
   bookingChargeLine,
   changeConfirmationCopy,
   isPurchaseActionDisabled,
+  canCancelStripeRenewal,
+  canVerifyStripeRenewal,
+  cancellationSheetDate,
+  cancelRenewalConfirmationCopy,
+  cancelRenewalSucceeded,
+  cancelRenewalSupport,
+  membershipScreenShows,
+  stripeRenewalCancelTargets,
   membershipCreditsDisplay,
   membershipPriceLine,
+  membershipScreenMode,
   membershipStatusDisplay,
   orderMembershipsForDisplay,
   passPlanLine,
@@ -66,7 +75,7 @@ test('ACTIVE + cancelAtPeriodEnd → Activa · No renovará (never plain Cancela
   const d = membershipStatusDisplay(row({ cancelAtPeriodEnd: true }), { now: NOW });
   assert.equal(d.label, 'Activa · No renovará');
   assert.equal(d.tone, 'caution');
-  assert.match(d.dateLine ?? '', /^Acceso hasta el /);
+  assert.match(d.dateLine ?? '', /^Termina el /);
 });
 
 test('CANCELED-but-entitled → "Activa hasta <date>" + "No renovará", NOT Cancelada', () => {
@@ -213,6 +222,159 @@ test('Mi Pase line shows primary plus compact count when stacked', () => {
 test('price line: interval vs fixed-duration', () => {
   assert.match(membershipPriceLine({ priceCents: 150000, currency: 'mxn', billingInterval: 'MONTHLY', entitlementDays: null }), /\/mes$/);
   assert.match(membershipPriceLine({ priceCents: 80000, currency: 'mxn', billingInterval: 'MONTHLY', entitlementDays: 45 }), /45 días$/);
+});
+
+test('membership screen: guests and people without a current membership see sales; holders see management', () => {
+  assert.equal(membershipScreenMode({ isGuest: true, currentMembershipCount: 0 }), 'sales');
+  assert.equal(membershipScreenMode({ isGuest: true, currentMembershipCount: 2 }), 'sales');
+  assert.equal(membershipScreenMode({ isGuest: false, currentMembershipCount: 0 }), 'sales');
+  assert.equal(membershipScreenMode({ isGuest: false, currentMembershipCount: 1 }), 'manage');
+  assert.equal(membershipScreenMode({ isGuest: false, currentMembershipCount: 3 }), 'manage');
+});
+
+test('cancel renewal is offered per Stripe row, including PAST_DUE, and never for cash or manual', () => {
+  const eligible = row({ source: 'STRIPE', status: 'ACTIVE', cancelAtPeriodEnd: false });
+  assert.equal(canCancelStripeRenewal(eligible), true);
+  assert.equal(canCancelStripeRenewal({ ...eligible, status: 'TRIALING' }), true);
+  assert.equal(canCancelStripeRenewal({ ...eligible, status: 'PAST_DUE' }), true);
+  assert.equal(canCancelStripeRenewal({ ...eligible, cancelAtPeriodEnd: true }), false);
+  assert.equal(canCancelStripeRenewal({ ...eligible, source: 'CASH' }), false);
+  assert.equal(canCancelStripeRenewal({ ...eligible, source: 'MANUAL' }), false);
+  assert.equal(canCancelStripeRenewal({ ...eligible, status: 'PAUSED' }), false);
+  assert.equal(canCancelStripeRenewal({ ...eligible, status: 'CANCELED' }), false);
+  assert.equal(canCancelStripeRenewal({ ...eligible, status: 'SCHEDULED' }), false);
+
+  const targets = stripeRenewalCancelTargets([
+    row({ subscriptionId: 'stripe-active', source: 'STRIPE', status: 'ACTIVE' }),
+    row({ subscriptionId: 'stripe-due', source: 'STRIPE', status: 'PAST_DUE', isEntitled: false }),
+    row({ subscriptionId: 'cash', source: 'CASH', status: 'ACTIVE' }),
+    row({ subscriptionId: 'ending', source: 'STRIPE', status: 'ACTIVE', cancelAtPeriodEnd: true }),
+  ]);
+  assert.deepEqual(targets, ['stripe-active', 'stripe-due']);
+  assert.equal(canVerifyStripeRenewal(row({ source: 'STRIPE', status: 'ACTIVE', cancelAtPeriodEnd: true })), true);
+  assert.equal(canVerifyStripeRenewal(row({ source: 'STRIPE', status: 'PAST_DUE', isEntitled: false, cancelAtPeriodEnd: true })), true);
+  assert.equal(canVerifyStripeRenewal(row({ source: 'CASH', status: 'ACTIVE', cancelAtPeriodEnd: true })), false);
+  assert.match(cancelRenewalSupport('ACTIVE', 'verify'), /no confirma que Stripe/);
+});
+
+test('a current member sees management only; guests and non-members keep the catalog and day pass', () => {
+  const manage = membershipScreenShows('manage');
+  assert.equal(manage.catalog, false);
+  assert.equal(manage.dayPassPurchase, false);
+  assert.equal(manage.dayPassHistory, false);
+  assert.equal(manage.membershipManagement, true);
+  const sales = membershipScreenShows('sales');
+  assert.equal(sales.catalog, true);
+  assert.equal(sales.dayPassPurchase, true);
+  assert.equal(sales.dayPassHistory, true);
+  assert.equal(sales.membershipManagement, false);
+});
+
+test('PAST_DUE that will not renew keeps the balance visible and does not say access was restored', () => {
+  const d = membershipStatusDisplay(
+    row({ status: 'PAST_DUE', isEntitled: false, cancelAtPeriodEnd: true }),
+    { now: NOW },
+  );
+  assert.equal(d.label, 'Pago pendiente · No renovará');
+  assert.match(d.dateLine ?? '', /saldo pendiente sigue cobrable/);
+  assert.doesNotMatch(d.dateLine ?? '', /acceso restaurado|pagado/i);
+});
+
+test('cancel confirmation separates future renewals from known open invoices', () => {
+  const active = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'ACTIVE',
+    invoices: [{ id: 'in_1', amountDueCents: 45000, currency: 'mxn' }],
+  });
+  assert.match(active.points.join(' '), /renovaciones automáticas futuras de Full Access/);
+  assert.match(active.points.join(' '), /siguen siendo cobrables/i);
+  assert.match(active.points.join(' '), /450\.00/);
+  assert.match(active.points.join(' '), /periodo ya pagado/);
+
+  const pastDue = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'PAST_DUE',
+    invoices: [],
+  });
+  assert.match(pastDue.points.join(' '), /No restaura el acceso/);
+  assert.match(pastDue.points.join(' '), /no reporta facturas abiertas/);
+  assert.doesNotMatch(pastDue.points.join(' '), /periodo ya pagado/);
+
+  const unknown = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'ACTIVE',
+    invoices: null,
+  });
+  assert.match(unknown.points.join(' '), /No pudimos verificar las facturas abiertas/);
+  assert.match(unknown.points.join(' '), /puede seguir siendo cobrable/);
+  assert.equal(unknown.confirmLabel, 'Confirmar cancelación');
+
+  const dated = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'ACTIVE',
+    invoices: [],
+    stripePeriodEnd: '2026-12-14T06:00:00.000Z',
+    timeZone: 'America/Mexico_City',
+  });
+  assert.match(dated.points.join(' '), /14 de diciembre de 2026/);
+  const pastDueDated = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'PAST_DUE',
+    invoices: [],
+    stripePeriodEnd: '2026-12-14T06:00:00.000Z',
+    timeZone: 'America/Mexico_City',
+  });
+  assert.match(pastDueDated.points.join(' '), /no significa que el acceso pagado continúe/);
+  assert.doesNotMatch(pastDueDated.points.join(' '), /acceso pagado continúa hasta/);
+
+  const stale = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'ACTIVE',
+    invoices: null,
+    stripePeriodEnd: '2026-12-14T06:00:00.000Z',
+    timeZone: 'America/Mexico_City',
+    staleLocalCancel: true,
+  });
+  assert.equal(stale.title, 'Stripe todavía va a renovar');
+  assert.match(stale.points.join(' '), /no detuvo el cobro futuro/);
+  assert.match(stale.points.join(' '), /14 de diciembre de 2026/);
+  assert.equal(
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' }),
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' }),
+  );
+  assert.match(
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' }) ?? '',
+    /diciembre de 2026/,
+  );
+  assert.equal(cancellationSheetDate({ stripePeriodEnd: '2026-01-01T06:00:00.000Z', timeZone: 'America/Mexico_City' })?.includes('enero'), true);
+  assert.equal(
+    cancellationSheetDate({ stripePeriodEnd: '2026-12-14T06:00:00.000Z', timeZone: 'America/Mexico_City' })?.includes('enero'),
+    false,
+  );
+
+  const blocked = cancelRenewalConfirmationCopy({
+    planName: 'Full Access',
+    localStatus: 'ACTIVE',
+    invoices: null,
+    blockedExplanation: 'Esta suscripción está en pausa en Stripe.',
+  });
+  assert.equal(blocked.title, 'No se puede programar la cancelación');
+  assert.match(blocked.points.join(' '), /pausa/);
+  assert.doesNotMatch(blocked.points.join(' '), /Se detienen las renovaciones/);
+});
+
+test('the screen only refreshes a cancellation Stripe verified and the app saved', () => {
+  assert.equal(cancelRenewalSucceeded({ verifiedAgainstStripe: true, cancelAtPeriodEnd: true }), true);
+  assert.equal(cancelRenewalSucceeded({ verifiedAgainstStripe: false, cancelAtPeriodEnd: true }), false);
+  assert.equal(cancelRenewalSucceeded({ verifiedAgainstStripe: true, cancelAtPeriodEnd: false }), false);
+  assert.equal(cancelRenewalSucceeded(undefined), false);
+});
+
+test('a locked membership price is what the card formats, not a different catalog price', () => {
+  const locked = membershipPriceLine({ priceCents: 100000, currency: 'mxn', billingInterval: 'MONTHLY', entitlementDays: null });
+  const catalog = membershipPriceLine({ priceCents: 150000, currency: 'mxn', billingInterval: 'MONTHLY', entitlementDays: null });
+  assert.match(locked, /1,000/);
+  assert.notEqual(locked, catalog);
 });
 
 test('staff sale relationship copy distinguishes add / change / renew', () => {

@@ -5,6 +5,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import type { MembershipSummaryDto } from '@/lib/api/membershipApi';
 import {
   attachScheduledSuccessors,
+  cancelRenewalSupport,
+  stripeRenewalAction,
   membershipCreditsDisplay,
   membershipPriceLine,
   membershipStatusDisplay,
@@ -118,6 +120,8 @@ export function MembershipCard({
   timeZone,
   onManage,
   portalBusy,
+  onCancelRenewal,
+  cancelBusy,
 }: {
   membership: MembershipSummaryDto;
   successor: MembershipSummaryDto | null;
@@ -126,6 +130,9 @@ export function MembershipCard({
   /** Present only for Stripe-paid memberships (customer-level billing portal). */
   onManage?: () => void;
   portalBusy?: boolean;
+  /** Stops future renewals. Shown only when canCancelStripeRenewal is true. */
+  onCancelRenewal?: (subscriptionId: string) => void;
+  cancelBusy?: boolean;
 }) {
   const C = getColors();
   const status = membershipStatusDisplay(membership, { timeZone });
@@ -253,15 +260,58 @@ export function MembershipCard({
 
           {successor ? <ScheduledSuccessorRow successor={successor} timeZone={timeZone} /> : null}
 
+          {stripeRenewalAction(membership) && onCancelRenewal ? (
+            <View style={{ marginTop: 22 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  stripeRenewalAction(membership) === 'verify'
+                    ? 'Verificar renovación'
+                    : 'Cancelar renovación automática'
+                }
+                onPress={() => onCancelRenewal(membership.subscriptionId)}
+                disabled={cancelBusy}
+                style={{
+                  minHeight: 52,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: C.separator,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 16,
+                  opacity: cancelBusy ? 0.5 : 1,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: '700',
+                    color: C.text,
+                    letterSpacing: -0.2,
+                  }}
+                >
+                  {cancelBusy
+                    ? 'Cancelando…'
+                    : stripeRenewalAction(membership) === 'verify'
+                      ? 'Verificar renovación'
+                      : 'Cancelar renovación automática'}
+                </Text>
+              </Pressable>
+              <Text style={{ fontSize: 13, color: C.textMute, lineHeight: 19, marginTop: 10 }}>
+                {cancelRenewalSupport(membership.status, stripeRenewalAction(membership) ?? 'cancel')}
+              </Text>
+            </View>
+          ) : null}
+
           {membership.source === 'STRIPE' && onManage ? (
             <>
               <View style={{ height: 1, backgroundColor: C.separator, marginVertical: 22 }} />
-              <Pressable accessibilityRole="button" onPress={onManage} disabled={portalBusy} hitSlop={8}>
+              <Pressable accessibilityRole="button" onPress={onManage} disabled={portalBusy || cancelBusy} hitSlop={8}>
                 <Text
                   style={{
                     fontSize: 15,
                     fontWeight: '600',
-                    color: portalBusy ? C.textMute : C.text,
+                    color: portalBusy || cancelBusy ? C.textMute : C.text,
                     letterSpacing: -0.2,
                   }}
                 >
@@ -282,12 +332,16 @@ export function MembershipList({
   timeZone,
   onManage,
   portalBusy,
+  onCancelRenewal,
+  cancelBusySubscriptionId,
 }: {
   memberships: MembershipSummaryDto[];
   primaryColor: string;
   timeZone?: string;
   onManage?: () => void;
   portalBusy?: boolean;
+  onCancelRenewal?: (subscriptionId: string) => void;
+  cancelBusySubscriptionId?: string | null;
 }) {
   const C = getColors();
   const { memberships: entries, orphanSuccessors } = attachScheduledSuccessors(memberships);
@@ -306,6 +360,8 @@ export function MembershipList({
           timeZone={timeZone}
           onManage={onManage}
           portalBusy={portalBusy}
+          onCancelRenewal={onCancelRenewal}
+          cancelBusy={cancelBusySubscriptionId === membership.subscriptionId}
         />
       ))}
       {orphanSuccessors.map((successor) => (

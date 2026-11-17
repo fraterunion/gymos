@@ -81,6 +81,29 @@ export class MembersController {
     return this.membersService.getMemberProfile(studioId, userId);
   }
 
+  /**
+   * The signed-in member stops renewal of their own Stripe subscription.
+   * Period-end only. The path user is always the token subject — never a body userId.
+   */
+  @Get('me/subscriptions/:subscriptionId/cancel-renewal-preview')
+  previewMyRenewalCancellation(
+    @Param('studioId') studioId: string,
+    @Param('subscriptionId') subscriptionId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.membersService.memberCancelRenewalPreview(studioId, userId, subscriptionId);
+  }
+
+  @Post('me/subscriptions/:subscriptionId/cancel-renewal')
+  @HttpCode(HttpStatus.OK)
+  cancelMyRenewal(
+    @Param('studioId') studioId: string,
+    @Param('subscriptionId') subscriptionId: string,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.membersService.memberCancelRenewalAtPeriodEnd(studioId, userId, subscriptionId);
+  }
+
   @Get('me/progress')
   getMyProgress(
     @Param('studioId') studioId: string,
