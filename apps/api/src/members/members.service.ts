@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { StripeService } from '../stripe/stripe.service';
 import {
@@ -45,11 +46,20 @@ import {
 } from '../billing/stripe-renewal-audit.utils';
 import {
   STRIPE_RENEWAL_AUDIT_ACTIONS,
+  STRIPE_RENEWAL_DISABLED,
   STRIPE_TO_CASH_IMMEDIATE,
   STRIPE_TO_CASH_PERIOD_END_SCHEDULED,
   type StripeRenewalSourceSurface,
 } from '../billing/stripe-renewal-audit.constants';
 import { MemberBillingStatusService, type MemberBillingContext } from './member-billing-status.service';
+import {
+  CANCEL_LOCAL_PERSIST_MESSAGE,
+  CANCEL_UNVERIFIED_MESSAGE,
+  decidePeriodEndCancel,
+  localStatusBlocksPeriodEndCancel,
+  readStripeCancelSnapshot,
+  type StripeCancelSnapshot,
+} from './member-cancel-renewal.policy';
 import {
   readCancellationFeedbackNear,
   renewalAuditOrigin,
@@ -89,6 +99,8 @@ const publicUserSelect = {
   phone: true,
   createdAt: true,
 } satisfies Prisma.UserSelect;
+
+type OpenInvoiceView = { id: string; amountDueCents: number; currency: string };
 
 @Injectable()
 export class MembersService {
@@ -1449,6 +1461,384 @@ export class MembersService {
       summary: `El staff canceló la membresía solo en GymOS. Stripe reporta la suscripción como «${liveStatus}»; mientras siga vigente ahí puede seguir cobrando al miembro.`,
       suggestedAction: 'Cancela la suscripción en Stripe (o desactiva la renovación automática desde GymOS) si la membresía ya no aplica. No cobres manualmente.',
       evidence: { localStatus: 'CANCELED', localEndReason: row.endReason, stripeStatus: liveStatus, actorUserId },
+    });
+  }
+
+  /**
+   * Read-only preview. Live Stripe decides eligibility. Open invoices are listed,
+   * never voided, refunded, or forgiven.
+   */
+  async memberCancelRenewalPreview(studioId: string, userId: string, subscriptionId: string) {
+    const sub = await this.loadOwnedSubscription(studioId, userId, subscriptionId);
+    const blocked = this.memberCancelBlockReason(sub);
+    if (blocked || !sub.stripeSubscriptionId) {
+      return {
+        eligible: false,
+        alreadyScheduled: false,
+        verifiedAgainstStripe: false,
+        liveStatus: null as string | null,
+        localStatus: sub.status,
+        cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        explanation: blocked,
+        openInvoices: null as OpenInvoiceView[] | null,
+      };
+    }
+
+    const customerId = await this.requireMemberStripeCustomerId(userId);
+    const live = await this.retrieveVerifiedStripeSubscription(sub.stripeSubscriptionId);
+    this.assertStripeCustomerLink(live, customerId);
+    const decision = decidePeriodEndCancel(live);
+    const openInvoices = await this.listSubscriptionOpenInvoices(sub.stripeSubscriptionId);
+    const invoicesUnknown = openInvoices === null;
+    const eligible =
+      decision.kind === 'already_scheduled' || (decision.kind === 'schedule' && !invoicesUnknown);
+    return {
+      eligible,
+      alreadyScheduled: decision.kind === 'already_scheduled',
+      verifiedAgainstStripe: true,
+      liveStatus: live.status,
+      localStatus: sub.status,
+      cancelAtPeriodEnd: live.cancelAtPeriodEnd,
+      explanation:
+        decision.kind === 'unsupported'
+          ? decision.message
+          : decision.kind === 'schedule' && invoicesUnknown
+            ? 'No pudimos consultar las facturas abiertas de esta suscripción. No se programó la cancelación.'
+            : null,
+      openInvoices,
+    };
+  }
+
+  /**
+   * Member self-service: schedule cancel_at_period_end after Stripe confirms it.
+   * Does not void invoices, stop collection of already-issued invoices, change
+   * plan, or restore access. Live Stripe is the only success signal.
+   */
+  async memberCancelRenewalAtPeriodEnd(studioId: string, userId: string, subscriptionId: string) {
+    const sub = await this.loadOwnedSubscription(studioId, userId, subscriptionId);
+    const blocked = this.memberCancelBlockReason(sub);
+    if (blocked) throw new BadRequestException(blocked);
+
+    const stripeSubscriptionId = sub.stripeSubscriptionId;
+    if (!stripeSubscriptionId) {
+      throw new BadRequestException('Solo puedes cancelar la renovación de una membresía pagada con tarjeta.');
+    }
+    const customerId = await this.requireMemberStripeCustomerId(userId);
+    const live = await this.retrieveVerifiedStripeSubscription(stripeSubscriptionId);
+    this.assertStripeCustomerLink(live, customerId);
+
+    const decision = decidePeriodEndCancel(live);
+    if (decision.kind === 'unsupported') {
+      throw new BadRequestException(decision.message);
+    }
+
+    const openInvoices = await this.listSubscriptionOpenInvoices(stripeSubscriptionId);
+    if (decision.kind === 'schedule' && openInvoices === null) {
+      throw new BadRequestException(
+        'No pudimos consultar las facturas abiertas de esta suscripción. No se programó la cancelación.',
+      );
+    }
+
+    const stripeIdempotencyKey = buildGymosRenewalIdempotencyKey();
+    let verified = live;
+    let mutated = false;
+    if (decision.kind === 'schedule') {
+      try {
+        await this.stripeService.updateSubscription(
+          stripeSubscriptionId,
+          { cancel_at_period_end: true },
+          { idempotencyKey: stripeIdempotencyKey },
+        );
+      } catch (err) {
+        const recovered = await this.retrieveAfterUncertainUpdate(stripeSubscriptionId, customerId);
+        this.logger.warn(
+          JSON.stringify({
+            event: 'member_cancel_renewal_stripe_uncertain',
+            studioId,
+            userId,
+            subscriptionId,
+            recovered: recovered?.cancelAtPeriodEnd === true,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        if (!recovered?.cancelAtPeriodEnd) {
+          throw new BadRequestException(CANCEL_UNVERIFIED_MESSAGE);
+        }
+        verified = recovered;
+        mutated = true;
+      }
+      if (!mutated) {
+        const confirmed = await this.retrieveAfterUncertainUpdate(stripeSubscriptionId, customerId);
+        if (!confirmed?.cancelAtPeriodEnd) {
+          throw new BadRequestException(CANCEL_UNVERIFIED_MESSAGE);
+        }
+        verified = confirmed;
+        mutated = true;
+      }
+    }
+
+    let persisted: { cancelAtPeriodEnd: boolean; currentPeriodEnd: Date | null; status: SubscriptionStatus };
+    try {
+      persisted = await this.persistVerifiedMemberCancel({
+        studioId,
+        userId,
+        subscriptionId,
+        stripeSubscriptionId,
+        currentPeriodEnd: verified.currentPeriodEnd ?? sub.currentPeriodEnd,
+        audit: mutated,
+        stripeIdempotencyKey,
+        liveStripeStatus: verified.status,
+      });
+    } catch (err) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'member_cancel_renewal_local_persist_failed',
+          studioId,
+          userId,
+          subscriptionId,
+          liveStatus: verified.status,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      if (mutated) {
+        try {
+          await this.recordMemberCancelAudit(this.prisma, {
+            studioId,
+            userId,
+            subscriptionId,
+            stripeSubscriptionId,
+            currentPeriodEnd: verified.currentPeriodEnd ?? sub.currentPeriodEnd,
+            stripeIdempotencyKey,
+            liveStripeStatus: verified.status,
+          });
+        } catch (auditErr) {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'member_cancel_renewal_audit_failed',
+              studioId,
+              userId,
+              subscriptionId,
+              error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+            }),
+          );
+        }
+      }
+      throw new ServiceUnavailableException(CANCEL_LOCAL_PERSIST_MESSAGE);
+    }
+    if (!persisted.cancelAtPeriodEnd) {
+      throw new ServiceUnavailableException(CANCEL_LOCAL_PERSIST_MESSAGE);
+    }
+
+    return {
+      outcome: mutated ? ('scheduled' as const) : ('already_scheduled' as const),
+      verifiedAgainstStripe: true as const,
+      subscriptionId,
+      cancelAtPeriodEnd: true as const,
+      currentPeriodEnd: persisted.currentPeriodEnd,
+      status: persisted.status,
+      liveStatus: verified.status,
+      openInvoices: openInvoices ?? [],
+    };
+  }
+
+  private async loadOwnedSubscription(studioId: string, userId: string, subscriptionId: string) {
+    const sub = await this.prisma.subscription.findFirst({
+      where: { id: subscriptionId, studioId, userId },
+      select: {
+        id: true,
+        source: true,
+        status: true,
+        stripeSubscriptionId: true,
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: true,
+      },
+    });
+    if (!sub) throw new NotFoundException('Subscription not found');
+    return sub;
+  }
+
+  private memberCancelBlockReason(sub: {
+    source: SubscriptionSource;
+    status: SubscriptionStatus;
+    stripeSubscriptionId: string | null;
+  }): string | null {
+    if (sub.source !== SubscriptionSource.STRIPE || !sub.stripeSubscriptionId) {
+      return 'Solo puedes cancelar la renovación de una membresía pagada con tarjeta.';
+    }
+    return localStatusBlocksPeriodEndCancel(sub.status);
+  }
+
+  private async requireMemberStripeCustomerId(userId: string): Promise<string> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: { stripeCustomerId: true },
+    });
+    if (!user?.stripeCustomerId) {
+      throw new BadRequestException('No hay un cliente de Stripe vinculado a tu cuenta.');
+    }
+    return user.stripeCustomerId;
+  }
+
+  private async retrieveVerifiedStripeSubscription(stripeSubscriptionId: string): Promise<StripeCancelSnapshot> {
+    try {
+      const raw = await this.stripeService.retrieveSubscription(stripeSubscriptionId, { timeoutMs: 8_000 });
+      const snap = readStripeCancelSnapshot(raw);
+      if (snap.id !== stripeSubscriptionId) {
+        throw new ForbiddenException('Esta suscripción de Stripe no coincide con tu membresía.');
+      }
+      return snap;
+    } catch (err) {
+      if (err instanceof ForbiddenException) throw err;
+      throw new BadRequestException(CANCEL_UNVERIFIED_MESSAGE);
+    }
+  }
+
+  private async retrieveAfterUncertainUpdate(
+    stripeSubscriptionId: string,
+    customerId: string,
+  ): Promise<StripeCancelSnapshot | null> {
+    try {
+      const raw = await this.stripeService.retrieveSubscription(stripeSubscriptionId, { timeoutMs: 8_000 });
+      const snap = readStripeCancelSnapshot(raw);
+      if (snap.id !== stripeSubscriptionId || snap.customerId !== customerId) return null;
+      return snap;
+    } catch {
+      return null;
+    }
+  }
+
+  private assertStripeCustomerLink(live: StripeCancelSnapshot, customerId: string): void {
+    if (!live.customerId || live.customerId !== customerId) {
+      throw new ForbiddenException('Esta suscripción de Stripe no pertenece a tu cuenta.');
+    }
+  }
+
+  /** null means the invoice list could not be verified. Never mutates invoices. */
+  private async listSubscriptionOpenInvoices(stripeSubscriptionId: string): Promise<OpenInvoiceView[] | null> {
+    try {
+      const invoices = await this.stripeService.listOpenInvoicesForSubscription(stripeSubscriptionId);
+      return invoices
+        .filter((invoice) => typeof invoice.id === 'string' && this.invoiceBelongsToSubscription(invoice, stripeSubscriptionId))
+        .map((invoice) => ({
+          id: invoice.id as string,
+          amountDueCents: invoice.amount_remaining ?? invoice.amount_due ?? 0,
+          currency: (invoice.currency ?? 'mxn').toLowerCase(),
+        }))
+        .filter((invoice) => invoice.amountDueCents > 0);
+    } catch (err) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'member_cancel_renewal_open_invoices_unavailable',
+          stripeSubscriptionId,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return null;
+    }
+  }
+
+  private invoiceBelongsToSubscription(
+    invoice: {
+      parent?: { subscription_details?: { subscription?: string | { id?: string | null } | null } | null } | null;
+      subscription?: string | { id?: string | null } | null;
+    },
+    stripeSubscriptionId: string,
+  ): boolean {
+    const parent = invoice.parent?.subscription_details?.subscription;
+    const parentId = typeof parent === 'string' ? parent : parent?.id ?? null;
+    const legacy = invoice.subscription;
+    const legacyId = typeof legacy === 'string' ? legacy : legacy?.id ?? null;
+    const id = parentId ?? legacyId;
+    return id === null || id === stripeSubscriptionId;
+  }
+
+  private async persistVerifiedMemberCancel(input: {
+    studioId: string;
+    userId: string;
+    subscriptionId: string;
+    stripeSubscriptionId: string;
+    currentPeriodEnd: Date | null;
+    audit: boolean;
+    stripeIdempotencyKey: string;
+    liveStripeStatus: string;
+  }): Promise<{ cancelAtPeriodEnd: boolean; currentPeriodEnd: Date | null; status: SubscriptionStatus }> {
+    return this.prisma.$transaction(async (tx) => {
+      await acquireSubscriptionWriteAdvisoryLock(tx, input.studioId, input.userId);
+      const written = await tx.subscription.updateMany({
+        where: {
+          id: input.subscriptionId,
+          studioId: input.studioId,
+          userId: input.userId,
+          cancelAtPeriodEnd: false,
+        },
+        data: { cancelAtPeriodEnd: true },
+      });
+      const row = await tx.subscription.findFirst({
+        where: { id: input.subscriptionId, studioId: input.studioId, userId: input.userId },
+        select: { cancelAtPeriodEnd: true, currentPeriodEnd: true, status: true },
+      });
+      if (!row?.cancelAtPeriodEnd) {
+        return {
+          cancelAtPeriodEnd: false,
+          currentPeriodEnd: row?.currentPeriodEnd ?? null,
+          status: row?.status ?? SubscriptionStatus.ACTIVE,
+        };
+      }
+      if (input.audit && (written.count === 1 || row.cancelAtPeriodEnd)) {
+        await this.recordMemberCancelAudit(tx, input);
+      }
+      return {
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: row.currentPeriodEnd,
+        status: row.status,
+      };
+    });
+  }
+
+  /**
+   * One MEMBER_APP audit per subscription. Safe to call again after a lost race
+   * or a local-write failure: a second call finds the first row and does nothing.
+   */
+  private async recordMemberCancelAudit(
+    client: Prisma.TransactionClient | PrismaService,
+    input: {
+      studioId: string;
+      userId: string;
+      subscriptionId: string;
+      stripeSubscriptionId: string;
+      currentPeriodEnd: Date | null;
+      stripeIdempotencyKey: string;
+      liveStripeStatus: string;
+    },
+  ): Promise<void> {
+    const existing = await client.auditLog.findFirst({
+      where: {
+        studioId: input.studioId,
+        entityId: input.subscriptionId,
+        action: STRIPE_RENEWAL_DISABLED,
+        actorUserId: input.userId,
+      },
+      select: { id: true },
+    });
+    if (existing) return;
+    const actorMembership = await client.studioMembership.findFirst({
+      where: { studioId: input.studioId, userId: input.userId, deletedAt: null },
+      select: { role: true },
+    });
+    await this.stripeRenewalAudit.logGymosRenewalChange({
+      studioId: input.studioId,
+      actorUserId: input.userId,
+      actorRole: actorMembership?.role ?? null,
+      memberUserId: input.userId,
+      subscriptionId: input.subscriptionId,
+      stripeSubscriptionId: input.stripeSubscriptionId,
+      previousCancelAtPeriodEnd: false,
+      newCancelAtPeriodEnd: true,
+      currentPeriodEnd: input.currentPeriodEnd,
+      sourceSurface: 'MEMBER_APP',
+      stripeIdempotencyKey: input.stripeIdempotencyKey,
+      liveStripeStatus: input.liveStripeStatus,
+      tx: client as Prisma.TransactionClient,
     });
   }
 

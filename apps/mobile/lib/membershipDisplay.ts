@@ -97,7 +97,7 @@ export function membershipStatusDisplay(
     return {
       label: 'Activa · No renovará',
       tone: 'caution',
-      dateLine: endDate ? `Acceso hasta el ${endDate}` : null,
+      dateLine: endDate ? `Termina el ${endDate}` : 'No renovará',
     };
   }
   switch (m.status) {
@@ -112,12 +112,28 @@ export function membershipStatusDisplay(
           : null,
       };
     case 'TRIALING':
+      if (m.cancelAtPeriodEnd) {
+        return {
+          label: 'Prueba · No renovará',
+          tone: 'caution',
+          dateLine: endDate ? `Termina el ${endDate}` : 'No renovará',
+        };
+      }
       return {
         label: 'Prueba',
         tone: 'neutral',
         dateLine: endDate ? `Tu prueba termina el ${endDate}` : null,
       };
     case 'PAST_DUE':
+      if (m.cancelAtPeriodEnd) {
+        return {
+          label: 'Pago pendiente · No renovará',
+          tone: 'caution',
+          dateLine: endDate
+            ? `El saldo pendiente sigue cobrable. No renueva después del ${endDate}`
+            : 'El saldo pendiente sigue cobrable. No habrá renovaciones nuevas.',
+        };
+      }
       return {
         label: 'Pago pendiente',
         tone: 'caution',
@@ -275,6 +291,156 @@ export function purchaseCtaLabel(action: PurchaseActionLike): string {
     case 'BLOCKED':
       return 'No disponible';
   }
+}
+
+/**
+ * Membership tab mode. Guests and accounts with no current membership (the API's
+ * `memberships` list: entitled, renewable, or scheduled) see the sales catalog.
+ * Anyone the API still treats as holding a current membership sees management only.
+ */
+export type MembershipScreenMode = 'sales' | 'manage';
+
+export function membershipScreenMode(input: {
+  isGuest: boolean;
+  currentMembershipCount: number;
+}): MembershipScreenMode {
+  if (!input.isGuest && input.currentMembershipCount > 0) return 'manage';
+  return 'sales';
+}
+
+/**
+ * Self-service "stop renewing" for a Stripe subscription that is still set to
+ * renew. PAST_DUE is included so a failed renewal does not trap the member.
+ * Cash, manual, paused, scheduled and already-ending rows are not offered this.
+ * The server still re-checks the live Stripe status before anything is scheduled.
+ */
+export function canCancelStripeRenewal(
+  membership: Pick<MembershipSummaryLike, 'source' | 'status' | 'cancelAtPeriodEnd'>,
+): boolean {
+  return (
+    membership.source === 'STRIPE' &&
+    (membership.status === 'ACTIVE' || membership.status === 'TRIALING' || membership.status === 'PAST_DUE') &&
+    !membership.cancelAtPeriodEnd
+  );
+}
+
+export function stripeRenewalCancelTargets<
+  T extends Pick<MembershipSummaryLike, 'subscriptionId' | 'source' | 'status' | 'cancelAtPeriodEnd'>,
+>(rows: readonly T[]): string[] {
+  return rows.filter(canCancelStripeRenewal).map((row) => row.subscriptionId);
+}
+
+export function cancelRenewalSupport(status: string): string {
+  if (status === 'PAST_DUE') {
+    return 'Detiene renovaciones futuras. No borra facturas ya emitidas ni restaura el acceso.';
+  }
+  return 'Detiene renovaciones futuras. La membresía sigue hasta el fin del periodo pagado. Las facturas ya emitidas siguen siendo cobrables.';
+}
+
+export type OpenInvoiceCopy = {
+  id: string;
+  amountDueCents: number;
+  currency: string;
+};
+
+function appendInvoicePoint(points: string[], invoices: readonly OpenInvoiceCopy[] | null, alreadyScheduled: boolean): void {
+  if (invoices === null) {
+    points.push(
+      alreadyScheduled
+        ? 'No pudimos consultar las facturas abiertas. Si existe alguna, sigue siendo cobrable.'
+        : 'No pudimos consultar las facturas abiertas. No confirmes hasta ver el saldo.',
+    );
+    return;
+  }
+  if (invoices.length === 0) {
+    points.push('En este momento Stripe no reporta facturas abiertas de esta suscripción.');
+    return;
+  }
+  const lines = invoices.map((invoice) => invoiceMoney(invoice.amountDueCents, invoice.currency)).join(', ');
+  points.push(`Facturas abiertas de esta suscripción: ${lines}. Siguen siendo cobrables.`);
+}
+
+function invoiceMoney(cents: number, currency: string): string {
+  const code = (currency || 'mxn').toUpperCase();
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: code,
+      minimumFractionDigits: 2,
+    }).format(cents / 100);
+  } catch {
+    return `${(cents / 100).toFixed(2)} ${code}`;
+  }
+}
+
+export function cancelRenewalConfirmationCopy(input: {
+  planName: string;
+  localStatus: string;
+  /** null = the invoice list is unknown. An empty list is not "you owe nothing forever". */
+  invoices: readonly OpenInvoiceCopy[] | null;
+  /** Set when this membership cannot be scheduled. The copy must not claim a cancellation. */
+  blockedExplanation?: string | null;
+  alreadyScheduled?: boolean;
+}): {
+  title: string;
+  points: readonly string[];
+  confirmLabel: string;
+  dismissLabel: string;
+} {
+  if (input.blockedExplanation) {
+    const points = [input.blockedExplanation, 'No se modificó ninguna factura.'];
+    if (input.invoices && input.invoices.length > 0) {
+      const lines = input.invoices
+        .map((invoice) => invoiceMoney(invoice.amountDueCents, invoice.currency))
+        .join(', ');
+      points.push(`Facturas abiertas que siguen siendo cobrables: ${lines}.`);
+    }
+    return {
+      title: 'No se puede programar la cancelación',
+      points,
+      confirmLabel: 'Confirmar cancelación',
+      dismissLabel: 'Cerrar',
+    };
+  }
+  if (input.alreadyScheduled) {
+    const points = [
+      `Stripe ya detuvo las renovaciones futuras de ${input.planName}.`,
+      'Las facturas ya emitidas pueden seguir siendo cobrables. No se borran ni se condonan.',
+    ];
+    if (input.localStatus === 'PAST_DUE') {
+      points.push('No restaura el acceso ni da por pagado el saldo pendiente.');
+    }
+    appendInvoicePoint(points, input.invoices, true);
+    return {
+      title: 'La renovación ya está cancelada',
+      points,
+      confirmLabel: 'Actualizar estado',
+      dismissLabel: 'Cerrar',
+    };
+  }
+  const points = [
+    `Se detienen las renovaciones automáticas futuras de ${input.planName}.`,
+    'Las facturas ya emitidas pueden seguir siendo cobrables. Esta acción no las borra, condona ni reembolsa.',
+  ];
+  if (input.localStatus === 'PAST_DUE') {
+    points.push('No restaura el acceso ni da por pagado el saldo pendiente.');
+  } else {
+    points.push('El acceso del periodo ya pagado continúa hasta su fecha de término.');
+  }
+  appendInvoicePoint(points, input.invoices, false);
+  return {
+    title: 'Cancelar renovación automática',
+    points,
+    confirmLabel: 'Confirmar cancelación',
+    dismissLabel: 'Mantener renovación',
+  };
+}
+
+/** Success is only a verified Stripe flag plus a saved local row. */
+export function cancelRenewalSucceeded(
+  result: { verifiedAgainstStripe?: boolean; cancelAtPeriodEnd?: boolean } | null | undefined,
+): boolean {
+  return result?.verifiedAgainstStripe === true && result.cancelAtPeriodEnd === true;
 }
 
 export function isPurchaseActionDisabled(action: PurchaseActionLike): boolean {

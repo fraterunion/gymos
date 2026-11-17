@@ -81,6 +81,8 @@ export type GymosRenewalAuditMetadata = {
   sourceSurface: StripeRenewalSourceSurface;
   stripeIdempotencyKey: string;
   stripeRequestId: string | null;
+  /** Live Stripe status observed when this mutation was verified. */
+  liveStripeStatus?: string | null;
   timestamp: string;
 };
 

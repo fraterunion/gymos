@@ -27,6 +27,7 @@ export type LogGymosRenewalChangeInput = {
   sourceSurface: StripeRenewalSourceSurface;
   stripeIdempotencyKey: string;
   stripeRequestId?: string | null;
+  liveStripeStatus?: string | null;
   effectiveAt?: Date;
   tx?: Prisma.TransactionClient;
 };
@@ -85,6 +86,7 @@ export class StripeRenewalAuditService {
       sourceSurface: input.sourceSurface,
       stripeIdempotencyKey: input.stripeIdempotencyKey,
       stripeRequestId: input.stripeRequestId ?? null,
+      liveStripeStatus: input.liveStripeStatus ?? null,
       timestamp: now.toISOString(),
     };
 

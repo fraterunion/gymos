@@ -25,6 +25,14 @@ describe('userFacingApiMessage', () => {
     expect(userFacingApiMessage(new ApiError('Internal server error', 500))).toBe(
       'El servicio del estudio no está disponible por el momento. Inténtalo de nuevo en un momento.',
     );
+    expect(
+      userFacingApiMessage(
+        new ApiError(
+          'Stripe ya detuvo la renovación, pero no pudimos guardarlo en tu cuenta. Desliza para actualizar. No se borró ninguna factura.',
+          503,
+        ),
+      ),
+    ).toMatch(/Stripe ya detuvo la renovación/);
     expect(userFacingApiMessage(new ApiError('P2002', 409))).toBe(
       'Algo salió mal. Por favor, inténtalo de nuevo.',
     );

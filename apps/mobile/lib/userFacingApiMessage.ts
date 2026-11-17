@@ -12,6 +12,9 @@ export function userFacingApiMessage(error: unknown, fallback = GENERIC): string
     return 'Esta app aún no está conectada a un servidor. Pídele a tu estudio una versión actualizada.';
   }
   if (error.status >= 500) {
+    if (error.status === 503 && /Stripe ya detuvo la renovación/i.test(m) && m.length <= 180) {
+      return m;
+    }
     return 'El servicio del estudio no está disponible por el momento. Inténtalo de nuevo en un momento.';
   }
   if (/Prisma|P2002|unique constraint|studio_id|Internal server error|\[object /i.test(m)) {

@@ -137,6 +137,15 @@ export function createE2eStripeServiceMock(config: {
     listSubscriptionsForCustomer: jest.fn().mockResolvedValue([]),
     // Reconciliation lookups (GET-only in production); empty unless a test provides data.
     listOpenInvoicesForCustomer: jest.fn().mockResolvedValue([]),
+    listOpenInvoicesForSubscription: jest.fn().mockResolvedValue([]),
+    updateSubscription: jest.fn().mockImplementation(async (id: string, params?: { cancel_at_period_end?: boolean }) =>
+      mockSubscription({
+        id,
+        customer: 'cus_e2e_test_customer',
+        cancel_at_period_end: params?.cancel_at_period_end ?? false,
+        status: 'active',
+      }),
+    ),
     listRefundsSince: jest.fn().mockResolvedValue({ data: [], hasMore: false }),
     listDisputesSince: jest.fn().mockResolvedValue({ data: [], hasMore: false }),
     retrieveCharge: jest.fn().mockRejectedValue(new Error('no Stripe network in e2e')),
